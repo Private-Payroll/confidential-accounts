@@ -8,9 +8,15 @@ export function ViewBanner() {
   const { viewer, chooseView } = useSession();
   if (!viewer.signs || viewer.view !== VIEWS.employee) return null;
   return (
-    <div className="flex flex-wrap items-center gap-3 border-b bg-muted px-4 py-2 text-sm" role="status" data-view-banner>
+    <div
+      className="flex flex-wrap items-center gap-3 border-b bg-muted px-4 py-2 text-sm"
+      role="status"
+      data-view-banner
+    >
       <span>{t('view.banner')}</span>
-      <Button size="sm" variant="outline" onClick={() => chooseView(VIEWS.company)}>{t('view.toCompany')}</Button>
+      <Button size="sm" variant="outline" onClick={() => chooseView(VIEWS.company)}>
+        {t('view.toCompany')}
+      </Button>
     </div>
   );
 }

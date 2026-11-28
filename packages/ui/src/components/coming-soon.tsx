@@ -25,7 +25,9 @@ export function ComingSoon({ explanation }: ComingSoonProps) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
         <Badge asChild variant="outline" className="h-4 px-1.5 font-normal text-muted-foreground">
-          <button type="button" data-slot="coming-soon">{t('kit.comingSoon.label')}</button>
+          <button type="button" data-slot="coming-soon">
+            {t('kit.comingSoon.label')}
+          </button>
         </Badge>
       </PopoverTrigger>
       <PopoverContent className="w-64 text-sm">{explanation}</PopoverContent>

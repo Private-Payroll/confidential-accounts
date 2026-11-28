@@ -29,9 +29,12 @@ const oneStep = (e: unknown): string => {
     if (typeof e === 'string') return e.trim();
     if (e === null || e === undefined) return '';
     const name = typeof (e as { name?: unknown }).name === 'string' ? (e as { name: string }).name : '';
-    const message = typeof (e as { message?: unknown }).message === 'string'
-      ? (e as { message: string }).message.trim()
-      : (typeof e === 'object' ? '' : String(e));
+    const message =
+      typeof (e as { message?: unknown }).message === 'string'
+        ? (e as { message: string }).message.trim()
+        : typeof e === 'object'
+          ? ''
+          : String(e);
     if (message === '') return TELLING_NAMES.has(name) ? name : '';
     return TELLING_NAMES.has(name) && !message.startsWith(name) ? `${name}: ${message}` : message;
   } catch {

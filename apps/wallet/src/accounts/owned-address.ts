@@ -2,9 +2,7 @@ import { addressFor } from 'midnight-identity';
 import type { Identity, PayeeAddress } from 'midnight-identity';
 import type { NetworkName } from 'midnight-identity/network';
 import { unshieldedAddressFor } from '../chain/unshielded.js';
-import {
-  MAIN_ACCOUNT, defaultNameOf, displayNameOf, isWalletAccount, slotNumberOf,
-} from './subwallets.js';
+import { MAIN_ACCOUNT, defaultNameOf, displayNameOf, isWalletAccount, slotNumberOf } from './subwallets.js';
 
 /**
  * AN ADDRESS AND ITS OWNER, ONE VALUE — the durable half.
@@ -59,15 +57,17 @@ export function ownedAddressFor(
   identity: Identity,
   account: number,
   names: Readonly<Record<string, string>>,
-  network: NetworkName,
+  network: NetworkName
 ): OwnedAddress {
   /* The fourth wall for the reserved account, and the first for slots the
    * interface does not offer at all: `moneyAt` would happily derive account
    * 12, but no screen may show an address the picker cannot reach — that is
    * §2.3's invisible-money trap from the other side. */
   if (!isWalletAccount(account)) {
-    throw new Error(`account ${account} is not a wallet this interface offers`
-      + (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${account} is not a wallet this interface offers` +
+        (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
   const name = displayNameOf(account, names);
   const slot = account === MAIN_ACCOUNT ? 'main wallet' : `subwallet ${slotNumberOf(account)}`;
@@ -78,6 +78,6 @@ export function ownedAddressFor(
     account,
     name,
     slot,
-    owner,
+    owner
   }) as OwnedAddress;
 }

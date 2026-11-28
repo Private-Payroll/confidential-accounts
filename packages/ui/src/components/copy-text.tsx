@@ -24,29 +24,58 @@ export function CopyText({ text, label, copied, refused }: CopyTextProps): React
   const [done, setDone] = useState(false);
   const [wouldNot, setWouldNot] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stop = (): void => { if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; } };
+  const stop = (): void => {
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
   useEffect(() => stop, []);
-  useEffect(() => { stop(); setDone(false); setWouldNot(false); }, [text]);
+  useEffect(() => {
+    stop();
+    setDone(false);
+    setWouldNot(false);
+  }, [text]);
   const press = (): void => {
     setWouldNot(false);
     const written = (): Promise<void> => {
-      try { return navigator.clipboard.writeText(text); } catch (e) { return Promise.reject(e); }
+      try {
+        return navigator.clipboard.writeText(text);
+      } catch (e) {
+        return Promise.reject(e);
+      }
     };
-    void written().then(() => {
-      stop();
-      setDone(true);
-      timer.current = setTimeout(() => { timer.current = null; setDone(false); }, COPIED_FOR_MS);
-    }, () => { stop(); setDone(false); setWouldNot(true); });
+    void written().then(
+      () => {
+        stop();
+        setDone(true);
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          setDone(false);
+        }, COPIED_FOR_MS);
+      },
+      () => {
+        stop();
+        setDone(false);
+        setWouldNot(true);
+      }
+    );
   };
   return (
     <div className="flex flex-col gap-2">
       <InputGroup>
         <InputGroupInput readOnly value={text} aria-label={label} dir="ltr" />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="button" variant="outline" size="sm" onClick={press}>{done ? copied : label}</InputGroupButton>
+          <InputGroupButton type="button" variant="outline" size="sm" onClick={press}>
+            {done ? copied : label}
+          </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
-      {wouldNot ? <p className="text-sm text-destructive" role="alert" data-copy-refused>{refused}</p> : null}
+      {wouldNot ? (
+        <p className="text-sm text-destructive" role="alert" data-copy-refused>
+          {refused}
+        </p>
+      ) : null}
     </div>
   );
 }

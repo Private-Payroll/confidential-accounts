@@ -34,7 +34,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -67,11 +67,15 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const mount = (): void => {
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
 };
 
 /** An unlocked wallet, through the real unlock — no phase is faked. */
@@ -207,9 +211,7 @@ describe('a place is framed; a flow and a condition are not', () => {
    */
   it('the place still to come renders the not-built screen inside the frame', async () => {
     await unlocked();
-    for (const [route, heading] of [
-      ['#/activity', 'Activity'],
-    ] as const) {
+    for (const [route, heading] of [['#/activity', 'Activity']] as const) {
       window.location.hash = route;
       await waitFor(() => {
         expect(document.querySelector('main h1')?.textContent).toBe(heading);
@@ -230,9 +232,7 @@ describe('a place is framed; a flow and a condition are not', () => {
     /* And what replaced the not-built screen: six named things, each carrying
      * the badge, and no fifth or seventh. */
     expect(document.querySelector('main')?.textContent).not.toContain('Not built yet');
-    for (const name of [
-      'ZK KYC', 'Proof of Personhood', 'Private Lottery', 'Whistleblow', 'Earn', 'Vote',
-    ]) {
+    for (const name of ['ZK KYC', 'Proof of Personhood', 'Private Lottery', 'Whistleblow', 'Earn', 'Vote']) {
       expect(screen.getByText(name)).toBeTruthy();
     }
     expect(screen.getAllByText('Coming soon')).toHaveLength(6);

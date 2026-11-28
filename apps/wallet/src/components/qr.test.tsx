@@ -62,23 +62,27 @@ beforeEach(() => {
   vi.stubGlobal('cancelAnimationFrame', () => {});
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
-    value: { getUserMedia: vi.fn().mockResolvedValue(fakeStream) },
+    value: { getUserMedia: vi.fn().mockResolvedValue(fakeStream) }
   });
   /* jsdom's media elements do not play; the component only needs them to
    * accept a stream and report a decodable frame. */
   Object.defineProperty(HTMLMediaElement.prototype, 'play', {
-    configurable: true, value: () => Promise.resolve(),
+    configurable: true,
+    value: () => Promise.resolve()
   });
   Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
-    configurable: true, set: () => {}, get: () => null,
+    configurable: true,
+    set: () => {},
+    get: () => null
   });
   Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
-    configurable: true, get: () => 4 /* HAVE_ENOUGH_DATA */,
+    configurable: true,
+    get: () => 4 /* HAVE_ENOUGH_DATA */
   });
   const frame = qrFrame(PAYLOAD);
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     drawImage: () => {},
-    getImageData: () => frame,
+    getImageData: () => frame
   } as unknown as CanvasRenderingContext2D);
 });
 
@@ -114,7 +118,7 @@ describe('the camera path actually scans', () => {
   it('a frame with no code keeps looking instead of giving up', async () => {
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
       drawImage: () => {},
-      getImageData: () => ({ data: new Uint8ClampedArray(400).fill(255), width: 10, height: 10 }),
+      getImageData: () => ({ data: new Uint8ClampedArray(400).fill(255), width: 10, height: 10 })
     } as unknown as CanvasRenderingContext2D);
     const onPayload = vi.fn();
     render(<ScanInput label="the code" actionLabel="Use it" onPayload={onPayload} />);
@@ -140,7 +144,10 @@ describe('the camera path actually scans', () => {
   it('a permission granted after the screen has gone does not leave the camera running', async () => {
     let grant: (stream: MediaStream) => void = () => {};
     vi.mocked(navigator.mediaDevices.getUserMedia).mockReturnValue(
-      new Promise((resolve) => { grant = resolve; }));
+      new Promise((resolve) => {
+        grant = resolve;
+      })
+    );
     const view = render(<ScanInput label="the code" actionLabel="Use it" onPayload={() => {}} />);
     fireEvent.click(screen.getByText('Scan it with this machine’s camera'));
     view.unmount();

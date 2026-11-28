@@ -22,17 +22,39 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { legChoiceOf, legOf } from '../../../../src/core/run-legs.js';
 import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { notEnoughApprovalsYet } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
-import { LegNotPayable, LegStopped, payAnApprovedLeg, type LegDoors, type LegPaid } from '../../../../packages/web-shared/src/leg-paid-here.js';
+import {
+  LegNotPayable,
+  LegStopped,
+  payAnApprovedLeg,
+  type LegDoors,
+  type LegPaid
+} from '../../../../packages/web-shared/src/leg-paid-here.js';
 import { legToPayHere, type PaymentsHereDeps } from '../../../../packages/web-shared/src/payments-made-here.js';
 import { ChargeNotYetSeen, RunNotChargedHere } from '../../../../packages/web-shared/src/run-charged-here.js';
-import { keptRunHere, payrollRoundsHere, proposalsListedHere } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
-import { PaymentLandedUnrecorded, PaymentNotAsBuilt, PaymentNotYetSeen, PaymentStillInFlight } from '../../../../packages/web-shared/src/vault-payment-in-flight.js';
+import {
+  keptRunHere,
+  payrollRoundsHere,
+  proposalsListedHere
+} from '../../../../packages/web-shared/src/run-rebuilt-here.js';
+import {
+  PaymentLandedUnrecorded,
+  PaymentNotAsBuilt,
+  PaymentNotYetSeen,
+  PaymentStillInFlight
+} from '../../../../packages/web-shared/src/vault-payment-in-flight.js';
 import { PublicPaymentNotYetSeen } from '../../../../packages/web-shared/src/vault-public-payout.js';
 import { walletHoldsTheMergeKey } from '../chain/key-material.js';
 import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
 import { companyRecordsFor, paidAmongFor, pureCircuits } from './company-records-in-the-wallet.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { payDoorsFor } from './one-off-payment.js';
 import { atTheBar, onTheChain, type ReadCompany } from './proposal-kinds.js';
 import { payrollKind, runShownLines, runShownOf, type RaiseRunReach } from './raise-run.js';
@@ -46,13 +68,17 @@ export type PayRunReach = RaiseRunReach & {
 };
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.pay-run.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.pay-run.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
 
 /** Where paying the run got to, as the page is told it. */
 export const PAY_RUN_STATE = {
-  awaitingApprovals: 'awaiting-approvals', paid: 'paid', partlyPaid: 'partly-paid', alreadyPaid: 'already-paid',
+  awaitingApprovals: 'awaiting-approvals',
+  paid: 'paid',
+  partlyPaid: 'partly-paid',
+  alreadyPaid: 'already-paid'
 } as const;
 
 /** Whether the run was charged to its vault's period here. */
@@ -74,8 +100,11 @@ const countedOf = (done: LegPaid, payees: number, unseen = 0) => {
 };
 
 /** A stop after a payment was handed over that may still land: it is waited for and looked at again, never paid again at once. */
-const mayStillLand = (e: unknown): boolean => e instanceof PaymentNotYetSeen || e instanceof PublicPaymentNotYetSeen
-  || e instanceof PaymentStillInFlight || e instanceof PaymentLandedUnrecorded;
+const mayStillLand = (e: unknown): boolean =>
+  e instanceof PaymentNotYetSeen ||
+  e instanceof PublicPaymentNotYetSeen ||
+  e instanceof PaymentStillInFlight ||
+  e instanceof PaymentLandedUnrecorded;
 
 /**
  * Why a stop before any step was sent stopped, in the words of the step that stopped it; a stop after a step was sent
@@ -85,7 +114,8 @@ const refusalOf = (e: unknown, handed: Handed): Words => {
   if (e instanceof LegNotPayable) return why('not-payable', { says: said(e) });
   if (e instanceof ChargeNotYetSeen) return why('charge-not-seen');
   if (e instanceof RunNotChargedHere) return why('not-charged', { says: said(e) });
-  if (e instanceof PaymentNotYetSeen || e instanceof PublicPaymentNotYetSeen) return why('payment-not-seen', { says: said(e) });
+  if (e instanceof PaymentNotYetSeen || e instanceof PublicPaymentNotYetSeen)
+    return why('payment-not-seen', { says: said(e) });
   if (e instanceof PaymentLandedUnrecorded) return why('payment-not-recorded', { says: said(e) });
   if (e instanceof PaymentStillInFlight) return why('payment-on-its-way', { says: said(e) });
   if (e instanceof PaymentNotAsBuilt) return why('payment-not-as-built', { says: said(e) });
@@ -111,14 +141,15 @@ function checkStep(reach: PayRunReach, read: ReadCompany, intent: ActIntent, her
       here.round = { id: named.id, chainId: named.chainId.toLowerCase() };
       const now = await onTheChain(r, here.round.chainId);
       if (now === undefined || now.held === 'never') throw new StepRefused(why('not-raised'));
-      if (now.held === 'closed') throw new StepRefused(why((now.closedBy ?? []).includes('cancel') ? 'withdrawn' : 'closed'));
+      if (now.held === 'closed')
+        throw new StepRefused(why((now.closedBy ?? []).includes('cancel') ? 'withdrawn' : 'closed'));
       const needed = kind.needed(now, await r.holders(), intent);
       ctx.tell({ approvals: now.approvals, ...(needed === null ? {} : { needed }) });
       if (!atTheBar(now, needed)) {
         here.short = true;
         ctx.tell({ state: PAY_RUN_STATE.awaitingApprovals });
       }
-    },
+    }
   };
 }
 
@@ -135,15 +166,22 @@ function payStep(reach: PayRunReach, read: ReadCompany, here: Paying): ActionSte
       const registry = reach.assets ?? theAssets;
       const paidAmong = paidAmongFor(records, pure);
       const deps: PaymentsHereDeps = {
-        detailsOf: pure.details, runPayload: pure.account.runPayload, proposalIdOf: pure.account.proposalIdOf, paidAmong,
+        detailsOf: pure.details,
+        runPayload: pure.account.runPayload,
+        proposalIdOf: pure.account.proposalIdOf,
+        paidAmong
       };
       const handed: Handed = { over: false };
       const named = here.round.id;
       try {
         const round = payrollRoundsHere(await proposalsListedHere(records), r.accountId, r.companyKeys, {
-          identity: records.roundIdentity, nowInSeconds: BigInt(Math.floor(reach.now() / 1000)),
+          identity: records.roundIdentity,
+          nowInSeconds: BigInt(Math.floor(reach.now() / 1000))
         }).find((x) => x.id === named);
-        if (round === undefined) throw new StepRefused(why('not-a-run', { says: 'the company holds no payroll proposal by that name that this wallet can open' }));
+        if (round === undefined)
+          throw new StepRefused(
+            why('not-a-run', { says: 'the company holds no payroll proposal by that name that this wallet can open' })
+          );
         const which = { asset: round.asset, form: round.form ?? 'shielded' } as const;
         const { run } = await keptRunHere(records, r.accountId, round.runId, r.companyKeys);
         const leg = legOf(run, legChoiceOf(which), registry);
@@ -162,15 +200,27 @@ function payStep(reach: PayRunReach, read: ReadCompany, here: Paying): ActionSte
         const doors: LegDoors = {
           ...pay,
           paidYet: async (payment) => (await paidAmong([payment.leaf as Hex])).paid.length === 1,
-          mergesProvedHere: reach.mergesProvedHere ?? (() => walletHoldsTheMergeKey()),
+          mergesProvedHere: reach.mergesProvedHere ?? (() => walletHoldsTheMergeKey())
         };
-        const done = await payAnApprovedLeg(doors, withCompanyKeys({
-          records, accountId: r.accountId, runId: round.runId, deps, which, ...(retry === undefined ? {} : { retry }),
-        }, r.companyKeys));
+        const done = await payAnApprovedLeg(
+          doors,
+          withCompanyKeys(
+            {
+              records,
+              accountId: r.accountId,
+              runId: round.runId,
+              deps,
+              which,
+              ...(retry === undefined ? {} : { retry })
+            },
+            r.companyKeys
+          )
+        );
         const counted = countedOf(done, order.payments.length);
         ctx.tell({
-          state: counted.owed === 0 ? PAY_RUN_STATE.paid : PAY_RUN_STATE.partlyPaid, ...counted,
-          charge: done.steps.some((s) => s.kind === 'charge') ? PAY_RUN_CHARGE.charged : PAY_RUN_CHARGE.none,
+          state: counted.owed === 0 ? PAY_RUN_STATE.paid : PAY_RUN_STATE.partlyPaid,
+          ...counted,
+          charge: done.steps.some((s) => s.kind === 'charge') ? PAY_RUN_CHARGE.charged : PAY_RUN_CHARGE.none
         });
       } catch (e) {
         if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
@@ -178,10 +228,17 @@ function payStep(reach: PayRunReach, read: ReadCompany, here: Paying): ActionSte
           const landing = mayStillLand(e.cause);
           const counted = countedOf(e.done, e.done.payees, landing ? 1 : 0);
           ctx.tell({
-            state: PAY_RUN_STATE.partlyPaid, ...counted,
-            charge: e.done.steps.some((s) => s.kind === 'charge') ? PAY_RUN_CHARGE.charged : PAY_RUN_CHARGE.none,
+            state: PAY_RUN_STATE.partlyPaid,
+            ...counted,
+            charge: e.done.steps.some((s) => s.kind === 'charge') ? PAY_RUN_CHARGE.charged : PAY_RUN_CHARGE.none
           });
-          throw new StepRefused(why(landing ? 'stopped-unseen' : 'stopped', { paid: counted.paid, payees: e.done.payees, says: said(e.cause) }));
+          throw new StepRefused(
+            why(landing ? 'stopped-unseen' : 'stopped', {
+              paid: counted.paid,
+              payees: e.done.payees,
+              says: said(e.cause)
+            })
+          );
         }
         if (!handed.over && notEnoughApprovalsYet(e)) {
           ctx.tell({ state: PAY_RUN_STATE.awaitingApprovals });
@@ -189,7 +246,7 @@ function payStep(reach: PayRunReach, read: ReadCompany, here: Paying): ActionSte
         }
         throw new StepRefused(refusalOf(e, handed));
       }
-    },
+    }
   };
 }
 
@@ -199,21 +256,30 @@ export function payRunAction(reach: PayRunReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.pay-run.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
-      { key: 'act.pay-run.shown.proposal', values: { proposal: intent.fields['proposal'] ?? '' }, from: 'page' as const },
+      {
+        key: 'act.pay-run.shown.proposal',
+        values: { proposal: intent.fields['proposal'] ?? '' },
+        from: 'page' as const
+      },
       ...runShownLines(intent, registry, 'act.pay-run.shown'),
       { key: 'act.pay-run.shown.matched', from: 'action' as const },
       { key: 'act.pay-run.shown.pay', from: 'action' as const },
-      { key: (await (reach.mergesProvedHere ?? (() => walletHoldsTheMergeKey()))()) ? 'act.pay-run.shown.merge' : 'act.pay-run.shown.no-merge', from: 'action' as const },
+      {
+        key: (await (reach.mergesProvedHere ?? (() => walletHoldsTheMergeKey()))())
+          ? 'act.pay-run.shown.merge'
+          : 'act.pay-run.shown.no-merge',
+        from: 'action' as const
+      },
       { key: 'act.pay-run.shown.again', from: 'action' as const },
       ...upkeepShown(),
-      { key: 'act.pay-run.shown.nothing-else', from: 'action' as const },
+      { key: 'act.pay-run.shown.nothing-else', from: 'action' as const }
     ],
     checks: [
       { key: 'act.pay-run.check.seat' },
       { key: 'act.pay-run.check.run' },
       { key: 'act.pay-run.check.chain' },
       { key: 'act.pay-run.check.window' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
@@ -222,14 +288,18 @@ export function payRunAction(reach: PayRunReach): ActionDefinition {
       return 'key' in shown ? why('not-a-run', shown.values) : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const here: Paying = { round: null, short: false };
       const seat: ActionStep = {
         title: { key: 'act.pay-run.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       return [seat, upkeep.first, checkStep(reach, read, intent, here), payStep(reach, read, here), upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

@@ -22,36 +22,41 @@ interface SeenElsewhere {
 export function seenElsewhere(v: SeenElsewhere): ReactNode {
   const { company, account, asking, elsewhere, companyOnChain, withExplanation } = v;
   return (
-    <StatusAlert
-      tone="warning"
-      title="You have given this company’s key to a different page before"
-    >
+    <StatusAlert tone="warning" title="You have given this company’s key to a different page before">
       {/* **EACH ADDRESS ON ITS OWN LINE.** Found by looking at the first
-        * picture of this screen: inline, the previous host wrapped as
-        * `https://payroll-a.exampl` / `e.` — a fact a person is being
-        * asked to COMPARE, broken in the middle of itself. */}
+       * picture of this screen: inline, the previous host wrapped as
+       * `https://payroll-a.exampl` / `e.` — a fact a person is being
+       * asked to COMPARE, broken in the middle of itself. */}
       <div data-seen-elsewhere>
         {/* WHICH company, said in the form a person was told it
-          * in. The warning named two origins and left the company itself
-          * to be inferred from the section above. */}
+         * in. The warning named two origins and left the company itself
+         * to be inferred from the section above. */}
         <p className="m-0">The company is</p>
-        <p className="m-0 font-mono tracking-wide text-foreground" {...(withExplanation ? { 'data-warning-fingerprint': true } : {})}>
-          {companyOnChain && account !== null ? companyFingerprint(company, account) : 'The company named above, once this wallet has checked it'}
+        <p
+          className="m-0 font-mono tracking-wide text-foreground"
+          {...(withExplanation ? { 'data-warning-fingerprint': true } : {})}
+        >
+          {companyOnChain && account !== null
+            ? companyFingerprint(company, account)
+            : 'The company named above, once this wallet has checked it'}
         </p>
         <p className="m-0" style={{ marginTop: '0.5rem' }}>
           Before now, this company’s key has gone to
         </p>
         {elsewhere.map((origin) => (
-          <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>
+          <p className="m-0 font-mono text-foreground" key={origin}>
+            {origin}
+          </p>
         ))}
-        <p className="m-0" style={{ marginTop: '0.5rem' }}>This page is</p>
+        <p className="m-0" style={{ marginTop: '0.5rem' }}>
+          This page is
+        </p>
         <p className="m-0 font-mono text-foreground">{asking}</p>
       </div>
       {withExplanation && (
         <p className="m-0">
-          That can be perfectly ordinary — a company can move, or run its own copy of
-          the same thing. It is shown because you are the only one who can tell the
-          difference between that and somebody standing in the way.
+          That can be perfectly ordinary — a company can move, or run its own copy of the same thing. It is shown
+          because you are the only one who can tell the difference between that and somebody standing in the way.
         </p>
       )}
     </StatusAlert>

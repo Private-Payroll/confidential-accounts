@@ -9,8 +9,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, ZERO_32, invitePayloadFor, invitedAddressFor,
-  invitedAddressCommitmentOf, removalPayloadFor, type Change,
+  AccountSimulator,
+  privateStateFor,
+  change,
+  ZERO_32,
+  invitePayloadFor,
+  invitedAddressFor,
+  invitedAddressCommitmentOf,
+  removalPayloadFor,
+  type Change
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { Transcript } from './transcript.js';
@@ -83,7 +90,7 @@ describe('a signer invited by address takes their own seat', () => {
       'the invitation payload': invitePayloadFor(C),
       'the seat key': C.secretKey,
       'the seat public key': sim.publicKeyOf(C),
-      'the blinding': C.blinding,
+      'the blinding': C.blinding
     });
   });
 });
@@ -92,7 +99,10 @@ describe('a seat the signers did not approve is refused', () => {
   it('another wallet cannot take the seat, even holding the invitation and its salt', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const { id, c } = await invitation(sim, C, [A, B], 21);
-    const other = { ...sim.invited(C, c), invite: { ...invitedAddressFor(C), coinSecretKey: invitedAddressFor(D).coinSecretKey } };
+    const other = {
+      ...sim.invited(C, c),
+      invite: { ...invitedAddressFor(C), coinSecretKey: invitedAddressFor(D).coinSecretKey }
+    };
 
     /* RED WHEN: the proposal's id is not checked against the invitation, so any wallet takes the seat. */
     await expect(sim.seatInvited(id, other)).rejects.toThrow(NOT_THIS_WALLET);
@@ -104,7 +114,10 @@ describe('a seat the signers did not approve is refused', () => {
     const { id, c } = await invitation(sim, C, [A, B], 22);
     const invite = invitedAddressFor(C);
     /* The address carries the coin public key in the clear; its holder alone has the secret key behind it. */
-    const knowsTheAddress = { ...sim.invited(D, c), invite: { ...invite, coinSecretKey: pureCircuits.coinPublicKeyOf(invite.coinSecretKey) } };
+    const knowsTheAddress = {
+      ...sim.invited(D, c),
+      invite: { ...invite, coinSecretKey: pureCircuits.coinPublicKeyOf(invite.coinSecretKey) }
+    };
 
     /* RED WHEN: the coin public key is taken from the invitee instead of worked out from their secret key. */
     await expect(sim.seatInvited(id, knowsTheAddress)).rejects.toThrow(NOT_THIS_WALLET);
@@ -114,7 +127,13 @@ describe('a seat the signers did not approve is refused', () => {
   it("a wallet that copies the invitation's commitment cannot take the seat", async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const { id, c } = await invitation(sim, C, [A, B], 23);
-    const copied = { ...sim.invited(D, c), invite: { coinSecretKey: invitedAddressFor(D).coinSecretKey, addressSalt: invitedAddressCommitmentOf(invitedAddressFor(C)) } };
+    const copied = {
+      ...sim.invited(D, c),
+      invite: {
+        coinSecretKey: invitedAddressFor(D).coinSecretKey,
+        addressSalt: invitedAddressCommitmentOf(invitedAddressFor(C))
+      }
+    };
 
     /* RED WHEN: the commitment to the address is not worked out from the invitee's key and salt. */
     await expect(sim.seatInvited(id, copied)).rejects.toThrow(NOT_THIS_WALLET);
@@ -124,7 +143,10 @@ describe('a seat the signers did not approve is refused', () => {
   it('the invited wallet with the wrong salt is refused', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     const { id, c } = await invitation(sim, C, [A, B], 24);
-    const wrongSalt = { ...sim.invited(C, c), invite: { ...invitedAddressFor(C), addressSalt: new Uint8Array(32).fill(7) } };
+    const wrongSalt = {
+      ...sim.invited(C, c),
+      invite: { ...invitedAddressFor(C), addressSalt: new Uint8Array(32).fill(7) }
+    };
 
     await expect(sim.seatInvited(id, wrongSalt)).rejects.toThrow(NOT_THIS_WALLET);
     expect(sim.ledger.signerLeaves.size()).toBe(2n);
@@ -132,7 +154,13 @@ describe('a seat the signers did not approve is refused', () => {
 
   it('an invitee cannot take wider rights than the invitation fixed', async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    const narrow: SignerRights = { mayRaise: false, mayApprove: true, mayHold: false, everyVault: false, vaults: [new Uint8Array(32).fill(9)] };
+    const narrow: SignerRights = {
+      mayRaise: false,
+      mayApprove: true,
+      mayHold: false,
+      everyVault: false,
+      vaults: [new Uint8Array(32).fill(9)]
+    };
     const invited: Device = { ...C, rights: narrow, scope: scopeOfRights(narrow) };
     const { id, c } = await invitation(sim, invited, [A, B], 25);
     const wider: Device = { ...sim.invited(invited, c), rights: null, scope: ALL_VAULTS };
@@ -171,8 +199,9 @@ describe('a seat the signers did not approve is refused', () => {
 
     const { id, c } = await invitation(sim, D, [A, B], 29);
     /* RED WHEN: seatInvited stops calling requireSeatBar, so the account threshold alone seats a signer. */
-    await expect(sim.seatInvited(id, sim.invited(D, c)))
-      .rejects.toThrow(/needs as many approvals as a policy change needs, and at least the threshold/);
+    await expect(sim.seatInvited(id, sim.invited(D, c))).rejects.toThrow(
+      /needs as many approvals as a policy change needs, and at least the threshold/
+    );
     await sim.as(C).approve(id);
     await sim.seatInvited(id, sim.invited(D, c));
     expect(sim.ledger.signerLeaves.member(sim.leafOf(D))).toBe(true);
@@ -188,8 +217,9 @@ describe('a seat the signers did not approve is refused', () => {
     await sim.as(sim.applying(A, out)).removeSigner(sim.leafOf(C), outId);
 
     /* RED WHEN: seatInvited stops calling requireApproved, so a removal since the raise does not end the invitation. */
-    await expect(sim.seatInvited(id, sim.invited(D, c)))
-      .rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
+    await expect(sim.seatInvited(id, sim.invited(D, c))).rejects.toThrow(
+      /a signer has been removed or replaced since this was raised; raise it again/
+    );
     expect(sim.ledger.signerLeaves.member(sim.leafOf(D))).toBe(false);
   });
 
@@ -199,8 +229,9 @@ describe('a seat the signers did not approve is refused', () => {
     await sim.seatInvited(id, sim.invited(C, c));
 
     await expect(sim.seatInvited(id, sim.invited(C, c))).rejects.toThrow(/that signer is already on this account/);
-    await expect(sim.seatInvited(id, { ...privateStateFor(77), invite: invitedAddressFor(C), proposalSalt: c.salt }))
-      .rejects.toThrow(/there is no open proposal with that id/);
+    await expect(
+      sim.seatInvited(id, { ...privateStateFor(77), invite: invitedAddressFor(C), proposalSalt: c.salt })
+    ).rejects.toThrow(/there is no open proposal with that id/);
     expect(sim.ledger.signerLeaves.size()).toBe(3n);
   });
 
@@ -270,7 +301,11 @@ describe('a signer is added only by invitation', () => {
     expect(circuits).toContain('removeSignerAndSetThreshold');
     expect(Object.keys(pureCircuits)).not.toContain('signerAddPayload');
     /* The generated circuit takes the call context, the leaf being removed, the threshold and the proposal: nothing that could seat. */
-    const remove = sim.contract.impureCircuits.removeSignerAndSetThreshold as unknown as (...args: unknown[]) => Promise<unknown>;
-    await expect(remove({}, sim.leafOf(B), 0n, ZERO_32, false)).rejects.toThrow(/removeSignerAndSetThreshold: expected 4 arguments/);
+    const remove = sim.contract.impureCircuits.removeSignerAndSetThreshold as unknown as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+    await expect(remove({}, sim.leafOf(B), 0n, ZERO_32, false)).rejects.toThrow(
+      /removeSignerAndSetThreshold: expected 4 arguments/
+    );
   });
 });

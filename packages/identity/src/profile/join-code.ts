@@ -46,7 +46,15 @@ import { readCompanyLabel, type CompanyLabel } from './company-label.js';
 import { usableOrigin } from './origin.js';
 import { readJoinParts, type JoinParts } from './join-parts.js';
 
-export { readAskedParts, readJoinParts, type AskedParts, type JoinParts, type PayeeParts, type ReaderParts, type SignerParts } from './join-parts.js';
+export {
+  readAskedParts,
+  readJoinParts,
+  type AskedParts,
+  type JoinParts,
+  type PayeeParts,
+  type ReaderParts,
+  type SignerParts
+} from './join-parts.js';
 import type { JoinCodeRequest } from './request.js';
 
 export const JOIN_CODE_SCHEMA = 'midnight-identity/join-code/v1' as const;
@@ -76,7 +84,12 @@ export interface JoinCode {
    * from, signed by that wallet for the company and the leaf. Whether the address is made from them, and the signature
    * holds, is for the device that takes the code to see.
    */
-  readonly seatAddress?: { readonly coinPublicKey: string; readonly address: string; readonly salt: string; readonly signature: string };
+  readonly seatAddress?: {
+    readonly coinPublicKey: string;
+    readonly address: string;
+    readonly salt: string;
+    readonly signature: string;
+  };
 }
 
 /** The bytes a code's signature covers, or null when any part is not one. */
@@ -84,9 +97,12 @@ export function joinCodeBytes(company: CompanyLabel, person: string, parts: Join
   const label = readCompanyLabel(company);
   const read = readJoinParts(parts);
   if (label === null || typeof person !== 'string' || !PERSON.test(person) || read === null) return null;
-  const fields = read.kind === 'signer'
-    ? [read.kind, read.signingPublicKey, read.wrappingPublicKey, read.leafCommitment]
-    : read.kind === 'payee' ? [read.kind, read.address, read.payslipKey] : [read.kind, read.readerKey];
+  const fields =
+    read.kind === 'signer'
+      ? [read.kind, read.signingPublicKey, read.wrappingPublicKey, read.leafCommitment]
+      : read.kind === 'payee'
+        ? [read.kind, read.address, read.payslipKey]
+        : [read.kind, read.readerKey];
   return sha256(new TextEncoder().encode(JSON.stringify([SIGNED_TAG, label, person, ...fields])));
 }
 
@@ -96,14 +112,21 @@ export function joinCodeBytes(company: CompanyLabel, person: string, parts: Join
  */
 export function signJoinCode(identity: Identity, company: CompanyLabel, person: string, parts: JoinParts): JoinCode {
   const message = joinCodeBytes(company, person, parts);
-  if (message === null) throw new Error('that is not a company\'s label, a sign-in and a code\'s parts, so no code was made.');
-  const secret = Uint8Array.from((committeeSigningKeyFor(identity, company).value.match(/../gu) ?? []).map((x) => Number.parseInt(x, 16)));
+  if (message === null)
+    throw new Error("that is not a company's label, a sign-in and a code's parts, so no code was made.");
+  const secret = Uint8Array.from(
+    (committeeSigningKeyFor(identity, company).value.match(/../gu) ?? []).map((x) => Number.parseInt(x, 16))
+  );
   try {
     const signature = Array.from(schnorr.sign(message, secret), (b) => b.toString(16).padStart(2, '0')).join('');
     const committeeKey = committeeKeyFor(identity, company);
     return Object.freeze({
-      schema: JOIN_CODE_SCHEMA, company, person, parts: readJoinParts(parts)!,
-      committeeKey: Object.freeze({ tag: committeeKey.tag, value: committeeKey.value }), signature,
+      schema: JOIN_CODE_SCHEMA,
+      company,
+      person,
+      parts: readJoinParts(parts)!,
+      committeeKey: Object.freeze({ tag: committeeKey.tag, value: committeeKey.value }),
+      signature
     });
   } finally {
     secret.fill(0);
@@ -114,7 +137,8 @@ export function signJoinCode(identity: Identity, company: CompanyLabel, person: 
 export function joinCodeSignedBy(code: JoinCode): boolean {
   if (typeof code !== 'object' || code === null || code.schema !== JOIN_CODE_SCHEMA) return false;
   const k = code.committeeKey;
-  if (typeof k !== 'object' || k === null || k.tag !== 'schnorr' || typeof k.value !== 'string' || !HEX64.test(k.value)) return false;
+  if (typeof k !== 'object' || k === null || k.tag !== 'schnorr' || typeof k.value !== 'string' || !HEX64.test(k.value))
+    return false;
   if (typeof code.signature !== 'string' || !HEX128.test(code.signature)) return false;
   const message = joinCodeBytes(code.company, code.person, code.parts);
   if (message === null) return false;
@@ -130,15 +154,19 @@ export function joinCodeSignedBy(code: JoinCode): boolean {
 export function writeJoinCode(code: JoinCode): string {
   const bytes = new TextEncoder().encode(JSON.stringify(code));
   let binary = '';
-  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
   return JOIN_CODE_PREFIX + btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 }
 
 /** Why a pasted code is not one, each a sentence the person pasting it can act on. */
 export const JOIN_CODE_REFUSAL = {
-  'not-a-code': 'what was pasted is not a join code. Ask the person for the code their wallet made, and paste all of it.',
-  'not-signed': 'this code is not signed by the wallet it names, over exactly what it carries, so a part of it was changed. Ask the person to make a new code.',
-  'another-company': 'this code was made for another company. Ask the person to make one for this company.',
+  'not-a-code':
+    'what was pasted is not a join code. Ask the person for the code their wallet made, and paste all of it.',
+  'not-signed':
+    'this code is not signed by the wallet it names, over exactly what it carries, so a part of it was changed. Ask the person to make a new code.',
+  'another-company': 'this code was made for another company. Ask the person to make one for this company.'
 } as const;
 export type JoinCodeRefusal = keyof typeof JOIN_CODE_REFUSAL;
 
@@ -154,12 +182,23 @@ export function readJoinCode(text: string, company: CompanyLabel): JoinCode | Jo
     return 'not-a-code';
   }
   const fields = typeof code === 'object' && code !== null ? Object.keys(code).sort().join(',') : '';
-  if (typeof code !== 'object' || code === null || code.schema !== JOIN_CODE_SCHEMA
-    || (fields !== 'committeeKey,company,parts,person,schema,signature'
+  if (
+    typeof code !== 'object' ||
+    code === null ||
+    code.schema !== JOIN_CODE_SCHEMA ||
+    (fields !== 'committeeKey,company,parts,person,schema,signature' &&
       /* Only a signer's code carries an opening and an address; whether they hold is for the device that takes the code to see. */
-      && !((fields === 'committeeKey,company,opening,parts,person,schema,signature'
-        || (fields === 'committeeKey,company,opening,parts,person,schema,seatAddress,signature' && typeof code.seatAddress === 'object' && code.seatAddress !== null))
-        && (code.parts as { kind?: unknown })?.kind === 'signer' && typeof code.opening === 'object' && code.opening !== null))) return 'not-a-code';
+      !(
+        (fields === 'committeeKey,company,opening,parts,person,schema,signature' ||
+          (fields === 'committeeKey,company,opening,parts,person,schema,seatAddress,signature' &&
+            typeof code.seatAddress === 'object' &&
+            code.seatAddress !== null)) &&
+        (code.parts as { kind?: unknown })?.kind === 'signer' &&
+        typeof code.opening === 'object' &&
+        code.opening !== null
+      ))
+  )
+    return 'not-a-code';
   if (!joinCodeSignedBy(code)) return 'not-signed';
   if (code.company !== company) return 'another-company';
   return Object.freeze({ ...code, parts: readJoinParts(code.parts)! });
@@ -174,8 +213,9 @@ export class JoinCodeRefused extends Error {
 }
 
 /** Why this wallet makes no code for a seat, with what seats the person today. */
-const NO_SEAT_CODE_YET = 'This wallet does not make a code for a seat yet: it cannot yet add to a code the address it would take the seat '
-  + 'with, so no company could add you from it. No code has been made. Ask the company to invite you by your private address instead.';
+const NO_SEAT_CODE_YET =
+  'This wallet does not make a code for a seat yet: it cannot yet add to a code the address it would take the seat ' +
+  'with, so no company could add you from it. No code has been made. Ask the company to invite you by your private address instead.';
 
 /**
  * **WHY THIS WALLET WILL NOT SIGN A CODE THE PAGE ASKED FOR**, or null when
@@ -191,11 +231,15 @@ const NO_SEAT_CODE_YET = 'This wallet does not make a code for a seat yet: it ca
  * screen says this sentence; the press refuses on it.
  */
 export function whyNoJoinCode(
-  request: JoinCodeRequest, receives: readonly string[], ownPayslipKey: string | null, ownReaderKey: string | null = null,
+  request: JoinCodeRequest,
+  receives: readonly string[],
+  ownPayslipKey: string | null,
+  ownReaderKey: string | null = null
 ): string | null {
   if (request.parts.kind === 'reader') {
     return ownReaderKey === null
-      ? 'This wallet could not work out the key it reads this company\'s records with, so no code has been made.' : null;
+      ? "This wallet could not work out the key it reads this company's records with, so no code has been made."
+      : null;
   }
   if (request.parts.kind === 'signer') return NO_SEAT_CODE_YET;
   if (!receives.includes(request.parts.address)) {
@@ -213,13 +257,18 @@ export function whyNoJoinCode(
  * this wallet's own key for the company, never over one the page names.
  */
 export function joinCodeAnswerFor(
-  identity: Identity, request: JoinCodeRequest, receives: readonly string[], ownPayslipKey: string | null, ownReaderKey: string | null = null,
+  identity: Identity,
+  request: JoinCodeRequest,
+  receives: readonly string[],
+  ownPayslipKey: string | null,
+  ownReaderKey: string | null = null
 ): JoinCode {
   if (!usableOrigin(request.requester.origin)) {
     throw new JoinCodeRefused('This wallet could not tell who asked, so no code has been made.');
   }
   const why = whyNoJoinCode(request, receives, ownPayslipKey, ownReaderKey);
   if (why !== null) throw new JoinCodeRefused(why);
-  const parts: JoinParts = request.parts.kind === 'reader' ? { kind: 'reader', readerKey: ownReaderKey!.toLowerCase() } : request.parts;
+  const parts: JoinParts =
+    request.parts.kind === 'reader' ? { kind: 'reader', readerKey: ownReaderKey!.toLowerCase() } : request.parts;
   return signJoinCode(identity, request.company, request.person, parts);
 }

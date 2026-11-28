@@ -17,7 +17,12 @@ import { serviceNotReached } from './hand-over.js';
  */
 const thisSendNotSent = (e: unknown, message: string): boolean => {
   const marks = e as { nothingWasSent?: unknown; thisSendNotSent?: unknown } | null;
-  return marks?.nothingWasSent === true || marks?.thisSendNotSent === true || e instanceof CompanyChangedMeanwhile || /Nothing was sent/u.test(message);
+  return (
+    marks?.nothingWasSent === true ||
+    marks?.thisSendNotSent === true ||
+    e instanceof CompanyChangedMeanwhile ||
+    /Nothing was sent/u.test(message)
+  );
 };
 
 /**
@@ -35,7 +40,7 @@ export const marked = async <T>(call: () => Promise<T>): Promise<T> => {
     throw Object.assign(new Error(message, { cause: e }), {
       nothingWasSent: thisSendNotSent(e, message),
       ...(typeof x?.status === 'number' ? { status: x.status } : {}),
-      ...(typeof x?.code === 'string' ? { code: x.code } : {}),
+      ...(typeof x?.code === 'string' ? { code: x.code } : {})
     });
   }
 };
@@ -46,7 +51,10 @@ type VaultKeys = Awaited<ReturnType<VaultService['keys']>>;
  * The vault keys `served` reads, refused before anything is built when a records key among their readers is one the
  * roster `roster` opens on this device does not name.
  */
-export const keysCheckedAgainst = async (served: () => Promise<VaultKeys>, roster: () => Promise<Roster>): Promise<VaultKeys> => {
+export const keysCheckedAgainst = async (
+  served: () => Promise<VaultKeys>,
+  roster: () => Promise<Roster>
+): Promise<VaultKeys> => {
   const [keys, named] = await Promise.all([served(), roster()]);
   const refused = whyNotTheReaders(keys.readers ?? [], named);
   if (refused !== null) throw new Error(`${refused} Nothing was built or sent.`);

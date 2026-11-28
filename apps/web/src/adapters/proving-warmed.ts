@@ -13,7 +13,11 @@ let warming: Promise<void> | null = null;
  */
 export const warmTheProving = (): void => {
   if (warming !== null) return;
-  const going = theVaultBuilder().then(async (w) => { await w.provingWarmed?.(); });
+  const going = theVaultBuilder().then(async (w) => {
+    await w.provingWarmed?.();
+  });
   warming = going;
-  going.catch(() => { if (warming === going) warming = null; });
+  going.catch(() => {
+    if (warming === going) warming = null;
+  });
 };

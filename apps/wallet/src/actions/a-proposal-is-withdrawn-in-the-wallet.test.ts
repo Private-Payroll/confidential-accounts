@@ -28,19 +28,29 @@ const t = vi.hoisted(() => ({
   /* What building the withdrawal throws, if anything. */
   buildFails: null as Error | null,
   /* What the service's cancel throws once it has been handed the proven call, if anything. */
-  cancelFails: null as Error | null,
+  cancelFails: null as Error | null
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
-  openTheRoundHere: async (_s: unknown, _a: string, id: string, _k: unknown, _r: boolean, _rec: unknown, _l: unknown, forAWithdrawal?: boolean) => {
+  openTheRoundHere: async (
+    _s: unknown,
+    _a: string,
+    id: string,
+    _k: unknown,
+    _r: boolean,
+    _rec: unknown,
+    _l: unknown,
+    forAWithdrawal?: boolean
+  ) => {
     t.log.push(`open ${id}${forAWithdrawal === true ? ' for a withdrawal' : ''}`);
     return t.opened;
-  },
+  }
 }));
 
 const withdrawModule = await import('./withdraw-proposal.js');
 const { withdrawProposalAction } = withdrawModule;
-const { KINDS_IN_THE_WALLET, NEVER_WITHDRAWN, neverWithdrawn } = await import('../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js');
+const { KINDS_IN_THE_WALLET, NEVER_WITHDRAWN, neverWithdrawn } =
+  await import('../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js');
 
 const identity = identityFromSecret(newSecret());
 const LABEL = drawCompanyLabel();
@@ -48,72 +58,119 @@ const ACCOUNT = 'c0'.repeat(32);
 const CHAIN_ID = 'dd'.repeat(32);
 const SECRET = '01'.repeat(32);
 const OWN = signingPublicKeyOf(SECRET as Hex).toLowerCase();
-const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
-const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
+const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
+const KEYS = {
+  epoch: 0,
+  key: '11'.repeat(32),
+  newest: 0,
+  keyAt: () => '11'.repeat(32),
+  sealing: () => ({ key: '11'.repeat(32), epoch: 0 })
+};
 const BASE = { record: 'acc_1', company: LABEL, account: ACCOUNT, proposal: 'prp_1' };
 const intent = (kind: string): ActIntent => ({ name: 'withdraw-proposal', fields: { ...BASE, kind } }) as ActIntent;
 const NOW_MS = 1_900_000_000_000;
 /* The leaf the company's directory shows retired, if any. */
 let retired: string | null = null;
 
-const reachOf = () => viewOverItsApi({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT,
-  seat: { signerId: 's1', signingSecret: SECRET, wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: 'cc'.repeat(32) },
-  leaf: 'a1'.repeat(32), companyKey: '11'.repeat(32),
-  api: async (path: string, init?: RequestInit) => {
-    const method = init?.method ?? 'GET';
-    t.log.push(`${method} ${path}${init?.body === undefined ? '' : ` ${init.body}`}`);
-    if (path === '/api/proposals/prp_1/standing') return { id: 'prp_1', chainId: CHAIN_ID, status: 'open', ...t.served };
-    if (path === '/api/proposals/prp_1/cancel') {
-      /* The chain takes a proven withdrawal and no longer holds the proposal; one with no call changes only the records. */
-      if ((JSON.parse(String(init?.body)) as { tx?: string }).tx !== undefined && t.cancelFails !== null) throw t.cancelFails;
-      if ((JSON.parse(String(init?.body)) as { tx?: string }).tx !== undefined) t.chain[CHAIN_ID] = { held: 'closed', approvals: 0, raisedAt: 1, closedBy: ['cancel'] };
-      return { id: 'prp_1', chainId: CHAIN_ID, status: 'cancelled' };
-    }
-    return [];
-  },
-  send: async () => ({ status: 404, body: {} }),
-  holders: async () => ({ seats: [], committee: [], approvals: 1, seatBar: 1, policyBar: null, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT }),
-  judges: {
-    directoryHereFor: () => async () => ({ dir: { seats: retired === null ? [] : [{ seat: retired, retired: { at: 1 } }] }, records: { history: new Map() } }),
-    filingJudgeFor: () => async () => null,
-    leavesFor: () => async () => [],
-  },
-  sealed: {}, companyKeys: KEYS,
-  roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: [] }),
-  builder: {
-    roundsOnChain: async ({ chainIds, seat }: { chainIds: string[]; seat?: string }) => {
-      t.asked.push(seat);
-      return Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }]));
+const reachOf = () =>
+  viewOverItsApi({
+    accountId: 'acc_1',
+    label: LABEL,
+    account: ACCOUNT,
+    seat: {
+      signerId: 's1',
+      signingSecret: SECRET,
+      wrappingSecret: '02'.repeat(32),
+      blinding: '03'.repeat(32),
+      scope: 'cc'.repeat(32)
     },
-    accountPresence: async (input: { account: string; transactions: string[] }) => {
-      t.log.push(`chain time for ${input.account}`);
-      if (t.tip instanceof Error) throw t.tip;
-      return { held: true, blockHeight: 9, blockTime: t.tip, ttl: null };
+    leaf: 'a1'.repeat(32),
+    companyKey: '11'.repeat(32),
+    api: async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      t.log.push(`${method} ${path}${init?.body === undefined ? '' : ` ${init.body}`}`);
+      if (path === '/api/proposals/prp_1/standing')
+        return { id: 'prp_1', chainId: CHAIN_ID, status: 'open', ...t.served };
+      if (path === '/api/proposals/prp_1/cancel') {
+        /* The chain takes a proven withdrawal and no longer holds the proposal; one with no call changes only the records. */
+        if ((JSON.parse(String(init?.body)) as { tx?: string }).tx !== undefined && t.cancelFails !== null)
+          throw t.cancelFails;
+        if ((JSON.parse(String(init?.body)) as { tx?: string }).tx !== undefined)
+          t.chain[CHAIN_ID] = { held: 'closed', approvals: 0, raisedAt: 1, closedBy: ['cancel'] };
+        return { id: 'prp_1', chainId: CHAIN_ID, status: 'cancelled' };
+      }
+      return [];
     },
-    governedCall: async (input: { order: { circuit: string; proposal: string } }) => {
-      t.log.push(`build ${input.order.circuit} ${input.order.proposal}`);
-      if (t.buildFails !== null) throw t.buildFails;
-      return { tx: 'TX' };
+    send: async () => ({ status: 404, body: {} }),
+    holders: async () => ({
+      seats: [],
+      committee: [],
+      approvals: 1,
+      seatBar: 1,
+      policyBar: null,
+      vaultThresholds: [],
+      adoptedVaults: [],
+      account: ACCOUNT
+    }),
+    judges: {
+      directoryHereFor: () => async () => ({
+        dir: { seats: retired === null ? [] : [{ seat: retired, retired: { at: 1 } }] },
+        records: { history: new Map() }
+      }),
+      filingJudgeFor: () => async () => null,
+      leavesFor: () => async () => []
     },
-  },
-  chain: { indexer: {}, callState: async () => ({ blockHash: 'b', accountState: 'AS', parameters: 'PP' }) },
-});
+    sealed: {},
+    companyKeys: KEYS,
+    roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: [] }),
+    builder: {
+      roundsOnChain: async ({ chainIds, seat }: { chainIds: string[]; seat?: string }) => {
+        t.asked.push(seat);
+        return Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }]));
+      },
+      accountPresence: async (input: { account: string; transactions: string[] }) => {
+        t.log.push(`chain time for ${input.account}`);
+        if (t.tip instanceof Error) throw t.tip;
+        return { held: true, blockHeight: 9, blockTime: t.tip, ttl: null };
+      },
+      governedCall: async (input: { order: { circuit: string; proposal: string } }) => {
+        t.log.push(`build ${input.order.circuit} ${input.order.proposal}`);
+        if (t.buildFails !== null) throw t.buildFails;
+        return { tx: 'TX' };
+      }
+    },
+    chain: { indexer: {}, callState: async () => ({ blockHash: 'b', accountState: 'AS', parameters: 'PP' }) }
+  });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const ctx = stepOverItsCall({
-    intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, account: 0 }, at: { step: 2, steps: 2 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('a withdrawal is sent through its calls, never a bare relay'); },
+    intent: i,
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_a',
+    held: { identity, account: 0 },
+    at: { step: 2, steps: 2 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error('a withdrawal is sent through its calls, never a bare relay');
+    },
     call: async () => ({ status: 404, body: {} }),
-    tell: (x: Record<string, unknown>) => { told.push(x); },
-    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
+    tell: (x: Record<string, unknown>) => {
+      told.push(x);
+    },
+    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} }
   }) as unknown as StepContext;
   return { ctx, told };
 };
 const reach = () => ({
-  chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => NOW_MS, secrets: () => ({}) as never,
-  reachFor: async () => reachOf() as never,
+  chain: () => ({}) as never,
+  builder: () => ({}) as never,
+  pause: async () => {},
+  now: () => NOW_MS,
+  secrets: () => ({}) as never,
+  reachFor: async () => reachOf() as never
 });
 const withdrawn = async (kind: string) => {
   const i = intent(kind);
@@ -126,13 +183,26 @@ const withdrawn = async (kind: string) => {
 const refusedWith = async (kind: string): Promise<StepRefused['words']> => {
   const i = intent(kind);
   const def = withdrawProposalAction(reach());
-  const e = await (async () => { for (const step of def.steps(i)) await step.run(ctxOf(i).ctx); })().then(() => null, (x: unknown) => x);
+  const e = await (async () => {
+    for (const step of def.steps(i)) await step.run(ctxOf(i).ctx);
+  })().then(
+    () => null,
+    (x: unknown) => x
+  );
   expect(e).toBeInstanceOf(StepRefused);
   return (e as StepRefused).words;
 };
 const refusalOf = async (kind: string): Promise<string> => (await refusedWith(kind)).key;
 const sent = () => t.log.filter((l) => l.startsWith('build') || l.startsWith('POST /api/proposals/prp_1/cancel'));
-const opened = (kind: string, over: Record<string, unknown> = {}) => ({ chainId: CHAIN_ID, digest: '', vault: '', salt: '', summary: '', kind, ...over });
+const opened = (kind: string, over: Record<string, unknown> = {}) => ({
+  chainId: CHAIN_ID,
+  digest: '',
+  vault: '',
+  salt: '',
+  summary: '',
+  kind,
+  ...over
+});
 const held = (over: Record<string, unknown> = {}) => ({ held: 'open', approvals: 1, raisedAt: 1, ...over });
 
 beforeEach(() => {
@@ -154,7 +224,10 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     /* RED WHEN: the raiser of a change to the company cannot withdraw it from the wallet, or the outcome is not the chain's. */
     expect(await withdrawn('threshold')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
     expect(t.log).toContain('open prp_1 for a withdrawal');
-    expect(sent()).toEqual([`build cancel ${CHAIN_ID}`, 'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}']);
+    expect(sent()).toEqual([
+      `build cancel ${CHAIN_ID}`,
+      'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}'
+    ]);
     /* RED WHEN: who raised it is read from the chain without this wallet's seat, so it is never said. */
     expect(t.asked.every((s) => s === SECRET)).toBe(true);
 
@@ -166,12 +239,15 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     expect(sent()).toHaveLength(2);
   });
 
-  it('a vault\'s retire is withdrawn by the seat that raised it, so a retire nobody will approve does not stand open', async () => {
+  it("a vault's retire is withdrawn by the seat that raised it, so a retire nobody will approve does not stand open", async () => {
     t.opened = opened('retire-vault');
     t.chain[CHAIN_ID] = held({ raisedHere: true });
     /* RED WHEN: a retire cannot be withdrawn from the wallet, or is withdrawn under another kind than its record names. */
     expect(await withdrawn('retire-vault')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
-    expect(sent()).toEqual([`build cancel ${CHAIN_ID}`, 'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}']);
+    expect(sent()).toEqual([
+      `build cancel ${CHAIN_ID}`,
+      'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}'
+    ]);
   });
 
   it('a removal raised elsewhere can be withdrawn through the registered withdrawal', async () => {
@@ -196,7 +272,7 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     expect(sent()).toEqual([]);
   });
 
-  it('a run\'s time to be paid is judged by the chain\'s newest block, and a run whose chain time is not read is refused with words', async () => {
+  it("a run's time to be paid is judged by the chain's newest block, and a run whose chain time is not read is refused with words", async () => {
     t.opened = opened('payroll');
     /* This wallet's clock says the run's time began ten minutes ago; the chain's newest block is an hour behind it. */
     t.chain[CHAIN_ID] = held({ raisedHere: true, opensAt: NOW_MS / 1000 - 600 });
@@ -231,10 +307,12 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     expect(sent()).toEqual([]);
   });
 
-  it('a run the chain would still take a withdrawal of, refused by the build on this wallet\'s clock, is told as that clock being ahead', async () => {
+  it("a run the chain would still take a withdrawal of, refused by the build on this wallet's clock, is told as that clock being ahead", async () => {
     t.opened = opened('payroll');
     t.chain[CHAIN_ID] = held({ raisedHere: true, opensAt: NOW_MS / 1000 + 600 });
-    t.buildFails = new Error('this withdrawal could not be built on this device: that run has already started; it can no longer be cancelled. Nothing was proved or sent.');
+    t.buildFails = new Error(
+      'this withdrawal could not be built on this device: that run has already started; it can no longer be cancelled. Nothing was proved or sent.'
+    );
     /* RED WHEN: a run the chain would still take a withdrawal of is told as started by the build's own clock. */
     expect(await refusalOf('payroll')).toBe('act.withdraw-proposal.why.clock-ahead');
     expect(t.log.filter((l) => l.startsWith('POST /api/proposals/prp_1/cancel'))).toEqual([]);
@@ -252,7 +330,8 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     t.opened = opened('transfer', { filedBy: OWN, raiseBy: String(NOW_MS / 1000 + 3_600) });
     /* RED WHEN: a one-off the chain does not show is marked withdrawn while a raise of it may still land, or the words do not say until when. */
     expect(await refusedWith('one-off')).toEqual({
-      key: 'act.withdraw-proposal.why.may-still-land', values: { until: new Date(NOW_MS + 3_600_000).toISOString() },
+      key: 'act.withdraw-proposal.why.may-still-land',
+      values: { until: new Date(NOW_MS + 3_600_000).toISOString() }
     });
     expect(sent()).toEqual([]);
     t.opened = opened('transfer', { filedBy: OWN, raiseBy: String(NOW_MS / 1000) });
@@ -266,11 +345,17 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     t.chain[CHAIN_ID] = held({ raisedHere: true });
     t.cancelFails = new Error('the connection dropped.');
     /* RED WHEN: a withdrawal that failed after the proven call was handed over is told as not withdrawn, so the signer sends it again. */
-    expect(await refusedWith('threshold')).toEqual({ key: 'act.withdraw-proposal.why.may-be-sent', values: { says: 'the connection dropped' } });
+    expect(await refusedWith('threshold')).toEqual({
+      key: 'act.withdraw-proposal.why.may-be-sent',
+      values: { says: 'the connection dropped' }
+    });
     t.cancelFails = null;
     t.buildFails = new Error('the device could not build it.');
     /* RED WHEN: a withdrawal that failed before anything was handed over is told as possibly sent, so the signer waits on nothing. */
-    expect(await refusedWith('threshold')).toEqual({ key: 'act.withdraw-proposal.why.not-withdrawn', values: { says: 'the device could not build it' } });
+    expect(await refusedWith('threshold')).toEqual({
+      key: 'act.withdraw-proposal.why.not-withdrawn',
+      values: { says: 'the device could not build it' }
+    });
     expect(t.log.filter((l) => l.startsWith('POST /api/proposals/prp_1/cancel'))).toHaveLength(1);
   });
 
@@ -283,7 +368,7 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
     expect(sent()).toEqual([]);
   });
 
-  it('a proposal of another kind than the one shown, or of a vault\'s set-up whatever it is shown as, is refused', async () => {
+  it("a proposal of another kind than the one shown, or of a vault's set-up whatever it is shown as, is refused", async () => {
     t.chain[CHAIN_ID] = held({ raisedHere: true });
     t.opened = opened('set-threshold');
     /* RED WHEN: the wallet withdraws a proposal of another kind than the one the person was shown. */
@@ -295,7 +380,7 @@ describe('A PROPOSAL IS WITHDRAWN FROM THE WALLET, AS THE CHAIN WOULD TAKE IT', 
   });
 });
 
-describe('THE COMPANY\'S PAY-RECORD KEY IS WITHDRAWN ONLY ONCE A REMOVAL HAS OUTRUN IT', () => {
+describe("THE COMPANY'S PAY-RECORD KEY IS WITHDRAWN ONLY ONCE A REMOVAL HAS OUTRUN IT", () => {
   it('a pay key the chain can still carry out is refused with its words and nothing sent; one a removal outran is withdrawn by its raiser', async () => {
     t.opened = opened('pay-key');
     t.chain[CHAIN_ID] = held({ raisedHere: true });
@@ -304,18 +389,25 @@ describe('THE COMPANY\'S PAY-RECORD KEY IS WITHDRAWN ONLY ONCE A REMOVAL HAS OUT
     expect(sent()).toEqual([]);
     expect(WORDS['act.withdraw-proposal.why.never-pay-key']).toMatch(/Nothing was signed or sent\.$/u);
     /* RED WHEN: the words promise that raising it again will pass, where a signer who approved it before cannot approve it again. */
-    expect(WORDS['act.withdraw-proposal.why.never-pay-key']).toMatch(/a signer who approved it before cannot approve it again, so the new raise may never reach the approvals it needs/u);
+    expect(WORDS['act.withdraw-proposal.why.never-pay-key']).toMatch(
+      /a signer who approved it before cannot approve it again, so the new raise may never reach the approvals it needs/u
+    );
     expect(WORDS['act.withdraw-proposal.why.never-pay-key']).not.toMatch(/afresh/u);
     t.chain[CHAIN_ID] = held({ raisedHere: true, outrun: true });
     /* RED WHEN: a pay key a removal outran cannot be withdrawn, so the company can never raise it again and finish. */
     expect(await withdrawn('pay-key')).toEqual([{ state: 'withdrawn', proposal: 'prp_1' }]);
-    expect(sent()).toEqual([`build cancel ${CHAIN_ID}`, 'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}']);
+    expect(sent()).toEqual([
+      `build cancel ${CHAIN_ID}`,
+      'POST /api/proposals/prp_1/cancel {"tx":"TX","filer":"' + OWN + '"}'
+    ]);
   });
 });
 
 describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAGE FOR', () => {
   it.each([
-    ['adopt-vault', 'never-adopt-vault'], ['vault-secret', 'never-vault-secret'], ['recovery', 'never-recovery'],
+    ['adopt-vault', 'never-adopt-vault'],
+    ['vault-secret', 'never-vault-secret'],
+    ['recovery', 'never-recovery']
   ])('%s is refused before anything is opened, with words that say why', async (kind, key) => {
     const def = withdrawProposalAction(reach());
     /* RED WHEN: a kind the wallet never withdraws reaches a step, or is refused with no words of its own. */
@@ -344,12 +436,39 @@ describe('THE KINDS THE WALLET NEVER WITHDRAWS, AND WHAT THE ACTION ASKS THE PAG
     expect([sendsIn(route!, '{"tx":"TX","filer":"f"}'), sendsIn(route!, '{"filer":"f"}')]).toEqual([true, false]);
     const def = withdrawProposalAction(reach());
     const keys = [
-      def.headline, ...(await def.shown(intent('threshold'))).map((l) => l.key), ...def.checks.map((c) => c.key),
+      def.headline,
+      ...(await def.shown(intent('threshold'))).map((l) => l.key),
+      ...def.checks.map((c) => c.key),
       ...def.steps(intent('threshold')).map((s) => s.title.key),
-      ...Object.values(KINDS_IN_THE_WALLET).flatMap((k) => (k.never === undefined ? [] : [`act.withdraw-proposal.why.${k.never}`])),
-      ...['not-a-proposal', 'not-as-shown', 'one-off-held', 'never-pay-key', 'closed', 'started', 'sent-not-yet-seen', 'filed-by-another', 'not-raised-here',
-        'raiser-not-read', 'chain-time-not-read', 'started-may-be-paid', 'started-charged', 'clock-ahead', 'may-still-land', 'retirement-filed', 'not-withdrawn', 'may-be-sent', 'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain',
-        'roster-not-opened'].map((k) => `act.withdraw-proposal.why.${k}`),
+      ...Object.values(KINDS_IN_THE_WALLET).flatMap((k) =>
+        k.never === undefined ? [] : [`act.withdraw-proposal.why.${k.never}`]
+      ),
+      ...[
+        'not-a-proposal',
+        'not-as-shown',
+        'one-off-held',
+        'never-pay-key',
+        'closed',
+        'started',
+        'sent-not-yet-seen',
+        'filed-by-another',
+        'not-raised-here',
+        'raiser-not-read',
+        'chain-time-not-read',
+        'started-may-be-paid',
+        'started-charged',
+        'clock-ahead',
+        'may-still-land',
+        'retirement-filed',
+        'not-withdrawn',
+        'may-be-sent',
+        'not-a-company',
+        'no-saved-keys',
+        'no-seat',
+        'seat-not-held',
+        'not-on-chain',
+        'roster-not-opened'
+      ].map((k) => `act.withdraw-proposal.why.${k}`)
     ];
     for (const k of keys) expect(WORDS[k], k).toBeTypeOf('string');
   });

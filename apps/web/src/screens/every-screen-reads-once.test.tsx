@@ -11,7 +11,14 @@ import { describe, expect, it } from 'vitest';
 import { PAGES } from '../pages.js';
 import { aCompanyOf } from './company-harness.test-support.js';
 import { SCREEN_PINS } from './screen-count-pins.test-support.js';
-import { differences, NOT_OPENED, openedTwice, PAGES_COUNTED, readsOf, type PageId } from './screen-counts.test-support.js';
+import {
+  differences,
+  NOT_OPENED,
+  openedTwice,
+  PAGES_COUNTED,
+  readsOf,
+  type PageId
+} from './screen-counts.test-support.js';
 import { askedBeyondWhatGrew, carriedNotAsHeldIn } from './screen-carried.test-support.js';
 import type { CompanyHeld, ScreenCount } from './company-harness.test-support.js';
 import { tableHeld, tableSource } from './screen-pins-writer.test-support.js';
@@ -19,7 +26,8 @@ import { tableHeld, tableSource } from './screen-pins-writer.test-support.js';
 const company = aCompanyOf({ people: 3, vendors: 2, vaults: 2, proposals: 1 });
 const OPENINGS = { timeout: 160_000 };
 
-const ABOUT = 'The pages\' reads when opened twice by the founding seat\'s page, the second opening counted, on the company at its first size.';
+const ABOUT =
+  "The pages' reads when opened twice by the founding seat's page, the second opening counted, on the company at its first size.";
 
 /* A page opened twice by the founding seat's page, the second opening counted. */
 const counted = (page: string) => openedTwice(company, page);
@@ -34,7 +42,9 @@ describe('EVERY SCREEN A COMPANY IS READ FROM READS THE SAME AT EVERY SIZE OF TH
   it('every page of a screen that reads a company is one the company opens, or is named with why it is not opened', () => {
     /* RED WHEN: a screen on the inventory draws a page that is not a company's page, so its reads are counted nowhere. */
     expect(PAGES_COUNTED.filter(({ page }) => !Object.hasOwn(PAGES, page))).toEqual([]);
-    const notACompanysPage = PAGES_COUNTED.filter(({ page }) => PAGES[page as PageId].audience !== 'company' && !Object.hasOwn(NOT_OPENED, page));
+    const notACompanysPage = PAGES_COUNTED.filter(
+      ({ page }) => PAGES[page as PageId].audience !== 'company' && !Object.hasOwn(NOT_OPENED, page)
+    );
     expect(notACompanysPage).toEqual([]);
     expect(PAGES_COUNTED.length).toBeGreaterThan(Object.keys(NOT_OPENED).length);
   });
@@ -71,15 +81,34 @@ describe('EVERY SCREEN A COMPANY IS READ FROM READS THE SAME AT EVERY SIZE OF TH
       /* RED WHEN: any route, wallet ask or chain, builder or indexer read of this page grows with the company's people, vendors, vaults or proposals. */
       expect(differing).toEqual([]);
       /* RED WHEN: a read of this page asks of one kind of record other than the same number it asked at the first size or one more for each one more of what its kind grows with (`PAGE_ASKED_GROWS_WITH`), or asks a kind it did not, at the company grown. */
-      expect(askedBeyondWhatGrew(`${screen} (${page})`, was.calls, now.calls, [heldAtN.get(page)!, company.held()], ['at the first size', 'grown'], page)).toEqual([]);
+      expect(
+        askedBeyondWhatGrew(
+          `${screen} (${page})`,
+          was.calls,
+          now.calls,
+          [heldAtN.get(page)!, company.held()],
+          ['at the first size', 'grown'],
+          page
+        )
+      ).toEqual([]);
       /* RED WHEN: at the company grown, an answer to this page carries a record twice, a list carries other than every record of its kind, or a read carries other than what it asked. */
       expect(carriedNotAsHeldIn(page, now.calls)).toEqual([]);
     });
   }
 
   it('the pins of the pages this run measures are the ones the pins writer writes from it', () => {
-    const table = { name: 'SCREEN_PINS', about: ABOUT, of: 'reads', rows: Object.fromEntries([...atN].map(([page, count]) => [page, readsOf(count)])) } as const;
+    const table = {
+      name: 'SCREEN_PINS',
+      about: ABOUT,
+      of: 'reads',
+      rows: Object.fromEntries([...atN].map(([page, count]) => [page, readsOf(count)]))
+    } as const;
     /* RED WHEN: a pin of a page counted here is not what this run measured, or the pins file was changed by hand away from what its writer writes. */
-    expect(tableHeld(table, opened.every(({ page }) => atN.has(page)))).toBe(tableSource(table));
+    expect(
+      tableHeld(
+        table,
+        opened.every(({ page }) => atN.has(page))
+      )
+    ).toBe(tableSource(table));
   });
 });

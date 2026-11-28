@@ -13,9 +13,7 @@ import { saveWalletCheckpoint } from '../accounts/storage.js';
 import { ORIGINAL_SLOT, forgetOpenWallet } from '../accounts/wallets-held.js';
 import { WALLET_ACCOUNTS } from '../accounts/subwallets.js';
 import { Home } from '../screens/home.js';
-import {
-  SWEEP_SLOT_GIVE_UP_MS, earnsAPreviewPlace, holdsMoney, useWalletBalances,
-} from './wallet-balances.js';
+import { SWEEP_SLOT_GIVE_UP_MS, earnsAPreviewPlace, holdsMoney, useWalletBalances } from './wallet-balances.js';
 import type { WalletBalanceRows } from './wallet-balances.js';
 import { KEPT_SNAPSHOT } from '../testing/snapshot.js';
 
@@ -60,11 +58,17 @@ function replayingEngine(): {
   return { engine, stopped, stoppedBeforeLive };
 }
 
-function SweepProbe({ identity, onRows }: {
-  identity: Identity; onRows: (rows: WalletBalanceRows, sweeping: boolean, sweep: () => void) => void;
+function SweepProbe({
+  identity,
+  onRows
+}: {
+  identity: Identity;
+  onRows: (rows: WalletBalanceRows, sweeping: boolean, sweep: () => void) => void;
 }) {
   const { rows, sweeping, sweep } = useWalletBalances(identity);
-  useEffect(() => { onRows(rows, sweeping, sweep); });
+  useEffect(() => {
+    onRows(rows, sweeping, sweep);
+  });
   return null;
 }
 
@@ -77,11 +81,19 @@ describe('the check-all sweep, against an engine that replays before it reads', 
     const started = Date.now();
     render(
       <BalanceEnginesContext.Provider value={{ shielded: engine, unshielded: inert, dust: inert }}>
-        <SweepProbe identity={identityFromSecret(newSecret())}
-          onRows={(r, s, go) => { rows = r; sweeping = s; sweep = go; }} />
-      </BalanceEnginesContext.Provider>,
+        <SweepProbe
+          identity={identityFromSecret(newSecret())}
+          onRows={(r, s, go) => {
+            rows = r;
+            sweeping = s;
+            sweep = go;
+          }}
+        />
+      </BalanceEnginesContext.Provider>
     );
-    act(() => { sweep(); });
+    act(() => {
+      sweep();
+    });
     await waitFor(() => expect(sweeping).toBe(false), { timeout: 5_000 });
     for (const account of WALLET_ACCOUNTS) {
       const row = rows[account];
@@ -113,13 +125,23 @@ describe('the check-all sweep, against an engine that replays before it reads', 
       let sweep: () => void = () => {};
       render(
         <BalanceEnginesContext.Provider value={{ shielded: silent, unshielded: inert, dust: inert }}>
-          <SweepProbe identity={identityFromSecret(newSecret())}
-            onRows={(r, s, go) => { rows = r; sweeping = s; sweep = go; }} />
-        </BalanceEnginesContext.Provider>,
+          <SweepProbe
+            identity={identityFromSecret(newSecret())}
+            onRows={(r, s, go) => {
+              rows = r;
+              sweeping = s;
+              sweep = go;
+            }}
+          />
+        </BalanceEnginesContext.Provider>
       );
-      act(() => { sweep(); });
+      act(() => {
+        sweep();
+      });
       for (let i = 0; i < WALLET_ACCOUNTS.length; i++) {
-        await act(async () => { await vi.advanceTimersByTimeAsync(SWEEP_SLOT_GIVE_UP_MS); });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SWEEP_SLOT_GIVE_UP_MS);
+        });
       }
       /* RED WHEN the sweep has no deadline of its own: it waits on slot 0 for
        * ever, because an engine stops reporting failure once a figure is shown. */
@@ -140,11 +162,19 @@ describe('the sweep, at its two other edges', () => {
     let sweep: () => void = () => {};
     render(
       <BalanceEnginesContext.Provider value={{ shielded: engine, unshielded: inert, dust: inert }}>
-        <SweepProbe identity={identityFromSecret(newSecret())}
-          onRows={(r, s, go) => { rows = r; sweeping = s; sweep = go; }} />
-      </BalanceEnginesContext.Provider>,
+        <SweepProbe
+          identity={identityFromSecret(newSecret())}
+          onRows={(r, s, go) => {
+            rows = r;
+            sweeping = s;
+            sweep = go;
+          }}
+        />
+      </BalanceEnginesContext.Provider>
     );
-    act(() => { sweep(); });
+    act(() => {
+      sweep();
+    });
     await waitFor(() => expect(sweeping).toBe(false), { timeout: 5_000 });
     return rows;
   };
@@ -166,7 +196,9 @@ describe('the sweep, at its two other edges', () => {
     const stopped: Record<number, number> = {};
     const engine: BalanceEngine = (_identity, account, tell) => {
       tell({ name: 'synced', night: 1n, asOf: Date.now() });
-      return () => { stopped[account] = (stopped[account] ?? 0) + 1; };
+      return () => {
+        stopped[account] = (stopped[account] ?? 0) + 1;
+      };
     };
     await sweepWith(engine);
     /* RED WHEN the handle of an engine that answered at once is never used. */
@@ -188,20 +220,34 @@ describe('a figure that did not record other tokens is not ranked empty', () => 
     const identity = identityFromSecret(secret);
     /* Account 9 was saved by an older wallet that recorded NIGHT only. Account
      * 11 was checked by this one and holds nothing. */
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 9), 9, {
-      serialized: KEPT_SNAPSHOT, night: 0n, asOf: Date.now(),
-    }, ORIGINAL_SLOT);
-    await saveWalletCheckpoint(coinPublicKeyOf(identity, 11), 11, {
-      serialized: KEPT_SNAPSHOT, night: 0n, others: {}, asOf: Date.now(),
-    }, ORIGINAL_SLOT);
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 9),
+      9,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 0n,
+        asOf: Date.now()
+      },
+      ORIGINAL_SLOT
+    );
+    await saveWalletCheckpoint(
+      coinPublicKeyOf(identity, 11),
+      11,
+      {
+        serialized: KEPT_SNAPSHOT,
+        night: 0n,
+        others: {},
+        asOf: Date.now()
+      },
+      ORIGINAL_SLOT
+    );
     render(
       <BalanceEnginesContext.Provider value={{ shielded: inert, unshielded: inert, dust: inert }}>
         <Home identity={identity} secret={secret} />
-      </BalanceEnginesContext.Provider>,
+      </BalanceEnginesContext.Provider>
     );
     const previewed = (): string[] =>
-      [...document.querySelectorAll('[data-wallet-preview-row]')]
-        .map((row) => row.getAttribute('data-account') ?? '');
+      [...document.querySelectorAll('[data-wallet-preview-row]')].map((row) => row.getAttribute('data-account') ?? '');
     /* RED WHEN the preview ranks by `holdsMoney` alone: 9 reads as empty and
      * the preview is 0, 2, 3. */
     await waitFor(() => expect(previewed()).toContain('9'));

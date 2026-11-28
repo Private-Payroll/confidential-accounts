@@ -17,7 +17,11 @@ const handedDown = new Map<string, PageView>();
 export const useTheViewOfTheTest = (): PageView | null => {
   let company: string | null = null;
   /* A test that loads the application's code afresh draws under a frame this file's copy does not know: it is handed no view. */
-  try { ({ company } = useSession()); } catch { return null; }
+  try {
+    ({ company } = useSession());
+  } catch {
+    return null;
+  }
   if (company === null) return null;
   const kept = handedDown.get(company) ?? aViewOf(company);
   handedDown.set(company, kept);

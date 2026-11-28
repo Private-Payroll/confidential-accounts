@@ -1,4 +1,11 @@
-import { createContext, useContext, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useSyncExternalStore,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+  type ReactNode
+} from 'react';
 import { EVERY_PAGE, HOME, mayOpen, PAGES, type Page, type PageId, type Params, type Viewer } from './pages.js';
 import { Fault, FAULT } from './faults.js';
 
@@ -13,7 +20,9 @@ import { Fault, FAULT } from './faults.js';
 const BROWSER_EVENTS = { back: 'popstate' } as const;
 
 const listeners = new Set<() => void>();
-const changed = (): void => { for (const l of listeners) l(); };
+const changed = (): void => {
+  for (const l of listeners) l();
+};
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
@@ -45,7 +54,10 @@ export function holdLink(path: string, hash: string): void {
   const id = page === undefined ? undefined : matchAddress(page.path, normalised(path))?.id;
   if (id === undefined) return;
   const token = hash.slice(1);
-  if (LINK_TOKEN.test(token)) { held = { id, token }; changed(); }
+  if (LINK_TOKEN.test(token)) {
+    held = { id, token };
+    changed();
+  }
   if (hash !== '') window.history.replaceState(null, '', path + window.location.search);
 }
 
@@ -99,7 +111,10 @@ export function matchAddress(path: string, address: string): Params | null {
   const params: Record<string, string> = {};
   for (const [i, part] of want.entries()) {
     const value = got[i]!;
-    if (!VALUE_PART.test(part)) { if (part !== value) return null; continue; }
+    if (!VALUE_PART.test(part)) {
+      if (part !== value) return null;
+      continue;
+    }
     if (!SAFE_VALUE.test(value)) return null;
     params[part.slice(1)] = value;
   }
@@ -134,7 +149,9 @@ export function resolve(address: string, viewer: Viewer): Resolved {
   const found = pageAt(EVERY_PAGE, normalised(address));
   if (found === null) return { of: RESOLVED.nothing };
   const { page, params } = found;
-  return mayOpen(page, viewer) ? { of: RESOLVED.page, id: page.id, page, params } : { of: RESOLVED.notYours, id: page.id, page };
+  return mayOpen(page, viewer)
+    ? { of: RESOLVED.page, id: page.id, page, params }
+    : { of: RESOLVED.notYours, id: page.id, page };
 }
 
 /**
@@ -143,7 +160,10 @@ export function resolve(address: string, viewer: Viewer): Resolved {
  * stands for a value there, wherever each sits in the list; among those, the
  * first in the list wins. Null when no page is at the address.
  */
-export function pageAt<P extends Page & { id: PageId }>(pages: readonly P[], at: string): { page: P; params: Params } | null {
+export function pageAt<P extends Page & { id: PageId }>(
+  pages: readonly P[],
+  at: string
+): { page: P; params: Params } | null {
   const outright = pages.find((p) => p.path === at);
   if (outright !== undefined) return { page: outright, params: {} };
   for (const page of pages) {
@@ -166,7 +186,15 @@ export function useCurrentPage(): { id: PageId; page: Page; params: Params } {
   return current;
 }
 
-export function CurrentPageProvider({ id, params = {}, children }: { id: PageId; params?: Params; children?: ReactNode }) {
+export function CurrentPageProvider({
+  id,
+  params = {},
+  children
+}: {
+  id: PageId;
+  params?: Params;
+  children?: ReactNode;
+}) {
   return <CurrentPage.Provider value={{ id, page: PAGES[id], params }}>{children}</CurrentPage.Provider>;
 }
 
@@ -174,12 +202,22 @@ export function CurrentPageProvider({ id, params = {}, children }: { id: PageId;
  * A LINK TO A PAGE, BY ITS ID. It is a real link, so it can be opened in a new
  * tab, and a plain press goes to the page without reloading.
  */
-export function PageLink({ to, params, children, onClick, ...rest }: { to: PageId; params?: Params; children?: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
+export function PageLink({
+  to,
+  params,
+  children,
+  onClick,
+  ...rest
+}: { to: PageId; params?: Params; children?: ReactNode } & Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
   const follow = (e: MouseEvent<HTMLAnchorElement>): void => {
     onClick?.(e);
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     go(to, false, params);
   };
-  return <a href={addressOf(to, params)} onClick={follow} {...rest}>{children}</a>;
+  return (
+    <a href={addressOf(to, params)} onClick={follow} {...rest}>
+      {children}
+    </a>
+  );
 }

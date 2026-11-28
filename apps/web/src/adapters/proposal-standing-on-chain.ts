@@ -23,18 +23,28 @@ export interface ClosingRead {
  * the approvals its hold says it was raised needing, `open` otherwise or when it was never raised. With no chain read
  * for it, the listed status is kept, except that it is never read as approved.
  */
-export function statusOnChain(listed: ProposalStatus, onChain: RoundOnChain | undefined, closing: ClosingRead): ProposalStatus {
+export function statusOnChain(
+  listed: ProposalStatus,
+  onChain: RoundOnChain | undefined,
+  closing: ClosingRead
+): ProposalStatus {
   if (onChain === undefined) return listed === PROPOSAL_STANDING.approved ? PROPOSAL_STANDING.open : listed;
   if (onChain.held === 'closed') return closing.statusOfAClose(onChain.closedBy ?? []);
   if (onChain.held === 'cleared') return PROPOSAL_STANDING.approved;
-  return onChain.held === 'open' && onChain.needed !== undefined && onChain.approvals >= onChain.needed ? PROPOSAL_STANDING.approved : PROPOSAL_STANDING.open;
+  return onChain.held === 'open' && onChain.needed !== undefined && onChain.approvals >= onChain.needed
+    ? PROPOSAL_STANDING.approved
+    : PROPOSAL_STANDING.open;
 }
 
 /**
  * The status a proposal is shown with: a proposal the chain shows closed reads as the calls that closed it say
  * (`closedAs`), so one closed unpaid reads as withdrawn only when every call that closed it was a withdrawal.
  */
-export function shownStatus(status: ProposalStatus, onChain: RoundOnChain | undefined, closing: ClosingRead): ProposalRow['status'] {
+export function shownStatus(
+  status: ProposalStatus,
+  onChain: RoundOnChain | undefined,
+  closing: ClosingRead
+): ProposalRow['status'] {
   return onChain?.held === 'closed' ? closing.closedAs(onChain.closedBy ?? []) : status;
 }
 

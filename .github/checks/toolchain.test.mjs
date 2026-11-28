@@ -22,7 +22,7 @@ import {
   releaseAsset,
   releaseUrl,
   targetFor,
-  versionProblem,
+  versionProblem
 } from './toolchain.mjs';
 
 test('THE POSITIVE CONTROL: the machine the checks run on has a published compiler', () => {
@@ -37,7 +37,7 @@ test('every machine this is written for names a distinct release target', () => 
     ['linux', 'x64'],
     ['linux', 'arm64'],
     ['darwin', 'x64'],
-    ['darwin', 'arm64'],
+    ['darwin', 'arm64']
   ]) {
     const target = targetFor(platform, arch);
     assert.ok(target.length > 0, `${platform}/${arch} named nothing`);
@@ -53,7 +53,7 @@ test('a machine with no published compiler is refused, and told the way through'
     (error) => {
       assert.ok(/COMPACT_HOME/.test(error.message), `the refusal did not say what resolves it: ${error.message}`);
       return true;
-    },
+    }
   );
 });
 
@@ -72,7 +72,7 @@ test('the version is in the path a compiler is unpacked to, so two cannot be con
   assert.notEqual(
     installDir('/somewhere', 'linux', 'x64'),
     installDir('/somewhere', 'darwin', 'arm64'),
-    'two machines unpack to the same place',
+    'two machines unpack to the same place'
   );
 });
 
@@ -93,7 +93,7 @@ test('a compiler that says nothing at all is refused rather than accepted', () =
   }
 });
 
-test('the proof server image is one exact release of Midnight\'s image, never a moving or candidate tag', () => {
+test("the proof server image is one exact release of Midnight's image, never a moving or candidate tag", () => {
   // RED WHEN: a door starts "latest" or a release candidate, and two machines run different provers under one pin.
   assert.match(PROOF_SERVER_IMAGE, /^midnightntwrk\/proof-server:\d+\.\d+\.\d+$/);
 });

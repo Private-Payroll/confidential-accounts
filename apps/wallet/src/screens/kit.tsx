@@ -2,7 +2,14 @@ import type { ReactNode } from 'react';
 import { Button } from 'vaults-ui';
 import { THEME_ENTRIES, useTheme } from '../shell/theme.js';
 import { TokensChapter, ButtonsChapter, BadgesChapter, CardsChapter } from './kit-chapters-basics.js';
-import { FieldsChapter, AlertsChapter, EmptyStatesChapter, ListRowsChapter, SectionChapter, ActionTilesChapter } from './kit-chapters-inputs.js';
+import {
+  FieldsChapter,
+  AlertsChapter,
+  EmptyStatesChapter,
+  ListRowsChapter,
+  SectionChapter,
+  ActionTilesChapter
+} from './kit-chapters-inputs.js';
 import { TableChapter, SkeletonChapter, TooltipChapter, DialogChapter, SidebarChapter } from './kit-chapters-data.js';
 
 /**
@@ -35,12 +42,12 @@ export function Kit(): ReactNode {
     <>
       <h1>The kit</h1>
       <p className="lede">
-        Every component, every variant, every state. Nothing on this page is real —
-        no wallet is read and no number is a balance.
+        Every component, every variant, every state. Nothing on this page is real — no wallet is read and no number is a
+        balance.
       </p>
       <p className="muted small">
-        This page is not in the navigation. It is reached by typing <code>#/kit</code>,
-        and it exists so a component is argued about once here rather than once per screen.
+        This page is not in the navigation. It is reached by typing <code>#/kit</code>, and it exists so a component is
+        argued about once here rather than once per screen.
       </p>
 
       <div className="mb-10 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3">
@@ -82,8 +89,8 @@ export function Kit(): ReactNode {
       <SidebarChapter />
 
       <p className="faint small">
-        End of the kit. Everything a screen is built from is on this page; if a screen needs
-        something that is not, that is a decision, not a class at the call site.
+        End of the kit. Everything a screen is built from is on this page; if a screen needs something that is not, that
+        is a decision, not a class at the call site.
       </p>
     </>
   );

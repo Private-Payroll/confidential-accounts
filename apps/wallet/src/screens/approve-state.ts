@@ -44,8 +44,7 @@ export function useApproveState(a: ApproveInputs) {
    * frame, fades it with, or moves it by - `framing.ts` says why. A disabled
    * button fires no press in React, by click or by key.
    */
-  const framing = useMemo(
-    () => framingOf(view ?? (window as unknown as ChannelWindow), embedder), [view, embedder]);
+  const framing = useMemo(() => framingOf(view ?? (window as unknown as ChannelWindow), embedder), [view, embedder]);
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
   const [channel, setChannel] = useState<ActingChannel | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -77,7 +76,10 @@ export function useApproveState(a: ApproveInputs) {
   const [sentAt, setSentAt] = useState<number | null>(null);
   /* The company the keyring answer carried, as that answer carried it: the label is the wallet's own draw when the
    * page is setting a company up, so this is the only place the person can read it. */
-  const [givenCompany, setGivenCompany] = useState<{ readonly company: CompanyLabel; readonly account: AccountAddress | null } | null>(null);
+  const [givenCompany, setGivenCompany] = useState<{
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress | null;
+  } | null>(null);
   /** This wallet, by the fingerprint of the secret that is answering - not by the slot it sits in. */
   const thisWallet = useMemo(() => toBase64Url(fingerprintOf(secret)), [secret]);
 
@@ -87,17 +89,24 @@ export function useApproveState(a: ApproveInputs) {
   useEffect(() => {
     const target = view ?? (window as unknown as ChannelWindow);
     /* What arrived and what was sent is written down, so a wait that never ended can be told apart later. */
-    const opened2 = listen(target, now, (state) => {
-      recordChannelState(portNow.current, state, now());
-      setChannelState(state);
-    }, embedder);
+    const opened2 = listen(
+      target,
+      now,
+      (state) => {
+        recordChannelState(portNow.current, state, now());
+        setChannelState(state);
+      },
+      embedder
+    );
     /* Every message this window sends the page is checked first for a secret of the saved keys it opened. */
     setChannel(checkedChannel(opened2));
     return () => opened2.stop();
   }, [view, now, embedder]);
   /* A request to pay, and only that, has every message it sends written down too. */
   const payingChannel = useMemo(
-    () => (channel === null ? null : recordedChannel(channel, portNow.current, now)), [channel, now]);
+    () => (channel === null ? null : recordedChannel(channel, portNow.current, now)),
+    [channel, now]
+  );
   /* A request to pay holds the wallet it is being paid from while a press runs and once it is answered. */
   const [walletLocked, setWalletLocked] = useState(false);
 
@@ -108,14 +117,57 @@ export function useApproveState(a: ApproveInputs) {
       setOpened(state);
       setProfile(state.of === 'profile' ? state.profile : emptyProfile(now()));
     });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [identity, port, now]);
-  return { framing, channelState, setChannelState, channel, profile, setProfile, opened, subwallet, setSubwallet, choseWallet, setChoseWallet, picked, setPicked, refused, setRefused, typed, setTyped, problem, setProblem, sentAt, setSentAt, givenCompany, setGivenCompany, thisWallet, portNow, payingChannel, walletLocked, setWalletLocked };
+  return {
+    framing,
+    channelState,
+    setChannelState,
+    channel,
+    profile,
+    setProfile,
+    opened,
+    subwallet,
+    setSubwallet,
+    choseWallet,
+    setChoseWallet,
+    picked,
+    setPicked,
+    refused,
+    setRefused,
+    typed,
+    setTyped,
+    problem,
+    setProblem,
+    sentAt,
+    setSentAt,
+    givenCompany,
+    setGivenCompany,
+    thisWallet,
+    portNow,
+    payingChannel,
+    walletLocked,
+    setWalletLocked
+  };
 }
 export type ApproveState = ReturnType<typeof useApproveState>;
 
 export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
-  const { identity, secret, registry, readLabel, framing, channelState, profile, subwallet, setSubwallet, choseWallet, setPicked } = a;
+  const {
+    identity,
+    secret,
+    registry,
+    readLabel,
+    framing,
+    channelState,
+    profile,
+    subwallet,
+    setSubwallet,
+    choseWallet,
+    setPicked
+  } = a;
   const request: Ask | null = channelState.of === 'request' ? channelState.request : null;
   /*
    * **THE COMPANY AN UNLOCK OR A KEYRING ASK NAMES, READ OFF ITS ACCOUNT BY
@@ -123,15 +175,18 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
    * once the account the page names has been read and carries the label the
    * page names. An ask to start a company names neither, and reads nothing.
    */
-  const labelAsked = request !== null && (request.kind === 'unlock' || request.kind === 'keyring')
-    ? request.company : null;
-  const accountAsked = request !== null && (request.kind === 'unlock' || request.kind === 'keyring')
-    ? request.account : null;
+  const labelAsked =
+    request !== null && (request.kind === 'unlock' || request.kind === 'keyring') ? request.company : null;
+  const accountAsked =
+    request !== null && (request.kind === 'unlock' || request.kind === 'keyring') ? request.account : null;
   const companyCheck = useCompanyCheck(labelAsked, accountAsked, readLabel);
   const companyOnChain = accountCarriesTheLabel(companyCheck, labelAsked);
   /* A company named beside opening the saved keys: once the check has read, the keys open, with its key only if it carries. */
-  const openedCompanyRead = request !== null && request.kind === 'keyring' && request.companyIfOnChain === true
-    && companyCheck.of !== 'checking';
+  const openedCompanyRead =
+    request !== null &&
+    request.kind === 'keyring' &&
+    request.companyIfOnChain === true &&
+    companyCheck.of !== 'checking';
   /* The dwell is timed from the moment THIS request is on screen, not from when
    * the screen mounted: a page that holds its request back until the wait has
    * run out would otherwise put a pressable button up the instant it arrives. */
@@ -144,8 +199,8 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
    * that carry `wants`; everything below reads this and not `request.kind`, so
    * a join walks the disclosure's own path through the rows, the pre-tick, the
    * missing-required line and the render rather than a copy of it. */
-  const wanting: Wanting | null = request !== null
-    && (request.kind === 'disclosure' || request.kind === 'join') ? request : null;
+  const wanting: Wanting | null =
+    request !== null && (request.kind === 'disclosure' || request.kind === 'join') ? request : null;
   /**
    * **THE CHOSEN WALLET, AS ONE VALUE, DERIVED ONCE PER CHOICE.**
    *
@@ -155,12 +210,13 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
    */
   const owned = useMemo(
     () => ownedAddressFor(identity, subwallet, loadSubwallets(secret).names, NETWORK),
-    [identity, subwallet, secret]);
+    [identity, subwallet, secret]
+  );
 
   const rows = useMemo(
-    () => (wanting === null || profile === null
-      ? [] : rowsFor(wanting, registry, profile, owned)),
-    [wanting, profile, registry, owned]);
+    () => (wanting === null || profile === null ? [] : rowsFor(wanting, registry, profile, owned)),
+    [wanting, profile, registry, owned]
+  );
 
   /**
    * **THE WALLET THIS SCREEN OPENS ON, AND THE WHOLE RULE.**
@@ -184,7 +240,8 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
   useEffect(() => {
     if (wanting === null || request === null || profile === null) return;
     const grant = profile.grants.find(
-      (g) => g.recipient.origin === request.requester.origin && g.subwallet === subwallet);
+      (g) => g.recipient.origin === request.requester.origin && g.subwallet === subwallet
+    );
     if (!grant) return;
     const pre: Record<string, string> = {};
     for (const row of rows) {
@@ -198,32 +255,42 @@ export function useWhatIsAsked(a: ApproveInputs & ApproveState) {
 export type WhatIsAsked = ReturnType<typeof useWhatIsAsked>;
 
 export function useRowEntry(a: ApproveInputs & ApproveState & WhatIsAsked) {
-  const { identity, registry, port, now, profile, setProfile, picked, setPicked, refused, setTyped, setProblem, rows } = a;
-  const fill = useCallback((definition: AttributeDefinition, text: string): void => {
-    if (profile === null) return;
-    const outcome = check(definition, text);
-    if (!outcome.ok) { setProblem(outcome.says); return; }
-    try {
-      const next = selfAssert(profile, registry, definition.name, text, '', now());
-      const added = next.held[next.held.length - 1]!;
-      setProfile(next);
-      setPicked((current) => ({ ...current, [definition.name]: added.id }));
-      setTyped((current) => ({ ...current, [definition.name]: '' }));
-      setProblem(null);
-      void save(port, identity, next).catch(() => setProblem('That could not be saved.'));
-    } catch (e) {
-      setProblem(e instanceof Error ? e.message : 'That could not be added.');
-    }
-  }, [profile, registry, port, identity, now]);
+  const { identity, registry, port, now, profile, setProfile, picked, setPicked, refused, setTyped, setProblem, rows } =
+    a;
+  const fill = useCallback(
+    (definition: AttributeDefinition, text: string): void => {
+      if (profile === null) return;
+      const outcome = check(definition, text);
+      if (!outcome.ok) {
+        setProblem(outcome.says);
+        return;
+      }
+      try {
+        const next = selfAssert(profile, registry, definition.name, text, '', now());
+        const added = next.held[next.held.length - 1]!;
+        setProfile(next);
+        setPicked((current) => ({ ...current, [definition.name]: added.id }));
+        setTyped((current) => ({ ...current, [definition.name]: '' }));
+        setProblem(null);
+        void save(port, identity, next).catch(() => setProblem('That could not be saved.'));
+      } catch (e) {
+        setProblem(e instanceof Error ? e.message : 'That could not be added.');
+      }
+    },
+    [profile, registry, port, identity, now]
+  );
 
   /*
    * A derived row is missing when it was refused or could not be worked
    * out, and never because nothing was picked: there is no list to pick from.
    */
-  const missingRequired = rows.filter((row) => row.required && (
-    row.derived !== null
-      ? !(row.derived.ok && refused[row.attribute] !== true)
-      : picked[row.attribute] === undefined));
+  const missingRequired = rows.filter(
+    (row) =>
+      row.required &&
+      (row.derived !== null
+        ? !(row.derived.ok && refused[row.attribute] !== true)
+        : picked[row.attribute] === undefined)
+  );
   return { fill, missingRequired };
 }
 export type RowEntry = ReturnType<typeof useRowEntry>;
@@ -237,13 +304,16 @@ export function useWalletRecord(a: ApproveInputs & ApproveState) {
    */
   const profileNow = useRef(profile);
   profileNow.current = profile;
-  const walletRecord = useMemo((): WalletRecord => ({
-    drewTheLabel: (label) => {
-      const p = profileNow.current;
-      const company = readCompanyLabel(label);
-      return p !== null && company !== null && drewTheLabelFor(p, company);
-    },
-  }), []);
+  const walletRecord = useMemo(
+    (): WalletRecord => ({
+      drewTheLabel: (label) => {
+        const p = profileNow.current;
+        const company = readCompanyLabel(label);
+        return p !== null && company !== null && drewTheLabelFor(p, company);
+      }
+    }),
+    []
+  );
   return { walletRecord };
 }
 export type WalletKept = ReturnType<typeof useWalletRecord>;

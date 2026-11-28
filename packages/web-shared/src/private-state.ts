@@ -104,7 +104,7 @@ import {
   persistableAccountHalf,
   refuseToPersistWhatMustNotBeStored,
   type NeverPersistedField,
-  type SignerOnlyField,
+  type SignerOnlyField
 } from '../../../src/midnight/what-a-device-may-persist.js';
 
 /**
@@ -143,10 +143,15 @@ export interface SignerMaterial {
  * rights, the record of them. The one place a wallet act takes a seat's material from its saved keys.
  */
 export const signerMaterialOf = (seat: {
-  readonly signingSecret: string; readonly blinding: string; readonly scope: string; readonly rights?: RightsRecord;
+  readonly signingSecret: string;
+  readonly blinding: string;
+  readonly scope: string;
+  readonly rights?: RightsRecord;
 }): SignerMaterial & { readonly scope: Hex } => ({
-  signingSecret: seat.signingSecret as Hex, blinding: seat.blinding as Hex, scope: seat.scope as Hex,
-  ...(seat.rights === undefined ? {} : { rights: seat.rights }),
+  signingSecret: seat.signingSecret as Hex,
+  blinding: seat.blinding as Hex,
+  scope: seat.scope as Hex,
+  ...(seat.rights === undefined ? {} : { rights: seat.rights })
 });
 
 /**
@@ -158,8 +163,7 @@ export const signerMaterialOf = (seat: {
  * so a device with no staged material composes a record that is complete for
  * what it is about to do.
  */
-export type ComposedRecord =
-  Pick<AccountPrivateState, SignerOnlyField | 'pinnedPath'> & Partial<AccountPrivateState>;
+export type ComposedRecord = Pick<AccountPrivateState, SignerOnlyField | 'pinnedPath'> & Partial<AccountPrivateState>;
 
 /**
  * The same record with everything that must not be written down taken out.
@@ -205,9 +209,7 @@ export interface AccountHalfStore {
  * refusals below are what turn that into a sentence naming the actual cause**,
  * on the device, before a proof and before a fee.
  */
-export const signerHalfOf = (
-  material: SignerMaterial,
-): Pick<AccountPrivateState, SignerOnlyField> => {
+export const signerHalfOf = (material: SignerMaterial): Pick<AccountPrivateState, SignerOnlyField> => {
   const width = (name: string, value: Hex | undefined, missing: string): Uint8Array => {
     if (value === undefined || value === '') throw new Error(missing);
     let bytes: Uint8Array;
@@ -216,13 +218,13 @@ export const signerHalfOf = (
     } catch {
       throw new Error(
         `the ${name} saved for this company on this device is not readable as key material. ` +
-          'Take the seat on this device again to replace it.',
+          'Take the seat on this device again to replace it.'
       );
     }
     if (bytes.length !== 32) {
       throw new Error(
         `the ${name} saved for this company on this device is ${bytes.length} bytes and a ` +
-          'signer\'s is thirty-two. Take the seat on this device again to replace it.',
+          "signer's is thirty-two. Take the seat on this device again to replace it."
       );
     }
     return bytes;
@@ -233,14 +235,14 @@ export const signerHalfOf = (
       'signing key',
       material.signingSecret,
       'this device holds no signing key for that company, so it cannot act as a signer on it. ' +
-        'Take the seat on this device to put one here.',
+        'Take the seat on this device to put one here.'
     ),
     blinding: width(
       'blinding factor',
       material.blinding,
       'this device holds no blinding factor for that company. The factor is half of what ' +
         'proves this signer is on the account, and it cannot be recovered from anywhere else. ' +
-        'Take the seat on this device again to replace it.',
+        'Take the seat on this device again to replace it.'
     ),
     /*
      * **ABSENT IS REFUSED AND IS NOT READ AS "EVERY VAULT".** The value that
@@ -255,9 +257,9 @@ export const signerHalfOf = (
       material.scope,
       'the key material saved for this company on this device was written before vault ' +
         'scopes were recorded, so it cannot say which vaults this signer may act on, and ' +
-        'nothing converts it. A seat taken under a new invitation by another sign-in can act.',
+        'nothing converts it. A seat taken under a new invitation by another sign-in can act.'
     ),
-    rights: rightsAsTheCircuitReadsThem(material),
+    rights: rightsAsTheCircuitReadsThem(material)
   };
 };
 
@@ -271,11 +273,17 @@ const rightsAsTheCircuitReadsThem = (material: SignerMaterial): SignerRights | n
   if (r === undefined) return null;
   if (material.scope === undefined || rightsScopeOf(r) !== material.scope.toLowerCase()) {
     throw new Error(
-      'the rights saved for this company on this device are not the ones this seat\'s leaf commits to, so it cannot ' +
-        'raise, approve or hold a run. Take the seat on this device again from your backup, or use the device you were seated from.',
+      "the rights saved for this company on this device are not the ones this seat's leaf commits to, so it cannot " +
+        'raise, approve or hold a run. Take the seat on this device again from your backup, or use the device you were seated from.'
     );
   }
-  return { mayRaise: r.mayRaise, mayApprove: r.mayApprove, mayHold: r.mayHold, everyVault: r.everyVault, vaults: r.vaults.map((v) => fromHex(v)) };
+  return {
+    mayRaise: r.mayRaise,
+    mayApprove: r.mayApprove,
+    mayHold: r.mayHold,
+    everyVault: r.everyVault,
+    vaults: r.vaults.map((v) => fromHex(v))
+  };
 };
 
 /**
@@ -338,15 +346,12 @@ export type SignerMaterialSource = (privateStateId: string) => SignerMaterial | 
  * against and the name check above stands alone**, which is the honest
  * behaviour rather than a refusal of a write nobody can check.
  */
-export const refuseToWriteTheSignersOwnMaterial = (
-  half: object,
-  material: SignerMaterial | null,
-): void => {
+export const refuseToWriteTheSignersOwnMaterial = (half: object, material: SignerMaterial | null): void => {
   if (material === null) return;
   const mine = new Set(
     [material.signingSecret, material.blinding, material.scope]
       .filter((hex): hex is Hex => hex !== undefined && hex !== '')
-      .map((hex) => hex.toLowerCase()),
+      .map((hex) => hex.toLowerCase())
   );
   for (const [name, value] of Object.entries(half)) {
     if (!(value instanceof Uint8Array)) continue;
@@ -354,8 +359,8 @@ export const refuseToWriteTheSignersOwnMaterial = (
     throw new Error(
       `saving what this company's last call staged, on this device, was about to write this ` +
         `signer's own key material to storage under the name "${name}". It lives once, in this ` +
-        'device\'s keyring, and a second copy of it is a second person who can sign. Nothing ' +
-        'has been written.',
+        "device's keyring, and a second copy of it is a second person who can sign. Nothing " +
+        'has been written.'
     );
   }
 };
@@ -375,7 +380,7 @@ export interface DerivedPrivateStateOptions {
  * package at run time, so loading it pulls in no WebAssembly at all.
  */
 export const derivedPrivateState = (
-  options: DerivedPrivateStateOptions,
+  options: DerivedPrivateStateOptions
 ): PrivateStateProvider<string, ComposedRecord> => {
   /**
    * What no store's answer may contribute, whatever it contains.
@@ -396,14 +401,11 @@ export const derivedPrivateState = (
      */
     ...persistableAccountHalf((stored ?? {}) as Partial<AccountPrivateState>),
     pinnedPath: null,
-    ...signerHalfOf(material),
+    ...signerHalfOf(material)
   });
 
   const refuse = (what: string, instead: string) => async (): Promise<never> => {
-    throw new Error(
-      `${what} is not something this device can do with a company's call material. ` +
-        `${instead}`,
-    );
+    throw new Error(`${what} is not something this device can do with a company's call material. ` + `${instead}`);
   };
 
   /*
@@ -417,14 +419,14 @@ export const derivedPrivateState = (
    * a record.
    */
   const exportPrivateStates = refuse(
-    'copying a company\'s call material off this device',
-    'It contains this signer\'s own key, which exists in one place on purpose and is ' +
-      'not copied out. Nothing has been written or sent.',
+    "copying a company's call material off this device",
+    "It contains this signer's own key, which exists in one place on purpose and is " +
+      'not copied out. Nothing has been written or sent.'
   );
   const importPrivateStates = refuse(
-    'loading a company\'s call material from somewhere else',
-    'The signer\'s own key is read from this device\'s keyring at the moment it is ' +
-      'needed, and the rest is staged by the call that needs it. Nothing has been saved.',
+    "loading a company's call material from somewhere else",
+    "The signer's own key is read from this device's keyring at the moment it is " +
+      'needed, and the rest is staged by the call that needs it. Nothing has been saved.'
   );
 
   /** One company's call material, reached under the address the scheme named, in lower case. */
@@ -459,10 +461,7 @@ export const derivedPrivateState = (
        */
       async set(privateStateId, state) {
         const half = persistableAccountHalf(state);
-        refuseToPersistWhatMustNotBeStored(
-          half,
-          'saving what this company\'s last call staged, on this device',
-        );
+        refuseToPersistWhatMustNotBeStored(half, "saving what this company's last call staged, on this device");
         refuseToWriteTheSignersOwnMaterial(half, options.signerMaterial(privateStateId));
         await options.accountHalf.set(address, privateStateId, half);
       },
@@ -477,7 +476,7 @@ export const derivedPrivateState = (
       },
 
       exportPrivateStates,
-      importPrivateStates,
+      importPrivateStates
     };
   };
 
@@ -489,8 +488,8 @@ export const derivedPrivateState = (
      * call that names no company does not reach across all of them.
      */
     clearAll: refuse(
-      'clearing every company\'s call material at once',
-      'What this device keeps is cleared one company at a time, by naming it. Nothing has been removed.',
+      "clearing every company's call material at once",
+      'What this device keeps is cleared one company at a time, by naming it. Nothing has been removed.'
     ),
 
     /*
@@ -506,28 +505,28 @@ export const derivedPrivateState = (
      * failing later inside it.
      */
     setSigningKey: refuse(
-      'giving this device authority to maintain a company\'s contract',
-      'Maintenance is not done from a browser here, so nothing has been saved.',
+      "giving this device authority to maintain a company's contract",
+      'Maintenance is not done from a browser here, so nothing has been saved.'
     ),
     getSigningKey: refuse(
       'reading a contract maintenance authority from this device',
-      'This device never holds one, so there is nothing to read.',
+      'This device never holds one, so there is nothing to read.'
     ),
     removeSigningKey: refuse(
       'removing a contract maintenance authority from this device',
-      'This device never holds one, so there is nothing to remove.',
+      'This device never holds one, so there is nothing to remove.'
     ),
     clearSigningKeys: refuse(
       'clearing contract maintenance authorities from this device',
-      'This device never holds any, so there is nothing to clear.',
+      'This device never holds any, so there is nothing to clear.'
     ),
     exportSigningKeys: refuse(
       'copying contract maintenance authorities off this device',
-      'This device never holds any, so there is nothing to copy.',
+      'This device never holds any, so there is nothing to copy.'
     ),
     importSigningKeys: refuse(
       'loading contract maintenance authorities onto this device',
-      'Maintenance is not done from a browser here, so nothing has been saved.',
-    ),
+      'Maintenance is not done from a browser here, so nothing has been saved.'
+    )
   };
 };

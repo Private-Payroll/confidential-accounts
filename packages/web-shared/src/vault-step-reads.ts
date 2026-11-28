@@ -21,7 +21,8 @@ export const timeShown = (ms: number): string => new Date(ms).toLocaleString();
  * as `vaultStandingHere`, without asking the wallet who holds the vault.
  */
 export async function notesAsThisDeviceReadsThem(
-  doors: Pick<ChainHereDoors, 'builder' | 'indexer'>, vault: Hex,
+  doors: Pick<ChainHereDoors, 'builder' | 'indexer'>,
+  vault: Hex
 ): Promise<VaultChainView> {
   return notesOfARead(vault, await readHere(doors, vault));
 }
@@ -31,7 +32,10 @@ export async function notesAsThisDeviceReadsThem(
  * found on the chain as one whose answer from the service was lost: by the coin it kept, or, for a payment that keeps
  * no change, by its own transaction.
  */
-export const NAMED_BY_NOTHING: { readonly txRef: string; readonly transactionHash: string | null } = Object.freeze({ txRef: '', transactionHash: null });
+export const NAMED_BY_NOTHING: { readonly txRef: string; readonly transactionHash: string | null } = Object.freeze({
+  txRef: '',
+  transactionHash: null
+});
 
 /**
  * `not-yet` carries `listed` when the vault's history was read in full and no
@@ -39,7 +43,9 @@ export const NAMED_BY_NOTHING: { readonly txRef: string; readonly transactionHas
  * indexer has not caught up. Without it, something could not be read.
  */
 type CreatingTransactionFound =
-  | { state: 'found'; createdIn: Hex } | { state: 'not-yet'; listed?: 'none' } | { state: 'unknown'; why: string; listed?: 'none' };
+  | { state: 'found'; createdIn: Hex }
+  | { state: 'not-yet'; listed?: 'none' }
+  | { state: 'unknown'; why: string; listed?: 'none' };
 
 /**
  * **WHICH TRANSACTION CREATED AN OUTPUT OF THIS VAULT, AS THE CHAIN SAYS, OR
@@ -55,10 +61,15 @@ type CreatingTransactionFound =
  * worker that cannot answer yet, and asking again may answer it.
  */
 export async function creatingTransactionOfOutput(
-  doors: { readonly builder: Pick<VaultBuilderClient, 'creatingTransaction' | 'eventsOf' | 'createdBy'>; readonly indexer: ChainHereDoors['indexer'] },
-  vault: Hex, output: string, transactionHash: string | null,
+  doors: {
+    readonly builder: Pick<VaultBuilderClient, 'creatingTransaction' | 'eventsOf' | 'createdBy'>;
+    readonly indexer: ChainHereDoors['indexer'];
+  },
+  vault: Hex,
+  output: string,
+  transactionHash: string | null,
   /** What the output is, as a refusal names it. */
-  what = 'this deposit',
+  what = 'this deposit'
 ): Promise<CreatingTransactionFound> {
   const judge = async (hash: string, events: EventOnTheWire[]): Promise<CreatingTransactionFound> => {
     if (events.length === 0) return { state: 'not-yet' };
@@ -69,7 +80,8 @@ export async function creatingTransactionOfOutput(
       return { state: 'not-yet' };
     }
     if (judged.state === 'found') return { state: 'found', createdIn: judged.createdIn as Hex };
-    if (judged.state === 'refused') return { state: 'unknown', why: `the transfer this page was given does not show ${what}` };
+    if (judged.state === 'refused')
+      return { state: 'unknown', why: `the transfer this page was given does not show ${what}` };
     return { state: 'not-yet' };
   };
   const indexer = await theWalletsIndexer(doors, vault);
@@ -86,7 +98,10 @@ export async function creatingTransactionOfOutput(
   let byOutput: CreatingTransactionFound;
   try {
     const found = await doors.builder.createdBy({ vault, commitment: output, indexer });
-    byOutput = found === null ? { state: 'not-yet', listed: 'none' } : await judge(String(found.transactionHash).toLowerCase(), found.events);
+    byOutput =
+      found === null
+        ? { state: 'not-yet', listed: 'none' }
+        : await judge(String(found.transactionHash).toLowerCase(), found.events);
   } catch {
     byOutput = { state: 'not-yet' };
   }
@@ -100,5 +115,8 @@ export async function creatingTransactionOfOutput(
 export const HEX64 = /^[0-9a-f]{64}$/u;
 
 export const lowerOf = (h: string): string => h.toLowerCase();
-export const coinOnTheWire = (c: { readonly nonce: Hex; readonly token: Hex; readonly value: bigint }): NoteOnTheWire =>
-  ({ nonce: c.nonce, token: c.token, value: c.value.toString() });
+export const coinOnTheWire = (c: {
+  readonly nonce: Hex;
+  readonly token: Hex;
+  readonly value: bigint;
+}): NoteOnTheWire => ({ nonce: c.nonce, token: c.token, value: c.value.toString() });

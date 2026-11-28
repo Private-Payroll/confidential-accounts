@@ -1,5 +1,11 @@
 import {
-  ACT_CALL_SCHEMA, ACT_KEEP_SCHEMA, ACT_RELAY_SCHEMA, NOT_ASKING_SCHEMA, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
+  ACT_CALL_SCHEMA,
+  ACT_KEEP_SCHEMA,
+  ACT_RELAY_SCHEMA,
+  NOT_ASKING_SCHEMA,
+  PROGRESS_SCHEMA,
+  PROGRESS_STAGES,
+  READY_PING
 } from 'midnight-identity/profile/channel';
 import type { NotAskedWhy, ProgressStage } from 'midnight-identity/profile/channel';
 import type { DisclosureResponse } from 'midnight-identity/profile/disclosure';
@@ -65,7 +71,7 @@ export type { ActAsked, ActOutcome } from './wallet-act.js';
  */
 export const US_TO_A_WALLET = {
   name: 'Confidential Accounts',
-  rdns: 'social.lemonade.confidential-accounts',
+  rdns: 'social.lemonade.confidential-accounts'
 } as const;
 
 /**
@@ -205,8 +211,7 @@ export const WALLET_DIALOG_SIZE = { width: 460, height: 760 } as const;
  */
 let asks = 0;
 
-const dialogUrl = (walletOrigin: string): string =>
-  `${walletOrigin}/?ask=${asks += 1}#/approve`;
+const dialogUrl = (walletOrigin: string): string => `${walletOrigin}/?ask=${(asks += 1)}#/approve`;
 
 /** `popup` is what makes it a window rather than a tab. Nothing else does. */
 const featuresFor = (view: Openable): string => {
@@ -382,11 +387,17 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
     wallet?.close?.();
   };
   return {
-    get wallet(): WalletWindow | null { return wallet ?? null; },
-    get stage(): ProgressStage | null { return stage; },
+    get wallet(): WalletWindow | null {
+      return wallet ?? null;
+    },
+    get stage(): ProgressStage | null {
+      return stage;
+    },
     onStage(watch: (stage: ProgressStage | null) => void): () => void {
       stageWatchers.add(watch);
-      return () => { stageWatchers.delete(watch); };
+      return () => {
+        stageWatchers.delete(watch);
+      };
     },
     saw(next: ProgressStage | null): void {
       if (next === stage) return;
@@ -433,19 +444,29 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
       unasked = false;
       return wallet;
     },
-    heardReady(): boolean { return ready; },
+    heardReady(): boolean {
+      return ready;
+    },
     listen(next: (event: MessageEvent) => void): () => void {
       hears = next;
-      return () => { if (hears === next) hears = null; };
+      return () => {
+        if (hears === next) hears = null;
+      };
     },
     notAsking(why: NotAskedWhy): boolean {
       if (!wallet || shut || !ready || !unasked || wallet.closed === true) return false;
       unasked = false;
       /* Telling the window is a courtesy to the person: a window that cannot take it is closed all the same. */
-      try { wallet.postMessage({ schema: NOT_ASKING_SCHEMA, why }, walletOrigin); } catch { return false; }
+      try {
+        wallet.postMessage({ schema: NOT_ASKING_SCHEMA, why }, walletOrigin);
+      } catch {
+        return false;
+      }
       return true;
     },
-    moreThanOneAsk(): void { more = true; },
+    moreThanOneAsk(): void {
+      more = true;
+    },
     askEnded(): void {
       /*
        * **THE CLOSE THAT USED TO LIVE INSIDE THE ASK.** It read
@@ -468,7 +489,7 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
     onGiveUp(run: () => void): void {
       onCancel = run;
       if (over) run();
-    },
+    }
   };
 }
 
@@ -482,10 +503,10 @@ export function openWalletDialog(view: Openable, walletOrigin: string): WalletDi
  * changed sends them somewhere there is nothing to find.
  */
 const NO_WINDOW_SAYS =
-  'your wallet window did not open, so nothing has been signed and nothing has been sent. '
-  + 'Press the button again. A window can only be opened at the moment a button is '
-  + 'pressed, so this is something this page has to get right rather than a setting for '
-  + 'you to change.';
+  'your wallet window did not open, so nothing has been signed and nothing has been sent. ' +
+  'Press the button again. A window can only be opened at the moment a button is ' +
+  'pressed, so this is something this page has to get right rather than a setting for ' +
+  'you to change.';
 
 /**
  * **WHAT IS SAID WHEN THE WINDOW WAS THERE AND IS NOT.**
@@ -497,8 +518,8 @@ const NO_WINDOW_SAYS =
  * between a person pressing the button again and a person watching a clock.
  */
 const WINDOW_GONE_SAYS =
-  'your wallet window could not be reached, so nothing has been signed and nothing has been '
-  + 'sent. Press the button again — a press is what lets this page open a fresh one.';
+  'your wallet window could not be reached, so nothing has been signed and nothing has been ' +
+  'sent. Press the button again — a press is what lets this page open a fresh one.';
 
 /**
  * **WHAT IS SAID WHEN THE PERSON APPROVED AND THE WALLET COULD NOT PAY.** Each
@@ -509,52 +530,57 @@ const WINDOW_GONE_SAYS =
  * this answer arrives.
  */
 export const PAYMENT_FAILED_SAYS: Readonly<Record<WalletPaymentFailure, string>> = Object.freeze({
-  'chain-unreadable': 'your wallet could not read the network to find your money, so it paid nothing and '
-    + 'nothing has been sent. Check your connection and try again; if your connection is working, the network '
-    + 'may be unavailable, so try again later.',
-  'not-enough': 'your wallet does not have enough available to pay for this, so it paid nothing and nothing '
-    + 'has been sent. Add to your wallet or choose a smaller amount, and try again.',
-  'not-as-approved': 'your wallet stopped before paying, because what it was about to pay did not match what '
-    + 'you approved, so it paid nothing and nothing has been sent. Try again. If it happens again, stop and '
-    + 'report it before paying from here.',
-  'did-not-finish': 'your wallet could not finish the payment you approved, so it paid nothing and nothing '
-    + 'has been sent. Try again.',
+  'chain-unreadable':
+    'your wallet could not read the network to find your money, so it paid nothing and ' +
+    'nothing has been sent. Check your connection and try again; if your connection is working, the network ' +
+    'may be unavailable, so try again later.',
+  'not-enough':
+    'your wallet does not have enough available to pay for this, so it paid nothing and nothing ' +
+    'has been sent. Add to your wallet or choose a smaller amount, and try again.',
+  'not-as-approved':
+    'your wallet stopped before paying, because what it was about to pay did not match what ' +
+    'you approved, so it paid nothing and nothing has been sent. Try again. If it happens again, stop and ' +
+    'report it before paying from here.',
+  'did-not-finish':
+    'your wallet could not finish the payment you approved, so it paid nothing and nothing ' +
+    'has been sent. Try again.'
 });
 
 const failureNamed = (why: unknown): WalletPaymentFailure =>
   typeof why === 'string' && Object.prototype.hasOwnProperty.call(PAYMENT_FAILED_SAYS, why)
-    ? why as WalletPaymentFailure
+    ? (why as WalletPaymentFailure)
     : 'did-not-finish';
 
 const GAVE_UP_SAYS =
-  'you stopped waiting for your wallet. Nothing was signed, nothing was released, and '
-  + 'nothing has changed here.';
+  'you stopped waiting for your wallet. Nothing was signed, nothing was released, and ' + 'nothing has changed here.';
 
 /** The wallet would not take what this page sent: it could not read it, or would not pay for what it read. */
 export const UNREADABLE_SAYS =
-  'your wallet would not take this request: it could not read it, or it would not pay for what it read. '
-  + 'Nothing was signed and nothing has been sent. Reload this page and try again.';
+  'your wallet would not take this request: it could not read it, or it would not pay for what it read. ' +
+  'Nothing was signed and nothing has been sent. Reload this page and try again.';
 
 /** Silence, with nothing heard since the ask was sent. The words a person met on 28 Sep, unchanged. */
 const NOTHING_CAME_BACK_SAYS = 'your wallet was opened but nothing came back. Nothing has been signed.';
 
 /** Silence after the wallet had said what it was doing: which stage it went quiet in. */
 export const WENT_QUIET_SAYS: Readonly<Record<ProgressStage, string>> = Object.freeze({
-  reading: 'your wallet stopped answering while it was reading the network to find your money, so this page '
-    + 'stopped waiting. It handed this page nothing, so nothing has been sent. Try again.',
-  proving: 'your wallet stopped answering while it was preparing the transaction, so this page stopped '
-    + 'waiting. It handed this page nothing, so nothing has been sent. Try again.',
+  reading:
+    'your wallet stopped answering while it was reading the network to find your money, so this page ' +
+    'stopped waiting. It handed this page nothing, so nothing has been sent. Try again.',
+  proving:
+    'your wallet stopped answering while it was preparing the transaction, so this page stopped ' +
+    'waiting. It handed this page nothing, so nothing has been sent. Try again.'
 });
 
 /** The ask's own deadline passed before the wallet had said anything. */
 export const RAN_OUT_SAYS =
-  'this request ran out of time before your wallet answered, so this page stopped waiting. Your wallet handed '
-  + 'this page nothing, so nothing has been sent. Try again.';
+  'this request ran out of time before your wallet answered, so this page stopped waiting. Your wallet handed ' +
+  'this page nothing, so nothing has been sent. Try again.';
 
 /** The ask's own deadline passed while the wallet was still at work: it had said so. */
 export const OUT_OF_TIME_SAYS =
-  'your wallet was still working when this request ran out of time, so this page stopped waiting. It handed '
-  + 'this page nothing, so nothing has been sent. Try again.';
+  'your wallet was still working when this request ran out of time, so this page stopped waiting. It handed ' +
+  'this page nothing, so nothing has been sent. Try again.';
 
 /** The deadline this page wrote into what it sent, when it wrote one. */
 const deadlineOf = (message: unknown): number | null => {
@@ -576,12 +602,23 @@ const deadlineOf = (message: unknown): number | null => {
  * else between opening and answering receives nothing.
  */
 export function askWalletToSignIn(
-  view: Openable, walletOrigin: string, ask: AskedFor, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: AskedFor,
+  dialog?: WalletDialog
 ): Promise<DisclosureResponse> {
-  return askWallet(view, walletOrigin, signInAsk({
-    name: ask.name, rdns: ask.rdns, purpose: ask.purpose,
-    nonce: ask.nonce, expiresAt: ask.expiresAt,
-  }), dialog) as Promise<DisclosureResponse>;
+  return askWallet(
+    view,
+    walletOrigin,
+    signInAsk({
+      name: ask.name,
+      rdns: ask.rdns,
+      purpose: ask.purpose,
+      nonce: ask.nonce,
+      expiresAt: ask.expiresAt
+    }),
+    dialog
+  ) as Promise<DisclosureResponse>;
 }
 
 /**
@@ -612,9 +649,11 @@ export function askWalletToSignIn(
  * ever the answer, with or without it.
  */
 export function askWallet(
-  view: Openable, walletOrigin: string, message: unknown,
+  view: Openable,
+  walletOrigin: string,
+  message: unknown,
   dialog: WalletDialog = openWalletDialog(view, walletOrigin),
-  hears?: (body: Readonly<Record<string, unknown>>) => void,
+  hears?: (body: Readonly<Record<string, unknown>>) => void
 ): Promise<unknown> {
   return new Promise<unknown>((resolve, reject) => {
     const opened = dialog.take();
@@ -622,9 +661,11 @@ export function askWallet(
       /* Two different mornings: a window that never opened is this page having
        * spent the press before it used it; a window that has gone is a window
        * the person closed. Neither is the other and neither is a silence. */
-      reject(dialog.wallet
-        ? new WalletClosed({ of: 'window-gone' }, WINDOW_GONE_SAYS)
-        : new WalletClosed({ of: 'no-wallet-tab' }, NO_WINDOW_SAYS));
+      reject(
+        dialog.wallet
+          ? new WalletClosed({ of: 'window-gone' }, WINDOW_GONE_SAYS)
+          : new WalletClosed({ of: 'no-wallet-tab' }, NO_WINDOW_SAYS)
+      );
       return;
     }
     /* Typed rather than narrowed: `onMessage` below is a hoisted declaration
@@ -634,10 +675,17 @@ export function askWallet(
     let done = false;
     /* Set once the ask is listening; until then there is nothing to stop hearing. */
     let unhear = (): void => {};
-    let timer = view.setTimeout(() => stop(new WalletClosed(
-      { of: 'silent' },
-      'your wallet did not answer. It may not have finished loading, or the window may have '
-      + 'been closed before it could.')), READY_TIMEOUT_MS);
+    let timer = view.setTimeout(
+      () =>
+        stop(
+          new WalletClosed(
+            { of: 'silent' },
+            'your wallet did not answer. It may not have finished loading, or the window may have ' +
+              'been closed before it could.'
+          )
+        ),
+      READY_TIMEOUT_MS
+    );
     /* Set when the ask is first posted, and never moved. */
     const deadline = deadlineOf(message);
     const now = (): number => (typeof view.now === 'function' ? view.now() : Date.now());
@@ -655,10 +703,18 @@ export function askWallet(
       const left = deadline === null ? Number.POSITIVE_INFINITY : deadline - now();
       const byDeadline = left <= ANSWER_TIMEOUT_MS;
       const ms = byDeadline ? Math.max(0, left) : ANSWER_TIMEOUT_MS;
-      timer = view.setTimeout(() => stop(byDeadline
-        ? new WalletClosed({ of: 'expired', while: 'open' }, lastStage === null ? RAN_OUT_SAYS : OUT_OF_TIME_SAYS)
-        : new WalletClosed({ of: 'silent' }, lastStage === null ? NOTHING_CAME_BACK_SAYS : WENT_QUIET_SAYS[lastStage])),
-      ms);
+      timer = view.setTimeout(
+        () =>
+          stop(
+            byDeadline
+              ? new WalletClosed({ of: 'expired', while: 'open' }, lastStage === null ? RAN_OUT_SAYS : OUT_OF_TIME_SAYS)
+              : new WalletClosed(
+                  { of: 'silent' },
+                  lastStage === null ? NOTHING_CAME_BACK_SAYS : WENT_QUIET_SAYS[lastStage]
+                )
+          ),
+        ms
+      );
     };
 
     const stop = (err?: Error): void => {
@@ -712,7 +768,7 @@ export function askWallet(
       if (body.schema === PROGRESS_SCHEMA) {
         if (!asked) return;
         const said = (body as { stage?: unknown }).stage;
-        const known = (PROGRESS_STAGES as readonly unknown[]).includes(said) ? said as ProgressStage : null;
+        const known = (PROGRESS_STAGES as readonly unknown[]).includes(said) ? (said as ProgressStage) : null;
         if (known !== null) lastStage = known;
         waitForTheWallet();
         dialog.saw?.(lastStage);
@@ -746,12 +802,15 @@ export function askWallet(
 
       if (body.schema === 'midnight-identity/disclosure-refused/v1') {
         const reason = body.reason === 'expired' ? 'expired' : 'declined';
-        stop(new WalletClosed(
-          { of: reason },
-          reason === 'expired'
-            ? 'the request had expired by the time it reached your wallet. Try again.'
-            : 'you did not approve it in your wallet, so nothing was signed, nothing was '
-              + 'released, and nothing has changed here.'));
+        stop(
+          new WalletClosed(
+            { of: reason },
+            reason === 'expired'
+              ? 'the request had expired by the time it reached your wallet. Try again.'
+              : 'you did not approve it in your wallet, so nothing was signed, nothing was ' +
+                  'released, and nothing has changed here.'
+          )
+        );
         return;
       }
 
@@ -772,7 +831,9 @@ export function askWallet(
       unhear = dialog.listen(onMessage);
     } else {
       view.addEventListener('message', onMessage);
-      unhear = () => { view.removeEventListener('message', onMessage); };
+      unhear = () => {
+        view.removeEventListener('message', onMessage);
+      };
     }
     /* The wallet said it was listening before this ask began, while the page was still preparing it: it will not say
      * so again, so the ask is sent now. */

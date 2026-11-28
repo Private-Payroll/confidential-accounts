@@ -10,9 +10,16 @@ import { authorityIn, type ContractAuthority } from './contract-authority.js';
 const KEY_A = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
 const KEY_B = 'c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5';
 const stateWith = (authority: unknown) => ({ data: {}, maintenanceAuthority: authority });
-const held = (over: Record<string, unknown> = {}) => stateWith({
-  committee: [{ tag: 'schnorr', value: KEY_A }, { tag: 'schnorr', value: KEY_B }], threshold: 2, counter: 0n, ...over,
-});
+const held = (over: Record<string, unknown> = {}) =>
+  stateWith({
+    committee: [
+      { tag: 'schnorr', value: KEY_A },
+      { tag: 'schnorr', value: KEY_B }
+    ],
+    threshold: 2,
+    counter: 0n,
+    ...over
+  });
 const refusal = (read: unknown): string => {
   expect(read).toHaveProperty('why');
   return (read as { why: string }).why;
@@ -22,7 +29,14 @@ describe('reading who holds a contract', () => {
   it('reads the committee, the threshold and the counter of a held contract', () => {
     const read = authorityIn(held({ counter: 3n })) as ContractAuthority;
     /* RED WHEN: the committee, the threshold or the counter is dropped or changed on the way out. */
-    expect(read).toEqual({ committee: [{ tag: 'schnorr', value: KEY_A }, { tag: 'schnorr', value: KEY_B }], threshold: 2, counter: 3n });
+    expect(read).toEqual({
+      committee: [
+        { tag: 'schnorr', value: KEY_A },
+        { tag: 'schnorr', value: KEY_B }
+      ],
+      threshold: 2,
+      counter: 3n
+    });
   });
 
   it('returns a result nobody can change afterwards', () => {
@@ -34,7 +48,9 @@ describe('reading who holds a contract', () => {
   });
 
   it('lower-cases every key once, so no caller compares by case', () => {
-    const read = authorityIn(held({ committee: [{ tag: 'schnorr', value: KEY_A.toUpperCase() }] })) as ContractAuthority;
+    const read = authorityIn(
+      held({ committee: [{ tag: 'schnorr', value: KEY_A.toUpperCase() }] })
+    ) as ContractAuthority;
     /* RED WHEN: a key is handed on in the case it was found in. */
     expect(read.committee[0]!.value).toBe(KEY_A);
   });
@@ -49,10 +65,15 @@ describe('reading who holds a contract', () => {
     expect((authorityIn(held({ committee: [], threshold: 0 })) as ContractAuthority).committee).toEqual([]);
   });
 
-  it('reads the runtime\'s own state the way it reads a plain object', () => {
+  it("reads the runtime's own state the way it reads a plain object", () => {
     const state = new ContractState();
     state.maintenanceAuthority = new ContractMaintenanceAuthority(
-      [{ tag: 'schnorr', value: KEY_A }, { tag: 'schnorr', value: KEY_B }], 2, 0n,
+      [
+        { tag: 'schnorr', value: KEY_A },
+        { tag: 'schnorr', value: KEY_B }
+      ],
+      2,
+      0n
     );
     /* RED WHEN: the reader asks for something only a plain object has, so the runtime's state is refused. */
     expect(authorityIn(ContractState.deserialize(state.serialize()))).toEqual(authorityIn(held()));
@@ -72,12 +93,15 @@ describe('reading who holds a contract', () => {
 
   it('refuses an unmaintainable contract as one with no committee', () => {
     /* RED WHEN: an unmaintainable contract is read as one with an empty committee. */
-    expect(refusal(authorityIn({ maintenanceAuthority: { kind: 'unmaintainable' } }))).toMatch(/committee is not a list/u);
+    expect(refusal(authorityIn({ maintenanceAuthority: { kind: 'unmaintainable' } }))).toMatch(
+      /committee is not a list/u
+    );
   });
 
   it('refuses a committee that is not a list', () => {
     /* RED WHEN: the committee is not checked to be a list, so an object or a string is walked as if it were one. */
-    for (const bad of [undefined, { length: 1 }, 'ab', null]) expect(refusal(authorityIn(held({ committee: bad })))).toMatch(/committee is not a list/u);
+    for (const bad of [undefined, { length: 1 }, 'ab', null])
+      expect(refusal(authorityIn(held({ committee: bad })))).toMatch(/committee is not a list/u);
   });
 
   it('refuses a member with no kind of key', () => {
@@ -103,12 +127,20 @@ describe('reading who holds a contract', () => {
 
   it('refuses a counter that is not a bigint of at least zero', () => {
     /* RED WHEN: a counter that is a plain number, text, missing or negative is accepted. */
-    for (const bad of [0, 1, '0', undefined, -1n]) expect(refusal(authorityIn(held({ counter: bad })))).toMatch(/counter/u);
+    for (const bad of [0, 1, '0', undefined, -1n])
+      expect(refusal(authorityIn(held({ counter: bad })))).toMatch(/counter/u);
   });
 
   it('refuses a committee when any one member of it is malformed', () => {
     /* RED WHEN: only the first member is checked. */
-    const read = authorityIn(held({ committee: [{ tag: 'schnorr', value: KEY_A }, { tag: 'schnorr', value: 'nope' }] }));
+    const read = authorityIn(
+      held({
+        committee: [
+          { tag: 'schnorr', value: KEY_A },
+          { tag: 'schnorr', value: 'nope' }
+        ]
+      })
+    );
     expect(refusal(read)).toMatch(/not hex digits/u);
   });
 });

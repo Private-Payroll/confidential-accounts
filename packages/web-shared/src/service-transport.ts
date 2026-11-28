@@ -59,15 +59,25 @@ export class NotOnTheService extends Error {}
  */
 export class ServiceRefused extends Error {
   readonly code: 'fee-not-paid' | 'network-refused' | undefined;
-  constructor(message: string, readonly body: Record<string, unknown>, status?: number) {
+  constructor(
+    message: string,
+    readonly body: Record<string, unknown>,
+    status?: number
+  ) {
     super(message);
     const named = body['code'];
-    this.code = status === 422 && body['nothingWasSent'] === true && (named === 'fee-not-paid' || named === 'network-refused') ? named : undefined;
+    this.code =
+      status === 422 && body['nothingWasSent'] === true && (named === 'fee-not-paid' || named === 'network-refused')
+        ? named
+        : undefined;
   }
 }
 
 /** A request's status and body, as one fetch of the service answered it; a body that is not JSON is `{}`. */
-interface PageAnswer { readonly status: number; readonly body: unknown }
+interface PageAnswer {
+  readonly status: number;
+  readonly body: unknown;
+}
 
 /**
  * **THE PAGE'S ONE FETCH OF THE SERVICE**, which every send on this page is built on: to this product's own server only
@@ -77,7 +87,7 @@ interface PageAnswer { readonly status: number; readonly body: unknown }
  * whoever sent it decides. It tells the sign-in nothing; any status comes back with its body.
  */
 const pageFetch = async (path: string, init: RequestInit, who: string | null): Promise<PageAnswer> => {
-  if (!path.startsWith('/api/')) throw new Error('a request is sent to this product\'s own server and nowhere else');
+  if (!path.startsWith('/api/')) throw new Error("a request is sent to this product's own server and nowhere else");
   let r: Response;
   try {
     r = await fetch(path, {
@@ -91,11 +101,14 @@ const pageFetch = async (path: string, init: RequestInit, who: string | null): P
          * request whose session is somebody else, rather than letting this tab's
          * keys be written under them. */
         ...(who ? { 'x-signed-in-as': who } : {}),
-        ...(init.headers ?? {}),
-      },
+        ...(init.headers ?? {})
+      }
     });
   } catch (e) {
-    throw new ServiceNotReached(`the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`, false);
+    throw new ServiceNotReached(
+      `the company's service could not be reached (${String((e as Error)?.message ?? e).replace(/\.\s*$/u, '')})`,
+      false
+    );
   }
   const body = await r.json().catch(() => ({}));
   return { status: r.status, body };
@@ -113,9 +126,15 @@ const apiOnce = async (path: string, opts: RequestInit = {}) => {
     signIn.lost('another-person');
     throw new AnotherPersonError(body.error);
   }
-  if (status === 503 && body?.code === 'could-not-check') throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
+  if (status === 503 && body?.code === 'could-not-check')
+    throw new CouldNotCheckError(body?.error ?? 'the service could not check your sign-in');
   if (status === 404) throw new NotOnTheService(body?.error ?? `request failed: ${status}`);
-  if (status < 200 || status > 299) throw new ServiceRefused(body?.error ?? `request failed: ${status}`, typeof body === 'object' && body !== null ? body : {}, status);
+  if (status < 200 || status > 299)
+    throw new ServiceRefused(
+      body?.error ?? `request failed: ${status}`,
+      typeof body === 'object' && body !== null ? body : {},
+      status
+    );
   return body;
 };
 
@@ -133,7 +152,8 @@ export const serviceCall = api;
 
 /** A request as the quiet form sends it, and the status and body it was answered with. */
 export type PageSend = (
-  path: string, init: { readonly method: 'GET' | 'PUT' | 'POST'; readonly body?: string; readonly signal?: AbortSignal },
+  path: string,
+  init: { readonly method: 'GET' | 'PUT' | 'POST'; readonly body?: string; readonly signal?: AbortSignal }
 ) => Promise<PageAnswer>;
 
 /**
@@ -141,8 +161,15 @@ export type PageSend = (
  * person `signedInAs` names. Any status comes back with its body and nothing is told to the sign-in this tab holds, so a
  * 401 signs nothing out; a read is not bounded or tried again; a request that got no answer is `ServiceNotReached`.
  */
-export const serviceAnswered = (signedInAs: () => string | null): PageSend => (path, init) => pageFetch(path, {
-  method: init.method,
-  ...(init.body === undefined ? {} : { body: init.body }),
-  ...(init.signal === undefined ? {} : { signal: init.signal }),
-}, signedInAs());
+export const serviceAnswered =
+  (signedInAs: () => string | null): PageSend =>
+  (path, init) =>
+    pageFetch(
+      path,
+      {
+        method: init.method,
+        ...(init.body === undefined ? {} : { body: init.body }),
+        ...(init.signal === undefined ? {} : { signal: init.signal })
+      },
+      signedInAs()
+    );

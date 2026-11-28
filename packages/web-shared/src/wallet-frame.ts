@@ -56,7 +56,9 @@ export const walletFrameShown = (): boolean => shown;
 /** Returns the way to stop watching. Call it from an effect's cleanup. */
 export function onWalletFrame(watch: (shown: boolean) => void): () => void {
   watching.add(watch);
-  return () => { watching.delete(watch); };
+  return () => {
+    watching.delete(watch);
+  };
 }
 
 /**
@@ -88,7 +90,7 @@ export function closeWalletFrame(): void {
  * waiting out a deadline for one that was never there.
  */
 export function walletInThisPage(
-  view: Pick<Openable, 'addEventListener' | 'removeEventListener' | 'setTimeout' | 'clearTimeout'>,
+  view: Pick<Openable, 'addEventListener' | 'removeEventListener' | 'setTimeout' | 'clearTimeout'>
 ): Openable {
   return {
     addEventListener: (type, handler) => view.addEventListener(type, handler),
@@ -109,10 +111,14 @@ export function walletInThisPage(
         focus: () => element.focus?.(),
         /* Only the handle for what is on screen may put it away: an older ask
          * closing late must not hide the newer one a person is reading. */
-        close: () => { if (mine === generation) closeWalletFrame(); },
-        get closed(): boolean { return mine !== generation || !shown || frame !== element; },
+        close: () => {
+          if (mine === generation) closeWalletFrame();
+        },
+        get closed(): boolean {
+          return mine !== generation || !shown || frame !== element;
+        }
       };
-    },
+    }
   };
 }
 
@@ -121,7 +127,11 @@ export function walletInThisPage(
 /** What this file needs of the page's document to make a frame nobody sees. */
 interface QuietDocument {
   createElement(tag: 'iframe'): HTMLIFrameElement;
-  readonly body: { appendChild(node: unknown): unknown; removeChild(node: unknown): unknown; contains(node: unknown): boolean };
+  readonly body: {
+    appendChild(node: unknown): unknown;
+    removeChild(node: unknown): unknown;
+    contains(node: unknown): boolean;
+  };
 }
 
 /**
@@ -136,7 +146,7 @@ interface QuietDocument {
  */
 export function walletQuietlyInThisPage(
   view: Pick<Openable, 'addEventListener' | 'removeEventListener' | 'setTimeout' | 'clearTimeout'>,
-  doc: QuietDocument = document as unknown as QuietDocument,
+  doc: QuietDocument = document as unknown as QuietDocument
 ): Openable {
   return {
     addEventListener: (type, handler) => view.addEventListener(type, handler),
@@ -165,8 +175,10 @@ export function walletQuietlyInThisPage(
           gone = true;
           if (doc.body.contains(element)) doc.body.removeChild(element);
         },
-        get closed(): boolean { return gone; },
+        get closed(): boolean {
+          return gone;
+        }
       };
-    },
+    }
   };
 }

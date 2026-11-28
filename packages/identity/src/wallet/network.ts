@@ -22,21 +22,19 @@
  * named here, and a record under any other name is refused there; it lives in
  * this package because this package cannot read that file.
  */
-export const NETWORKS = [
-  'undeployed', 'preview', 'preprod', 'qanet', 'stagenet', 'mainnet',
-] as const;
+export const NETWORKS = ['undeployed', 'preview', 'preprod', 'qanet', 'stagenet', 'mainnet'] as const;
 
 export type NetworkName = (typeof NETWORKS)[number];
 
-export const isNetworkName = (value: string): value is NetworkName =>
-  (NETWORKS as readonly string[]).includes(value);
+export const isNetworkName = (value: string): value is NetworkName => (NETWORKS as readonly string[]).includes(value);
 
 export function networkName(value: string): NetworkName {
   if (!isNetworkName(value)) {
     throw new Error(
-      `"${value}" is not a network this product runs on. It must be one of ${NETWORKS.join(', ')} — `
-      + 'and it is not a label, it is part of every address, so a wrong one produces '
-      + 'addresses nothing on the real network can decode.');
+      `"${value}" is not a network this product runs on. It must be one of ${NETWORKS.join(', ')} — ` +
+        'and it is not a label, it is part of every address, so a wrong one produces ' +
+        'addresses nothing on the real network can decode.'
+    );
   }
   return value;
 }

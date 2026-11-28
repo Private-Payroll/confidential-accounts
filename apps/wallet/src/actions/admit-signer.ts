@@ -6,8 +6,22 @@ import { admitSignerHere } from '../../../../packages/web-shared/src/roster-file
 import { SeatNotReadOnTheChain } from '../../../../packages/web-shared/src/seat-not-read-on-the-chain.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, governanceDoorsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  companyReachFor,
+  governanceDoorsFor,
+  keptReach,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
@@ -37,7 +51,8 @@ export interface AdmitSignerReach {
 export const ADMIT_STATE = { admitted: 'admitted', alreadyAdmitted: 'already-admitted' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.admit-signer.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.admit-signer.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -50,20 +65,25 @@ export function admitSignerAction(reach: AdmitSignerReach): ActionDefinition {
       { key: 'act.admit-signer.shown.checks', from: 'action' },
       { key: 'act.admit-signer.shown.admit', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.admit-signer.shown.nothing-else', from: 'action' },
+      { key: 'act.admit-signer.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.admit-signer.check.seat' },
       { key: 'act.admit-signer.check.chain' },
       { key: 'act.admit-signer.check.one-seat' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
-    check: async (intent) => (['record', 'signer', 'personName'].some((k) => (intent.fields[k] ?? '') === '') ? why('not-a-signer') : null),
+    check: async (intent) =>
+      ['record', 'signer', 'personName'].some((k) => (intent.fields[k] ?? '') === '') ? why('not-a-signer') : null,
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.admit-signer.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const admit: ActionStep = {
@@ -82,27 +102,38 @@ export function admitSignerAction(reach: AdmitSignerReach): ActionDefinition {
              */
             const here = await rosterHere(roster);
             const waiting = here.opened.signers.find((s) => s.id === signerId && s.status === 'pending');
-            if (here.account.signers.some((s) => s.id === signerId && s.status === 'active'
-              && (waiting === undefined || (s.leafCommitment ?? '').toLowerCase() === (waiting.leafCommitment ?? '').toLowerCase()))) {
+            if (
+              here.account.signers.some(
+                (s) =>
+                  s.id === signerId &&
+                  s.status === 'active' &&
+                  (waiting === undefined ||
+                    (s.leafCommitment ?? '').toLowerCase() === (waiting.leafCommitment ?? '').toLowerCase())
+              )
+            ) {
               read.renew();
               ctx.tell({ state: ADMIT_STATE.alreadyAdmitted });
               return;
             }
-            await admitSignerHere({ ...roster, commitments }, { signerId, readOut: '', name: intent.fields['personName']! });
+            await admitSignerHere(
+              { ...roster, commitments },
+              { signerId, readOut: '', name: intent.fields['personName']! }
+            );
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             const code = codeOfError(e);
             if (e instanceof WaitingIdTaken) throw new StepRefused(why('id-taken'), code);
             if (e instanceof SeatNotReadOnTheChain) throw new StepRefused(why('chain-unread'), code);
-            if (e instanceof SeatKeyNotFromTheInvitee) throw new StepRefused(why('not-the-invited', { says: said(e) }), code);
+            if (e instanceof SeatKeyNotFromTheInvitee)
+              throw new StepRefused(why('not-the-invited', { says: said(e) }), code);
             if (e instanceof FiledNotEntered) throw new StepRefused(why('filed-not-entered', { says: said(e) }), code);
             throw new StepRefused(why('not-admitted', { says: said(e) }), code);
           }
           read.renew();
           ctx.tell({ state: ADMIT_STATE.admitted });
-        },
+        }
       };
       return [upkeep.first, seat, admit, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

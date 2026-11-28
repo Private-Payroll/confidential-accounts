@@ -2,8 +2,15 @@ import { privateAmount, publicAmount, type PrivateAmount, type PublicAmount } fr
 import { assets, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { openWalletDialog, US_TO_A_WALLET } from 'vaults-web-shared/wallet-sign-in.js';
 import { walletInThisPage } from 'vaults-web-shared/wallet-frame.js';
-import { askWalletForAddressesAndBalances, WalletDidNotShowAddressesAndBalances } from 'vaults-web-shared/wallet-records-key.js';
-import type { AddressesAndBalancesShown, HeldAmount, Visibility } from 'midnight-identity/profile/addresses-and-balances';
+import {
+  askWalletForAddressesAndBalances,
+  WalletDidNotShowAddressesAndBalances
+} from 'vaults-web-shared/wallet-records-key.js';
+import type {
+  AddressesAndBalancesShown,
+  HeldAmount,
+  Visibility
+} from 'midnight-identity/profile/addresses-and-balances';
 import { ACCOUNT_ORIGIN } from './session.js';
 import { ACT_REFUSAL, refusalOf, type ActRefusal } from './refusals.js';
 
@@ -28,7 +35,9 @@ export const ACCOUNT_BALANCES = { read: 'read', refused: 'refused' } as const;
 export const SIDE = { read: 'read', notKnown: 'not-known' } as const;
 
 /** The two sides of an account, compared by the code. */
-export const VISIBILITY = { private: 'private', public: 'public' } as const satisfies Readonly<Record<Visibility, Visibility>>;
+export const VISIBILITY = { private: 'private', public: 'public' } as const satisfies Readonly<
+  Record<Visibility, Visibility>
+>;
 
 /**
  * One token the account holds on one side that this app can put in, under the
@@ -50,24 +59,29 @@ export interface TokenHeld {
 /** One side of the account: read at `at`, with the tokens this app can put in and a count of those it cannot; or not known. */
 export type SideHeld =
   | {
-    readonly of: typeof SIDE.read; readonly at: number;
-    readonly tokens: readonly TokenHeld[];
-    /** Tokens held above zero on this side that the registry does not name for it: counted, never offered. */
-    readonly cannotPutIn: number;
-  }
+      readonly of: typeof SIDE.read;
+      readonly at: number;
+      readonly tokens: readonly TokenHeld[];
+      /** Tokens held above zero on this side that the registry does not name for it: counted, never offered. */
+      readonly cannotPutIn: number;
+    }
   | { readonly of: typeof SIDE.notKnown };
 
 /** The account's private address and both sides, as the wallet said at `at`; or why there is nothing. */
 export type AccountBalances =
   | {
-    readonly of: typeof ACCOUNT_BALANCES.read; readonly at: number;
-    readonly privateAddress: string;
-    readonly private: SideHeld; readonly public: SideHeld;
-  }
+      readonly of: typeof ACCOUNT_BALANCES.read;
+      readonly at: number;
+      readonly privateAddress: string;
+      readonly private: SideHeld;
+      readonly public: SideHeld;
+    }
   | { readonly of: typeof ACCOUNT_BALANCES.refused; readonly why: ActRefusal };
 
 /** The ledger's word for each side. */
-const FORM = { private: 'shielded', public: 'unshielded' } as const satisfies Readonly<Record<Visibility, 'shielded' | 'unshielded'>>;
+const FORM = { private: 'shielded', public: 'unshielded' } as const satisfies Readonly<
+  Record<Visibility, 'shielded' | 'unshielded'>
+>;
 
 /** One side of what the wallet showed: each token named by the registry's entry for that side, in the registry's order, and the rest counted. */
 function sideOf(shown: AddressesAndBalancesShown, visibility: Visibility, registry: AssetRegistry): SideHeld {
@@ -83,11 +97,15 @@ function sideOf(shown: AddressesAndBalancesShown, visibility: Visibility, regist
       continue;
     }
     tokens.push({
-      visibility, code: asset.code, name: asset.name, held,
-      amount: visibility === VISIBILITY.private
-        ? privateAmount(held, asset.decimals, asset.symbol)
-        : publicAmount(held, asset.decimals, asset.symbol),
-      order: asset.sortOrder,
+      visibility,
+      code: asset.code,
+      name: asset.name,
+      held,
+      amount:
+        visibility === VISIBILITY.private
+          ? privateAmount(held, asset.decimals, asset.symbol)
+          : publicAmount(held, asset.decimals, asset.symbol),
+      order: asset.sortOrder
     });
   }
   tokens.sort((a, b) => a.order - b.order);
@@ -95,10 +113,17 @@ function sideOf(shown: AddressesAndBalancesShown, visibility: Visibility, regist
 }
 
 /** What the wallet showed, as a screen takes it. */
-export function accountBalancesFrom(shown: AddressesAndBalancesShown, at: number, registry: AssetRegistry = assets): AccountBalances {
+export function accountBalancesFrom(
+  shown: AddressesAndBalancesShown,
+  at: number,
+  registry: AssetRegistry = assets
+): AccountBalances {
   return {
-    of: ACCOUNT_BALANCES.read, at, privateAddress: shown.addresses.private,
-    private: sideOf(shown, VISIBILITY.private, registry), public: sideOf(shown, VISIBILITY.public, registry),
+    of: ACCOUNT_BALANCES.read,
+    at,
+    privateAddress: shown.addresses.private,
+    private: sideOf(shown, VISIBILITY.private, registry),
+    public: sideOf(shown, VISIBILITY.public, registry)
   };
 }
 
@@ -117,14 +142,21 @@ export async function askForAccountBalances(registry: AssetRegistry = assets): P
   const view = walletInThisPage(window);
   const dialog = openWalletDialog(view, ACCOUNT_ORIGIN);
   try {
-    const { shown, at } = await askWalletForAddressesAndBalances(view, ACCOUNT_ORIGIN, {
-      atOrigin: window.location.origin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+    const { shown, at } = await askWalletForAddressesAndBalances(
+      view,
+      ACCOUNT_ORIGIN,
+      {
+        atOrigin: window.location.origin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
+      },
+      dialog
+    );
     return accountBalancesFrom(shown, at, registry);
   } catch (e) {
     return {
       of: ACCOUNT_BALANCES.refused,
-      why: e instanceof WalletDidNotShowAddressesAndBalances ? ACT_REFUSAL.unreadable : refusalOf(e),
+      why: e instanceof WalletDidNotShowAddressesAndBalances ? ACT_REFUSAL.unreadable : refusalOf(e)
     };
   } finally {
     dialog.giveUp();

@@ -35,16 +35,29 @@ export const carriedBy = (tx: unknown): unknown => {
  * earlier ledger, which reads none of this wallet's transactions, so a path
  * asks this before it hands the facade anything to read.
  */
-export const actsOnThisWalletsLedger = async (facade: Pick<WalletFacade, 'state'>, waitMs = 180_000): Promise<boolean> => {
+export const actsOnThisWalletsLedger = async (
+  facade: Pick<WalletFacade, 'state'>,
+  waitMs = 180_000
+): Promise<boolean> => {
   /* A part still syncing reports the earlier ledger until it crosses the fork, so this waits for that, up to `waitMs`. */
-  const crossed = firstValueFrom(facade.state().pipe(filter((s) => s.activeProtocolVersion >= DefaultForkSchedule.v9), map(() => true)));
+  const crossed = firstValueFrom(
+    facade.state().pipe(
+      filter((s) => s.activeProtocolVersion >= DefaultForkSchedule.v9),
+      map(() => true)
+    )
+  );
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), waitMs); });
+  const late = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), waitMs);
+  });
   try {
-    return await Promise.race([crossed.catch(() => {
-      /* A state stream that failed is a facade not on this ledger. */
-      return false;
-    }), late]);
+    return await Promise.race([
+      crossed.catch(() => {
+        /* A state stream that failed is a facade not on this ledger. */
+        return false;
+      }),
+      late
+    ]);
   } finally {
     clearTimeout(timer);
   }
@@ -59,14 +72,17 @@ export const actsOnThisWalletsLedger = async (facade: Pick<WalletFacade, 'state'
  * False when the facade never reached this ledger, and nothing is read again: the caller refuses in its own words.
  */
 export const readOnThisWalletsLedger = async (
-  facade: Pick<WalletFacade, 'state'>, readUp: () => Promise<void>, waitMs?: number,
+  facade: Pick<WalletFacade, 'state'>,
+  readUp: () => Promise<void>,
+  waitMs?: number
 ): Promise<boolean> => {
   const readOnThisLedger = await actsOnThisWalletsLedger(facade, 0);
-  if (!await actsOnThisWalletsLedger(facade, waitMs)) return false;
+  if (!(await actsOnThisWalletsLedger(facade, waitMs))) return false;
   if (!readOnThisLedger) await readUp();
   return true;
 };
 
 /** Why a path read nothing and paid nothing when the facade is not on this wallet's ledger, and what clears it. */
-export const NOT_ON_THIS_WALLETS_LEDGER = 'this wallet could not learn from the network which ledger version the chain '
-  + 'is on when it opened, so it read nothing and paid nothing. It asks the network again the next time it is asked to pay.';
+export const NOT_ON_THIS_WALLETS_LEDGER =
+  'this wallet could not learn from the network which ledger version the chain ' +
+  'is on when it opened, so it read nothing and paid nothing. It asks the network again the next time it is asked to pay.';

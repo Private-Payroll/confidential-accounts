@@ -15,7 +15,14 @@ import { ComingSoon } from './coming-soon.js';
 import { ConfirmInYourAccount } from './confirm-in-your-account.js';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './tabs.js';
 import { Alert, AlertDescription } from './alert.js';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, InputGroupTextarea } from './input-group.js';
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+  InputGroupText,
+  InputGroupTextarea
+} from './input-group.js';
 import { Spinner } from './spinner.js';
 import * as kit from '../index.js';
 import { CopyText } from './copy-text.js';
@@ -23,17 +30,32 @@ import { CopyText } from './copy-text.js';
 afterEach(cleanup);
 
 /* The tooltip's arrow measures itself with ResizeObserver, which a browser has and this test's page does not. */
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 
 /* The application's own English file: the words below come from it, and from nothing in the kit. */
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/web/src/locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = JSON.parse(
+  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/web/src/locales/en.json'), 'utf8')
+) as Record<string, string>;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.json': {} });
-const inKit = (ui: React.ReactNode, pick = 'en') => render(<KitProvider languages={LANGUAGES} pick={pick}>{ui}</KitProvider>);
+const inKit = (ui: React.ReactNode, pick = 'en') =>
+  render(
+    <KitProvider languages={LANGUAGES} pick={pick}>
+      {ui}
+    </KitProvider>
+  );
 
-describe('an alert\'s text', () => {
+describe("an alert's text", () => {
   /* RED WHEN: the text is balanced, which at phone width wraps it near 60% of the box and leaves the rest empty. */
   it('uses the full width of the box', () => {
-    inKit(<Alert><AlertDescription>One line of text.</AlertDescription></Alert>);
+    inKit(
+      <Alert>
+        <AlertDescription>One line of text.</AlertDescription>
+      </Alert>
+    );
     const text = screen.getByText('One line of text.');
     expect(text.className).toContain('text-pretty');
     expect(text.className).not.toContain('text-balance');
@@ -43,7 +65,9 @@ describe('an alert\'s text', () => {
 describe('an amount', () => {
   /* RED WHEN: the figure loses a digit, is not written left to right, or a private amount carries the Public pill. */
   it('is exact, left to right, and private with no pill', () => {
-    const { container } = inKit(<Amount value={privateAmount(12_345_678_901_234_567_890n, 6, 'tUSD')} kind="payment" />);
+    const { container } = inKit(
+      <Amount value={privateAmount(12_345_678_901_234_567_890n, 6, 'tUSD')} kind="payment" />
+    );
     const figure = container.querySelector('[data-slot=amount] > span[dir=ltr]');
     expect(figure?.textContent).toBe('12,345,678,901,234.56789 tUSD');
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
@@ -56,7 +80,9 @@ describe('an amount', () => {
     const pill = container.querySelector('[data-slot=public-pill]') as HTMLElement;
     expect(pill.textContent).toBe(EN['kit.public.label']);
     expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
-    await act(async () => { fireEvent.click(pill); });
+    await act(async () => {
+      fireEvent.click(pill);
+    });
     expect(screen.queryAllByText(EN['kit.public.explanation.payment']!).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(EN['kit.public.explanation.balance']!)).toEqual([]);
   });
@@ -67,15 +93,25 @@ describe('an amount', () => {
    * uses the balance wording.
    */
   it('explains a payment not made yet as one to come, and only that one', async () => {
-    expect(new Set([EN['kit.public.explanation.toBePaid'], EN['kit.public.explanation.payment'], EN['kit.public.explanation.balance']]).size).toBe(3);
+    expect(
+      new Set([
+        EN['kit.public.explanation.toBePaid'],
+        EN['kit.public.explanation.payment'],
+        EN['kit.public.explanation.balance']
+      ]).size
+    ).toBe(3);
     const { container } = inKit(<Amount value={publicAmount(1n, 0, 'NIGHT')} kind="to-be-paid" />);
-    await act(async () => { fireEvent.click(container.querySelector('[data-slot=public-pill]')!); });
+    await act(async () => {
+      fireEvent.click(container.querySelector('[data-slot=public-pill]')!);
+    });
     expect(screen.queryAllByText(EN['kit.public.explanation.toBePaid']!).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
     expect(screen.queryAllByText(EN['kit.public.explanation.balance']!)).toEqual([]);
     cleanup();
     const made = inKit(<Amount value={publicAmount(1n, 0, 'NIGHT')} kind="payment" />);
-    await act(async () => { fireEvent.click(made.container.querySelector('[data-slot=public-pill]')!); });
+    await act(async () => {
+      fireEvent.click(made.container.querySelector('[data-slot=public-pill]')!);
+    });
     expect(screen.queryAllByText(EN['kit.public.explanation.toBePaid']!)).toEqual([]);
   });
 
@@ -89,15 +125,23 @@ describe('an amount', () => {
   it('cannot be shown unless it was made as an amount, and says whether it is a payment or a balance', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     // @ts-expect-error an amount is made by publicAmount or privateAmount, never a bare bigint
-    expect(() => inKit(<Amount value={1n} kind="payment" />)).toThrow(/made by publicAmount or privateAmount, and this is a value of type bigint/);
+    expect(() => inKit(<Amount value={1n} kind="payment" />)).toThrow(
+      /made by publicAmount or privateAmount, and this is a value of type bigint/
+    );
     // @ts-expect-error nor a number
-    expect(() => inKit(<Amount value={1} kind="payment" />)).toThrow(/made by publicAmount or privateAmount, and this is a value of type number/);
+    expect(() => inKit(<Amount value={1} kind="payment" />)).toThrow(
+      /made by publicAmount or privateAmount, and this is a value of type number/
+    );
     // @ts-expect-error whether an amount is public is read from it, and is never passed in
     inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} visibility="public" kind="payment" />);
     // @ts-expect-error whether it is a payment or a balance is required, so the pill never guesses what public means
-    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'tUSD')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={publicAmount(1n, 0, 'tUSD')} />)).toThrow(
+      /a payment, a payment to be made or a balance, and this one is undefined/
+    );
     // @ts-expect-error and on a private amount too
-    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} />)).toThrow(/a payment, a payment to be made or a balance, and this one is undefined/);
+    expect(() => inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} />)).toThrow(
+      /a payment, a payment to be made or a balance, and this one is undefined/
+    );
     vi.restoreAllMocks();
   });
 
@@ -115,7 +159,9 @@ describe('an amount', () => {
 
   /* RED WHEN: a value told it is public, or dressed as one, is shown as public: the pill is written only for an amount made public. */
   it('is public only when made public', () => {
-    const { container } = inKit(<Amount value={privateAmount(1n, 0, 'tUSD')} {...{ visibility: 'public' }} kind="payment" />);
+    const { container } = inKit(
+      <Amount value={privateAmount(1n, 0, 'tUSD')} {...{ visibility: 'public' }} kind="payment" />
+    );
     expect(container.querySelector('[data-slot=public-pill]')).toBeNull();
     expect(container.querySelector('[data-slot=amount]')?.getAttribute('data-visibility')).toBe('private');
   });
@@ -155,10 +201,12 @@ describe('an amount in a table that says its asset and state in columns of their
   });
 
   /* RED WHEN: the state is not read from the amount itself: a public amount without the Public pill and its explanation, or a private one without the Private pill. */
-  it('says private or public from the amount, with the Public pill\'s explanation', async () => {
+  it("says private or public from the amount, with the Public pill's explanation", async () => {
     const pub = inKit(<AmountState value={publicAmount(1n, 0, 'NIGHT')} kind="balance" />);
     expect(pub.container.querySelector('[data-slot=public-pill]')?.textContent).toBe(EN['kit.public.label']);
-    await act(async () => { fireEvent.click(pub.container.querySelector('[data-slot=public-pill]')!); });
+    await act(async () => {
+      fireEvent.click(pub.container.querySelector('[data-slot=public-pill]')!);
+    });
     expect(document.body.textContent).toContain(EN['kit.public.explanation.balance']);
     expect(document.body.textContent).not.toContain(EN['kit.public.explanation.payment']);
     expect(pub.container.querySelector('[data-slot=private-pill]')).toBeNull();
@@ -193,9 +241,19 @@ describe('a balance', () => {
    * once as a label and once as the pill.
    */
   it('shows private and public on two lines, never a total, and says Public once', () => {
-    const { container } = inKit(<Balance private={privateAmount(150n, 2, 'tUSD')} public={publicAmount(25n, 2, 'tUSD')} />);
+    const { container } = inKit(
+      <Balance private={privateAmount(150n, 2, 'tUSD')} public={publicAmount(25n, 2, 'tUSD')} />
+    );
     const lines = [...container.querySelectorAll('dd')];
-    expect(lines.map((d) => [d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'), d.querySelector('span[dir=ltr]')?.textContent])).toEqual([['private', '1.5 tUSD'], ['public', '0.25 tUSD']]);
+    expect(
+      lines.map((d) => [
+        d.querySelector('[data-visibility]')?.getAttribute('data-visibility') ?? d.getAttribute('data-visibility'),
+        d.querySelector('span[dir=ltr]')?.textContent
+      ])
+    ).toEqual([
+      ['private', '1.5 tUSD'],
+      ['public', '0.25 tUSD']
+    ]);
     expect(container.textContent).not.toContain('1.75');
     const labels = [...container.querySelectorAll('dt')];
     expect(labels[0]?.textContent).toBe(EN['kit.balance.private']);
@@ -210,8 +268,12 @@ describe('a balance', () => {
    * payment's, who received it.
    */
   it('explains its public line as a balance, not as a payment', async () => {
-    const { container } = inKit(<Balance private={privateAmount(1n, 0, 'tUSD')} public={publicAmount(2n, 0, 'tUSD')} />);
-    await act(async () => { fireEvent.click(container.querySelector('[data-slot=public-pill]') as HTMLElement); });
+    const { container } = inKit(
+      <Balance private={privateAmount(1n, 0, 'tUSD')} public={publicAmount(2n, 0, 'tUSD')} />
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector('[data-slot=public-pill]') as HTMLElement);
+    });
     expect(EN['kit.public.explanation.balance']).not.toBe(EN['kit.public.explanation.payment']);
     expect(screen.queryAllByText(EN['kit.public.explanation.balance']!).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(EN['kit.public.explanation.payment']!)).toEqual([]);
@@ -227,9 +289,15 @@ describe('a balance', () => {
     const held: PrivateAmount = privateAmount(1n, 0, 'tUSD');
     const shown: PublicAmount = publicAmount(2n, 0, 'tUSD');
     // @ts-expect-error the two sides swapped do not typecheck
-    expect(() => inKit(<Balance private={shown} public={held} />)).toThrow(/private amount on its private side and a public amount on its public side/);
-    expect(() => inKit(<Balance private={held} public={held as unknown as PublicAmount} />)).toThrow(/public amount on its public side/);
-    expect(() => inKit(<Balance private={shown as unknown as PrivateAmount} public={shown} />)).toThrow(/private amount on its private side/);
+    expect(() => inKit(<Balance private={shown} public={held} />)).toThrow(
+      /private amount on its private side and a public amount on its public side/
+    );
+    expect(() => inKit(<Balance private={held} public={held as unknown as PublicAmount} />)).toThrow(
+      /public amount on its public side/
+    );
+    expect(() => inKit(<Balance private={shown as unknown as PrivateAmount} public={shown} />)).toThrow(
+      /private amount on its private side/
+    );
     // @ts-expect-error there is no total
     inKit(<Balance private={held} public={shown} total={shown} />);
     vi.restoreAllMocks();
@@ -246,11 +314,17 @@ describe('the Coming soon pill', () => {
     expect(pill.className).toMatch(/\bbg-muted\b/);
     expect(pill.className).toMatch(/\btext-muted-foreground\b/);
     expect(screen.queryByText(explanation)).toBeNull();
-    await act(async () => { fireEvent.click(pill); });
+    await act(async () => {
+      fireEvent.click(pill);
+    });
     expect(screen.getByText(explanation)).toBeTruthy();
-    await act(async () => { fireEvent.click(pill); });
+    await act(async () => {
+      fireEvent.click(pill);
+    });
     expect(screen.queryByText(explanation)).toBeNull();
-    await act(async () => { fireEvent.mouseEnter(pill); });
+    await act(async () => {
+      fireEvent.mouseEnter(pill);
+    });
     expect(screen.getByText(explanation)).toBeTruthy();
   });
 });
@@ -258,17 +332,22 @@ describe('the Coming soon pill', () => {
 describe('the confirm step', () => {
   /* RED WHEN: its words are not the English file's, what is confirmed is not shown or not required, an answer is not reported, or it can be answered while busy. */
   it('asks, reports the answer, and waits while busy', () => {
-    const onConfirm = vi.fn(); const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
     const summary = 'What the screen says is being confirmed.';
     // @ts-expect-error what is being confirmed is required, so no approval is asked for with nothing said about it
-    void <ConfirmInYourAccount onConfirm={onConfirm} onCancel={onCancel} />;
+    void (<ConfirmInYourAccount onConfirm={onConfirm} onCancel={onCancel} />);
     const { rerender } = inKit(<ConfirmInYourAccount summary={summary} onConfirm={onConfirm} onCancel={onCancel} />);
     expect(screen.getByRole('heading').textContent).toBe(EN['kit.confirm.title']);
     expect(screen.getByText(summary)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: EN['kit.confirm.confirm'] }));
     fireEvent.click(screen.getByRole('button', { name: EN['kit.confirm.cancel'] }));
     expect([onConfirm.mock.calls.length, onCancel.mock.calls.length]).toEqual([1, 1]);
-    rerender(<KitProvider languages={LANGUAGES} pick="en"><ConfirmInYourAccount summary={summary} onConfirm={onConfirm} onCancel={onCancel} busy /></KitProvider>);
+    rerender(
+      <KitProvider languages={LANGUAGES} pick="en">
+        <ConfirmInYourAccount summary={summary} onConfirm={onConfirm} onCancel={onCancel} busy />
+      </KitProvider>
+    );
     for (const b of screen.getAllByRole('button')) expect((b as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -282,9 +361,13 @@ describe('the tabs across the top of a page', () => {
   it('are one tab list, mark the tab shown, and move by press and by arrow key', async () => {
     const { container } = inKit(
       <Tabs defaultValue="a">
-        <TabsList><TabsTrigger value="a">A</TabsTrigger><TabsTrigger value="b">B</TabsTrigger></TabsList>
-        <TabsContent value="a">first</TabsContent><TabsContent value="b">second</TabsContent>
-      </Tabs>,
+        <TabsList>
+          <TabsTrigger value="a">A</TabsTrigger>
+          <TabsTrigger value="b">B</TabsTrigger>
+        </TabsList>
+        <TabsContent value="a">first</TabsContent>
+        <TabsContent value="b">second</TabsContent>
+      </Tabs>
     );
     const list = container.querySelector('[data-slot=tabs-list]') as HTMLElement;
     expect(list.getAttribute('role')).toBe('tablist');
@@ -292,11 +375,16 @@ describe('the tabs across the top of a page', () => {
     expect([a!.getAttribute('aria-selected'), b!.getAttribute('aria-selected')]).toEqual(['true', 'false']);
     expect(container.textContent).toContain('first');
     expect(container.textContent).not.toContain('second');
-    await act(async () => { fireEvent.mouseDown(b!, { button: 0 }); });
+    await act(async () => {
+      fireEvent.mouseDown(b!, { button: 0 });
+    });
     expect(b!.getAttribute('aria-selected')).toBe('true');
     expect(container.textContent).toContain('second');
     b!.focus();
-    await act(async () => { fireEvent.keyDown(b!, { key: 'ArrowLeft' }); await new Promise((r) => setTimeout(r, 0)); });
+    await act(async () => {
+      fireEvent.keyDown(b!, { key: 'ArrowLeft' });
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(document.activeElement).toBe(a);
   });
 });
@@ -310,7 +398,9 @@ describe('a spinner', () => {
     expect(spinner.getAttribute('aria-label')).toBe(EN['accountTokens.waiting']);
     const german = inKit(<Spinner aria-label="Warten" />, 'de');
     expect(german.container.querySelector('[data-slot=spinner]')!.getAttribute('aria-label')).toBe('Warten');
-    expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'spinner.tsx'), 'utf8')).not.toMatch(/aria-label\s*=\s*["']/);
+    expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), 'spinner.tsx'), 'utf8')).not.toMatch(
+      /aria-label\s*=\s*["']/
+    );
   });
 });
 
@@ -321,8 +411,11 @@ describe('an input group', () => {
     const { container } = inKit(
       <InputGroup>
         <InputGroupInput aria-label="amount" />
-        <InputGroupAddon align="inline-end"><InputGroupText>unit</InputGroupText><InputGroupButton onClick={pressed}>x</InputGroupButton></InputGroupAddon>
-      </InputGroup>,
+        <InputGroupAddon align="inline-end">
+          <InputGroupText>unit</InputGroupText>
+          <InputGroupButton onClick={pressed}>x</InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
     );
     const field = container.querySelector('input')!;
     const addon = container.querySelector('[data-slot=input-group-addon]')!;
@@ -336,16 +429,38 @@ describe('an input group', () => {
 
   /* RED WHEN: a group around a text area is drawn without its field being the group's control. */
   it('can hold a text area as its field', () => {
-    const { container } = inKit(<InputGroup><InputGroupTextarea aria-label="note" /></InputGroup>);
+    const { container } = inKit(
+      <InputGroup>
+        <InputGroupTextarea aria-label="note" />
+      </InputGroup>
+    );
     expect(container.querySelector('[data-slot=input-group] textarea[data-slot=input-group-control]')).not.toBeNull();
   });
 });
 
-describe('the kit\'s index', () => {
+describe("the kit's index", () => {
   /* RED WHEN: Select, Checkbox, Table or the copy control is left out of the index, so a screen in the application cannot import it by the kit's name. */
   it('exports the select, the checkbox, the table and the copy control, each with its parts', () => {
-    const names = ['Select', 'SelectContent', 'SelectGroup', 'SelectItem', 'SelectLabel', 'SelectSeparator', 'SelectTrigger', 'SelectValue',
-      'Checkbox', 'Table', 'TableBody', 'TableCaption', 'TableCell', 'TableFooter', 'TableHead', 'TableHeader', 'TableRow', 'CopyText'];
+    const names = [
+      'Select',
+      'SelectContent',
+      'SelectGroup',
+      'SelectItem',
+      'SelectLabel',
+      'SelectSeparator',
+      'SelectTrigger',
+      'SelectValue',
+      'Checkbox',
+      'Table',
+      'TableBody',
+      'TableCaption',
+      'TableCell',
+      'TableFooter',
+      'TableHead',
+      'TableHeader',
+      'TableRow',
+      'CopyText'
+    ];
     expect(names.filter((n) => (kit as Record<string, unknown>)[n] === undefined)).toEqual([]);
   });
 });
@@ -354,9 +469,20 @@ describe('the copy control', () => {
   const written: string[] = [];
   const setClipboard = () => {
     written.length = 0;
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async (t: string) => { written.push(t); }) } });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async (t: string) => {
+          written.push(t);
+        })
+      }
+    });
   };
-  const press = async () => { await act(async () => { fireEvent.click(screen.getByRole('button')); }); };
+  const press = async () => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button'));
+    });
+  };
 
   /* RED WHEN: pressing the control writes anything but the text it was given, or shows the text it was given in a field that can be edited. */
   it('writes its text to the clipboard and shows it read-only', async () => {
@@ -375,12 +501,20 @@ describe('the copy control', () => {
     const view = inKit(<CopyText text="a" label="Copy link" copied="Link copied" refused="Not copied" />);
     await press();
     expect(screen.getByRole('button').textContent).toBe('Link copied');
-    await act(async () => { vi.advanceTimersByTime(1599); });
+    await act(async () => {
+      vi.advanceTimersByTime(1599);
+    });
     expect(screen.getByRole('button').textContent).toBe('Link copied');
-    await act(async () => { vi.advanceTimersByTime(1); });
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
     expect(screen.getByRole('button').textContent).toBe('Copy link');
     await press();
-    view.rerender(<KitProvider languages={LANGUAGES} pick="en"><CopyText text="b" label="Copy link" copied="Link copied" refused="Not copied" /></KitProvider>);
+    view.rerender(
+      <KitProvider languages={LANGUAGES} pick="en">
+        <CopyText text="b" label="Copy link" copied="Link copied" refused="Not copied" />
+      </KitProvider>
+    );
     expect(screen.getByRole('button').textContent).toBe('Copy link');
     vi.useRealTimers();
   });
@@ -399,7 +533,14 @@ describe('the copy control', () => {
 
   /* RED WHEN: a browser that would not copy (a refused permission, or no clipboard on a page that is not secure) leaves the control saying nothing or saying copied, or the message stays after the next press copies. */
   it('says so under the field when the browser would not copy, and not once a press copies', async () => {
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => { throw new Error('denied'); }) } });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async () => {
+          throw new Error('denied');
+        })
+      }
+    });
     inKit(<CopyText text="a" label="Copy link" copied="Link copied" refused="Not copied" />);
     expect(screen.queryByRole('alert')).toBeNull();
     await press();

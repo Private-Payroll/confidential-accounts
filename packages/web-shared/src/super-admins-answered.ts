@@ -14,7 +14,8 @@ const COUNTER = /^[0-9]+$/u;
 
 /** One answer to one of the super admins' asks, built with `d`. */
 export async function superAdminAnswered(
-  d: Pick<WorkerDeps, 'runtimeState' | 'accountLedger' | 'ledger' | 'chainSourceAt'>, ask: SuperAdminAsk,
+  d: Pick<WorkerDeps, 'runtimeState' | 'accountLedger' | 'ledger' | 'chainSourceAt'>,
+  ask: SuperAdminAsk
 ): Promise<SuperAdminAnswer> {
   const ledger = superAdminLedgerOf(d.ledger);
   switch (ask.ask) {
@@ -27,12 +28,28 @@ export async function superAdminAnswered(
         : { id: ask.id, ok: true, ask: ask.ask, read: await reads.authorityAt(String(ask.address).toLowerCase()) };
     }
     case 'super-admin-update': {
-      if (!COUNTER.test(String(ask.counter))) throw new Error('that is not a counter the chain holds, so no update was made.');
-      return { id: ask.id, ok: true, ask: ask.ask, bytes: toBase64(await ledger.updateBytes({ vault: ask.vault, counter: BigInt(ask.counter), to: ask.to })) };
+      if (!COUNTER.test(String(ask.counter)))
+        throw new Error('that is not a counter the chain holds, so no update was made.');
+      return {
+        id: ask.id,
+        ok: true,
+        ask: ask.ask,
+        bytes: toBase64(await ledger.updateBytes({ vault: ask.vault, counter: BigInt(ask.counter), to: ask.to }))
+      };
     }
     case 'super-admin-signed':
-      return { id: ask.id, ok: true, ask: ask.ask, good: await ledger.signedBy(ask.key, fromBase64(ask.data), ask.signature) };
+      return {
+        id: ask.id,
+        ok: true,
+        ask: ask.ask,
+        good: await ledger.signedBy(ask.key, fromBase64(ask.data), ask.signature)
+      };
     case 'super-admin-joined':
-      return { id: ask.id, ok: true, ask: ask.ask, good: await ledger.joinedBy(fromBase64(ask.data), ask.key, ask.signature) };
+      return {
+        id: ask.id,
+        ok: true,
+        ask: ask.ask,
+        good: await ledger.joinedBy(fromBase64(ask.data), ask.key, ask.signature)
+      };
   }
 }

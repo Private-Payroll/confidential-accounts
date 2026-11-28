@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { COMPANY_PHASE, COMPANY_USUAL_SECONDS, stageTimeRecord, stageTimeNoter, type StageTimeRecord } from './usual-times.js';
+import {
+  COMPANY_PHASE,
+  COMPANY_USUAL_SECONDS,
+  stageTimeRecord,
+  stageTimeNoter,
+  type StageTimeRecord
+} from './usual-times.js';
 
 /**
  * **EACH STAGE'S MEASURED SECONDS ARE KEPT WHEN THE STAGE ENDS, IN DEVELOPMENT ONLY.**
@@ -13,16 +19,32 @@ import { COMPANY_PHASE, COMPANY_USUAL_SECONDS, stageTimeRecord, stageTimeNoter, 
  * production build writes a line; or a constant of the usual times is changed by the recorder. A line is one object
  * (`stageTime`, `measuredSeconds`, `usualShownSeconds`), so no wording of its own stands in the application.
  */
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
-const noting = () => { const lines: StageTimeRecord[] = []; return { lines, note: stageTimeNoter((l) => { lines.push(l); }) }; };
-const rec = (stageTime: readonly string[], measuredSeconds: number, usualShownSeconds: number | null): StageTimeRecord => ({ stageTime, measuredSeconds, usualShownSeconds });
+const noting = () => {
+  const lines: StageTimeRecord[] = [];
+  return {
+    lines,
+    note: stageTimeNoter((l) => {
+      lines.push(l);
+    })
+  };
+};
+const rec = (
+  stageTime: readonly string[],
+  measuredSeconds: number,
+  usualShownSeconds: number | null
+): StageTimeRecord => ({ stageTime, measuredSeconds, usualShownSeconds });
 
 describe('the stage times', () => {
   it('the line names the stage, the measured seconds and the usual figure shown', () => {
     expect(stageTimeRecord(['deploy', 'proving'], 112.34, 120)).toEqual(rec(['deploy', 'proving'], 112.3, 120));
     expect(stageTimeRecord(['waiting-for-approvals'], 5, null)).toEqual(rec(['waiting-for-approvals'], 5, null));
-    expect(JSON.stringify(stageTimeRecord(['sending'], 31.25, 30))).toBe('{"stageTime":["sending"],"measuredSeconds":31.3,"usualShownSeconds":30}');
+    expect(JSON.stringify(stageTimeRecord(['sending'], 31.25, 30))).toBe(
+      '{"stageTime":["sending"],"measuredSeconds":31.3,"usualShownSeconds":30}'
+    );
   });
 
   it('writes one line when a stage ends, measured from its start to the start of the next', () => {
@@ -68,7 +90,7 @@ describe('the stage times', () => {
     expect(lines).toEqual([rec(['building'], 1, 120)]);
   });
 
-  it('the usual figures themselves are the recorder\'s to read, never to change', () => {
+  it("the usual figures themselves are the recorder's to read, never to change", () => {
     const { note } = noting();
     note(['deploy', COMPANY_PHASE.proving], 0, COMPANY_USUAL_SECONDS[COMPANY_PHASE.proving], 0);
     note(null, 0, null, 1_000);

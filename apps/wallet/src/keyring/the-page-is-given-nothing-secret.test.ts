@@ -6,7 +6,13 @@ import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { KeyringRequest } from 'midnight-identity/profile/request';
 import { fromHex, randomBytes, toHex, wrapKey } from '../../../../src/core/crypto.js';
 import { inboxPublicKey } from '../../../../src/core/sealed-records.js';
-import { openKeyring, sealedDigestOf, sealKeyring, type Keyring, type SavedCreation } from '../../../../packages/web-shared/src/keyring-blob.js';
+import {
+  openKeyring,
+  sealedDigestOf,
+  sealKeyring,
+  type Keyring,
+  type SavedCreation
+} from '../../../../packages/web-shared/src/keyring-blob.js';
 import { foundTheCompanyInTheWallet } from './found-company.js';
 import { SavedKeysRefused, type KeyringMark, type KeyringMarks } from './held-keyring.js';
 import { keysReadForThePage } from './read-for-the-page.js';
@@ -21,34 +27,72 @@ import { keyringSealKeyFor } from './seal-key.js';
 const PAGE = 'https://app.payroll.example';
 const secret = newSecret();
 const identity = identityFromSecret(secret);
-const SEAT = { signerId: 'sig_1', signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), blinding: '33'.repeat(32), scope: '44'.repeat(32) };
+const SEAT = {
+  signerId: 'sig_1',
+  signingSecret: '11'.repeat(32),
+  wrappingSecret: '22'.repeat(32),
+  blinding: '33'.repeat(32),
+  scope: '44'.repeat(32)
+};
 const VIEWING = toHex(randomBytes(32));
-const ask = (over: Partial<KeyringRequest> = {}): KeyringRequest => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'keyring', requester: { origin: PAGE, name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'x', nonce: 'k1', expiresAt: Date.now() + 600_000, person: 'usr_a', signedInAs: null, company: null, account: null, drawLabel: false,
-  ...over,
-} as KeyringRequest);
+const ask = (over: Partial<KeyringRequest> = {}): KeyringRequest =>
+  ({
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'keyring',
+    requester: { origin: PAGE, name: 'Payroll', rdns: 'example.payroll' },
+    purpose: 'x',
+    nonce: 'k1',
+    expiresAt: Date.now() + 600_000,
+    person: 'usr_a',
+    signedInAs: null,
+    company: null,
+    account: null,
+    drawLabel: false,
+    ...over
+  }) as KeyringRequest;
 const KEY = toHex(keyringSealKeyFor(identity, ask()));
 const marks = (): KeyringMarks => {
   const seen = new Map<string, KeyringMark>();
-  return { markOf: (p) => seen.get(p) ?? null, raise: (p, m) => { seen.set(p, m); } };
+  return {
+    markOf: (p) => seen.get(p) ?? null,
+    raise: (p, m) => {
+      seen.set(p, m);
+    }
+  };
 };
 const creation = (accountId: string, signed: boolean): SavedCreation => ({
-  accountId, person: 'usr_a', label: drawCompanyLabel(), foundingKey: { tag: 'schnorr', value: 'ab'.repeat(32) },
+  accountId,
+  person: 'usr_a',
+  label: drawCompanyLabel(),
+  foundingKey: { tag: 'schnorr', value: 'ab'.repeat(32) },
   request: { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 } as never,
-  made: true, deploy: null, signed: signed ? { tx: 'x', signature: { tag: 'schnorr', value: 'aa'.repeat(64) } } : null, recorded: false,
+  made: true,
+  deploy: null,
+  signed: signed ? { tx: 'x', signature: { tag: 'schnorr', value: 'aa'.repeat(64) } } : null,
+  recorded: false
 });
-const held = (): Keyring => ({ accounts: { acc_A: SEAT }, creations: { acc_U: creation('acc_U', false), acc_S: creation('acc_S', true) } });
+const held = (): Keyring => ({
+  accounts: { acc_A: SEAT },
+  creations: { acc_U: creation('acc_U', false), acc_S: creation('acc_S', true) }
+});
 const handedIn = (k: Keyring) => ({ sealed: sealKeyring(k, KEY).sealed, version: 4 });
-const served = () => [{
-  accountId: 'acc_A', inboxPublicKey: inboxPublicKey(VIEWING, 'acc_A'),
-  wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(VIEWING, toHex(x25519.getPublicKey(fromHex(SEAT.wrappingSecret)))) }],
-}];
-const secretsOf = (k: Keyring): string[] => Object.values(k.accounts).flatMap((s) => [s.signingSecret, s.wrappingSecret, s.blinding]);
+const served = () => [
+  {
+    accountId: 'acc_A',
+    inboxPublicKey: inboxPublicKey(VIEWING, 'acc_A'),
+    wrappedKeys: [{ signerId: 'sig_1', ...wrapKey(VIEWING, toHex(x25519.getPublicKey(fromHex(SEAT.wrappingSecret)))) }]
+  }
+];
+const secretsOf = (k: Keyring): string[] =>
+  Object.values(k.accounts).flatMap((s) => [s.signingSecret, s.wrappingSecret, s.blinding]);
 
 describe('THE PAGE IS GIVEN NOTHING SECRET OF THE SAVED KEYS', () => {
-  it('answers with the seat\'s public halves, the believed viewing key, the metadata and its public name, and no secret', () => {
-    const read = keysReadForThePage({ identity, request: ask({ keyring: handedIn(held()), served: served() }), marks: marks() })!.read;
+  it("answers with the seat's public halves, the believed viewing key, the metadata and its public name, and no secret", () => {
+    const read = keysReadForThePage({
+      identity,
+      request: ask({ keyring: handedIn(held()), served: served() }),
+      marks: marks()
+    })!.read;
     expect(Object.keys(read.seats)).toEqual(['acc_A']);
     expect(read.viewing).toEqual({ acc_A: VIEWING });
     expect(read.holder).toBe(keyringHolderFor(identity, ask()));
@@ -60,8 +104,16 @@ describe('THE PAGE IS GIVEN NOTHING SECRET OF THE SAVED KEYS', () => {
 
   it('makes the creation changes the page asked for only where the saved keys agree, and hands them back sealed', () => {
     const read = keysReadForThePage({
-      identity, marks: marks(),
-      request: ask({ keyring: handedIn(held()), served: [], tidy: [{ record: 'acc_U', what: 'forget' }, { record: 'acc_S', what: 'forget' }] }),
+      identity,
+      marks: marks(),
+      request: ask({
+        keyring: handedIn(held()),
+        served: [],
+        tidy: [
+          { record: 'acc_U', what: 'forget' },
+          { record: 'acc_S', what: 'forget' }
+        ]
+      })
     })!.read;
     /* RED WHEN: the asked changes are not made, or one is made on a creation something was signed for. */
     const again = openKeyring(read.resealed!.sealed as never, KEY);
@@ -75,11 +127,17 @@ describe('THE PAGE IS GIVEN NOTHING SECRET OF THE SAVED KEYS', () => {
     expect(keysReadForThePage({ identity, request: ask(), marks: marks() })).toBeNull();
   });
 
-  it('a founding\'s answer holds the new company\'s viewing key and seat by their public halves only', async () => {
+  it("a founding's answer holds the new company's viewing key and seat by their public halves only", async () => {
     const label = drawCompanyLabel();
     const done = await foundTheCompanyInTheWallet({
-      identity, label, marks: marks(),
-      request: ask({ drawLabel: true, founding: { name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' } }, keyring: { sealed: null, version: 0 } }),
+      identity,
+      label,
+      marks: marks(),
+      request: ask({
+        drawLabel: true,
+        founding: { name: 'Acme Ltd', signer: { name: 'Priya', role: 'admin' } },
+        keyring: { sealed: null, version: 0 }
+      })
     });
     const id = done.accountId;
     /* RED WHEN: the page is not given the new company's viewing key, so opening it costs a window. */
@@ -113,12 +171,22 @@ describe('SAVED KEYS SEALED UNDER THE OLD KEY COME BACK SEALED UNDER THE NEW ONE
     expect(m.markOf('usr_a')?.under).toBeUndefined();
     here.handedOver();
     /* RED WHEN: the re-seal on this path raises nothing, so this device goes on opening copies under the old key. */
-    expect(m.markOf('usr_a')).toEqual({ counter: 2, digest: sealedDigestOf(here.read.resealed!.sealed as never), under: 2 });
+    expect(m.markOf('usr_a')).toEqual({
+      counter: 2,
+      digest: sealedDigestOf(here.read.resealed!.sealed as never),
+      under: 2
+    });
     /* RED WHEN: a device that has moved the copy to the new key opens one still under the old key, or refuses it as anything but an older copy. */
-    expect(() => keysReadForThePage({ identity, request: ask({ keyring: handed, served: [] }), marks: m })).toThrow(SavedKeysRefused);
-    expect(() => keysReadForThePage({ identity, request: ask({ keyring: handed, served: [] }), marks: m })).toThrow(/before this device moved them to the key no page holds, so they are an older copy/);
+    expect(() => keysReadForThePage({ identity, request: ask({ keyring: handed, served: [] }), marks: m })).toThrow(
+      SavedKeysRefused
+    );
+    expect(() => keysReadForThePage({ identity, request: ask({ keyring: handed, served: [] }), marks: m })).toThrow(
+      /before this device moved them to the key no page holds, so they are an older copy/
+    );
     /* The copy the page was handed opens, and the mark moves on with it. */
     const kept = { sealed: here.read.resealed!.sealed, version: 5 };
-    expect(keysReadForThePage({ identity, request: ask({ keyring: kept as never, served: [] }), marks: m })!.read.resealed).toBeNull();
+    expect(
+      keysReadForThePage({ identity, request: ask({ keyring: kept as never, served: [] }), marks: m })!.read.resealed
+    ).toBeNull();
   });
 });

@@ -20,14 +20,21 @@ type RemovalApproversDoors = Pick<GovernanceDoors, 'approvers' | 'records' | 'ac
  * this device cannot open is refused rather than left out (`bandsInForceHere`,
  * strict). Refuses, with nothing sent, a page that cannot read the policies.
  */
-async function bandsForARemovalHere(doors: RemovalApproversDoors, viewingKey: KeysHeld): Promise<readonly BandInForce[]> {
+async function bandsForARemovalHere(
+  doors: RemovalApproversDoors,
+  viewingKey: KeysHeld
+): Promise<readonly BandInForce[]> {
   if (doors.records?.spendingPolicies === undefined) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s spending policies, so it cannot count who approves each '
-      + 'vault\'s runs at its bands once this signer is removed. Nothing was sent. Reload the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's spending policies, so it cannot count who approves each " +
+        "vault's runs at its bands once this signer is removed. Nothing was sent. Reload the page to get the current version."
+    );
   }
   return bandsInForceHere({ records: doors.records, accountId: doors.accountId, viewingKey }, { strict: true });
 }
 
 /** The approvers once a signer is removed, each vault counted at the highest band of a policy in force on it. */
-export const removalApproversHere = async (doors: RemovalApproversDoors, viewingKey: KeysHeld): Promise<ApproverRoster> =>
-  withBandsInForce(await doors.approvers(), await bandsForARemovalHere(doors, viewingKey));
+export const removalApproversHere = async (
+  doors: RemovalApproversDoors,
+  viewingKey: KeysHeld
+): Promise<ApproverRoster> => withBandsInForce(await doors.approvers(), await bandsForARemovalHere(doors, viewingKey));

@@ -11,14 +11,18 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { HDKey } from '@scure/bip32';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import {
-  DerivationError, Purposes, addressFor, identityFromWords, seedFromWords,
-} from 'midnight-identity';
+import { DerivationError, Purposes, addressFor, identityFromWords, seedFromWords } from 'midnight-identity';
 import { ownedAddressFor } from './owned-address.js';
 import type { OwnedAddress } from './owned-address.js';
 import {
-  MAIN_ACCOUNT, OFFERED_UP_FRONT, SUBWALLET_ACCOUNTS, WALLET_ACCOUNTS,
-  defaultNameOf, displayNameOf, hueOf, isWalletAccount,
+  MAIN_ACCOUNT,
+  OFFERED_UP_FRONT,
+  SUBWALLET_ACCOUNTS,
+  WALLET_ACCOUNTS,
+  defaultNameOf,
+  displayNameOf,
+  hueOf,
+  isWalletAccount
 } from './subwallets.js';
 
 /**
@@ -121,8 +125,7 @@ describe('the derivation parameter — 2.1', () => {
 describe('account 1 — 2.2, the authority trap, asserted rather than remembered', () => {
   const AUTHORITY_ROOT_PATH = "m/44'/2400'/1'/0/0";
   const SALT = new TextEncoder().encode('midnight-identity/authority/v1');
-  const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC))
-    .derive(AUTHORITY_ROOT_PATH).privateKey!;
+  const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC)).derive(AUTHORITY_ROOT_PATH).privateKey!;
 
   it('moneyAt(1) is refused, loudly and by its own name', () => {
     expect(() => ours.moneyAt(1)).toThrow(DerivationError);
@@ -143,10 +146,9 @@ describe('account 1 — 2.2, the authority trap, asserted rather than remembered
      * from, which is exactly why `moneyAt(1)` refuses. If the authority path
      * ever moves, this test says so rather than letting the two rules drift
      * apart. */
-    const nightAtAccount1 = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC))
-      .derive("m/44'/2400'/1'/0/0").privateKey!;
-    const expandsTo = (purpose: string, index: number): string => hex(hkdf(
-      sha256, nightAtAccount1, SALT, new TextEncoder().encode(`${purpose}/${index}`), 32));
+    const nightAtAccount1 = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC)).derive("m/44'/2400'/1'/0/0").privateKey!;
+    const expandsTo = (purpose: string, index: number): string =>
+      hex(hkdf(sha256, nightAtAccount1, SALT, new TextEncoder().encode(`${purpose}/${index}`), 32));
     expect(expandsTo(Purposes.Login, 0)).toBe(hex(ours.authority(Purposes.Login, 0)));
     expect(expandsTo(Purposes.Device, 7)).toBe(hex(ours.authority(Purposes.Device, 7)));
   });
@@ -166,9 +168,9 @@ describe('account 1 — 2.2, the authority trap, asserted rather than remembered
      * against is strictly larger. */
     for (const purpose of Object.values(Purposes)) {
       for (const index of [0, 1, 2, 41]) {
-        authorityKeys.add(hex(hkdf(
-          sha256, independentRoot, SALT,
-          new TextEncoder().encode(`${purpose}/${index}`), 32)));
+        authorityKeys.add(
+          hex(hkdf(sha256, independentRoot, SALT, new TextEncoder().encode(`${purpose}/${index}`), 32))
+        );
       }
     }
     for (const account of WALLET_ACCOUNTS) {
@@ -215,8 +217,7 @@ describe('an address and its owner are one value', () => {
     /* Somebody names subwallet 2 "Subwallet 1". The genuine Subwallet 1 owns
      * as "Subwallet 1"; the impostor owns as "Subwallet 1 (subwallet 2)" —
      * the lie is printed next to the truth. */
-    expect(ownedAddressFor(ours, 3, { '3': 'Subwallet 1' }, 'preprod').owner)
-      .toBe('Subwallet 1 (subwallet 2)');
+    expect(ownedAddressFor(ours, 3, { '3': 'Subwallet 1' }, 'preprod').owner).toBe('Subwallet 1 (subwallet 2)');
   });
 
   it('refuses the reserved account and any slot the picker does not offer', () => {
@@ -231,7 +232,10 @@ describe('an address and its owner are one value', () => {
     // @ts-expect-error the brand is module-private: no literal can be an OwnedAddress
     const forged: OwnedAddress = {
       address: ownedAddressFor(ours, 0, {}, 'preprod').address,
-      account: 2, name: 'x', slot: 'subwallet 1', owner: 'x',
+      account: 2,
+      name: 'x',
+      slot: 'subwallet 1',
+      owner: 'x'
     };
     /* Used so the compiler keeps the assertion above. */
     expect(forged.account).toBe(2);
@@ -252,8 +256,9 @@ describe('the reserved account is documented where an implementer meets it', () 
    * sits in a sibling folder. The document an external implementer reads is
    * the one the package publishes, which is the one this pins. */
   const security = readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)),
-      '../../../../packages/identity/SECURITY.md'), 'utf8');
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../packages/identity/SECURITY.md'),
+    'utf8'
+  );
 
   it('SECURITY.md says account 1 is reserved and never a wallet', () => {
     expect(security).toMatch(/Account 1 of this seed is reserved and must never be offered as a wallet/);

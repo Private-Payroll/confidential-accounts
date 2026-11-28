@@ -7,7 +7,12 @@ import { keyInForce, type KeysHeld } from '../../../src/core/company-key.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { keysByPurpose } from './keys-by-purpose.js';
 import type { SealedProposal } from '../../../src/core/types.js';
-import { directoryEntryMade, type CommitteeKey, type DirectoryEntry, type DirectoryFiling } from '../../../src/midnight/seat-directory.js';
+import {
+  directoryEntryMade,
+  type CommitteeKey,
+  type DirectoryEntry,
+  type DirectoryFiling
+} from '../../../src/midnight/seat-directory.js';
 import type { DirectoryEntryStatement } from 'midnight-identity/profile/records-key';
 import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { openSeatProof, type SeatOpening } from '../../../src/core/seat-opening.js';
@@ -26,7 +31,9 @@ import type { CompanyView } from './company-view.js';
  * than the one this device now holds, or none.
  */
 /** The view a seat's own entry is read and filed through: the step's current one. */
-export interface EntryView { current(): Pick<CompanyView<unknown>, 'filings' | 'list' | 'write'> }
+export interface EntryView {
+  current(): Pick<CompanyView<unknown>, 'filings' | 'list' | 'write'>;
+}
 
 /** What filing an owed entry reads and writes, through the step's view: the directory, the proposals and the one filing. */
 interface EntryService {
@@ -38,31 +45,53 @@ interface EntryService {
 const entryServiceOf = (view: EntryView): EntryService => ({
   filings: () => view.current().filings(),
   proposals: () => view.current().list('proposals'),
-  file: async (filing) => { await view.current().write([{ to: 'directory', filing }]); },
+  file: async (filing) => {
+    await view.current().write([{ to: 'directory', filing }]);
+  }
 });
 
 const fileOwnDirectoryEntry = async (
-  service: EntryService, accountId: string, person: string,
-  signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement }, opening: SeatOpening,
-  keys: { readonly signingSecret: Hex; readonly viewingKey: KeysHeld }, invited: SignedSeatInvitation | null,
+  service: EntryService,
+  accountId: string,
+  person: string,
+  signed: { readonly committeeKey: CommitteeKey; readonly entry: DirectoryEntryStatement },
+  opening: SeatOpening,
+  keys: { readonly signingSecret: Hex; readonly viewingKey: KeysHeld },
+  invited: SignedSeatInvitation | null
 ): Promise<'filed' | 'already-there'> => {
   const filings = await service.filings();
   /*
    * Already filed for this seat with these keys, and carrying the very invitation this device holds: an entry filed
    * under one whose inviter has left since is filed again under the one re-issued for it.
    */
-  const there = filings.some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === signed.entry.seat
-    && f.change.entry.statement.signingKey === signed.entry.signingKey && f.change.entry.statement.wrappingKey === signed.entry.wrappingKey
-    && (invited === null || ((proof) => keysByPurpose(keys.viewingKey).everyEpoch().some((k) => openSeatProof(accountId, proof, k)?.invited?.signature === invited.signature))(f.change.entry.proof)));
+  const there = filings.some(
+    (f) =>
+      f?.change?.kind === 'claim' &&
+      f.change.entry?.statement?.seat === signed.entry.seat &&
+      f.change.entry.statement.signingKey === signed.entry.signingKey &&
+      f.change.entry.statement.wrappingKey === signed.entry.wrappingKey &&
+      (invited === null ||
+        ((proof) =>
+          keysByPurpose(keys.viewingKey)
+            .everyEpoch()
+            .some((k) => openSeatProof(accountId, proof, k)?.invited?.signature === invited.signature))(
+          f.change.entry.proof
+        ))
+  );
   if (there) return 'already-there';
   const entry: DirectoryEntry = directoryEntryMade({
     /*
      * Sealed under the key in force even while sealing is paused: the change of the key that ends the pause can wait
      * on this very entry, so refusing it here would hold the pause for ever.
      */
-    company: accountId, person, committeeKey: signed.committeeKey, signed: signed.entry, opening,
-    signingSecret: keys.signingSecret, viewingKey: keyInForce(keys.viewingKey),
-    ...(invited === null ? {} : { invited }),
+    company: accountId,
+    person,
+    committeeKey: signed.committeeKey,
+    signed: signed.entry,
+    opening,
+    signingSecret: keys.signingSecret,
+    viewingKey: keyInForce(keys.viewingKey),
+    ...(invited === null ? {} : { invited })
   });
   const filing: DirectoryFiling = { company: accountId, version: filings.length + 1, change: { kind: 'claim', entry } };
   await service.file(filing);
@@ -74,13 +103,19 @@ const fileOwnDirectoryEntry = async (
  * because this device cannot read the invitation behind its seat yet (`waitingForItsInvitation`, said in words the
  * person can act on). Only the first two let the entry go.
  */
-export type OwedEntryFiled = 'filed' | 'already-there' | 'nothing-owed' | { readonly notYet: string } | { readonly waitingForItsInvitation: string };
+export type OwedEntryFiled =
+  | 'filed'
+  | 'already-there'
+  | 'nothing-owed'
+  | { readonly notYet: string }
+  | { readonly waitingForItsInvitation: string };
 
 /** Said while a seat's own entry waits for the invitation behind it: what is waited for, and what happens next. */
-export const WAITING_FOR_ITS_INVITATION = 'your seat\'s entry in the company\'s directory is not filed yet: it must carry the invitation a '
-  + 'seat of the company signed for you, and this device could not read it from the company\'s proposals. Until it is filed '
-  + 'no device believes your seat, so you cannot approve or file anything. It is tried again in your next action in your wallet; '
-  + 'if this stays, ask the signer who added you to make an action on the company in their wallet, or to invite you again';
+export const WAITING_FOR_ITS_INVITATION =
+  "your seat's entry in the company's directory is not filed yet: it must carry the invitation a " +
+  "seat of the company signed for you, and this device could not read it from the company's proposals. Until it is filed " +
+  'no device believes your seat, so you cannot approve or file anything. It is tried again in your next action in your wallet; ' +
+  'if this stays, ask the signer who added you to make an action on the company in their wallet, or to invite you again';
 
 /**
  * **A SIGNER'S DIRECTORY ENTRY, FILED FROM THEIR OWN DEVICE AS SOON AS THE
@@ -111,7 +146,7 @@ export const fileTheOwedDirectoryEntry = async (
   /** The seat the account's deploy seated, as the person's own wallet reads it; null where it cannot be read. */
   founding: () => Promise<string | null>,
   /** The step's view of the company: the directory and the proposals are read, and the entry filed, through it. */
-  view: EntryView,
+  view: EntryView
 ): Promise<OwedEntryFiled> => {
   const service = entryServiceOf(view);
   const now = owed.read();
@@ -121,16 +156,27 @@ export const fileTheOwedDirectoryEntry = async (
     if (now.opening === undefined) {
       /* An entry the directory already holds needs no opening to be filed: it is there, whatever the keys on this device hold. */
       const entry = now.signed.entry;
-      const there = (await service.filings()).some((f) => f?.change?.kind === 'claim' && f.change.entry?.statement?.seat === entry.seat
-        && f.change.entry.statement.signingKey === entry.signingKey && f.change.entry.statement.wrappingKey === entry.wrappingKey);
+      const there = (await service.filings()).some(
+        (f) =>
+          f?.change?.kind === 'claim' &&
+          f.change.entry?.statement?.seat === entry.seat &&
+          f.change.entry.statement.signingKey === entry.signingKey &&
+          f.change.entry.statement.wrappingKey === entry.wrappingKey
+      );
       if (!there) {
-        return { notYet: 'this device holds no opening of its seat, so its entry cannot be filed. Take the seat again on this device' };
+        return {
+          notYet:
+            'this device holds no opening of its seat, so its entry cannot be filed. Take the seat again on this device'
+        };
       }
       done = 'already-there';
     } else {
       const held = await keys();
       if (held === null) {
-        return { notYet: 'this device cannot open the company\'s key yet, so its entry cannot be sealed for the company\'s members. It is filed once you are admitted' };
+        return {
+          notYet:
+            "this device cannot open the company's key yet, so its entry cannot be sealed for the company's members. It is filed once you are admitted"
+        };
       }
       /*
        * An invitation kept from a link names no leaf; the one an entry carries names it, and is read from the proposal that
@@ -139,17 +185,31 @@ export const fileTheOwedDirectoryEntry = async (
        */
       const seat = now.signed.entry.seat.toLowerCase();
       const byAddress = now.invited?.terms.leaf === undefined && now.invited?.terms.proposal !== undefined;
-      let invited = byAddress || now.invited?.terms.leaf?.toLowerCase() === seat ? now.invited ?? null : null;
+      let invited = byAddress || now.invited?.terms.leaf?.toLowerCase() === seat ? (now.invited ?? null) : null;
       if (invited === null) {
         /* A list the service will not give is a wait, never a reason to file the entry without its invitation. */
         let listed: unknown = [];
-        try { listed = await service.proposals(); } catch { listed = []; }
-        invited = seatInvitationIn(Array.isArray(listed) ? listed as SealedProposal[] : [], accountId, held.viewingKey, seat);
+        try {
+          listed = await service.proposals();
+        } catch {
+          listed = [];
+        }
+        invited = seatInvitationIn(
+          Array.isArray(listed) ? (listed as SealedProposal[]) : [],
+          accountId,
+          held.viewingKey,
+          seat
+        );
       }
       if (invited === null) {
         let first: string | null = null;
-        try { first = await founding(); } catch { first = null; }
-        if (first === null || first.toLowerCase() !== seat) return { waitingForItsInvitation: WAITING_FOR_ITS_INVITATION };
+        try {
+          first = await founding();
+        } catch {
+          first = null;
+        }
+        if (first === null || first.toLowerCase() !== seat)
+          return { waitingForItsInvitation: WAITING_FOR_ITS_INVITATION };
       }
       done = await fileOwnDirectoryEntry(service, accountId, now.person, now.signed, now.opening, held, invited);
     }

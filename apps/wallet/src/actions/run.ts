@@ -1,17 +1,55 @@
-import { ACT_ENDED_SCHEMA, ACT_REFUSED_CODE, ACT_REFUSED_KEY, MOST_ACT_RELAYS, MOST_ACT_STEPS, readOutcome } from 'midnight-identity/profile/channel';
-import type { ActEnded, ActStop, ActingChannel, CalledOver, KeptOver, RelayLabel, StepAt } from 'midnight-identity/profile/channel';
+import {
+  ACT_ENDED_SCHEMA,
+  ACT_REFUSED_CODE,
+  ACT_REFUSED_KEY,
+  MOST_ACT_RELAYS,
+  MOST_ACT_STEPS,
+  readOutcome
+} from 'midnight-identity/profile/channel';
+import type {
+  ActEnded,
+  ActStop,
+  ActingChannel,
+  CalledOver,
+  KeptOver,
+  RelayLabel,
+  StepAt
+} from 'midnight-identity/profile/channel';
 import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
 import { intentShapeOf, routeOf, sendsIn, type ActRequest } from 'midnight-identity/profile/request';
 import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.js';
-import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, type HeldKeyring, type KeyringMarks } from '../keyring/held-keyring.js';
+import {
+  keyringMarksFor,
+  openHeldKeyring,
+  SavedKeysRefused,
+  type HeldKeyring,
+  type KeyringMarks
+} from '../keyring/held-keyring.js';
 import { keysAtTheEnd, readKeysAtTheEnd } from './keys-at-the-end.js';
 import { checkedChannel, SecretWouldCross } from '../keyring/nothing-secret-crosses.js';
-import { StepRefused, type ActKeyring, type ActionDefinition, type Held, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActKeyring,
+  type ActionDefinition,
+  type Held,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ServiceNotReached, serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
 import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
-import { creationSource, feeSource, invitationSource, type AnsweredCall } from '../../../../packages/web-shared/src/records-source.js';
 import {
-  answeredNothingSent, gateRefusal, serviceCallOver, StepViews, type MovingSend, type StraightDoor,
+  creationSource,
+  feeSource,
+  invitationSource,
+  type AnsweredCall
+} from '../../../../packages/web-shared/src/records-source.js';
+import {
+  answeredNothingSent,
+  gateRefusal,
+  serviceCallOver,
+  StepViews,
+  type MovingSend,
+  type StraightDoor
 } from './step-views.js';
 
 /** A signal aborted at Stop, and abortable on its own when the action ends or runs out of time. */
@@ -64,7 +102,11 @@ export const REGISTRY_WRITE_MS = 3 * 60_000;
  * service's log; nowhere otherwise. Read when the action starts.
  */
 const actLogInDevelopment = (): ((line: string) => void) | undefined =>
-  (import.meta.env.DEV && import.meta.env.VITE_DEV_ERROR_SINK === '1' ? (line: string) => { console.warn(line); } : undefined);
+  import.meta.env.DEV && import.meta.env.VITE_DEV_ERROR_SINK === '1'
+    ? (line: string) => {
+        console.warn(line);
+      }
+    : undefined;
 
 /** An error as one line, its kind and message; never cut short here, so the console report can still see a key in it. */
 const thrown = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
@@ -132,7 +174,10 @@ export interface RunEnded {
   readonly abandoned: boolean;
 }
 
-type Raced = { readonly of: 'ran' } | { readonly of: 'failed'; readonly error: unknown } | { readonly of: 'cut'; readonly why: ActStop };
+type Raced =
+  | { readonly of: 'ran' }
+  | { readonly of: 'failed'; readonly error: unknown }
+  | { readonly of: 'cut'; readonly why: ActStop };
 
 /**
  * NEVER THROWS: whatever a definition does, the page gets one terminal answer. A refused or unanswered transaction
@@ -147,7 +192,11 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   const write = run.log ?? actLogInDevelopment();
   const log = (line: string): void => {
     if (write === undefined) return;
-    try { write(`action ${request.intent.name} in the wallet: ${line}`); } catch { /* a line that cannot be written never stops the action */ }
+    try {
+      write(`action ${request.intent.name} in the wallet: ${line}`);
+    } catch {
+      /* a line that cannot be written never stops the action */
+    }
   };
   const started = now();
   const deadline = Math.min(request.expiresAt - DEADLINE_MARGIN_MS, started + MOST_ACT_MS);
@@ -184,10 +233,18 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     return run.held;
   };
   const held: Held = Object.freeze({
-    get identity() { return keys().identity; },
-    get secret() { return keys().secret; },
-    get wallet() { return keys().wallet; },
-    get account() { return keys().account; },
+    get identity() {
+      return keys().identity;
+    },
+    get secret() {
+      return keys().secret;
+    },
+    get wallet() {
+      return keys().wallet;
+    },
+    get account() {
+      return keys().account;
+    }
   });
   /* Aborted at Stop, at the deadline and when the action ends: what each step is given to stop building. */
   const cut = cutAtStop(run.stop);
@@ -198,7 +255,10 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
    */
   const refusalOf = (why: ActStop | null): { refused?: string; code?: string } => {
     if (why !== 'check-failed' || says === null || !ACT_REFUSED_KEY.test(says.key)) return {};
-    return { refused: says.key, ...(refusedCode !== undefined && ACT_REFUSED_CODE.test(refusedCode) ? { code: refusedCode } : {}) };
+    return {
+      refused: says.key,
+      ...(refusedCode !== undefined && ACT_REFUSED_CODE.test(refusedCode) ? { code: refusedCode } : {})
+    };
   };
   const finish = (why: ActStop | null, step: number): RunEnded => {
     if (ended !== null) return ended;
@@ -214,8 +274,14 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     const mayLandOnAStop = Math.max(unconfirmed, Math.min(unconfirmed + sentStraight, MOST_ACT_RELAYS - relayed));
     const mayLand = why === null ? 0 : mayLandOnAStop;
     const answer: ActEnded = Object.freeze({
-      schema: ACT_ENDED_SCHEMA, nonce: request.nonce, intent: request.intent.name,
-      ended: why === null ? 'done' as const : 'stopped' as const, step, steps: total, relayed, unconfirmed: mayLand,
+      schema: ACT_ENDED_SCHEMA,
+      nonce: request.nonce,
+      intent: request.intent.name,
+      ended: why === null ? ('done' as const) : ('stopped' as const),
+      step,
+      steps: total,
+      relayed,
+      unconfirmed: mayLand,
       ...(why === null ? {} : { why }),
       ...refusalOf(why),
       ...((): { outcome?: Readonly<Record<string, string | number>> } => {
@@ -223,7 +289,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
         return outcome === undefined || outcome === null ? {} : { outcome };
       })(),
       ...keysAtTheEnd(opened, request, run.held.identity, (k) => ownCompany ?? ownCompanyIn(k)),
-      ...readKeysAtTheEnd(request.intent.name, why, readKeys),
+      ...readKeysAtTheEnd(request.intent.name, why, readKeys)
     });
     let sent: ActEnded = answer;
     try {
@@ -232,21 +298,39 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       if (!(e instanceof SecretWouldCross)) throw e;
       /* The end answer held a secret: it is not sent, and the page is told the action stopped, with nothing else. */
       sent = Object.freeze({
-        schema: ACT_ENDED_SCHEMA, nonce: request.nonce, intent: request.intent.name,
-        ended: 'stopped' as const, step, steps: total, relayed, unconfirmed: mayLandOnAStop, why: 'step-failed' as const,
+        schema: ACT_ENDED_SCHEMA,
+        nonce: request.nonce,
+        intent: request.intent.name,
+        ended: 'stopped' as const,
+        step,
+        steps: total,
+        relayed,
+        unconfirmed: mayLandOnAStop,
+        why: 'step-failed' as const
       });
       channel.answer(sent);
     }
     const done = sent.ended === 'done';
-    ended = Object.freeze({ ended: sent, says: done ? shownAtTheEnd[0] ?? null : says, more: done ? shownAtTheEnd.slice(1) : [], abandoned: !stepSettled });
-    log(sent.ended === 'done'
-      ? `done, ${sent.steps} of ${sent.steps} steps (relayed ${relayed})`
-      : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${sent.unconfirmed})`
-        + (sent.refused === undefined ? '' : ` (refused: ${sent.refused}${sent.code === undefined ? '' : ` ${sent.code}`})`));
+    ended = Object.freeze({
+      ended: sent,
+      says: done ? (shownAtTheEnd[0] ?? null) : says,
+      more: done ? shownAtTheEnd.slice(1) : [],
+      abandoned: !stepSettled
+    });
+    log(
+      sent.ended === 'done'
+        ? `done, ${sent.steps} of ${sent.steps} steps (relayed ${relayed})`
+        : `stopped at step ${sent.step} of ${sent.steps}: ${sent.why ?? 'step-failed'} (relayed ${relayed}, unconfirmed ${sent.unconfirmed})` +
+            (sent.refused === undefined
+              ? ''
+              : ` (refused: ${sent.refused}${sent.code === undefined ? '' : ` ${sent.code}`})`)
+    );
     return ended;
   };
 
-  const watch = (): void => { run.watch?.({ step: current, steps: total, relayed, unconfirmed, told: { ...told } }); };
+  const watch = (): void => {
+    run.watch?.({ step: current, steps: total, relayed, unconfirmed, told: { ...told } });
+  };
   /* A message refused for holding a secret stops the action where it is: nothing more is sent for it. */
   const sending = <T>(send: () => T): T => {
     try {
@@ -308,7 +392,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
 
   const shape = intentShapeOf(request.intent.name);
   /* The views the step running now opened, the one gate every send of it passes (step-views.ts), and whether it spoke. */
-  let views: StepViews | null = null, saidByTheGate = false;
+  let views: StepViews | null = null,
+    saidByTheGate = false;
   /* Before anything was handed over the gate's words stand; after, the step's own words for what it sent do. */
   const latchedAtTheGate = (words: Words): ActStop => {
     says = words;
@@ -318,7 +403,10 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     return latched;
   };
-  const gate = async (into: readonly { readonly vault: string }[] = [], calls: readonly MovingSend[] = []): Promise<void> => {
+  const gate = async (
+    into: readonly { readonly vault: string }[] = [],
+    calls: readonly MovingSend[] = []
+  ): Promise<void> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     try {
@@ -326,23 +414,40 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       await views?.check(into, calls);
     } catch (e) {
       const { words, marks } = gateRefusal(e, handedOver);
-      throw Object.assign(words === null ? (e instanceof Error ? e : new Error(String(e))) : new ActionStopped(latchedAtTheGate(words)), marks);
+      throw Object.assign(
+        words === null ? (e instanceof Error ? e : new Error(String(e))) : new ActionStopped(latchedAtTheGate(words)),
+        marks
+      );
     }
   };
   /* A transaction this wallet sends itself: the gate in its turn first, again when the send asks, and marked once handed over. */
   const sendStraight = async <T>(
-    send: (door: StraightDoor) => Promise<T>, into: readonly { readonly vault: string }[] = [],
-    calls: readonly { readonly circuit: string; readonly contract: string }[] = [],
+    send: (door: StraightDoor) => Promise<T>,
+    into: readonly { readonly vault: string }[] = [],
+    calls: readonly { readonly circuit: string; readonly contract: string }[] = []
   ): Promise<T> => {
     await inTurn(() => gate(into, calls));
     let handed = false;
     try {
-      return await send({ ready: () => inTurn(() => gate(into, calls)), handedOver: () => { handed = true; handedOver += 1; sentStraight += 1; } });
+      return await send({
+        ready: () => inTurn(() => gate(into, calls)),
+        handedOver: () => {
+          handed = true;
+          handedOver += 1;
+          sentStraight += 1;
+        }
+      });
     } finally {
-      if (handed) views?.sent(calls); else views?.notSent(calls);
+      if (handed) views?.sent(calls);
+      else views?.notSent(calls);
     }
   };
-  const callOne = async (at: StepAt, method: 'GET' | 'PUT' | 'POST', path: string, body?: string): Promise<{ status: number; body: unknown }> => {
+  const callOne = async (
+    at: StepAt,
+    method: 'GET' | 'PUT' | 'POST',
+    path: string,
+    body?: string
+  ): Promise<{ status: number; body: unknown }> => {
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     if (now() >= deadline) throw new ActionStopped('out-of-time');
@@ -363,7 +468,8 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     const outcome: CalledOver | 'late' = await Promise.race([answered, patience]).finally(() => clearTimeout(timer));
     if (typeof outcome === 'object') {
       if (sendsIn(route, body)) {
-        if (outcome.status >= 200 && outcome.status < 300) relayed += 1; else unconfirmed += 1;
+        if (outcome.status >= 200 && outcome.status < 300) relayed += 1;
+        else unconfirmed += 1;
         watch();
       }
       return { status: outcome.status, body: outcome.body };
@@ -375,11 +481,18 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
        * that carried nothing handed nothing over; one that carried something may have reached the service, and the
        * step reads the chain before it sends anything again. Past its patience the page may still make the call.
        */
-      if (outcome === 'late' && sendsIn(route, body)) { unconfirmed += 1; lateUnconfirmed += 1; watch(); }
+      if (outcome === 'late' && sendsIn(route, body)) {
+        unconfirmed += 1;
+        lateUnconfirmed += 1;
+        watch();
+      }
       /* Once anything of this action was handed over, no unanswered call says nothing was sent. */
-      throw new ServiceNotReached(outcome === 'late'
-        ? 'the company\'s service did not answer in time'
-        : 'the company\'s service could not be reached', !carries && handedOver === 0);
+      throw new ServiceNotReached(
+        outcome === 'late'
+          ? "the company's service did not answer in time"
+          : "the company's service could not be reached",
+        !carries && handedOver === 0
+      );
     }
     if (sendsIn(route, body)) unconfirmed += 1;
     latched = outcome === 'refused' ? 'call-refused' : 'no-call-answer';
@@ -394,11 +507,19 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   };
   const callsAt = (at: StepAt) => ({
     inTurn: serviceCallOver((method, path, body) => callInTurn(at, method, path, body, true)),
-    direct: serviceCallOver((method, path, body) => callOne(at, method, path, body)),
+    direct: serviceCallOver((method, path, body) => callOne(at, method, path, body))
   });
-  const tell = (outcome: Readonly<Record<string, string | number>>): void => { Object.assign(told, outcome); };
-  const releaseReadKeys = (keys: ReadKeysReleased): void => { readKeys = keys; };
-  const sentByTheWallet = (): void => { handedOver += 1; sentStraight += 1; views?.sent(); };
+  const tell = (outcome: Readonly<Record<string, string | number>>): void => {
+    Object.assign(told, outcome);
+  };
+  const releaseReadKeys = (keys: ReadKeysReleased): void => {
+    readKeys = keys;
+  };
+  const sentByTheWallet = (): void => {
+    handedOver += 1;
+    sentStraight += 1;
+    views?.sent();
+  };
   /* The chain shows the call the page did not answer in time for: it is on the chain, no longer unconfirmed. */
   const seenOnTheChain = (): void => {
     if (lateUnconfirmed === 0) return;
@@ -406,7 +527,9 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     unconfirmed -= 1;
     watch();
   };
-  const show = (words: Words): void => { shownAtTheEnd.push(words); };
+  const show = (words: Words): void => {
+    shownAtTheEnd.push(words);
+  };
   /*
    * The person's Confirm of what a step read with the seat's keys. Refused once anything has been handed over to be
    * sent or written (a relay, or any call that is not a GET or a read), or asked a second time, so the one Confirm
@@ -417,9 +540,17 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   const askedInTheWindow = async (lines: readonly Words[], asks: 'read' | 'fee'): Promise<boolean> => {
     const asked = run.confirm!;
     const yes = await new Promise<boolean>((resolve) => {
-      if (cut.signal.aborted) { resolve(false); return; }
+      if (cut.signal.aborted) {
+        resolve(false);
+        return;
+      }
       cut.signal.addEventListener('abort', () => resolve(false), { once: true });
-      Promise.resolve().then(() => asked(lines, cut.signal, asks)).then((said) => resolve(said === true), () => resolve(false));
+      Promise.resolve()
+        .then(() => asked(lines, cut.signal, asks))
+        .then(
+          (said) => resolve(said === true),
+          () => resolve(false)
+        );
     });
     if (latched !== null) throw new ActionStopped(latched);
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
@@ -432,7 +563,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     if (closed || run.stop.aborted) throw new ActionStopped('stopped');
     if (confirmAsked || handedOver > 0 || run.confirm === undefined) throw new ActionStopped('step-failed');
     confirmAsked = true;
-    if (!await askedInTheWindow(lines, 'read')) throw new ActionStopped('stopped');
+    if (!(await askedInTheWindow(lines, 'read'))) throw new ActionStopped('stopped');
     log(`step ${current} of ${total}: confirmed in the window`);
   };
   /*
@@ -477,7 +608,9 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     const record = request.intent.fields['record'];
     if (typeof record === 'string') return record;
     const label = request.intent.fields['company'];
-    const creation = Object.values({ ...(k.creationsSetAside ?? {}), ...(k.creations ?? {}) }).find((c) => c.label === label);
+    const creation = Object.values({ ...(k.creationsSetAside ?? {}), ...(k.creations ?? {}) }).find(
+      (c) => c.label === label
+    );
     return creation === undefined ? null : creation.accountId;
   };
   let ownCompany: string | null = null;
@@ -490,7 +623,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
         identity: h.identity,
         ask: { requester: request.requester, person: request.person },
         handedIn: request.keyring,
-        marks: run.marks ?? keyringMarksFor(h.secret),
+        marks: run.marks ?? keyringMarksFor(h.secret)
       });
       ownCompany = ownCompanyIn(opened.read());
     } catch (e) {
@@ -528,14 +661,21 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     watch();
     throw new ActionStopped(latched);
   };
-  const keepInTurn = (at: StepAt, change: (current: Keyring) => Keyring): Promise<void> => inTurn(() => keepOne(at, change));
-  const savedKeysAt = (at: StepAt): ActKeyring | null => (request.keyring === undefined ? null : Object.freeze({
-    open: openSavedKeys,
-    keep: (change: (current: Keyring) => Keyring) => keepInTurn(at, change),
-  }));
+  const keepInTurn = (at: StepAt, change: (current: Keyring) => Keyring): Promise<void> =>
+    inTurn(() => keepOne(at, change));
+  const savedKeysAt = (at: StepAt): ActKeyring | null =>
+    request.keyring === undefined
+      ? null
+      : Object.freeze({
+          open: openSavedKeys,
+          keep: (change: (current: Keyring) => Keyring) => keepInTurn(at, change)
+        });
 
   /* After a cut, what the step already handed over decides how the action ends. */
-  const afterTheCut = async (raced: { readonly of: 'cut'; readonly why: ActStop }, ran: Promise<Raced>): Promise<RunEnded> => {
+  const afterTheCut = async (
+    raced: { readonly of: 'cut'; readonly why: ActStop },
+    ran: Promise<Raced>
+  ): Promise<RunEnded> => {
     /* A transaction already with the page is waited for, so the counts say what the page did with it. */
     closed = true;
     cut.abort();
@@ -546,7 +686,10 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     const bound = Math.max(0, Math.min(RELAY_PATIENCE_MS, deadline - now()));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const after = await Promise.race([
-      ran, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), bound); }),
+      ran,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), bound);
+      })
     ]).finally(() => clearTimeout(timer));
     if (latched !== null) return finish(latched, current);
     if (after?.of !== 'ran') return finish(raced.why, current);
@@ -555,7 +698,7 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   /* After a step settles, a latched stop or a failed step ends the action; null lets the next step run. */
   const afterTheStep = async (raced: Exclude<Raced, { readonly of: 'cut' }>): Promise<RunEnded | null> => {
     await queue;
-    const stopped = latched === null ? views?.stoppedWith(handedOver) ?? null : null;
+    const stopped = latched === null ? (views?.stoppedWith(handedOver) ?? null) : null;
     if (stopped !== null) latchedAtTheGate(stopped);
     if (latched !== null) {
       /* A step that says why its refused transaction was refused keeps its words; the end still says it was refused. */
@@ -570,7 +713,12 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
         return finish('check-failed', current);
       }
       /* A step that could not go around a service giving no answer stops as that, so the page says it may have been sent. */
-      const why = raced.error instanceof ActionStopped ? raced.error.why : serviceNotReached(raced.error) ? 'no-call-answer' : 'step-failed';
+      const why =
+        raced.error instanceof ActionStopped
+          ? raced.error.why
+          : serviceNotReached(raced.error)
+            ? 'no-call-answer'
+            : 'step-failed';
       return finish(why, current);
     }
     return null;
@@ -603,11 +751,30 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
   const contextAt = (at: StepAt, stepViews: StepViews, feeOfItsOwn = false): StepContext => {
     const answeredAt: AnsweredCall = (method, path, body) => callInTurn(at, method, path, body);
     return {
-      intent: request.intent, asker: request.requester, person: request.person ?? null, held, at, signal: cut.signal, relay: (transaction, label) => relay(at, transaction, label), keyring: savedKeysAt(at),
-      tell, show, confirm, confirmFee: feeOfItsOwn ? confirmItsOwnFee : confirmFee, sentByTheWallet, seenOnTheChain, releaseReadKeys,
-      viewFor: stepViews.viewFor, sendStraight, movesWhoHolds: stepViews.movesWhoHolds,
-      invitations: invitationSource(answeredAt), creation: creationSource(answeredAt), fees: feeSource(answeredAt),
-      registryEntryOwed: (write) => { owedWrite = write; },
+      intent: request.intent,
+      asker: request.requester,
+      person: request.person ?? null,
+      held,
+      at,
+      signal: cut.signal,
+      relay: (transaction, label) => relay(at, transaction, label),
+      keyring: savedKeysAt(at),
+      tell,
+      show,
+      confirm,
+      confirmFee: feeOfItsOwn ? confirmItsOwnFee : confirmFee,
+      sentByTheWallet,
+      seenOnTheChain,
+      releaseReadKeys,
+      viewFor: stepViews.viewFor,
+      sendStraight,
+      movesWhoHolds: stepViews.movesWhoHolds,
+      invitations: invitationSource(answeredAt),
+      creation: creationSource(answeredAt),
+      fees: feeSource(answeredAt),
+      registryEntryOwed: (write) => {
+        owedWrite = write;
+      }
     };
   };
   /*
@@ -627,9 +794,16 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       timer = setTimeout(() => resolve('its time ran out'), Math.max(0, Math.min(REGISTRY_WRITE_MS, deadline - now())));
     });
     const said = await Promise.race([
-      write(contextAt(at, stepViews, true)).then(() => null, (e: unknown) => `it threw: ${thrown(e)}`),
-      limit, outside.then((why) => `the action was cut short (${why})`),
-    ]).finally(() => { clearTimeout(timer); stepViews.end(); });
+      write(contextAt(at, stepViews, true)).then(
+        () => null,
+        (e: unknown) => `it threw: ${thrown(e)}`
+      ),
+      limit,
+      outside.then((why) => `the action was cut short (${why})`)
+    ]).finally(() => {
+      clearTimeout(timer);
+      stepViews.end();
+    });
     if (said !== null) log(`the registry entry owed was not written, and stays owed: ${said}`);
   };
 
@@ -639,12 +813,17 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
     const early = await beforeTheSteps(steps);
     if (early !== null) return early;
 
-    beat = setInterval(() => { channel.step({ step: current, steps: total }); }, HEARTBEAT_MS);
+    beat = setInterval(() => {
+      channel.step({ step: current, steps: total });
+    }, HEARTBEAT_MS);
 
     /* Resolves when the action is cut short from outside a step: Stop, or the deadline. */
     const outside = new Promise<ActStop>((resolve) => {
       const late = setTimeout(() => resolve('out-of-time'), Math.max(0, deadline - now()));
-      const stopped = (): void => { clearTimeout(late); resolve('stopped'); };
+      const stopped = (): void => {
+        clearTimeout(late);
+        resolve('stopped');
+      };
       if (run.stop.aborted) stopped();
       else run.stop.addEventListener('abort', stopped, { once: true });
       cut.signal.addEventListener('abort', () => clearTimeout(late), { once: true });
@@ -664,11 +843,17 @@ export async function runAction(run: RunOf): Promise<RunEnded> {
       const stepViews = (views = new StepViews(callsAt(at)));
       const ran: Promise<Raced> = Promise.resolve()
         .then(() => step.run(contextAt(at, stepViews)))
-        .then(() => ({ of: 'ran' as const }), (error: unknown) => {
-          log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
-          return { of: 'failed' as const, error };
-        })
-        .finally(() => { stepSettled = true; stepViews.end(); });
+        .then(
+          () => ({ of: 'ran' as const }),
+          (error: unknown) => {
+            log(`step ${at.step} of ${at.steps} threw: ${thrown(error)}`);
+            return { of: 'failed' as const, error };
+          }
+        )
+        .finally(() => {
+          stepSettled = true;
+          stepViews.end();
+        });
       const raced = await Promise.race([ran, outside.then((why) => ({ of: 'cut' as const, why }))]);
       if (raced.of === 'cut') return await afterTheCut(raced, ran);
       const over = await afterTheStep(raced);

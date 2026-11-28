@@ -18,12 +18,22 @@
  */
 import { REQUEST_SCHEMA, type FirstSecretShown, type InvitedBy } from 'midnight-identity/profile/request';
 import {
-  readHoldersAnswer, readRecordsKeyAnswer, type AccountHoldersRead, type AccountPaymentFacts, type AccountRoleEntry, type AccountSeats, type DirectoryEntryStatement,
-  type RecordsKeyStatement, type VaultHolders,
+  readHoldersAnswer,
+  readRecordsKeyAnswer,
+  type AccountHoldersRead,
+  type AccountPaymentFacts,
+  type AccountRoleEntry,
+  type AccountSeats,
+  type DirectoryEntryStatement,
+  type RecordsKeyStatement,
+  type VaultHolders
 } from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel, VaultAddress } from 'midnight-identity/profile/company-label';
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
-import { readAddressesAndBalancesAnswer, type AddressesAndBalancesShown } from 'midnight-identity/profile/addresses-and-balances';
+import {
+  readAddressesAndBalancesAnswer,
+  type AddressesAndBalancesShown
+} from 'midnight-identity/profile/addresses-and-balances';
 import { toHex, randomBytes } from '../../../src/core/crypto.js';
 import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js';
 
@@ -31,11 +41,14 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 const RECORDS_KEY_WINDOW_MS = 10 * 60_000;
 
 const RECORDS_KEY_PURPOSE =
-  'So the other signers\' devices can check that the copy of a vault\'s secret kept for you is one your own recovery '
-  + 'words open. Your wallet signs your records key for your seat, and says who holds your company now.';
+  "So the other signers' devices can check that the copy of a vault's secret kept for you is one your own recovery " +
+  'words open. Your wallet signs your records key for your seat, and says who holds your company now.';
 
 class WalletDidNotSignRecordsKey extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
     super(message);
     this.name = 'WalletDidNotSignRecordsKey';
   }
@@ -75,28 +88,43 @@ export interface RecordsKeyAsked {
 
 /** The ask on the wire. */
 const recordsKeyAsk = (parts: {
-  name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: CompanyLabel; account: AccountAddress; seat: string; vault?: VaultAddress; signingKey?: string; invitedBy?: InvitedBy;
+  name: string;
+  rdns: string;
+  purpose: string;
+  nonce: string;
+  expiresAt: number;
+  company: CompanyLabel;
+  account: AccountAddress;
+  seat: string;
+  vault?: VaultAddress;
+  signingKey?: string;
+  invitedBy?: InvitedBy;
   firstSecret?: FirstSecretShown;
-}) => Object.freeze({
-  schema: REQUEST_SCHEMA,
-  kind: 'records-key' as const,
-  requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
-  purpose: parts.purpose,
-  nonce: parts.nonce,
-  expiresAt: parts.expiresAt,
-  company: parts.company,
-  account: parts.account,
-  seat: parts.seat.toLowerCase(),
-  ...(parts.vault === undefined ? {} : { vault: parts.vault.toLowerCase() }),
-  ...(parts.signingKey === undefined ? {} : { signingKey: parts.signingKey.toLowerCase() }),
-  ...(parts.invitedBy === undefined ? {} : { invitedBy: parts.invitedBy }),
-  ...(parts.firstSecret === undefined ? {} : {
-    firstSecret: {
-      readers: parts.firstSecret.readers.map((r) => ({ key: r.key.toLowerCase(), ...(r.name === undefined ? {} : { name: r.name }) })),
-    },
-  }),
-});
+}) =>
+  Object.freeze({
+    schema: REQUEST_SCHEMA,
+    kind: 'records-key' as const,
+    requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
+    purpose: parts.purpose,
+    nonce: parts.nonce,
+    expiresAt: parts.expiresAt,
+    company: parts.company,
+    account: parts.account,
+    seat: parts.seat.toLowerCase(),
+    ...(parts.vault === undefined ? {} : { vault: parts.vault.toLowerCase() }),
+    ...(parts.signingKey === undefined ? {} : { signingKey: parts.signingKey.toLowerCase() }),
+    ...(parts.invitedBy === undefined ? {} : { invitedBy: parts.invitedBy }),
+    ...(parts.firstSecret === undefined
+      ? {}
+      : {
+          firstSecret: {
+            readers: parts.firstSecret.readers.map((r) => ({
+              key: r.key.toLowerCase(),
+              ...(r.name === undefined ? {} : { name: r.name })
+            }))
+          }
+        })
+  });
 
 /** What comes back, checked: the statement, the committee key it verifies against, and who holds the account. */
 export interface RecordsKeySigned {
@@ -110,38 +138,66 @@ export interface RecordsKeySigned {
 }
 
 export async function askWalletToSignRecordsKey(
-  view: Openable, walletOrigin: string, ask: RecordsKeyAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: RecordsKeyAsked,
+  dialog?: WalletDialog
 ): Promise<RecordsKeySigned> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
-  const answer = await askWallet(view, walletOrigin, recordsKeyAsk({
-    name: ask.name, rdns: ask.rdns, purpose: RECORDS_KEY_PURPOSE, nonce, expiresAt: now() + RECORDS_KEY_WINDOW_MS,
-    company: ask.company, account: ask.account, seat: ask.seat, ...(ask.vault === undefined ? {} : { vault: ask.vault }),
-    ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey }),
-    ...(ask.invitedBy === undefined ? {} : { invitedBy: ask.invitedBy }),
-    ...(ask.firstSecret === undefined ? {} : { firstSecret: ask.firstSecret }),
-  }), dialog);
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    recordsKeyAsk({
+      name: ask.name,
+      rdns: ask.rdns,
+      purpose: RECORDS_KEY_PURPOSE,
+      nonce,
+      expiresAt: now() + RECORDS_KEY_WINDOW_MS,
+      company: ask.company,
+      account: ask.account,
+      seat: ask.seat,
+      ...(ask.vault === undefined ? {} : { vault: ask.vault }),
+      ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey }),
+      ...(ask.invitedBy === undefined ? {} : { invitedBy: ask.invitedBy }),
+      ...(ask.firstSecret === undefined ? {} : { firstSecret: ask.firstSecret })
+    }),
+    dialog
+  );
   const read = readRecordsKeyAnswer(answer, {
-    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, seat: ask.seat.toLowerCase(),
+    atOrigin: ask.atOrigin,
+    expectingNonce: nonce,
+    company: ask.company,
+    account: ask.account,
+    seat: ask.seat.toLowerCase(),
     ...(ask.vault === undefined ? {} : { vault: ask.vault.toLowerCase() }),
-    ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey.toLowerCase() }),
+    ...(ask.signingKey === undefined ? {} : { signingKey: ask.signingKey.toLowerCase() })
   });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;
     throw new WalletDidNotSignRecordsKey(refused.code, refused.says);
   }
-  return { committeeKey: read.committeeKey, statement: read.statement, seats: read.seats, vault: read.vault, entry: read.entry };
+  return {
+    committeeKey: read.committeeKey,
+    statement: read.statement,
+    seats: read.seats,
+    vault: read.vault,
+    entry: read.entry
+  };
 }
 
 /* ------------------------------------------------------------------ who holds it, with no press */
 
 const HOLDERS_WINDOW_MS = 2 * 60_000;
 const HOLDERS_PURPOSE =
-  'So this page believes only what your company\'s signers filed: your wallet says who holds your company now, as it reads '
-  + 'the network. Nothing is signed and nothing private is shared.';
+  "So this page believes only what your company's signers filed: your wallet says who holds your company now, as it reads " +
+  'the network. Nothing is signed and nothing private is shared.';
 
 class WalletDidNotSayWhoHolds extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
     super(message);
     this.name = 'WalletDidNotSayWhoHolds';
   }
@@ -178,34 +234,47 @@ export interface HoldersRead {
  * Asked afresh for every read that believes a filing, and never kept.
  */
 export async function askWalletWhoHolds(
-  view: Openable, walletOrigin: string, ask: HoldersAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: HoldersAsked,
+  dialog?: WalletDialog
 ): Promise<HoldersRead> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
-  const answer = await askWallet(view, walletOrigin, Object.freeze({
-    schema: REQUEST_SCHEMA,
-    kind: 'holders' as const,
-    requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
-    purpose: HOLDERS_PURPOSE,
-    nonce,
-    expiresAt: now() + HOLDERS_WINDOW_MS,
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    Object.freeze({
+      schema: REQUEST_SCHEMA,
+      kind: 'holders' as const,
+      requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
+      purpose: HOLDERS_PURPOSE,
+      nonce,
+      expiresAt: now() + HOLDERS_WINDOW_MS,
+      company: ask.company,
+      account: ask.account,
+      ...(ask.movements === undefined ? {} : { movements: [...ask.movements] }),
+      ...(ask.roles === undefined ? {} : { roles: [...ask.roles] })
+    }),
+    dialog
+  );
+  const read = readHoldersAnswer(answer, {
+    atOrigin: ask.atOrigin,
+    expectingNonce: nonce,
     company: ask.company,
     account: ask.account,
-    ...(ask.movements === undefined ? {} : { movements: [...ask.movements] }),
-    ...(ask.roles === undefined ? {} : { roles: [...ask.roles] }),
-  }), dialog);
-  const read = readHoldersAnswer(answer, {
-    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account,
     ...(ask.movements === undefined ? {} : { movements: ask.movements }),
-    ...(ask.roles === undefined ? {} : { roles: ask.roles }),
+    ...(ask.roles === undefined ? {} : { roles: ask.roles })
   });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;
     throw new WalletDidNotSayWhoHolds(refused.code, refused.says);
   }
   return {
-    holders: read.holders, ...(read.payments === undefined ? {} : { payments: read.payments }),
-    ...(read.roles === undefined ? {} : { roles: read.roles }), indexer: read.indexer,
+    holders: read.holders,
+    ...(read.payments === undefined ? {} : { payments: read.payments }),
+    ...(read.roles === undefined ? {} : { roles: read.roles }),
+    indexer: read.indexer
   };
 }
 
@@ -213,12 +282,15 @@ export async function askWalletWhoHolds(
 
 const ADDRESSES_AND_BALANCES_WINDOW_MS = 10 * 60_000;
 const ADDRESSES_AND_BALANCES_PURPOSE =
-  'So this page can show you where your wallet receives privately and what it holds: your wallet shows you exactly what '
-  + 'it will hand over, and hands it over only if you press. Nothing is signed.';
+  'So this page can show you where your wallet receives privately and what it holds: your wallet shows you exactly what ' +
+  'it will hand over, and hands it over only if you press. Nothing is signed.';
 
 /** The wallet's answer was not believed: `code` says why (`not-an-answer`, `origin-mismatch`, `nonce-mismatch`). */
 export class WalletDidNotShowAddressesAndBalances extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
     super(message);
     this.name = 'WalletDidNotShowAddressesAndBalances';
   }
@@ -248,18 +320,26 @@ interface AddressesAndBalancesAsked {
  * nothing is handed over.
  */
 export async function askWalletForAddressesAndBalances(
-  view: Openable, walletOrigin: string, ask: AddressesAndBalancesAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: AddressesAndBalancesAsked,
+  dialog?: WalletDialog
 ): Promise<{ readonly shown: AddressesAndBalancesShown; readonly at: number }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
-  const answer = await askWallet(view, walletOrigin, Object.freeze({
-    schema: REQUEST_SCHEMA,
-    kind: 'addresses-and-balances' as const,
-    requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
-    purpose: ADDRESSES_AND_BALANCES_PURPOSE,
-    nonce,
-    expiresAt: now() + ADDRESSES_AND_BALANCES_WINDOW_MS,
-  }), dialog);
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    Object.freeze({
+      schema: REQUEST_SCHEMA,
+      kind: 'addresses-and-balances' as const,
+      requester: Object.freeze({ name: ask.name, rdns: ask.rdns }),
+      purpose: ADDRESSES_AND_BALANCES_PURPOSE,
+      nonce,
+      expiresAt: now() + ADDRESSES_AND_BALANCES_WINDOW_MS
+    }),
+    dialog
+  );
   const read = readAddressesAndBalancesAnswer(answer, { atOrigin: ask.atOrigin, expectingNonce: nonce });
   if (!read.ok) {
     const refused = read as Extract<typeof read, { ok: false }>;

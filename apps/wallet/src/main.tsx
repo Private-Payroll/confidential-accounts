@@ -43,5 +43,5 @@ createRoot(mount).render(
         </SessionProvider>
       </ErrorBoundary>
     </KitProvider>
-  </StrictMode>,
+  </StrictMode>
 );

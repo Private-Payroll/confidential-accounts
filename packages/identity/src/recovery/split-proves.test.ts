@@ -22,7 +22,7 @@ import type { Placement } from './pieces.js';
 const THREE: readonly Placement[] = [
   { label: 'Your Google account', holder: 'google:person@example.com' },
   { label: 'Printed', holder: 'paper' },
-  { label: 'My other laptop', holder: 'device:laptop-2' },
+  { label: 'My other laptop', holder: 'device:laptop-2' }
 ];
 
 afterEach(() => {
@@ -40,9 +40,10 @@ describe('splitSecret proves its own output', () => {
      */
     vi.doMock('shamir-secret-sharing', () => ({
       split: async (_secret: Uint8Array, count: number) =>
-        Array.from({ length: count }, (_, i) => Uint8Array.from(
-          { length: 33 }, (__, j) => (i * 31 + j * 7 + 1) & 0xff)),
-      combine: async () => new Uint8Array(32).fill(9),
+        Array.from({ length: count }, (_, i) =>
+          Uint8Array.from({ length: 33 }, (__, j) => (i * 31 + j * 7 + 1) & 0xff)
+        ),
+      combine: async () => new Uint8Array(32).fill(9)
     }));
     const { splitSecret, RecoveryError } = await import('./pieces.js');
     await expect(splitSecret(newSecret(), THREE, 2)).rejects.toThrow(RecoveryError);

@@ -29,7 +29,11 @@ import { PAY_KEY_SUMMARY, payKeyProposalIn } from '../../../../src/core/proposal
 import type { SealedProposal } from '../../../../src/core/types.js';
 import { payKeyRoundOf, type PayKeyPure } from '../../../../src/midnight/pay-key-round.js';
 import { sealPayKeyTo } from '../../../../src/midnight/run-keys.js';
-import type { GovernedCallOrder, OpenedRound, RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
+import type {
+  GovernedCallOrder,
+  OpenedRound,
+  RoundOnChain
+} from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { refuseARunALeaverRaisedHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { believedFilerHere } from '../../../../packages/web-shared/src/round-opened-here.js';
@@ -60,10 +64,12 @@ export interface PayKeyKindReach {
 export const PAY_KEY_STATE = { waiting: 'waiting-for-approvals', atItsBar: 'ready-to-carry' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.approve-pay-key.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.approve-pay-key.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const KIND_WHY: Readonly<Record<string, string>> = { closed: 'carried-out', counted: 'already-counted' };
-const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
+const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words =>
+  why(KIND_WHY[stop] ?? stop, values);
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const ZERO = '00'.repeat(32);
 const WAIT_MS = 180_000;
@@ -82,7 +88,8 @@ interface PayKeyOpened {
 /** The pay-record key's kind of the one approval. */
 export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
   const pure = reach.payKeyPure ?? (async () => (await pureCircuits()).account as unknown as PayKeyPure);
-  const recordsOf = (ctx: StepContext, r: CompanyReach) => governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal)).records!;
+  const recordsOf = (ctx: StepContext, r: CompanyReach) =>
+    governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal)).records!;
 
   /*
    * The record under the page's name, opened and believed, and the proposal this wallet makes from the key the
@@ -92,7 +99,9 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
     const records = recordsOf(ctx, r);
     const id = intent.fields['proposal']!;
     try {
-      const rec = ((await records.proposals!()) as readonly SealedProposal[]).find((p) => p.id === id && p.accountId === r.accountId);
+      const rec = ((await records.proposals!()) as readonly SealedProposal[]).find(
+        (p) => p.id === id && p.accountId === r.accountId
+      );
       const held = rec === undefined ? null : payKeyProposalIn(rec, r.accountId, r.companyKeys);
       if (rec === undefined || held === null) throw new StepRefused(why('not-a-pay-key'));
       await believedFilerHere(records, r.accountId, rec);
@@ -100,9 +109,22 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
       const P = await pure();
       const round = payKeyRoundOf(P, payKey as Hex);
       const noVault = toHex(P.noVault()).toLowerCase() as Hex;
-      if (held.commitment !== round.commitment || held.digest !== round.payload || held.salt !== round.salt
-        || held.chainId !== round.proposal || held.vault !== noVault) throw new StepRefused(why('not-as-held'));
-      return { chainId: round.proposal, digest: round.payload, commitment: round.commitment, salt: round.salt, noVault, key: payKey as Hex };
+      if (
+        held.commitment !== round.commitment ||
+        held.digest !== round.payload ||
+        held.salt !== round.salt ||
+        held.chainId !== round.proposal ||
+        held.vault !== noVault
+      )
+        throw new StepRefused(why('not-as-held'));
+      return {
+        chainId: round.proposal,
+        digest: round.payload,
+        commitment: round.commitment,
+        salt: round.salt,
+        noVault,
+        key: payKey as Hex
+      };
     } catch (e) {
       if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
       throw new StepRefused(why('not-approved', { says: said(e) }), codeOfError(e));
@@ -119,30 +141,52 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
   };
 
   /* One call built and proved here with this seat's own material, then handed to the service's creation route, or straight to the chain. */
-  const sent = async (ctx: StepContext, r: CompanyReach, o: PayKeyOpened, order: GovernedCallOrder, handed: Handed): Promise<void> => {
-    const chain = await governedCallServiceThrough(r.stepView).callState(r.accountId).catch((e: unknown) => {
-      throw e instanceof AccountNotReadAtOneBlock ? Object.assign(e, { nothingWasSent: true }) : e;
-    });
+  const sent = async (
+    ctx: StepContext,
+    r: CompanyReach,
+    o: PayKeyOpened,
+    order: GovernedCallOrder,
+    handed: Handed
+  ): Promise<void> => {
+    const chain = await governedCallServiceThrough(r.stepView)
+      .callState(r.accountId)
+      .catch((e: unknown) => {
+        throw e instanceof AccountNotReadAtOneBlock ? Object.assign(e, { nothingWasSent: true }) : e;
+      });
     const opened = {
-      chainId: o.chainId, digest: o.digest, vault: o.noVault, salt: o.salt, summary: PAY_KEY_SUMMARY,
-      governance: { kind: 'pay-key', commitment: o.commitment }, half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: ZERO },
+      chainId: o.chainId,
+      digest: o.digest,
+      vault: o.noVault,
+      salt: o.salt,
+      summary: PAY_KEY_SUMMARY,
+      governance: { kind: 'pay-key', commitment: o.commitment },
+      half: { assetId: NO_ASSET, changeAmount: '0', changeBatchDigest: ZERO }
     } as OpenedRound;
     const { tx } = await r.builder.governedCall({
-      account: r.account, order, opened, chain,
-      material: signerMaterialOf(r.seat),
+      account: r.account,
+      order,
+      opened,
+      chain,
+      material: signerMaterialOf(r.seat)
     });
     await handedOver(handOverMarked(r.handOver, handed), {
-      tx, call: { kind: 'account-call', contract: r.account, circuit: order.circuit },
+      tx,
+      call: { kind: 'account-call', contract: r.account, circuit: order.circuit },
       viaService: async () => {
         handed.over = true;
         takenOrThrown(await ctx.creation.payKey(r.accountId, { call: order.circuit, tx }));
       },
-      after: async () => undefined,
+      after: async () => undefined
     });
   };
 
   /* The chain read until it shows what was sent; a wait that runs out stops the action, which reads the chain again. */
-  const shown = async (ctx: StepContext, r: CompanyReach, chainId: Hex, done: (s: RoundOnChain | undefined) => boolean): Promise<void> => {
+  const shown = async (
+    ctx: StepContext,
+    r: CompanyReach,
+    chainId: Hex,
+    done: (s: RoundOnChain | undefined) => boolean
+  ): Promise<void> => {
     const every = reach.everyMs ?? EVERY_MS;
     for (let waited = 0; waited <= (reach.waitMs ?? WAIT_MS); waited += every) {
       if (done(await onTheChain(r, chainId))) return;
@@ -158,9 +202,19 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
     const o = await openedHere(ctx, r, intent);
     if (o.chainId !== round.chainId.toLowerCase()) throw new StepRefused(why('not-as-held'));
     const wrappingPublicKey = toHex(x25519.getPublicKey(fromHex(String(r.seat.wrappingSecret).toLowerCase()))) as Hex;
-    await sent(ctx, r, o, {
-      circuit: 'sealPayKey', wrap: sealPayKeyTo(o.key, wrappingPublicKey), commitment: o.commitment, proposal: o.chainId, proposalSalt: o.salt,
-    } as GovernedCallOrder, handed);
+    await sent(
+      ctx,
+      r,
+      o,
+      {
+        circuit: 'sealPayKey',
+        wrap: sealPayKeyTo(o.key, wrappingPublicKey),
+        commitment: o.commitment,
+        proposal: o.chainId,
+        proposalSalt: o.salt
+      } as GovernedCallOrder,
+      handed
+    );
     await shown(ctx, r, o.chainId, (s) => s?.held === 'closed');
   };
 
@@ -168,9 +222,13 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
     fields: [],
     changesTheCompany: true,
     shown: async (intent): Promise<readonly ShownLine[]> => [
-      { key: 'act.approve-pay-key.shown.proposal', values: { proposal: intent.fields['proposal'] ?? '' }, from: 'page' },
+      {
+        key: 'act.approve-pay-key.shown.proposal',
+        values: { proposal: intent.fields['proposal'] ?? '' },
+        from: 'page'
+      },
       { key: 'act.approve-pay-key.shown.checks', from: 'action' },
-      { key: 'act.approve-pay-key.shown.approve', from: 'action' },
+      { key: 'act.approve-pay-key.shown.approve', from: 'action' }
     ],
     check: () => null,
     opened: async (ctx, r, intent) => {
@@ -185,13 +243,25 @@ export function payKeyKind(reach: PayKeyKindReach): ProposalKind {
       const now = await onTheChain(r, o.chainId);
       if (now?.held === 'closed') throw new ApprovalNotOwed('carried-out');
       if (now?.approvedHere === true) throw new ApprovalNotOwed('counted');
-      await sent(ctx, r, o, { circuit: 'approve', proposal: o.chainId, of: { governance: governance(o), proposalSalt: o.salt } } as GovernedCallOrder, handed);
+      await sent(
+        ctx,
+        r,
+        o,
+        {
+          circuit: 'approve',
+          proposal: o.chainId,
+          of: { governance: governance(o), proposalSalt: o.salt }
+        } as GovernedCallOrder,
+        handed
+      );
       /* This seat's own approval on the chain, never a count another signer's approval can also raise. */
       await shown(ctx, r, o.chainId, (s) => s?.approvedHere === true || s?.held === 'closed');
     },
     stateAt: (atItsBar) => (atItsBar ? PAY_KEY_STATE.atItsBar : PAY_KEY_STATE.waiting),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-pay-key.step.carry' }, carryOut)],
-    why: kindWhy,
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.approve-pay-key.step.carry' }, carryOut)
+    ],
+    why: kindWhy
   };
   return kind;
 }

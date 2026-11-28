@@ -9,7 +9,11 @@ import { unseal } from '../../../src/core/crypto.js';
 import { keyringAsk, KEYRING_PURPOSE } from '../../../src/core/wallet-unlock.js';
 import * as keyring from './keyring.js';
 import * as creation from './company-creation.js';
-import { foundedAsTheWalletAnswers, keyringAsTheWalletAnswers, savedKeysSealKey } from '../../../src/testing/a-wallet-founds-a-company.js';
+import {
+  foundedAsTheWalletAnswers,
+  keyringAsTheWalletAnswers,
+  savedKeysSealKey
+} from '../../../src/testing/a-wallet-founds-a-company.js';
 import type { Openable } from './wallet-sign-in.js';
 
 /**
@@ -41,16 +45,24 @@ class WalletAtTheOtherEnd implements Openable {
   private readonly tab = { postMessage: (m: unknown) => this.onAsk(m) };
   constructor(
     private readonly holds: (address: string) => boolean = (address) => address === SIGNED_IN,
-    private readonly who: Identity = identity,
+    private readonly who: Identity = identity
   ) {}
-  open(): Window | null { return this.tab as unknown as Window; }
+  open(): Window | null {
+    return this.tab as unknown as Window;
+  }
   addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
     this.handler = h;
     queueMicrotask(() => this.deliver({ schema: READY_PING }));
   }
-  removeEventListener(): void { this.handler = null; }
-  setTimeout(): number { return 0; }
-  clearTimeout(): void { /* nothing to clear */ }
+  removeEventListener(): void {
+    this.handler = null;
+  }
+  setTimeout(): number {
+    return 0;
+  }
+  clearTimeout(): void {
+    /* nothing to clear */
+  }
   private deliver(data: unknown): void {
     this.handler?.({ origin: WALLET, source: this.tab, data } as unknown as MessageEvent);
   }
@@ -59,9 +71,12 @@ class WalletAtTheOtherEnd implements Openable {
     try {
       const ask = parseAsk(message, US, Date.now());
       if (ask.kind === 'keyring') this.askedFor.push((ask as KeyringRequest).signedInAs ?? null);
-      answer = ask.kind !== 'keyring' ? { schema: 'a-sign-in' }
-        : (ask as KeyringRequest).drawLabel ? foundedAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds)
-          : keyringAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds, Date.now());
+      answer =
+        ask.kind !== 'keyring'
+          ? { schema: 'a-sign-in' }
+          : (ask as KeyringRequest).drawLabel
+            ? foundedAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds)
+            : keyringAsTheWalletAnswers(this.who, ask as KeyringRequest, this.holds, Date.now());
     } catch {
       answer = { schema: 'nothing-given' };
     }
@@ -70,10 +85,25 @@ class WalletAtTheOtherEnd implements Openable {
 }
 
 /** The keyring key the wallet above gives this person. */
-const keyringHex = () => (savedKeysSealKey(identity, parseAsk(keyringAsk({
-  name: 'n', rdns: 'r', purpose: KEYRING_PURPOSE, nonce: 'n', expiresAt: Date.now() + 60_000,
-  person: PERSON, signedInAs: null, company: null, account: null,
-}), US, Date.now()) as KeyringRequest));
+const keyringHex = () =>
+  savedKeysSealKey(
+    identity,
+    parseAsk(
+      keyringAsk({
+        name: 'n',
+        rdns: 'r',
+        purpose: KEYRING_PURPOSE,
+        nonce: 'n',
+        expiresAt: Date.now() + 60_000,
+        person: PERSON,
+        signedInAs: null,
+        company: null,
+        account: null
+      }),
+      US,
+      Date.now()
+    ) as KeyringRequest
+  );
 
 const A_COMPANY = { name: 'Acme Ltd', signers: [{ name: 'Priya', role: 'admin' as const }], threshold: 1 };
 const USER = { id: PERSON, email: null, name: 'Priya' };
@@ -81,7 +111,10 @@ const USER = { id: PERSON, email: null, name: 'Priya' };
 const answerFor = (address: string) => ({ user: USER, address, created: true, session: {} });
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; keyring.forgetLocally(); });
+afterEach(() => {
+  globalThis.fetch = realFetch;
+  keyring.forgetLocally();
+});
 
 /** A service with nothing saved for this person, answering the routes a first company uses. */
 function nothingSavedYet() {
@@ -94,11 +127,18 @@ function nothingSavedYet() {
     posted.push({ route, body });
     const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b }) as Response;
     switch (route) {
-      case 'GET /api/me': return json(200, { user: USER, accounts: [] });
-      case 'GET /api/me/keys': return json(200, { keyBundle: saved, version });
-      case 'PUT /api/me/keys': saved = body.keyBundle; version += 1; return json(200, { version });
-      case 'POST /api/accounts': return json(201, { account: { id: body.founding.account.id }, state: 'made' });
-      default: return json(404, { error: `no route for ${route}` });
+      case 'GET /api/me':
+        return json(200, { user: USER, accounts: [] });
+      case 'GET /api/me/keys':
+        return json(200, { keyBundle: saved, version });
+      case 'PUT /api/me/keys':
+        saved = body.keyBundle;
+        version += 1;
+        return json(200, { version });
+      case 'POST /api/accounts':
+        return json(201, { account: { id: body.founding.account.id }, state: 'made' });
+      default:
+        return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
   return { sent: (route: string) => posted.filter((p) => p.route === route) };
@@ -146,7 +186,14 @@ describe('a sign-in handed over by another screen', () => {
 
   /* RED WHEN: an answer with no person or no address is taken, leaving the tab signed in as nobody in particular or with no address to ask about. */
   it('refuses an answer that names no person or no address, and leaves the tab as it was', () => {
-    for (const bad of [{}, { user: USER }, { user: USER, address: '' }, { address: SIGNED_IN }, { user: { id: PERSON }, address: SIGNED_IN }, null]) {
+    for (const bad of [
+      {},
+      { user: USER },
+      { user: USER, address: '' },
+      { address: SIGNED_IN },
+      { user: { id: PERSON }, address: SIGNED_IN },
+      null
+    ]) {
       expect(() => keyring.signedInByAnotherScreen(bad)).toThrow();
       expect(keyring.currentUser()).toBeNull();
       expect(keyring.signedInWallet()).toBeNull();
@@ -160,10 +207,12 @@ describe('a sign-in handed over by another screen', () => {
   });
 
   /* RED WHEN: a tab that picked the sign-in up without an answer (a reload) is let save a person's first keys, or the refusal stops being its own kind a screen can tell apart. */
-  it('still refuses a person\'s first keys in a tab that was handed no sign-in, by a refusal a screen can name', async () => {
+  it("still refuses a person's first keys in a tab that was handed no sign-in, by a refusal a screen can name", async () => {
     const { sent } = nothingSavedYet();
     expect(await keyring.resumeSession()).toEqual(USER);
-    await expect(creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)).rejects.toBeInstanceOf(creation.FirstKeysNeedTheSignIn);
+    await expect(
+      creation.startCompanyHeldFromTheStart(A_COMPANY, WALLET, new WalletAtTheOtherEnd(), US)
+    ).rejects.toBeInstanceOf(creation.FirstKeysNeedTheSignIn);
     expect(sent('POST /api/accounts')).toEqual([]);
   });
 });

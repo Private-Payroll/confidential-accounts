@@ -25,8 +25,12 @@ describe('a company not finished', () => {
 describe('a service that gave no answer', () => {
   /* RED WHEN: a request the service never answered is told as an ask that did not finish, so the person is not told the service could not be reached. */
   it('is told as unreachable when the error is the one a request with no answer throws', () => {
-    expect(refusalOf(new ServiceNotReached('the company\'s service could not be reached (no answer)', false))).toBe(ACT_REFUSAL.unreachable);
-    expect(refusalOf(new ServiceNotReached('the company\'s service could not be reached (no answer)', true))).toBe(ACT_REFUSAL.unreachable);
+    expect(refusalOf(new ServiceNotReached("the company's service could not be reached (no answer)", false))).toBe(
+      ACT_REFUSAL.unreachable
+    );
+    expect(refusalOf(new ServiceNotReached("the company's service could not be reached (no answer)", true))).toBe(
+      ACT_REFUSAL.unreachable
+    );
   });
 });
 
@@ -54,8 +58,9 @@ describe('a wallet that did not answer, ran out, or could not read', () => {
 
   /* RED WHEN: a payment the wallet could not make is told as one that did not finish, or two reasons share one kind. */
   it('tells each reason a payment failed by its own kind', () => {
-    const kinds = (['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish'] as const)
-      .map((why) => refusalOf(closed({ of: 'failed', why })));
+    const kinds = (['chain-unreadable', 'not-enough', 'not-as-approved', 'did-not-finish'] as const).map((why) =>
+      refusalOf(closed({ of: 'failed', why }))
+    );
     expect(new Set(kinds).size).toBe(4);
     expect(kinds).not.toContain(ACT_REFUSAL.didNotFinish);
   });
@@ -69,9 +74,14 @@ describe('a read that ran out of time', () => {
 });
 
 describe('a fee that could not be paid, told by the service with a code', () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   const refusedWith = async (status: number, body: unknown): Promise<unknown> => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }))
+    );
     return transport.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e);
   };
 
@@ -91,17 +101,25 @@ describe('a fee that could not be paid, told by the service with a code', () => 
 
   /* RED WHEN: a 502, where something may have been sent, is told as a fee that was not paid, or a 422 with no known code is told as anything but "it did not finish". */
   it('keeps "it did not finish" for a 502 and for a 422 with no known code', async () => {
-    expect(refusalOf(await refusedWith(502, { nothingWasSent: false, code: 'fee-not-paid', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
-    expect(refusalOf(await refusedWith(502, { nothingWasSent: true, code: 'fee-not-paid', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+    expect(refusalOf(await refusedWith(502, { nothingWasSent: false, code: 'fee-not-paid', error: 'x' }))).toBe(
+      ACT_REFUSAL.didNotFinish
+    );
+    expect(refusalOf(await refusedWith(502, { nothingWasSent: true, code: 'fee-not-paid', error: 'x' }))).toBe(
+      ACT_REFUSAL.didNotFinish
+    );
     expect(refusalOf(await refusedWith(422, { nothingWasSent: true, error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
-    expect(refusalOf(await refusedWith(422, { nothingWasSent: true, code: 'other', error: 'x' }))).toBe(ACT_REFUSAL.didNotFinish);
+    expect(refusalOf(await refusedWith(422, { nothingWasSent: true, code: 'other', error: 'x' }))).toBe(
+      ACT_REFUSAL.didNotFinish
+    );
   });
 });
 
 describe('a roster this device does not believe', () => {
   /* RED WHEN: a company whose roster this device does not believe is told "it did not finish", which a retry never changes. */
   it('is told by its own kind, apart from an action that did not finish', () => {
-    expect(refusalOf(new RosterNotBelieved('This device does not believe the company\'s roster it was given (x).'))).toBe(ACT_REFUSAL.rosterNotBelieved);
+    expect(
+      refusalOf(new RosterNotBelieved("This device does not believe the company's roster it was given (x)."))
+    ).toBe(ACT_REFUSAL.rosterNotBelieved);
     expect(ACT_REFUSAL.rosterNotBelieved).toBe('roster-not-believed');
   });
 });

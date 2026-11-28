@@ -19,37 +19,85 @@ export type PersonAct = (typeof PERSON_ACT)[keyof typeof PERSON_ACT];
  * A stop the wallet gave in a key this page does not know, or none at all, is `other` or `stopped`.
  */
 export const WHY = {
-  notACompany: 'not-a-company', noSavedKeys: 'no-saved-keys', noSeat: 'no-seat', seatNotHeld: 'seat-not-held', notOnChain: 'not-on-chain',
-  rosterNotOpened: 'roster-not-opened', notBelieved: 'not-believed', notFound: 'not-found', notAsShown: 'not-as-shown', notFiled: 'not-filed',
-  fingerprintNeeded: 'fingerprint-needed', fingerprintNotNeeded: 'fingerprint-not-needed', notAdmitted: 'not-admitted',
-  notChanged: 'not-changed', dateRaised: 'date-raised', termsRaised: 'terms-raised',
-  filedNotEntered: 'filed-not-entered', filedNotEnteredNorAnchored: 'filed-not-entered-nor-anchored',
-  askedWrongly: 'asked-wrongly', stopped: 'stopped', other: 'other',
+  notACompany: 'not-a-company',
+  noSavedKeys: 'no-saved-keys',
+  noSeat: 'no-seat',
+  seatNotHeld: 'seat-not-held',
+  notOnChain: 'not-on-chain',
+  rosterNotOpened: 'roster-not-opened',
+  notBelieved: 'not-believed',
+  notFound: 'not-found',
+  notAsShown: 'not-as-shown',
+  notFiled: 'not-filed',
+  fingerprintNeeded: 'fingerprint-needed',
+  fingerprintNotNeeded: 'fingerprint-not-needed',
+  notAdmitted: 'not-admitted',
+  notChanged: 'not-changed',
+  dateRaised: 'date-raised',
+  termsRaised: 'terms-raised',
+  filedNotEntered: 'filed-not-entered',
+  filedNotEnteredNorAnchored: 'filed-not-entered-nor-anchored',
+  askedWrongly: 'asked-wrongly',
+  stopped: 'stopped',
+  other: 'other'
 } as const;
 export type PersonWhy = (typeof WHY)[keyof typeof WHY];
 
 const SEAT: Readonly<Record<string, PersonWhy>> = {
-  'not-a-company': WHY.notACompany, 'no-saved-keys': WHY.noSavedKeys, 'no-seat': WHY.noSeat, 'seat-not-held': WHY.seatNotHeld,
-  'not-on-chain': WHY.notOnChain, 'roster-not-opened': WHY.rosterNotOpened,
-  'not-believed': WHY.notBelieved, 'not-found': WHY.notFound, 'not-as-shown': WHY.notAsShown, 'not-filed': WHY.notFiled,
-  'filed-not-entered': WHY.filedNotEntered, 'filed-not-entered-nor-anchored': WHY.filedNotEnteredNorAnchored,
+  'not-a-company': WHY.notACompany,
+  'no-saved-keys': WHY.noSavedKeys,
+  'no-seat': WHY.noSeat,
+  'seat-not-held': WHY.seatNotHeld,
+  'not-on-chain': WHY.notOnChain,
+  'roster-not-opened': WHY.rosterNotOpened,
+  'not-believed': WHY.notBelieved,
+  'not-found': WHY.notFound,
+  'not-as-shown': WHY.notAsShown,
+  'not-filed': WHY.notFiled,
+  'filed-not-entered': WHY.filedNotEntered,
+  'filed-not-entered-nor-anchored': WHY.filedNotEnteredNorAnchored
 };
 const WRONGLY = ['not-a-person', 'no-person'] as const;
 /** Each wallet key, after `act.<act>.why.`, as the page's code; a key not listed for the act is `other`. */
 const CODE_OF: Readonly<Record<PersonAct, Readonly<Record<string, PersonWhy>>>> = {
   [PERSON_ACT.admit]: {
-    ...SEAT, ...Object.fromEntries(WRONGLY.map((k) => [k, WHY.askedWrongly])), 'not-a-fingerprint': WHY.askedWrongly,
-    'no-fingerprint': WHY.fingerprintNeeded, 'fingerprint-not-checked': WHY.fingerprintNotNeeded, 'not-admitted': WHY.notAdmitted,
+    ...SEAT,
+    ...Object.fromEntries(WRONGLY.map((k) => [k, WHY.askedWrongly])),
+    'not-a-fingerprint': WHY.askedWrongly,
+    'no-fingerprint': WHY.fingerprintNeeded,
+    'fingerprint-not-checked': WHY.fingerprintNotNeeded,
+    'not-admitted': WHY.notAdmitted
   },
   [PERSON_ACT.change]: {
-    ...SEAT, ...Object.fromEntries([...WRONGLY, 'not-for-this-kind', 'cleared-and-given', 'not-a-status', 'not-an-asset', 'no-pay', 'not-terms', 'nothing',
-      'status-and-details', 'pay-incomplete', 'no-classification'].map((k) => [k, WHY.askedWrongly])),
-    'not-changed': WHY.notChanged, 'date-raised': WHY.dateRaised, 'terms-raised': WHY.termsRaised,
-  },
+    ...SEAT,
+    ...Object.fromEntries(
+      [
+        ...WRONGLY,
+        'not-for-this-kind',
+        'cleared-and-given',
+        'not-a-status',
+        'not-an-asset',
+        'no-pay',
+        'not-terms',
+        'nothing',
+        'status-and-details',
+        'pay-incomplete',
+        'no-classification'
+      ].map((k) => [k, WHY.askedWrongly])
+    ),
+    'not-changed': WHY.notChanged,
+    'date-raised': WHY.dateRaised,
+    'terms-raised': WHY.termsRaised
+  }
 };
 
 /** A stop that may have filed the record or left it not yet entered in the company's records: a second press finishes it, so the page reads again. */
-const PARTLY: ReadonlySet<PersonWhy> = new Set<PersonWhy>([WHY.filedNotEntered, WHY.filedNotEnteredNorAnchored, WHY.stopped, WHY.other]);
+const PARTLY: ReadonlySet<PersonWhy> = new Set<PersonWhy>([
+  WHY.filedNotEntered,
+  WHY.filedNotEnteredNorAnchored,
+  WHY.stopped,
+  WHY.other
+]);
 
 const KEY = /^act\.([a-z-]+)\.why\.([a-z-]+)$/u;
 
@@ -65,15 +113,29 @@ export const PERSON_ACTED = { done: 'done', stopped: 'stopped', refused: 'refuse
 
 /** What the page found wrong with what was typed, before the wallet was asked. */
 export const PROBLEM = {
-  noFingerprint: 'no-fingerprint', badFingerprint: 'bad-fingerprint', noAmount: 'no-amount', badAmount: 'bad-amount', zeroAmount: 'zero-amount',
-  tooManyDecimals: 'too-many-decimals', noAsset: 'no-asset', noDate: 'no-date', badDate: 'bad-date', noClassification: 'no-classification',
+  noFingerprint: 'no-fingerprint',
+  badFingerprint: 'bad-fingerprint',
+  noAmount: 'no-amount',
+  badAmount: 'bad-amount',
+  zeroAmount: 'zero-amount',
+  tooManyDecimals: 'too-many-decimals',
+  noAsset: 'no-asset',
+  noDate: 'no-date',
+  badDate: 'bad-date',
+  noClassification: 'no-classification'
 } as const;
 export type PersonProblem = (typeof PROBLEM)[keyof typeof PROBLEM];
 
 /** `handedOver`: the wallet handed the page transactions before it stopped (sent or not confirmed), whatever the reason, so "nothing was done" is not true. */
 export type PersonActed =
   | { readonly of: typeof PERSON_ACTED.done; readonly state: string | null }
-  | { readonly of: typeof PERSON_ACTED.stopped; readonly act: PersonAct; readonly why: PersonWhy; readonly partial: boolean; readonly handedOver: boolean }
+  | {
+      readonly of: typeof PERSON_ACTED.stopped;
+      readonly act: PersonAct;
+      readonly why: PersonWhy;
+      readonly partial: boolean;
+      readonly handedOver: boolean;
+    }
   | { readonly of: typeof PERSON_ACTED.refused; readonly why: ActRefusal }
   | { readonly of: typeof PERSON_ACTED.problem; readonly problem: PersonProblem };
 
@@ -93,11 +155,17 @@ function actedOf(act: PersonAct, ended: Ended): PersonActed {
     return { of: PERSON_ACTED.done, state: typeof state === 'string' ? state : null };
   }
   const why = whyOf(act, ended.refused);
-  return { of: PERSON_ACTED.stopped, act, why, partial: PARTLY.has(why), handedOver: ended.relayed > 0 || ended.unconfirmed > 0 };
+  return {
+    of: PERSON_ACTED.stopped,
+    act,
+    why,
+    partial: PARTLY.has(why),
+    handedOver: ended.relayed > 0 || ended.unconfirmed > 0
+  };
 }
 
-
-const steps = (onStep?: (step: number, steps: number) => void) => (onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) });
+const steps = (onStep?: (step: number, steps: number) => void) =>
+  onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) };
 
 /**
  * Admit a person or a vendor (`kind`, an employee when none is given) who handed their code over. One admitted on a fingerprint is
@@ -106,8 +174,16 @@ const steps = (onStep?: (step: number, steps: number) => void) => (onStep === un
  * check against nothing.
  */
 export async function admitPerson(
-  personId: string, view: PageView, who: { readonly id: string; readonly name: string; readonly kind?: PersonKind; readonly admitBy: AdmitBy; readonly fingerprint?: string },
-  onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  who: {
+    readonly id: string;
+    readonly name: string;
+    readonly kind?: PersonKind;
+    readonly admitBy: AdmitBy;
+    readonly fingerprint?: string;
+  },
+  onStep?: (step: number, steps: number) => void
 ): Promise<PersonActed> {
   try {
     let fingerprint: string | undefined;
@@ -119,7 +195,17 @@ export async function admitPerson(
     }
     const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
-    const ended = await admitPersonInTheWallet({ ...named, kind: who.kind ?? PERSON_KIND.employee, person: who.id, name: who.name, ...(fingerprint === undefined ? {} : { fingerprint }) }, ACCOUNT_ORIGIN, steps(onStep));
+    const ended = await admitPersonInTheWallet(
+      {
+        ...named,
+        kind: who.kind ?? PERSON_KIND.employee,
+        person: who.id,
+        name: who.name,
+        ...(fingerprint === undefined ? {} : { fingerprint })
+      },
+      ACCOUNT_ORIGIN,
+      steps(onStep)
+    );
     return actedOf(PERSON_ACT.admit, ended);
   } catch (e) {
     return refused(refusalOf(e));
@@ -130,7 +216,13 @@ export async function admitPerson(
 export const CLASSIFICATIONS = EMPLOYEE_CLASSIFICATIONS;
 
 /** The ways a person's record is changed, each its own act: the wallet refuses a status asked together with details. */
-export const CHANGE = { pay: 'pay', classification: 'classification', endDate: 'endDate', leavingDate: 'leavingDate', leave: 'leave' } as const;
+export const CHANGE = {
+  pay: 'pay',
+  classification: 'classification',
+  endDate: 'endDate',
+  leavingDate: 'leavingDate',
+  leave: 'leave'
+} as const;
 export type PersonChange =
   | { readonly kind: typeof CHANGE.pay; readonly amount: string; readonly from: string }
   | { readonly kind: typeof CHANGE.classification; readonly classification: string; readonly from: string }
@@ -138,13 +230,17 @@ export type PersonChange =
   | { readonly kind: typeof CHANGE.leave; readonly day: string };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;
-const isDay = (s: string): boolean => DAY.test(s) && !Number.isNaN(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
+const isDay = (s: string): boolean =>
+  DAY.test(s) && !Number.isNaN(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
 
 /** A day typed for a change: missing, or not a calendar date. */
-const dayProblem = (day: string): PersonProblem | null => (day === '' ? PROBLEM.noDate : isDay(day) ? null : PROBLEM.badDate);
+const dayProblem = (day: string): PersonProblem | null =>
+  day === '' ? PROBLEM.noDate : isDay(day) ? null : PROBLEM.badDate;
 
 const AMOUNT_PROBLEMS: Readonly<Record<string, PersonProblem>> = {
-  [AMOUNT_PROBLEM.noAmount]: PROBLEM.noAmount, [AMOUNT_PROBLEM.zeroAmount]: PROBLEM.zeroAmount, [AMOUNT_PROBLEM.tooManyDecimals]: PROBLEM.tooManyDecimals,
+  [AMOUNT_PROBLEM.noAmount]: PROBLEM.noAmount,
+  [AMOUNT_PROBLEM.zeroAmount]: PROBLEM.zeroAmount,
+  [AMOUNT_PROBLEM.tooManyDecimals]: PROBLEM.tooManyDecimals
 };
 
 /**
@@ -153,8 +249,11 @@ const AMOUNT_PROBLEMS: Readonly<Record<string, PersonProblem>> = {
  * with a leaving date only when one was typed. The wallet checks the months already raised.
  */
 export async function changePerson(
-  personId: string, view: PageView, person: { readonly id: string; readonly name: string; readonly asset: string }, change: PersonChange,
-  onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  person: { readonly id: string; readonly name: string; readonly asset: string },
+  change: PersonChange,
+  onStep?: (step: number, steps: number) => void
 ): Promise<PersonActed> {
   try {
     let asked: Parameters<typeof changePersonInTheWallet>[0]['change'];
@@ -171,7 +270,9 @@ export async function changePerson(
       if (!kinds.includes(change.classification)) return problem(PROBLEM.noClassification);
       const wrong = dayProblem(change.from);
       if (wrong !== null) return problem(wrong);
-      asked = { classification: { classification: change.classification as EmployeeClassification, from: change.from } };
+      asked = {
+        classification: { classification: change.classification as EmployeeClassification, from: change.from }
+      };
     } else if (change.kind === CHANGE.leave) {
       const wrong = change.day === '' ? null : dayProblem(change.day);
       if (wrong !== null) return problem(wrong);
@@ -183,7 +284,11 @@ export async function changePerson(
     }
     const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
-    const ended = await changePersonInTheWallet({ ...named, kind: PERSON_KIND.employee, person: person.id, name: person.name, change: asked }, ACCOUNT_ORIGIN, steps(onStep));
+    const ended = await changePersonInTheWallet(
+      { ...named, kind: PERSON_KIND.employee, person: person.id, name: person.name, change: asked },
+      ACCOUNT_ORIGIN,
+      steps(onStep)
+    );
     return actedOf(PERSON_ACT.change, ended);
   } catch (e) {
     return refused(refusalOf(e));
@@ -194,7 +299,12 @@ export async function changePerson(
 export const VENDOR_CHANGE = { terms: 'terms', endDate: 'endDate' } as const;
 export type VendorChange =
   | { readonly kind: typeof VENDOR_CHANGE.terms; readonly terms: typeof TERMS.oneOff }
-  | { readonly kind: typeof VENDOR_CHANGE.terms; readonly terms: typeof TERMS.monthly; readonly asset: string; readonly amount: string }
+  | {
+      readonly kind: typeof VENDOR_CHANGE.terms;
+      readonly terms: typeof TERMS.monthly;
+      readonly asset: string;
+      readonly amount: string;
+    }
   | { readonly kind: typeof VENDOR_CHANGE.endDate; readonly day: string | null };
 
 /**
@@ -203,8 +313,11 @@ export type VendorChange =
  * The wallet refuses terms once any month is raised, and an end date in or before a raised month.
  */
 export async function changeVendor(
-  personId: string, view: PageView, vendor: { readonly id: string; readonly name: string }, change: VendorChange,
-  onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  vendor: { readonly id: string; readonly name: string },
+  change: VendorChange,
+  onStep?: (step: number, steps: number) => void
 ): Promise<PersonActed> {
   try {
     let asked: Parameters<typeof changePersonInTheWallet>[0]['change'];
@@ -223,7 +336,11 @@ export async function changeVendor(
     }
     const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
-    const ended = await changePersonInTheWallet({ ...named, kind: PERSON_KIND.vendor, person: vendor.id, name: vendor.name, change: asked }, ACCOUNT_ORIGIN, steps(onStep));
+    const ended = await changePersonInTheWallet(
+      { ...named, kind: PERSON_KIND.vendor, person: vendor.id, name: vendor.name, change: asked },
+      ACCOUNT_ORIGIN,
+      steps(onStep)
+    );
     return actedOf(PERSON_ACT.change, ended);
   } catch (e) {
     return refused(refusalOf(e));

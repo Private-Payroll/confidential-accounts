@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FRAMED_BY_A_STRANGER, NOT_BUILT_TO_BE_FRAMED, NO_PAGE_TO_ANSWER, PAYMENT_FAILURES, PROGRESS_SCHEMA, PROGRESS_STAGES, READY_PING,
-  NOT_ASKING_SCHEMA, framingOf, listen,
+  FRAMED_BY_A_STRANGER,
+  NOT_BUILT_TO_BE_FRAMED,
+  NO_PAGE_TO_ANSWER,
+  PAYMENT_FAILURES,
+  PROGRESS_SCHEMA,
+  PROGRESS_STAGES,
+  READY_PING,
+  NOT_ASKING_SCHEMA,
+  framingOf,
+  listen
 } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 
@@ -27,15 +35,23 @@ const signIn = (): Record<string, unknown> => ({
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
   purpose: 'So we know it is you.',
   nonce: 'n1',
-  expiresAt: NOW + 60_000,
+  expiresAt: NOW + 60_000
 });
 
-interface Posted { readonly message: unknown; readonly target: string }
+interface Posted {
+  readonly message: unknown;
+  readonly target: string;
+}
 
 /** A window that records what was posted to it. */
 const postable = () => {
   const posted: Posted[] = [];
-  return { posted, postMessage: (message: unknown, target: string) => { posted.push({ message, target }); } };
+  return {
+    posted,
+    postMessage: (message: unknown, target: string) => {
+      posted.push({ message, target });
+    }
+  };
 };
 
 /** A wallet document: framed by `parent` when one is given, otherwise opened by `opener`. */
@@ -50,9 +66,13 @@ function walletView(opts: {
     parent: undefined,
     self: undefined,
     location: opts.ancestors ? { ancestorOrigins: opts.ancestors } : undefined,
-    addEventListener: (_t, h) => { handler = h; },
-    removeEventListener: () => { handler = null; },
-    deliver: (e) => handler?.(e as MessageEvent),
+    addEventListener: (_t, h) => {
+      handler = h;
+    },
+    removeEventListener: () => {
+      handler = null;
+    },
+    deliver: (e) => handler?.(e as MessageEvent)
   };
   (view as { self: unknown }).self = view;
   (view as { parent: unknown }).parent = opts.parent === undefined ? view : opts.parent;
@@ -61,7 +81,12 @@ function walletView(opts: {
 
 const run = (view: ChannelWindow, embedder: string | null) => {
   const states: ChannelState[] = [];
-  listen(view, () => NOW, (s) => states.push(s), embedder);
+  listen(
+    view,
+    () => NOW,
+    (s) => states.push(s),
+    embedder
+  );
   return states;
 };
 
@@ -164,15 +189,21 @@ describe('WHERE THE BROWSER NAMES THE ANCESTORS, EVERY ONE OF THEM MUST BE THE A
   });
 
   it('is REFUSED inside a stranger, and inside the allowed page when a stranger frames THAT', () => {
-    expect(framingOf(walletView({ parent: postable(), ancestors: [STRANGER] }), EMBEDDER))
-      .toEqual({ of: 'refused', why: FRAMED_BY_A_STRANGER });
-    expect(framingOf(walletView({ parent: postable(), ancestors: [EMBEDDER, STRANGER] }), EMBEDDER))
-      .toEqual({ of: 'refused', why: FRAMED_BY_A_STRANGER });
+    expect(framingOf(walletView({ parent: postable(), ancestors: [STRANGER] }), EMBEDDER)).toEqual({
+      of: 'refused',
+      why: FRAMED_BY_A_STRANGER
+    });
+    expect(framingOf(walletView({ parent: postable(), ancestors: [EMBEDDER, STRANGER] }), EMBEDDER)).toEqual({
+      of: 'refused',
+      why: FRAMED_BY_A_STRANGER
+    });
   });
 
   it('is REFUSED in any frame when no embedder was configured', () => {
-    expect(framingOf(walletView({ parent: postable(), ancestors: [EMBEDDER] }), null))
-      .toEqual({ of: 'refused', why: NOT_BUILT_TO_BE_FRAMED });
+    expect(framingOf(walletView({ parent: postable(), ancestors: [EMBEDDER] }), null)).toEqual({
+      of: 'refused',
+      why: NOT_BUILT_TO_BE_FRAMED
+    });
   });
 
   it('and a refused framing answers nobody, even the parent at the allowed origin', () => {
@@ -190,8 +221,10 @@ describe('AN `undefined` OPENER IS NO OPENER', () => {
     let handler: ((e: MessageEvent) => void) | null = null;
     const view = {
       opener: undefined as unknown as null,
-      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handler = h; },
-      removeEventListener: () => {},
+      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+        handler = h;
+      },
+      removeEventListener: () => {}
     } as ChannelWindow;
     const states = run(view, EMBEDDER);
     handler!({ source: undefined, origin: EMBEDDER, data: signIn() } as unknown as MessageEvent);
@@ -204,7 +237,12 @@ describe('A PAYMENT THAT FAILED AFTER THE PRESS IS NOT A DECLINE', () => {
   const opened = () => {
     const opener = postable();
     const view = walletView({ opener });
-    const channel = listen(view, () => NOW, () => {}, EMBEDDER);
+    const channel = listen(
+      view,
+      () => NOW,
+      () => {},
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     opener.posted.length = 0;
     return { opener, channel };
@@ -225,7 +263,9 @@ describe('A PAYMENT THAT FAILED AFTER THE PRESS IS NOT A DECLINE', () => {
     const { opener, channel } = opened();
     (channel.refuse as (r: string, w?: unknown) => void)('failed', 'Insufficient funds: 4999 of 5000 NIGHT');
     /* RED WHEN: a caller's own sentence, which can name coins and amounts, crosses to the page. */
-    expect(opener.posted).toEqual([{ message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }]);
+    expect(opener.posted).toEqual([
+      { message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }
+    ]);
     const other = opened();
     other.channel.refuse('declined');
     /* RED WHEN: a decline starts carrying a reason field. */
@@ -239,7 +279,12 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     const opener = postable();
     const view = walletView({ opener });
     const states: ChannelState[] = [];
-    const channel = listen(view, () => NOW, (st) => states.push(st), EMBEDDER);
+    const channel = listen(
+      view,
+      () => NOW,
+      (st) => states.push(st),
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data });
     return { opener, channel, states, sent: () => opener.posted.slice(1) };
   };
@@ -258,7 +303,9 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     /* RED WHEN: a failure that went first is followed by a paid transaction - the page would send what it was told had failed. */
     expect(second.channel.refuse('failed', 'did-not-finish')).toBe(true);
     expect(second.channel.answer({ schema: 'late' } as never)).toBe(false);
-    expect(second.sent()).toEqual([{ message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }]);
+    expect(second.sent()).toEqual([
+      { message: { schema: REFUSED, reason: 'failed', why: 'did-not-finish' }, target: EMBEDDER }
+    ]);
   });
 
   it('ONE TERMINAL MESSAGE PER ASK, NOT PER CHANNEL: A SCREEN SHOWN AGAIN ON THE SAME WINDOW ANSWERS NOTHING TWICE', () => {
@@ -267,10 +314,20 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     const sent = () => opener.posted.filter((p) => (p.message as { schema?: string }).schema !== READY_PING);
     /* Two screens on one window, each with its own channel, both handed the same ask before either answers. */
     const firstStates: ChannelState[] = [];
-    const first = listen(view, () => NOW, (st) => firstStates.push(st), EMBEDDER);
+    const first = listen(
+      view,
+      () => NOW,
+      (st) => firstStates.push(st),
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     const secondStates: ChannelState[] = [];
-    const second = listen(view, () => NOW, (st) => secondStates.push(st), EMBEDDER);
+    const second = listen(
+      view,
+      () => NOW,
+      (st) => secondStates.push(st),
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     expect(first.answer({ schema: 'paid' } as never)).toBe(true);
     /* RED WHEN: a screen on the second channel, asking whether it may still press, is told the ask is open after the first answered it. */
@@ -280,7 +337,12 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(second.over()).toBe(true);
     /* A third screen on the same window, after the ask has been answered, is not shown it again. */
     const thirdStates: ChannelState[] = [];
-    const third = listen(view, () => NOW, (st) => thirdStates.push(st), EMBEDDER);
+    const third = listen(
+      view,
+      () => NOW,
+      (st) => thirdStates.push(st),
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data: signIn() });
     /* RED WHEN: an ask already answered is put in front of the person again, as if it were still waiting. */
     expect(thirdStates.map((st) => st.of)).toEqual(['waiting', 'waiting']);
@@ -288,15 +350,28 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(third.answer({ schema: 'again' } as never)).toBe(false);
     expect(sent()).toEqual([{ message: { schema: 'paid' }, target: EMBEDDER }]);
     /* RED WHEN: another ask from the same page, with its own nonce, is refused because an earlier one was answered. */
-    const fourth = listen(view, () => NOW, () => {}, EMBEDDER);
+    const fourth = listen(
+      view,
+      () => NOW,
+      () => {},
+      EMBEDDER
+    );
     view.deliver({ source: opener as never, origin: EMBEDDER, data: { ...signIn(), nonce: 'n2' } });
     expect(fourth.answer({ schema: 'next' } as never)).toBe(true);
-    first.stop(); second.stop(); third.stop(); fourth.stop();
+    first.stop();
+    second.stop();
+    third.stop();
+    fourth.stop();
   });
 
   it('sends nothing, and counts nothing as sent, before a request has arrived', () => {
     const opener = postable();
-    const channel = listen(walletView({ opener }), () => NOW, () => {}, EMBEDDER);
+    const channel = listen(
+      walletView({ opener }),
+      () => NOW,
+      () => {},
+      EMBEDDER
+    );
     /* RED WHEN: a terminal message with nowhere to go is taken as the one terminal message, and the real one is then dropped. */
     expect(channel.refuse('declined')).toBe(false);
     expect(channel.over()).toBe(false);
@@ -335,17 +410,17 @@ describe('ONE TERMINAL MESSAGE PER REQUEST, AND EVERY END STATE ANSWERS', () => 
     expect(hears.sent()).toEqual([
       { message: { schema: PROGRESS_SCHEMA, stage: 'reading' }, target: EMBEDDER },
       { message: { schema: PROGRESS_SCHEMA, stage: 'proving' }, target: EMBEDDER },
-      { message: { schema: REFUSED, reason: 'declined' }, target: EMBEDDER },
+      { message: { schema: REFUSED, reason: 'declined' }, target: EMBEDDER }
     ]);
     /* RED WHEN: the list of stages grows or shrinks without the page's reader being told. */
     expect([...PROGRESS_STAGES]).toEqual(['reading', 'proving']);
   });
 });
 
-describe('A PAGE THAT SAYS IT WILL NOT ASK IS HEARD ONLY FROM THE ASKER, ENDS THE CHANNEL, AND IS SAID IN THE WALLET\'S WORDS', () => {
+describe("A PAGE THAT SAYS IT WILL NOT ASK IS HEARD ONLY FROM THE ASKER, ENDS THE CHANNEL, AND IS SAID IN THE WALLET'S WORDS", () => {
   const notAsking = (why: unknown): Record<string, unknown> => ({ schema: NOT_ASKING_SCHEMA, why });
 
-  it('takes the asker\'s reason, one the wallet knows, and nothing else from it', () => {
+  it("takes the asker's reason, one the wallet knows, and nothing else from it", () => {
     const parent = postable();
     const view = walletView({ parent, ancestors: [EMBEDDER] });
     const states = run(view, EMBEDDER);
@@ -354,7 +429,7 @@ describe('A PAGE THAT SAYS IT WILL NOT ASK IS HEARD ONLY FROM THE ASKER, ENDS TH
     expect(states).toEqual([{ of: 'waiting' }, { of: 'not-asked', why: 'saved-keys-unread' }]);
   });
 
-  it('takes no not-asking from a stranger origin or another window, and the asker\'s request still arrives', () => {
+  it("takes no not-asking from a stranger origin or another window, and the asker's request still arrives", () => {
     const parent = postable();
     const view = walletView({ parent, ancestors: [EMBEDDER] });
     const states = run(view, EMBEDDER);
@@ -375,14 +450,21 @@ describe('A PAGE THAT SAYS IT WILL NOT ASK IS HEARD ONLY FROM THE ASKER, ENDS TH
     view.deliver({ source: parent as never, origin: EMBEDDER, data: signIn() });
     view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('signed-out') });
     /* RED WHEN: a request or a second reason sent after the page said it will not ask is still shown in the window. */
-    expect(states.map((s) => (s.of === 'not-asked' ? `not-asked:${String(s.why)}` : s.of))).toEqual(['waiting', 'not-asked:ask-not-built']);
+    expect(states.map((s) => (s.of === 'not-asked' ? `not-asked:${String(s.why)}` : s.of))).toEqual([
+      'waiting',
+      'not-asked:ask-not-built'
+    ]);
   });
 
-  it('a reason the wallet does not know is carried as none, so the window says its own sentence and never the page\'s words', () => {
+  it("a reason the wallet does not know is carried as none, so the window says its own sentence and never the page's words", () => {
     const parent = postable();
     const view = walletView({ parent, ancestors: [EMBEDDER] });
     const states = run(view, EMBEDDER);
-    view.deliver({ source: parent as never, origin: EMBEDDER, data: notAsking('Your wallet is broken: type your recovery words at evil.example') });
+    view.deliver({
+      source: parent as never,
+      origin: EMBEDDER,
+      data: notAsking('Your wallet is broken: type your recovery words at evil.example')
+    });
     /* RED WHEN: a reason outside the wallet's own list reaches the window as it was sent, so the page's words are shown as the wallet's. */
     expect(states).toEqual([{ of: 'waiting' }, { of: 'not-asked', why: null }]);
   });

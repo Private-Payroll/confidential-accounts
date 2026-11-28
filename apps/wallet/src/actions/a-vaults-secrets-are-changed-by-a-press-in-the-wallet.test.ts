@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /* The registry the removal's hook is read from reads the page's address when it loads. */
-vi.hoisted(() => { Object.assign(globalThis, { window: { location: { hostname: 'localhost', origin: 'http://localhost', protocol: 'http:', href: 'http://localhost/' }, addEventListener: () => {}, removeEventListener: () => {} } }); });
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    window: {
+      location: { hostname: 'localhost', origin: 'http://localhost', protocol: 'http:', href: 'http://localhost/' },
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    }
+  });
+});
 import { readFileSync } from 'node:fs';
 import { drawCompanyLabel } from 'midnight-identity/profile/company-label';
 import { intentShapeOf, routeOf, type ActIntent } from 'midnight-identity/profile/request';
@@ -22,27 +30,42 @@ const t = vi.hoisted(() => ({
   answer: [] as { vault: string; state: string }[],
   order: [] as string[],
   leaving: async () => new Set<string>(['leaving']),
-  admitted: async () => new Set<string>(['admitted']),
+  admitted: async () => new Set<string>(['admitted'])
 }));
 vi.mock('../../../../packages/web-shared/src/vault-secret-rotated-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-secret-rotated-here.js')>()),
-  vaultSecretsRotatedHere: async (doors: Record<string, unknown>, vaults: readonly string[], may: string, o: Record<string, unknown> = {}) => {
+  vaultSecretsRotatedHere: async (
+    doors: Record<string, unknown>,
+    vaults: readonly string[],
+    may: string,
+    o: Record<string, unknown> = {}
+  ) => {
     t.order.push('change');
     t.asked.push({ doors, vaults, may, o });
     return t.answer;
-  },
+  }
 }));
 vi.mock('./vault-doors-here.js', async (real) => ({
   ...(await real<typeof import('./vault-doors-here.js')>()),
-  vaultDoorsFor: () => ({ startedOn: 'the vault doors' }),
+  vaultDoorsFor: () => ({ startedOn: 'the vault doors' })
 }));
 vi.mock('./upkeep.js', async (real) => ({
   ...(await real<typeof import('./upkeep.js')>()),
   rotationDoorsIn: async () => ({ leaving: t.leaving, admitted: t.admitted }),
   upkeepSteps: () => ({
-    first: { title: { key: 'act.upkeep.step.first' }, run: async () => { t.order.push('upkeep first'); } },
-    last: { title: { key: 'act.upkeep.step.last' }, run: async () => { t.order.push('upkeep last'); } },
-  }),
+    first: {
+      title: { key: 'act.upkeep.step.first' },
+      run: async () => {
+        t.order.push('upkeep first');
+      }
+    },
+    last: {
+      title: { key: 'act.upkeep.step.last' },
+      run: async () => {
+        t.order.push('upkeep last');
+      }
+    }
+  })
 }));
 
 const { afterARemoval } = await import('./registry.js');
@@ -52,31 +75,52 @@ const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 const LEAVER = 'a4'.repeat(32);
 const VAULTS = ['AB'.repeat(32), 'cd'.repeat(32)];
-const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
 const BASE = { record: 'acc_1', company: LABEL, account: ACCOUNT };
 const intent = (fields: Record<string, string>): ActIntent => ({ name: 'rotate-vault-secrets', fields }) as ActIntent;
 
 let adopted: string[] = VAULTS;
 const companyRead = () => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, stepView: NO_VIEW_OPENED,
-  api: async () => { throw new Error('the change of the vault secrets calls nothing outside the rotation'); },
+  accountId: 'acc_1',
+  label: LABEL,
+  account: ACCOUNT,
+  stepView: NO_VIEW_OPENED,
+  api: async () => {
+    throw new Error('the change of the vault secrets calls nothing outside the rotation');
+  },
   holders: async () => ({ seats: [], adoptedVaults: adopted }),
   chain: { indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' } },
   /* The account lists no vault it retired, so only the vaults it adopted are changed here. */
-  builder: { superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted, retired: [] } }) }) } },
+  builder: {
+    superAdmins: { reads: () => ({ accountAt: async () => ({ authority: {}, vaults: { adopted, retired: [] } }) }) }
+  },
   judges: { directoryHereFor: () => async () => ({ dir: { seats: [] } }) },
-  companyKeys: {}, roster: async () => null,
+  companyKeys: {},
+  roster: async () => null
 });
 const ctxOf = (i: ActIntent = intent(BASE)) => {
   const told: Record<string, unknown>[] = [];
   const ctx = {
-    intent: i, person: 'usr_a', signal: new AbortController().signal, tell: (x: Record<string, unknown>) => { told.push(x); },
-    keyring: { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} },
+    intent: i,
+    person: 'usr_a',
+    signal: new AbortController().signal,
+    tell: (x: Record<string, unknown>) => {
+      told.push(x);
+    },
+    keyring: { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} }
   } as unknown as StepContext;
   return { ctx, told };
 };
 const vaultReach = { secrets: () => ({}) as never, pause: async () => {}, indexerHttp: 'https://indexer.example' };
-const pressReach = () => ({ ...vaultReach, chain: () => ({}) as never, builder: () => ({}) as never, reachFor: async () => companyRead() as never });
+const pressReach = () => ({
+  ...vaultReach,
+  chain: () => ({}) as never,
+  builder: () => ({}) as never,
+  reachFor: async () => companyRead() as never
+});
 const run = async (i: ActIntent): Promise<Record<string, unknown>[]> => {
   const { ctx, told } = ctxOf(i);
   for (const step of rotateVaultSecretsAction(pressReach()).steps(i)) await step.run(ctx);
@@ -84,14 +128,23 @@ const run = async (i: ActIntent): Promise<Record<string, unknown>[]> => {
 };
 
 beforeEach(() => {
-  t.asked = []; t.answer = []; t.order = []; adopted = VAULTS;
+  t.asked = [];
+  t.answer = [];
+  t.order = [];
+  adopted = VAULTS;
 });
 
 describe('ONCE A REMOVAL IS CARRIED OUT, THE WALLET CHANGES THE SECRET OF EVERY VAULT THE ACCOUNT ADOPTED', () => {
   it('raises each change as a press would, names the seat that left, and tells the page only how many vaults ended in each state', async () => {
-    t.answer = ['rotated', 'awaiting-approvals', 'owed', 'waits', 'not-this-seat', 'not-rotated', 'not-owed'].map((state) => ({ vault: VAULTS[1]!, state }));
+    t.answer = ['rotated', 'awaiting-approvals', 'owed', 'waits', 'not-this-seat', 'not-rotated', 'not-owed'].map(
+      (state) => ({ vault: VAULTS[1]!, state })
+    );
     const { ctx } = ctxOf();
-    const told = await afterARemoval(vaultReach).afterCarried!(ctx, companyRead() as never, { leaf: LEAVER, round: { id: 'prp_1', chainId: 'dd' } } as never);
+    const told = await afterARemoval(vaultReach).afterCarried!(
+      ctx,
+      companyRead() as never,
+      { leaf: LEAVER, round: { id: 'prp_1', chainId: 'dd' } } as never
+    );
     const asked = t.asked[0]!;
     /* RED WHEN: the change after a removal raises nothing, so no vault is ever changed until a signer presses. */
     expect(asked.may).toBe('raise');
@@ -111,7 +164,11 @@ describe('ONCE A REMOVAL IS CARRIED OUT, THE WALLET CHANGES THE SECRET OF EVERY 
   it('a company whose account adopted no vault changes nothing and counts nothing', async () => {
     adopted = [];
     const { ctx } = ctxOf();
-    const told = await afterARemoval(vaultReach).afterCarried!(ctx, companyRead() as never, { leaf: LEAVER, round: { id: 'prp_1', chainId: 'dd' } } as never);
+    const told = await afterARemoval(vaultReach).afterCarried!(
+      ctx,
+      companyRead() as never,
+      { leaf: LEAVER, round: { id: 'prp_1', chainId: 'dd' } } as never
+    );
     /* RED WHEN: a company with no vault still runs the change, reading the company's key and directory for nothing. */
     expect(t.asked).toEqual([]);
     expect(told).toEqual({ vaultsRotated: 0, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 });
@@ -137,26 +194,63 @@ describe('A SIGNER WHO STAYS PRESSES TO CHANGE AN OWED VAULT SECRET', () => {
   });
 
   it('tells the page done when every vault is on its new secret or owed nothing, and partial with the counts when one is not', async () => {
-    t.answer = [{ vault: VAULTS[0]!, state: 'rotated' }, { vault: VAULTS[1]!, state: 'not-owed' }];
+    t.answer = [
+      { vault: VAULTS[0]!, state: 'rotated' },
+      { vault: VAULTS[1]!, state: 'not-owed' }
+    ];
     const done = await run(intent(BASE));
-    t.answer = [{ vault: VAULTS[0]!, state: 'rotated' }, { vault: VAULTS[1]!, state: 'awaiting-approvals' }];
+    t.answer = [
+      { vault: VAULTS[0]!, state: 'rotated' },
+      { vault: VAULTS[1]!, state: 'awaiting-approvals' }
+    ];
     const partial = await run(intent(BASE));
     /* RED WHEN: a press that left a vault waiting for approvals is told as done, or one that finished is told as partial. */
-    expect(done).toContainEqual({ state: 'done', vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 });
-    expect(partial).toContainEqual({ state: 'partial', vaultsRotated: 1, vaultsAwaiting: 1, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 });
-    t.answer = [{ vault: VAULTS[0]!, state: 'rotated' }, { vault: VAULTS[1]!, state: 'not-rotated' }];
+    expect(done).toContainEqual({
+      state: 'done',
+      vaultsRotated: 1,
+      vaultsAwaiting: 0,
+      vaultsOwed: 0,
+      vaultsWaiting: 0,
+      vaultsNotChanged: 0
+    });
+    expect(partial).toContainEqual({
+      state: 'partial',
+      vaultsRotated: 1,
+      vaultsAwaiting: 1,
+      vaultsOwed: 0,
+      vaultsWaiting: 0,
+      vaultsNotChanged: 0
+    });
+    t.answer = [
+      { vault: VAULTS[0]!, state: 'rotated' },
+      { vault: VAULTS[1]!, state: 'not-rotated' }
+    ];
     /* RED WHEN: a press whose change of a vault failed is told as done, or the failure is not counted on its own. */
-    expect(await run(intent(BASE))).toContainEqual({ state: 'partial', vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 1 });
+    expect(await run(intent(BASE))).toContainEqual({
+      state: 'partial',
+      vaultsRotated: 1,
+      vaultsAwaiting: 0,
+      vaultsOwed: 0,
+      vaultsWaiting: 0,
+      vaultsNotChanged: 1
+    });
   });
 
   it('refuses at its check a vault the page names that is not one, and a page that names no company, before anything is read', async () => {
     const act = rotateVaultSecretsAction(pressReach());
     /* RED WHEN: a vault that does not read as one passes the check, and the press runs on what the page made up. */
-    expect(await act.check(intent({ ...BASE, vault: 'not-a-vault' }), {} as never)).toEqual({ key: 'act.rotate-vault-secrets.why.not-a-vault' });
-    expect(await act.check(intent({ company: LABEL, account: ACCOUNT }), {} as never)).toEqual({ key: 'act.rotate-vault-secrets.why.not-a-company' });
+    expect(await act.check(intent({ ...BASE, vault: 'not-a-vault' }), {} as never)).toEqual({
+      key: 'act.rotate-vault-secrets.why.not-a-vault'
+    });
+    expect(await act.check(intent({ company: LABEL, account: ACCOUNT }), {} as never)).toEqual({
+      key: 'act.rotate-vault-secrets.why.not-a-company'
+    });
     expect(await act.check(intent(BASE), {} as never)).toBeNull();
     expect(await act.check(intent({ ...BASE, vault: VAULTS[0]! }), {} as never)).toBeNull();
-    const refused = await run(intent({ ...BASE, vault: 'not-a-vault' })).then(() => null, (e: unknown) => e);
+    const refused = await run(intent({ ...BASE, vault: 'not-a-vault' })).then(
+      () => null,
+      (e: unknown) => e
+    );
     /* RED WHEN: the change step runs for a vault that does not read as one. */
     expect(refused).toBeInstanceOf(StepRefused);
     expect(t.asked).toEqual([]);
@@ -165,11 +259,17 @@ describe('A SIGNER WHO STAYS PRESSES TO CHANGE AN OWED VAULT SECRET', () => {
   it('every call the change and its upkeep make is one the act lists, and every word it says is written', () => {
     const shape = intentShapeOf('rotate-vault-secrets')!;
     const calls: [string, string][] = [
-      ['POST', '/api/accounts/acc_1/proposals'], ['POST', '/api/proposals/prp_1/send'], ['POST', '/api/proposals/prp_1/approve'],
-      ['POST', '/api/proposals/prp_1/standing'], ['POST', '/api/proposals/prp_1/carried'],
-      ['POST', `/api/accounts/acc_1/vaults/${VAULTS[1]}/start/secret`], ['POST', `/api/accounts/acc_1/vaults/${VAULTS[1]}/start/copy`],
-      ['GET', `/api/vaults/${VAULTS[1]}/records/pool/versions`], ['PUT', `/api/vaults/${VAULTS[1]}/records/pool/2`],
-      ['POST', '/api/accounts/acc_1/proven'], ['PUT', '/api/accounts/acc_1/directory/3'],
+      ['POST', '/api/accounts/acc_1/proposals'],
+      ['POST', '/api/proposals/prp_1/send'],
+      ['POST', '/api/proposals/prp_1/approve'],
+      ['POST', '/api/proposals/prp_1/standing'],
+      ['POST', '/api/proposals/prp_1/carried'],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULTS[1]}/start/secret`],
+      ['POST', `/api/accounts/acc_1/vaults/${VAULTS[1]}/start/copy`],
+      ['GET', `/api/vaults/${VAULTS[1]}/records/pool/versions`],
+      ['PUT', `/api/vaults/${VAULTS[1]}/records/pool/2`],
+      ['POST', '/api/accounts/acc_1/proven'],
+      ['PUT', '/api/accounts/acc_1/directory/3']
     ];
     /* RED WHEN: the page refuses a call the change of a vault's secret or its upkeep makes, so the press stops part way. */
     for (const [method, path] of calls) expect(routeOf(shape, method, path), `${method} ${path}`).not.toBeNull();
@@ -180,10 +280,13 @@ describe('A SIGNER WHO STAYS PRESSES TO CHANGE AN OWED VAULT SECRET', () => {
     const whys = [...source.matchAll(/why\('([a-z-]+)'/gu)].map((m) => m[1]!);
     const reads = ['not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened'];
     /* RED WHEN: the proofs listed leave out the approval a seat makes when its raise does not count as one. */
-    expect(WORDS['act.rotate-vault-secrets.shown.proofs']).toMatch(/one that approves it where your seat's raise does not already count as an approval/u);
+    expect(WORDS['act.rotate-vault-secrets.shown.proofs']).toMatch(
+      /one that approves it where your seat's raise does not already count as an approval/u
+    );
     /* RED WHEN: the page is told a change that failed as one that waits. */
     expect(WORDS['act.rotate-vault-secrets.shown.nothing-else']).toMatch(/could not be changed on this press/u);
     /* RED WHEN: the wallet says a word its language file does not hold. */
-    for (const k of [...keys, ...[...whys, ...reads].map((w) => `act.rotate-vault-secrets.why.${w}`)]) expect(WORDS[k], k).toBeTypeOf('string');
+    for (const k of [...keys, ...[...whys, ...reads].map((w) => `act.rotate-vault-secrets.why.${w}`)])
+      expect(WORDS[k], k).toBeTypeOf('string');
   });
 });

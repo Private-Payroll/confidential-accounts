@@ -51,36 +51,62 @@ interface RosterSigner {
  * chain holds that `here.waited` names and no row and no seat in `here.shown` does, once (`seatsWaitedUnlisted`).
  */
 export function signerStandings(
-  signers: readonly RosterSigner[], seatsOnChain: readonly string[],
+  signers: readonly RosterSigner[],
+  seatsOnChain: readonly string[],
   here: {
-    readonly own?: { readonly signerId: string; readonly signingPublicKey: string } | null; readonly entries?: ReadonlySet<string> | null;
+    readonly own?: { readonly signerId: string; readonly signingPublicKey: string } | null;
+    readonly entries?: ReadonlySet<string> | null;
     /** The seats the roster read waits for someone invited to be admitted to, and those an invitation by address already shows. */
-    readonly waited?: readonly string[]; readonly shown?: readonly string[];
-  } = {},
+    readonly waited?: readonly string[];
+    readonly shown?: readonly string[];
+  } = {}
 ): SignerStanding[] {
   const held = new Set(seatsOnChain.map((s) => s.toLowerCase()));
   const own = here.own == null ? null : { id: here.own.signerId, key: here.own.signingPublicKey.toLowerCase() };
   const entries = here.entries ?? null;
-  return [...signers.map((s) => {
-    const leaf = typeof s.leafCommitment === 'string' ? s.leafCommitment.toLowerCase() : null;
-    return {
-      id: s.id, name: s.name, accepted: s.status === 'pending',
-      seatOnChain: leaf !== null && held.has(leaf),
-      you: own !== null && s.id === own.id && typeof s.signingPublicKey === 'string' && s.signingPublicKey.toLowerCase() === own.key,
-      entryFiled: entries === null || leaf === null ? null : entries.has(leaf),
-      leaf,
-    };
-  }), ...seatsWaitedUnlisted(here.waited ?? [], held, [...signers.map((s) => s.leafCommitment), ...(here.shown ?? [])])];
+  return [
+    ...signers.map((s) => {
+      const leaf = typeof s.leafCommitment === 'string' ? s.leafCommitment.toLowerCase() : null;
+      return {
+        id: s.id,
+        name: s.name,
+        accepted: s.status === 'pending',
+        seatOnChain: leaf !== null && held.has(leaf),
+        you:
+          own !== null &&
+          s.id === own.id &&
+          typeof s.signingPublicKey === 'string' &&
+          s.signingPublicKey.toLowerCase() === own.key,
+        entryFiled: entries === null || leaf === null ? null : entries.has(leaf),
+        leaf
+      };
+    }),
+    ...seatsWaitedUnlisted(here.waited ?? [], held, [...signers.map((s) => s.leafCommitment), ...(here.shown ?? [])])
+  ];
 }
 
 /**
  * Each seat the chain holds that the roster read waits for someone invited to be admitted to, and that no roster entry
  * and no invitation by address lists: listed once, by its seat, so a seat the network holds is never left off the page.
  */
-const seatsWaitedUnlisted = (waited: readonly string[], held: ReadonlySet<string>, listed: readonly (string | null)[]): SignerStanding[] => {
+const seatsWaitedUnlisted = (
+  waited: readonly string[],
+  held: ReadonlySet<string>,
+  listed: readonly (string | null)[]
+): SignerStanding[] => {
   const named = new Set(listed.flatMap((x) => (typeof x === 'string' ? [x.toLowerCase()] : [])));
-  return [...new Set(waited.map((x) => x.toLowerCase()))].filter((leaf) => held.has(leaf) && !named.has(leaf))
-    .map((leaf) => ({ id: leaf, name: '', accepted: false, seatOnChain: true, you: false, entryFiled: null, leaf, waiting: true as const }));
+  return [...new Set(waited.map((x) => x.toLowerCase()))]
+    .filter((leaf) => held.has(leaf) && !named.has(leaf))
+    .map((leaf) => ({
+      id: leaf,
+      name: '',
+      accepted: false,
+      seatOnChain: true,
+      you: false,
+      entryFiled: null,
+      leaf,
+      waiting: true as const
+    }));
 };
 
 /**
@@ -100,12 +126,26 @@ export interface SignersApprovals {
  * The count is the seat bar the wallet read (`seatBar`), never the threshold: a change of signers short of it is refused by
  * the account. Unreadable when the bar is missing or is not a whole number of one or more, or is below the threshold.
  */
-export function approvalsForSigners(g: Pick<ChainSeats, 'approvals' | 'seatBar' | 'vaultThresholds' | 'adoptedVaults'> & Partial<Pick<ChainSeats, 'seats'>>): Read<SignersApprovals> {
+export function approvalsForSigners(
+  g: Pick<ChainSeats, 'approvals' | 'seatBar' | 'vaultThresholds' | 'adoptedVaults'> &
+    Partial<Pick<ChainSeats, 'seats'>>
+): Read<SignersApprovals> {
   const bar = g.seatBar;
-  if (!Number.isSafeInteger(bar) || bar < 1 || !Number.isSafeInteger(g.approvals) || bar < g.approvals) return { of: READ.unreadable };
+  if (!Number.isSafeInteger(bar) || bar < 1 || !Number.isSafeInteger(g.approvals) || bar < g.approvals)
+    return { of: READ.unreadable };
   const adopted = new Set((g.adoptedVaults ?? []).map((v) => v.toLowerCase()));
-  const vaults = (g.vaultThresholds ?? []).filter((v) => v.threshold === bar && adopted.has(v.vault.toLowerCase())).map((v) => v.vault);
-  return { of: READ.read, value: { count: bar, raisedAboveTheAccount: bar > g.approvals, vaultsAtThatNumber: vaults, seated: Array.isArray(g.seats) ? g.seats.length : null } };
+  const vaults = (g.vaultThresholds ?? [])
+    .filter((v) => v.threshold === bar && adopted.has(v.vault.toLowerCase()))
+    .map((v) => v.vault);
+  return {
+    of: READ.read,
+    value: {
+      count: bar,
+      raisedAboveTheAccount: bar > g.approvals,
+      vaultsAtThatNumber: vaults,
+      seated: Array.isArray(g.seats) ? g.seats.length : null
+    }
+  };
 }
 
 /**
@@ -143,7 +183,8 @@ export interface SignerInvited {
 }
 
 /** The approvals an invitation binds, as the digits its signed terms hold: a whole number of one up to the most an account stores, or null where none is bound. */
-const thresholdOf = (bound: string | undefined): string | null => (bound !== undefined && invitationThresholdRefusal(bound) === null ? bound : null);
+const thresholdOf = (bound: string | undefined): string | null =>
+  bound !== undefined && invitationThresholdRefusal(bound) === null ? bound : null;
 
 /**
  * Each proposal that invites a signer by address and still waits, in the order the service listed them; every other proposal
@@ -155,7 +196,10 @@ const thresholdOf = (bound: string | undefined): string | null => (bound !== und
  */
 export function signersInvitedIn(
   proposals: readonly {
-    readonly rec: SealedProposal; readonly opened: Proposal; readonly status: ProposalStatus; readonly approvals: number;
+    readonly rec: SealedProposal;
+    readonly opened: Proposal;
+    readonly status: ProposalStatus;
+    readonly approvals: number;
     readonly standing?: { readonly outrun?: boolean };
   }[],
   open: (rec: SealedProposal) => AddSignerByAddress | null,
@@ -163,7 +207,7 @@ export function signersInvitedIn(
     readonly taken: Readonly<Record<string, string | null>>;
     readonly waiting: readonly { readonly id: string; readonly leafCommitment: string | null }[];
     readonly seated?: readonly { readonly leafCommitment: string | null }[];
-  } = { taken: {}, waiting: [] },
+  } = { taken: {}, waiting: [] }
 ): SignerInvited[] {
   const low = (x: string): string => x.toLowerCase();
   const taken = new Map(Object.entries(here.taken).map(([k, v]) => [low(k), typeof v === 'string' ? low(v) : null]));
@@ -172,19 +216,32 @@ export function signersInvitedIn(
     const invite = body?.invited.terms.invite;
     if (body === null || invite === undefined) return [];
     const leaf = taken.get(low(body.chainId)) ?? null;
-    if (leaf !== null && (here.seated ?? []).some((s) => typeof s.leafCommitment === 'string' && low(s.leafCommitment) === leaf)) return [];
-    const entry = leaf === null ? undefined : here.waiting.find((w) => typeof w.leafCommitment === 'string' && low(w.leafCommitment) === leaf);
-    return [{
-      proposal: rec.id, name: body.invited.terms.name, role: body.invited.terms.role, address: invite.address, scope: invite.scope, coinKey: body.coinPublicKey,
-      status, approvals,
-      seat: leaf === null ? null : { signer: entry?.id ?? null },
-      threshold: thresholdOf(invite.threshold),
-      ...(standing?.outrun === true && leaf === null ? { outrun: true as const } : {}),
-    }];
+    if (
+      leaf !== null &&
+      (here.seated ?? []).some((s) => typeof s.leafCommitment === 'string' && low(s.leafCommitment) === leaf)
+    )
+      return [];
+    const entry =
+      leaf === null
+        ? undefined
+        : here.waiting.find((w) => typeof w.leafCommitment === 'string' && low(w.leafCommitment) === leaf);
+    return [
+      {
+        proposal: rec.id,
+        name: body.invited.terms.name,
+        role: body.invited.terms.role,
+        address: invite.address,
+        scope: invite.scope,
+        coinKey: body.coinPublicKey,
+        status,
+        approvals,
+        seat: leaf === null ? null : { signer: entry?.id ?? null },
+        threshold: thresholdOf(invite.threshold),
+        ...(standing?.outrun === true && leaf === null ? { outrun: true as const } : {})
+      }
+    ];
   });
 }
-
-
 
 /**
  * The proposals that wait to set the company's approvals, each with the number it holds. Only a proposal the chain still holds open,
@@ -192,11 +249,22 @@ export function signersInvitedIn(
  * number, is listed; a vault's own threshold is another kind and is never taken for the company's.
  */
 export function thresholdChangesWaiting(
-  proposals: readonly { readonly id: string; readonly kind: string; readonly status: string; readonly asks?: { readonly threshold?: unknown } }[],
+  proposals: readonly {
+    readonly id: string;
+    readonly kind: string;
+    readonly status: string;
+    readonly asks?: { readonly threshold?: unknown };
+  }[]
 ): readonly { readonly id: string; readonly count: number }[] {
   return proposals.flatMap((p) => {
     const count = p.asks?.threshold;
-    return p.kind === 'set-threshold' && p.status === 'open' && typeof count === 'number' && Number.isSafeInteger(count) && count >= 1 ? [{ id: p.id, count }] : [];
+    return p.kind === 'set-threshold' &&
+      p.status === 'open' &&
+      typeof count === 'number' &&
+      Number.isSafeInteger(count) &&
+      count >= 1
+      ? [{ id: p.id, count }]
+      : [];
   });
 }
 

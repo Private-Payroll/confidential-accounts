@@ -41,7 +41,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import {
-  circuitOf, keyLocationOf, type KeyMaterialSource, type ProvingKeyMaterial,
+  circuitOf,
+  keyLocationOf,
+  type KeyMaterialSource,
+  type ProvingKeyMaterial
 } from '../../../src/midnight/wasm-proving.js';
 
 export { circuitOf };
@@ -94,8 +97,7 @@ export class MemoryArtefactCache implements ArtefactCache {
  * never handed to a proof about another. A source that checks what it keeps
  * files by the circuit and this build's digest instead (`httpKeyMaterialSource`).
  */
-export const cacheKeyFor = (kind: string, keyLocation: string): string =>
-  `artefact:${kind}:${keyLocation}`;
+export const cacheKeyFor = (kind: string, keyLocation: string): string => `artefact:${kind}:${keyLocation}`;
 
 /**
  * Reads a response body a chunk at a time, reporting as it goes.
@@ -110,7 +112,7 @@ const readStreaming = async (
   url: string,
   what: string,
   already: number,
-  onProgress?: (p: FetchProgress) => void,
+  onProgress?: (p: FetchProgress) => void
 ): Promise<{ bytes: Uint8Array; expected: number | null }> => {
   const header = res.headers.get('content-length');
   const expected = header === null || Number.isNaN(Number(header)) ? null : Number(header);
@@ -127,8 +129,10 @@ const readStreaming = async (
   const encoding = res.headers.get('content-encoding');
   const comparable = expected !== null && (encoding === null || encoding === '' || encoding === 'identity');
   const short = (received: number, cause?: unknown): Error =>
-    new Error(`the download of ${url} stopped after ${received}${comparable ? ` of ${expected}` : ''} bytes`
-      + (cause === undefined ? '' : `: ${String((cause as any)?.message ?? cause)}`));
+    new Error(
+      `the download of ${url} stopped after ${received}${comparable ? ` of ${expected}` : ''} bytes` +
+        (cause === undefined ? '' : `: ${String((cause as any)?.message ?? cause)}`)
+    );
 
   /*
    * A body that cannot be streamed is read whole rather than refused. Some
@@ -154,7 +158,11 @@ const readStreaming = async (
   let received = 0;
   for (;;) {
     let step: { done: boolean; value?: Uint8Array };
-    try { step = await reader.read(); } catch (e) { throw short(received, e); }
+    try {
+      step = await reader.read();
+    } catch (e) {
+      throw short(received, e);
+    }
     const { done, value } = step;
     if (done || value === undefined) break;
     parts.push(value);
@@ -162,14 +170,17 @@ const readStreaming = async (
     onProgress?.({
       received: already + received,
       total: expected === null ? null : already + expected,
-      what,
+      what
     });
   }
 
   if (comparable && received !== expected) throw short(received);
   const bytes = new Uint8Array(received);
   let at = 0;
-  for (const part of parts) { bytes.set(part, at); at += part.length; }
+  for (const part of parts) {
+    bytes.set(part, at);
+    at += part.length;
+  }
   return { bytes, expected };
 };
 
@@ -246,7 +257,7 @@ export const contractPins = (
   whose: string,
   expectedVk: Readonly<Record<string, string>>,
   manifest: CompiledManifest,
-  paramsDigest: (name: string) => string | undefined = () => undefined,
+  paramsDigest: (name: string) => string | undefined = () => undefined
 ): ProvingPins => ({
   whose,
   carriesKeys: Object.keys(expectedVk).length > 0 && typeof manifest.keys === 'object' && manifest.keys !== null,
@@ -256,11 +267,13 @@ export const contractPins = (
   },
   digestOf: (kind, circuit) => {
     if (kind === 'verifier') {
-      return Object.hasOwn(expectedVk, circuit) && typeof expectedVk[circuit] === 'string' ? expectedVk[circuit]!.toLowerCase() : undefined;
+      return Object.hasOwn(expectedVk, circuit) && typeof expectedVk[circuit] === 'string'
+        ? expectedVk[circuit]!.toLowerCase()
+        : undefined;
     }
     return kind === 'prover' ? hashIn(manifest.keys, `${circuit}.prover`) : hashIn(manifest.zkir, `${circuit}.bzkir`);
   },
-  paramsDigest,
+  paramsDigest
 });
 
 /** The pins Midnight's own shielded circuits are checked against: one entry per file, as `<folder>/<circuit>.<kind>`. */
@@ -282,7 +295,7 @@ export const networkPins = (whose: string, pinned: NetworkKeyPins, folder: strin
     const pin = Object.hasOwn(pinned.artefacts, file) ? pinned.artefacts[file]?.sha256 : undefined;
     return typeof pin === 'string' ? pin.toLowerCase() : undefined;
   },
-  paramsDigest: () => undefined,
+  paramsDigest: () => undefined
 });
 
 /** Why a device would not prove with what it was handed. */
@@ -303,7 +316,11 @@ export type ProvingMaterialRefusal =
  */
 export class ProvingMaterialRefused extends Error {
   override readonly name = 'ProvingMaterialRefused';
-  constructor(readonly kind: ProvingMaterialRefusal, readonly keyLocation: string, message: string) {
+  constructor(
+    readonly kind: ProvingMaterialRefusal,
+    readonly keyLocation: string,
+    message: string
+  ) {
     super(message);
   }
 }
@@ -313,7 +330,10 @@ const KIND_WORD: Record<ArtefactKind, string> = { prover: 'proving key', verifie
 const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
   const subtle = (globalThis as { crypto?: { subtle?: { digest?: unknown } } }).crypto?.subtle;
   if (subtle !== undefined && typeof subtle.digest === 'function') {
-    const hashed = await (subtle as { digest(a: string, b: Uint8Array): Promise<ArrayBuffer> }).digest('SHA-256', bytes);
+    const hashed = await (subtle as { digest(a: string, b: Uint8Array): Promise<ArrayBuffer> }).digest(
+      'SHA-256',
+      bytes
+    );
     return bytesToHex(new Uint8Array(hashed));
   }
   return bytesToHex(sha256(bytes));
@@ -355,10 +375,7 @@ export interface ArtefactSource extends KeyMaterialSource {
  * copy of each file, and a file another build keeps for the same verifying key
  * sits under another key and is never handed over in its place.
  */
-export const httpKeyMaterialSource = (
-  base: string,
-  options: HttpKeyMaterialOptions = {},
-): ArtefactSource => {
+export const httpKeyMaterialSource = (base: string, options: HttpKeyMaterialOptions = {}): ArtefactSource => {
   const doFetch = options.fetchImpl ?? fetch;
   const cache = options.cache;
   const pins = options.pins;
@@ -414,7 +431,12 @@ export const httpKeyMaterialSource = (
    * used and kept only when they hash to `want`, and are otherwise refused.
    */
   const checked = (
-    key: string, url: string, what: string, already: number, want: string, refused: () => ProvingMaterialRefused,
+    key: string,
+    url: string,
+    what: string,
+    already: number,
+    want: string,
+    refused: () => ProvingMaterialRefused
   ): Promise<Uint8Array> => {
     const going = inFlight.get(key);
     if (going !== undefined) return going;
@@ -422,14 +444,19 @@ export const httpKeyMaterialSource = (
       const held = await cache?.get(key);
       if (held) {
         if (checkedKeys.has(key)) return held;
-        if (await digest(held) === want) { checkedKeys.add(key); return held; }
+        if ((await digest(held)) === want) {
+          checkedKeys.add(key);
+          return held;
+        }
       }
       const bytes = await download(url, what, already);
-      if (await digest(bytes) !== want) throw refused();
+      if ((await digest(bytes)) !== want) throw refused();
       await cache?.put(key, bytes);
       checkedKeys.add(key);
       return bytes;
-    })().finally(() => { inFlight.delete(key); });
+    })().finally(() => {
+      inFlight.delete(key);
+    });
     inFlight.set(key, started);
     return started;
   };
@@ -446,38 +473,65 @@ export const httpKeyMaterialSource = (
   const SERVED: Record<ArtefactKind, { url: (circuit: string) => string; what: string }> = {
     prover: { url: (c) => `${base}/keys/${c}.prover`, what: 'fetching the proving key' },
     verifier: { url: (c) => `${base}/keys/${c}.verifier`, what: 'fetching the verifying key' },
-    ir: { url: (c) => `${base}/zkir/${c}.bzkir`, what: 'fetching the circuit' },
+    ir: { url: (c) => `${base}/zkir/${c}.bzkir`, what: 'fetching the circuit' }
   };
 
   const one = async (kind: ArtefactKind, keyLocation: string, already: number): Promise<Uint8Array> => {
     if (pins === undefined) {
-      return cached(cacheKeyFor(kind, keyLocation), SERVED[kind].url(circuitOf(keyLocation)), SERVED[kind].what, already);
+      return cached(
+        cacheKeyFor(kind, keyLocation),
+        SERVED[kind].url(circuitOf(keyLocation)),
+        SERVED[kind].what,
+        already
+      );
     }
     const circuit = pins.circuitIn(keyLocation);
     if (circuit === null) {
-      throw new ProvingMaterialRefused('no-pin', keyLocation,
-        `This app proves nothing at "${keyLocation}" for ${pins.whose}, so no proof was made and nothing was asked of the service.`);
+      throw new ProvingMaterialRefused(
+        'no-pin',
+        keyLocation,
+        `This app proves nothing at "${keyLocation}" for ${pins.whose}, so no proof was made and nothing was asked of the service.`
+      );
     }
     if (!pins.carriesKeys) {
-      throw new ProvingMaterialRefused('no-keys-in-this-build', keyLocation,
-        `This copy of the app was built without the proving keys for ${pins.whose}, so it cannot prove anything for it and no proof was made.`);
+      throw new ProvingMaterialRefused(
+        'no-keys-in-this-build',
+        keyLocation,
+        `This copy of the app was built without the proving keys for ${pins.whose}, so it cannot prove anything for it and no proof was made.`
+      );
     }
     const vk = pins.digestOf('verifier', circuit);
     const want = pins.digestOf(kind, circuit);
     if (vk === undefined || want === undefined) {
-      throw new ProvingMaterialRefused('no-pin', keyLocation,
-        `This app has no ${KIND_WORD[kind]} it can check for the ${circuit} circuit of ${pins.whose}, so no proof was made and nothing was asked of the service.`);
+      throw new ProvingMaterialRefused(
+        'no-pin',
+        keyLocation,
+        `This app has no ${KIND_WORD[kind]} it can check for the ${circuit} circuit of ${pins.whose}, so no proof was made and nothing was asked of the service.`
+      );
     }
     const located = keyLocationOf(keyLocation);
     if (located?.kind === 'contract' && located.verifierKeyHash !== null && located.verifierKeyHash !== vk) {
-      throw new ProvingMaterialRefused('not-this-builds-circuit', keyLocation,
-        `The ${circuit} circuit this proof was asked for, for ${pins.whose}, is not the one this app proves, so no proof was made. `
-          + 'The contract it was read from carries a circuit from another version of the app.');
+      throw new ProvingMaterialRefused(
+        'not-this-builds-circuit',
+        keyLocation,
+        `The ${circuit} circuit this proof was asked for, for ${pins.whose}, is not the one this app proves, so no proof was made. ` +
+          'The contract it was read from carries a circuit from another version of the app.'
+      );
     }
-    return checked(`artefact:${kind}:${circuit}?vk=${vk}&sha256=${want}`, SERVED[kind].url(circuit), SERVED[kind].what, already, want,
-      () => new ProvingMaterialRefused('other-bytes-served', keyLocation,
-        `The service sent a ${KIND_WORD[kind]} for the ${circuit} circuit of ${pins.whose} that is not this app's, `
-          + 'so it was neither used nor kept, and no proof was made.'));
+    return checked(
+      `artefact:${kind}:${circuit}?vk=${vk}&sha256=${want}`,
+      SERVED[kind].url(circuit),
+      SERVED[kind].what,
+      already,
+      want,
+      () =>
+        new ProvingMaterialRefused(
+          'other-bytes-served',
+          keyLocation,
+          `The service sent a ${KIND_WORD[kind]} for the ${circuit} circuit of ${pins.whose} that is not this app's, ` +
+            'so it was neither used nor kept, and no proof was made.'
+        )
+    );
   };
 
   return {
@@ -517,13 +571,26 @@ export const httpKeyMaterialSource = (
       } else {
         const want = pins.paramsDigest(name);
         if (want === undefined) {
-          throw new ProvingMaterialRefused('no-pin', name,
-            `Midnight publishes no public parameters this app can check for circuits of this size (k=${k}), so no proof was made.`);
+          throw new ProvingMaterialRefused(
+            'no-pin',
+            name,
+            `Midnight publishes no public parameters this app can check for circuits of this size (k=${k}), so no proof was made.`
+          );
         }
-        bytes = checked(`artefact:params:${name}?sha256=${want}`, url, what, 0, want,
-          () => new ProvingMaterialRefused('other-bytes-served', name,
-            `The service sent public parameters for circuits of this size (k=${k}) that are not the ones Midnight publishes, `
-              + 'so they were neither used nor kept, and no proof was made.'));
+        bytes = checked(
+          `artefact:params:${name}?sha256=${want}`,
+          url,
+          what,
+          0,
+          want,
+          () =>
+            new ProvingMaterialRefused(
+              'other-bytes-served',
+              name,
+              `The service sent public parameters for circuits of this size (k=${k}) that are not the ones Midnight publishes, ` +
+                'so they were neither used nor kept, and no proof was made.'
+            )
+        );
       }
       try {
         return await bytes;
@@ -532,10 +599,10 @@ export const httpKeyMaterialSource = (
         throw new Error(
           `the public parameters for this circuit did not arrive (k=${k}). ${name}: ${String((e as any)?.message ?? e)}. ` +
             'The service fetches and checks these when it starts, and its log says which it could not get; ' +
-            'try again in a minute, and if it keeps happening the service needs attention.',
+            'try again in a minute, and if it keeps happening the service needs attention.'
         );
       }
-    },
+    }
   };
 };
 
@@ -576,13 +643,17 @@ export class IndexedDbArtefactCache implements ArtefactCache {
   constructor(
     private factory: IDBFactoryLike,
     private name = 'confidential-accounts-artefacts',
-    private tell: (why: string) => void = () => {},
+    private tell: (why: string) => void = () => {}
   ) {}
 
   private refused(doing: string, key: string, e: unknown): void {
     try {
-      this.tell(`this browser's store would not ${doing} ${key}: ${String((e as any)?.message ?? (e as any)?.name ?? e)}`);
-    } catch { /* whoever listens cannot stop the cache */ }
+      this.tell(
+        `this browser's store would not ${doing} ${key}: ${String((e as any)?.message ?? (e as any)?.name ?? e)}`
+      );
+    } catch {
+      /* whoever listens cannot stop the cache */
+    }
   }
 
   private open(): Promise<any> {
@@ -604,7 +675,9 @@ export class IndexedDbArtefactCache implements ArtefactCache {
         const tx = db.transaction(STORE, 'readonly');
         const request = tx.objectStore(STORE).get(key);
         let held: unknown;
-        request.onsuccess = () => { held = request.result; };
+        request.onsuccess = () => {
+          held = request.result;
+        };
         request.onerror = () => reject(request.error ?? new Error('the database request failed'));
         tx.oncomplete = () => resolve(held);
         tx.onabort = () => reject(tx.error ?? new Error('the database transaction was rolled back'));

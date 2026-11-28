@@ -29,14 +29,19 @@ const DEPOSIT = keyFile('v3', 19);
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 /* Version 7 of the account (both slots of `adopt`) and of the vault (one slot of `deposit`). */
-const VERSIONS: readonly ReleasedVersion[] = [{
-  version: 7, reachedFrom: [], openRunsFinishFirst: false, withdrawn: false,
-  keys: {
-    account: { adopt: { v2: hexOf(sha256(ADOPT_V2)), v3: hexOf(sha256(ADOPT_V3)) } },
-    vault: { deposit: { v3: hexOf(sha256(DEPOSIT)) } },
-    registry: { put: { v3: hexOf(sha256(keyFile('v3', 3))) } },
-  },
-}];
+const VERSIONS: readonly ReleasedVersion[] = [
+  {
+    version: 7,
+    reachedFrom: [],
+    openRunsFinishFirst: false,
+    withdrawn: false,
+    keys: {
+      account: { adopt: { v2: hexOf(sha256(ADOPT_V2)), v3: hexOf(sha256(ADOPT_V3)) } },
+      vault: { deposit: { v3: hexOf(sha256(DEPOSIT)) } },
+      registry: { put: { v3: hexOf(sha256(keyFile('v3', 3))) } }
+    }
+  }
+];
 
 const THE_BUILD = stateHex({ adopt: [ADOPT_V2, ADOPT_V3] });
 const A_HIDDEN_KEY = stateHex({ adopt: [STRANGER_V2, ADOPT_V3] });
@@ -44,25 +49,47 @@ const THE_VAULT = stateHex({ deposit: [DEPOSIT] });
 const A_HIDDEN_KEY_IN_THE_VAULT = stateHex({ deposit: [STRANGER_V2, DEPOSIT] });
 
 /** A reader as the wallet's own, over a chain that answers with `answer` at every address. */
-const reading = (answer: () => Promise<string | null>): KeysReader => (address, contract) =>
-  publishedBuildAt(answer, address, contract, VERSIONS);
+const reading =
+  (answer: () => Promise<string | null>): KeysReader =>
+  (address, contract) =>
+    publishedBuildAt(answer, address, contract, VERSIONS);
 const answering = (hex: string | null): KeysReader => reading(() => Promise.resolve(hex));
 
 const carries: CompanyCheck = { of: 'carries', label: CO };
 /* The only way a screen is handed a reader: the provider above it. */
-const under = (readKeys: KeysReader, ui: ReactNode) => <KeysReaderContext.Provider value={readKeys}>{ui}</KeysReaderContext.Provider>;
-const words = (key: 'stamp.published' | 'stamp.not-published' | 'stamp.unchecked' | 'stamp.checking', kind: string, version = 7): string =>
-  EN[key].replace('{kind}', kind).replace('{version}', String(version));
-const company = (readKeys: KeysReader) => under(readKeys, (
-  <CompanyOnChain label={CO} account={A} check={carries} doing="signed" compareWith="the person who invited you gave you" />
-));
-const settle = async (): Promise<void> => { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }); };
-const stampIn = (c: HTMLElement, contract: string): HTMLElement => c.querySelector(`[data-build-contract="${contract}"]`)!;
+const under = (readKeys: KeysReader, ui: ReactNode) => (
+  <KeysReaderContext.Provider value={readKeys}>{ui}</KeysReaderContext.Provider>
+);
+const words = (
+  key: 'stamp.published' | 'stamp.not-published' | 'stamp.unchecked' | 'stamp.checking',
+  kind: string,
+  version = 7
+): string => EN[key].replace('{kind}', kind).replace('{version}', String(version));
+const company = (readKeys: KeysReader) =>
+  under(
+    readKeys,
+    <CompanyOnChain
+      label={CO}
+      account={A}
+      check={carries}
+      doing="signed"
+      compareWith="the person who invited you gave you"
+    />
+  );
+const settle = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
+const stampIn = (c: HTMLElement, contract: string): HTMLElement =>
+  c.querySelector(`[data-build-contract="${contract}"]`)!;
 
 afterEach(cleanup);
 
 describe('a company shows which published build its account is', () => {
-  it('SHOWS THE VERSION FOR A BUILD\'S KEYS IN EVERY SLOT', async () => {
+  it("SHOWS THE VERSION FOR A BUILD'S KEYS IN EVERY SLOT", async () => {
     const { container } = render(company(answering(THE_BUILD)));
     await settle();
     const stamp = stampIn(container, 'account');
@@ -85,7 +112,7 @@ describe('a company shows which published build its account is', () => {
   it.each([
     ['a read that is refused', () => Promise.reject(new Error('the indexer answered 503.'))],
     ['an indexer that holds nothing there', () => Promise.resolve(null)],
-    ['bytes that are not a contract state', () => Promise.resolve('00ff00ff')],
+    ['bytes that are not a contract state', () => Promise.resolve('00ff00ff')]
   ] as const)('SAYS IT COULD NOT CHECK, AND NEITHER VERDICT, FOR %s', async (_what, answer) => {
     const { container } = render(company(reading(answer)));
     await settle();
@@ -96,10 +123,13 @@ describe('a company shows which published build its account is', () => {
     expect(stamp.textContent).not.toMatch(/built from our|is not a published/);
   });
 
-  it.each([null, {}, { operations: () => 1, operation: () => undefined }])('A STATE WHOSE KEYS CANNOT BE LISTED (%j) IS UNCHECKED, NOT UNPUBLISHED', (state) => {
-    /* RED WHEN a state that cannot be read for its keys is shown as "Not a published version". */
-    expect(publishedBuildOfState(state, A, 'account', VERSIONS)).toEqual({ of: 'unchecked' });
-  });
+  it.each([null, {}, { operations: () => 1, operation: () => undefined }])(
+    'A STATE WHOSE KEYS CANNOT BE LISTED (%j) IS UNCHECKED, NOT UNPUBLISHED',
+    (state) => {
+      /* RED WHEN a state that cannot be read for its keys is shown as "Not a published version". */
+      expect(publishedBuildOfState(state, A, 'account', VERSIONS)).toEqual({ of: 'unchecked' });
+    }
+  );
 
   it('SAYS IT COULD NOT CHECK WHEN THE READER ITSELF FAILS', async () => {
     const { container } = render(company(() => Promise.reject(new Error('boom'))));
@@ -117,7 +147,12 @@ describe('a company shows which published build its account is', () => {
 
   it('CHANGES NEITHER THE FINGERPRINT NOR WHAT THE CHECK LETS THROUGH', async () => {
     const seen: string[] = [];
-    for (const readKeys of [answering(THE_BUILD), answering(A_HIDDEN_KEY), answering(null), () => Promise.reject(new Error('x'))] as KeysReader[]) {
+    for (const readKeys of [
+      answering(THE_BUILD),
+      answering(A_HIDDEN_KEY),
+      answering(null),
+      () => Promise.reject(new Error('x'))
+    ] as KeysReader[]) {
       const { container, unmount } = render(company(readKeys));
       await settle();
       const fingerprint = container.querySelector('[data-company-fingerprint]');
@@ -133,8 +168,16 @@ describe('a company shows which published build its account is', () => {
 
   it('SHOWS NO STAMP WHERE THE CHECK REFUSED THE COMPANY', async () => {
     let asked = 0;
-    const counting: KeysReader = async () => { asked += 1; return { of: 'published', version: 7 }; };
-    const { container } = render(under(counting, <CompanyOnChain label={CO} account={A} check={{ of: 'no-account' }} doing="signed" compareWith="x" />));
+    const counting: KeysReader = async () => {
+      asked += 1;
+      return { of: 'published', version: 7 };
+    };
+    const { container } = render(
+      under(
+        counting,
+        <CompanyOnChain label={CO} account={A} check={{ of: 'no-account' }} doing="signed" compareWith="x" />
+      )
+    );
     await settle();
     expect(container.querySelector('[data-build-stamp]')).toBeNull();
     expect(asked).toBe(0);
@@ -142,35 +185,69 @@ describe('a company shows which published build its account is', () => {
 
   it('READS ONCE FOR ONE ADDRESS, AND NEVER SHOWS AN ANSWER READ FOR ANOTHER', async () => {
     let asked = 0;
-    const once: KeysReader = (address, contract) => { asked += 1; return publishedBuildAt(() => Promise.resolve(THE_BUILD), address, contract, VERSIONS); };
+    const once: KeysReader = (address, contract) => {
+      asked += 1;
+      return publishedBuildAt(() => Promise.resolve(THE_BUILD), address, contract, VERSIONS);
+    };
     const { rerender, container } = render(company(once));
     await settle();
     rerender(company(once));
     await settle();
     expect(asked).toBe(1);
     const other = 'b2'.repeat(32) as AccountAddress;
-    rerender(under(() => new Promise(() => {}), <CompanyOnChain label={CO} account={other} check={carries} doing="signed" compareWith="x" />));
+    rerender(
+      under(
+        () => new Promise(() => {}),
+        <CompanyOnChain label={CO} account={other} check={carries} doing="signed" compareWith="x" />
+      )
+    );
     /* RED WHEN the answer is kept without the address it was read for: the new address shows the old answer. */
     expect(stampIn(container, 'account').getAttribute('data-build-stamp')).toBe('checking');
   });
 });
 
-const ask = parseAsk({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'balance',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'Put money into your company vault.',
-  nonce: 'b1', expiresAt: 1_755_000_600_000, company: CO, account: A, vault: VAULT, transaction: 'AAECAw==',
-}, 'https://payroll-a.example', 1_755_000_000_000) as BalanceRequest;
+const ask = parseAsk(
+  {
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'balance',
+    requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+    purpose: 'Put money into your company vault.',
+    nonce: 'b1',
+    expiresAt: 1_755_000_600_000,
+    company: CO,
+    account: A,
+    vault: VAULT,
+    transaction: 'AAECAw=='
+  },
+  'https://payroll-a.example',
+  1_755_000_000_000
+) as BalanceRequest;
 
 const READY: Extract<ComponentProps<typeof BalanceAsk>['stage'], { of: 'ready' }> = {
-  of: 'ready', tx: { imbalances: () => new Map(), serialize: () => new Uint8Array() }, leaves: [], pays: 'private',
+  of: 'ready',
+  tx: { imbalances: () => new Map(), serialize: () => new Uint8Array() },
+  leaves: [],
+  pays: 'private'
 };
-const vaultWindow = (readKeys: KeysReader, o: { onChain?: boolean; ready?: boolean } = {}) => under(readKeys, (
-  <BalanceAsk
-    stage={o.ready === true ? READY : { of: 'reading' }} request={ask} check={carries} consent={{ ok: true }}
-    channel={o.ready === true ? recordingChannel([]) : null} busy={false} held={false}
-    onChain={o.onChain ?? true} whoIsAsking={null} whichWallet={null} pay={() => {}} close={() => {}} decline={() => {}}
-  />
-));
+const vaultWindow = (readKeys: KeysReader, o: { onChain?: boolean; ready?: boolean } = {}) =>
+  under(
+    readKeys,
+    <BalanceAsk
+      stage={o.ready === true ? READY : { of: 'reading' }}
+      request={ask}
+      check={carries}
+      consent={{ ok: true }}
+      channel={o.ready === true ? recordingChannel([]) : null}
+      busy={false}
+      held={false}
+      onChain={o.onChain ?? true}
+      whoIsAsking={null}
+      whichWallet={null}
+      pay={() => {}}
+      close={() => {}}
+      decline={() => {}}
+    />
+  );
 
 describe('the vault window shows which published build the vault is', () => {
   it('SHOWS THE VERSION FOR THE VAULT AND FOR THE ACCOUNT, EACH READ AS ITS OWN CONTRACT', async () => {
@@ -209,8 +286,10 @@ describe('the vault window shows which published build the vault is', () => {
 
   it('A PAYABLE WINDOW KEEPS ITS PAY BUTTON ENABLED UNDER EVERY STAMP ANSWER, AND AN UNPAYABLE ONE KEEPS IT HELD', async () => {
     const answers: [string, KeysReader][] = [
-      ['published', answering(THE_VAULT)], ['not published', answering(A_HIDDEN_KEY_IN_THE_VAULT)], ['could not check', answering(null)],
-      ['still reading', () => new Promise(() => {})],
+      ['published', answering(THE_VAULT)],
+      ['not published', answering(A_HIDDEN_KEY_IN_THE_VAULT)],
+      ['could not check', answering(null)],
+      ['still reading', () => new Promise(() => {})]
     ];
     for (const [what, readKeys] of answers) {
       const open = render(vaultWindow(readKeys, { ready: true }));
@@ -230,7 +309,10 @@ describe('the vault window shows which published build the vault is', () => {
 describe('the stamp reads through the context the screen sits in', () => {
   it('USES THE READER OF THE PROVIDER ABOVE IT WHEN IT IS GIVEN NO PROP, ONCE PER ADDRESS AND KIND', async () => {
     const calls: string[] = [];
-    const counting: KeysReader = async (address, contract) => { calls.push(`${contract}:${address}`); return { of: 'published', version: 7 }; };
+    const counting: KeysReader = async (address, contract) => {
+      calls.push(`${contract}:${address}`);
+      return { of: 'published', version: 7 };
+    };
     const { container } = render(vaultWindow(counting));
     await settle();
     /* RED WHEN the screen does not read through the context it sits in. */

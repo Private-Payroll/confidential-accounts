@@ -2,8 +2,23 @@ import { useCompanyView } from '../records/company-records.js';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Alert, AlertDescription, Button, ConfirmInYourAccount, Input, Label, Textarea, useText } from 'vaults-ui';
 import {
-  adoptAgain, CREATING, createVault, finishStarting, giveYourVaultKeys, openYourKeys, pressingAgainCanClear, READY, readVaultReadiness, SAID, STARTING,
-  STOPPED, type Creating, type Readiness, type SaidCode, type StartStopped, type VaultCreated,
+  adoptAgain,
+  CREATING,
+  createVault,
+  finishStarting,
+  giveYourVaultKeys,
+  openYourKeys,
+  pressingAgainCanClear,
+  READY,
+  readVaultReadiness,
+  SAID,
+  STARTING,
+  STOPPED,
+  type Creating,
+  type Readiness,
+  type SaidCode,
+  type StartStopped,
+  type VaultCreated
 } from '../adapters/create-vault.js';
 import { HANDOVER, readHandover, type Handover } from '../adapters/handover-state.js';
 import { proofsRunning } from '../adapters/proofs-running.js';
@@ -31,7 +46,7 @@ function useStoppedSays(): (stopped: StartStopped) => string {
     [STOPPED.tooFewApprovers]: t('createVault.stopped.tooFewApprovers'),
     [STOPPED.readersCannotOpen]: t('createVault.stopped.readersCannotOpen'),
     [STOPPED.anotherSecret]: t('createVault.stopped.anotherSecret'),
-    [STOPPED.readBackOnly]: t('createVault.stopped.readBackOnly'),
+    [STOPPED.readBackOnly]: t('createVault.stopped.readBackOnly')
   };
   return (stopped) => says[stopped];
 }
@@ -49,12 +64,15 @@ function useSaidSays(): Record<SaidCode, string> {
   return {
     [SAID.proposalNotWrittenDown]: t('createVault.said.proposalNotWrittenDown'),
     [SAID.nameNotFiled]: t('createVault.said.nameNotFiled'),
-    [SAID.nameGivenBefore]: t('createVault.said.nameGivenBefore'),
+    [SAID.nameGivenBefore]: t('createVault.said.nameGivenBefore')
   };
 }
 
 /** The four things the read of who holds the company can say after a vault is created, other than that its super admins hold it. */
-const HELD_NOTICE: Record<Handover['of'], Extract<Handover['of'], 'change-owed' | 'held-by-other-keys' | 'unreadable' | 'unreachable'> | null> = {
+const HELD_NOTICE: Record<
+  Handover['of'],
+  Extract<Handover['of'], 'change-owed' | 'held-by-other-keys' | 'unreadable' | 'unreachable'> | null
+> = {
   [HANDOVER.held]: null,
   [HANDOVER.changeOwed]: HANDOVER.changeOwed,
   [HANDOVER.heldByOtherKeys]: HANDOVER.heldByOtherKeys,
@@ -62,7 +80,7 @@ const HELD_NOTICE: Record<Handover['of'], Extract<Handover['of'], 'change-owed' 
   [HANDOVER.notOnChain]: HANDOVER.unreadable,
   [HANDOVER.unreachable]: HANDOVER.unreachable,
   [HANDOVER.notSignedIn]: HANDOVER.unreachable,
-  [HANDOVER.anotherPerson]: HANDOVER.unreachable,
+  [HANDOVER.anotherPerson]: HANDOVER.unreachable
 };
 
 /**
@@ -78,7 +96,7 @@ function HeldNotice({ of }: { of: NonNullable<(typeof HELD_NOTICE)[Handover['of'
     [HANDOVER.changeOwed]: t('createVault.held.changeOwed'),
     [HANDOVER.heldByOtherKeys]: t('createVault.held.byOtherKeys'),
     [HANDOVER.unreadable]: t('createVault.held.unreadable'),
-    [HANDOVER.unreachable]: t('createVault.held.unreachable'),
+    [HANDOVER.unreachable]: t('createVault.held.unreachable')
   };
   return (
     <Alert data-held-notice={of}>
@@ -86,7 +104,9 @@ function HeldNotice({ of }: { of: NonNullable<(typeof HELD_NOTICE)[Handover['of'
       {of === HANDOVER.changeOwed ? (
         <div>
           <Button asChild variant="outline">
-            <PageLink to={PAGE.settingsSigners} onClick={panel.close} data-action="go-signers">{t('createVault.held.goSigners')}</PageLink>
+            <PageLink to={PAGE.settingsSigners} onClick={panel.close} data-action="go-signers">
+              {t('createVault.held.goSigners')}
+            </PageLink>
           </Button>
         </div>
       ) : null}
@@ -100,16 +120,28 @@ function HeldNotice({ of }: { of: NonNullable<(typeof HELD_NOTICE)[Handover['of'
  * Signers' keys that do not match offer nothing: pressing again would stop the
  * same way.
  */
-function StopResolvedBy({ result, disabled, ask }: {
+function StopResolvedBy({
+  result,
+  disabled,
+  ask
+}: {
   result: Extract<VaultCreated, { of: typeof STARTING.owed | typeof STARTING.awaiting }>;
-  disabled: boolean; ask: (a: Asking) => void;
+  disabled: boolean;
+  ask: (a: Asking) => void;
 }) {
   const t = useText();
   const stopped = result.of === STARTING.owed ? result.stopped : undefined;
   if (!pressingAgainCanClear(stopped)) return null;
   return (
     <div>
-      <Button variant="outline" disabled={disabled} onClick={() => ask({ of: ASKING.start, vault: result.vault })} data-action="finish-start">{t('createVault.finishStart')}</Button>
+      <Button
+        variant="outline"
+        disabled={disabled}
+        onClick={() => ask({ of: ASKING.start, vault: result.vault })}
+        data-action="finish-start"
+      >
+        {t('createVault.finishStart')}
+      </Button>
     </div>
   );
 }
@@ -149,8 +181,14 @@ function StopResolvedBy({ result, disabled, ask }: {
  * company account not read as held by its super admins is said once the vault
  * is created, with the way to the signers page where a change is owed.
  */
-export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps & { starting?: string; retired?: string }) {
-  const t = useText(), view = useCompanyView();
+export function CreateVault({
+  leadTo,
+  onChanged,
+  starting,
+  retired
+}: StepProps & { starting?: string; retired?: string }) {
+  const t = useText(),
+    view = useCompanyView();
   const stoppedSays = useStoppedSays();
   const { person, company } = useSession();
   const saidSays = useSaidSays();
@@ -179,7 +217,9 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
   const read = useCallback(async () => {
     setReady(view === null ? null : await readVaultReadiness(person.id, view));
   }, [person.id, view]);
-  useEffect(() => { void read(); }, [read]);
+  useEffect(() => {
+    void read();
+  }, [read]);
   /* Asked to carry on setting up one vault, from this signer's own device: asked once, once the company has been read. */
   const askedToStart = useRef<string | null>(null);
   useEffect(() => {
@@ -197,20 +237,42 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
     let alive = true;
     const vault = asking.vault;
     void import('../adapters/company-vaults-read.js')
-      .then(async ({ readVaultName, NAME_NOT_READ }) => ({ filed: await readVaultName(person.id, view, vault, NAME_NOT_READ), unread: NAME_NOT_READ }))
-      .then(({ filed, unread }) => { if (alive) { setNameOwed(filed === null ? vault : null); setNameUnreadFor(filed === unread ? vault : null); setNameReadFor(vault); } });
-    return () => { alive = false; };
+      .then(async ({ readVaultName, NAME_NOT_READ }) => ({
+        filed: await readVaultName(person.id, view, vault, NAME_NOT_READ),
+        unread: NAME_NOT_READ
+      }))
+      .then(({ filed, unread }) => {
+        if (alive) {
+          setNameOwed(filed === null ? vault : null);
+          setNameUnreadFor(filed === unread ? vault : null);
+          setNameReadFor(vault);
+        }
+      });
+    return () => {
+      alive = false;
+    };
   }, [asking, person.id, view]);
 
   const busy = stage !== null;
   const act = async (asked: Asking): Promise<void> => {
     if (view === null) return;
-    setAsking(null); setResult(null); setStage(CREATING.checking);
-    const r = asked.of === ASKING.create
-      ? await createVault(person.id, view, setStage, { name: name.trim(), description: description.trim() })
-      : retired !== undefined ? await adoptAgain(person.id, view, asked.vault, retired, setStage)
-      : await finishStarting(person.id, view, asked.vault, setStage,
-        nameOwed === asked.vault && name.trim() !== '' ? { name: name.trim(), description: description.trim() } : undefined);
+    setAsking(null);
+    setResult(null);
+    setStage(CREATING.checking);
+    const r =
+      asked.of === ASKING.create
+        ? await createVault(person.id, view, setStage, { name: name.trim(), description: description.trim() })
+        : retired !== undefined
+          ? await adoptAgain(person.id, view, asked.vault, retired, setStage)
+          : await finishStarting(
+              person.id,
+              view,
+              asked.vault,
+              setStage,
+              nameOwed === asked.vault && name.trim() !== ''
+                ? { name: name.trim(), description: description.trim() }
+                : undefined
+            );
     const handover = r.of === ACTED.done ? await readHandover(person.id, view) : null;
     /* Any read of who holds the company but "held" is said under the outcome: a vault created does not make the company's account held. */
     setHeld(handover === null ? null : handover.of);
@@ -237,34 +299,60 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
   };
 
   /* Not finished: the creation read is in and does not confirm it. Keys not open on a company the service reads as finished are the keys' reason, not this one. */
-  const unfinished = creation !== null && !creation.confirmedFinished && !(creation.standing === 'finished' && ready?.of === READY.locked);
+  const unfinished =
+    creation !== null &&
+    !creation.confirmedFinished &&
+    !(creation.standing === 'finished' && ready?.of === READY.locked);
   const named = name.trim() !== '';
   const askingTheName = asking?.of === ASKING.start && nameOwed === asking.vault;
   /* Creating a vault gives this person's own vault keys first, in the same action, so their keys still to give do not hold it back. */
   /* Keys not open here hold nothing back either: the action in the wallet reads them itself and checks the vault can be created. */
-  const canCreate = company !== null && creation !== null && !unfinished
-    && (ready?.of === READY.ready || ready?.of === READY.yoursMissing || ready?.of === READY.locked) && named && !busy;
-  const why = company === null ? t('createVault.why.noCompany')
-    : ready === null || creation === null ? t('createVault.why.reading')
-    : unfinished ? t('createVault.why.notFinished')
-    : ready.of === READY.yoursMissing && !named ? t('createVault.why.yoursMissing')
-    : ready.of === READY.othersMissing ? t('createVault.why.othersMissing')
-    : ready.of === READY.notOnChain ? t('createVault.why.notOnChain')
-    : ready.of === READY.locked && !named ? t('createVault.why.locked')
-    : !named ? t('createVault.why.nameFirst')
-    : null;
+  const canCreate =
+    company !== null &&
+    creation !== null &&
+    !unfinished &&
+    (ready?.of === READY.ready || ready?.of === READY.yoursMissing || ready?.of === READY.locked) &&
+    named &&
+    !busy;
+  const why =
+    company === null
+      ? t('createVault.why.noCompany')
+      : ready === null || creation === null
+        ? t('createVault.why.reading')
+        : unfinished
+          ? t('createVault.why.notFinished')
+          : ready.of === READY.yoursMissing && !named
+            ? t('createVault.why.yoursMissing')
+            : ready.of === READY.othersMissing
+              ? t('createVault.why.othersMissing')
+              : ready.of === READY.notOnChain
+                ? t('createVault.why.notOnChain')
+                : ready.of === READY.locked && !named
+                  ? t('createVault.why.locked')
+                  : !named
+                    ? t('createVault.why.nameFirst')
+                    : null;
   const { now, proofStartedAt } = useTicker(proofsRunning);
   const stageSince = useStageSince(stage ?? null);
   const noteStageTime = useRef(stageTimeNoter());
   const timedStage = stage === null || stage === CREATING.done ? null : stage;
   useEffect(() => {
-    noteStageTime.current(timedStage === null ? null : [timedStage], proofStartedAt ?? stageSince, timedStage === null ? null : VAULT_USUAL_SECONDS[timedStage]);
+    noteStageTime.current(
+      timedStage === null ? null : [timedStage],
+      proofStartedAt ?? stageSince,
+      timedStage === null ? null : VAULT_USUAL_SECONDS[timedStage]
+    );
   }, [timedStage]);
-  useEffect(() => () => { noteStageTime.current(null, 0, null); }, []);
+  useEffect(
+    () => () => {
+      noteStageTime.current(null, 0, null);
+    },
+    []
+  );
   const STAGE_SAYS: Record<Creating, string> = {
     [CREATING.checking]: t('createVault.stage.checking'),
     [CREATING.building]: t('createVault.stage.building'),
-    [CREATING.done]: t('createVault.stage.done'),
+    [CREATING.done]: t('createVault.stage.done')
   };
 
   return (
@@ -272,89 +360,183 @@ export function CreateVault({ leadTo, onChanged, starting, retired }: StepProps 
       <p className="text-sm text-muted-foreground">{t('createVault.what')}</p>
       <div className="flex flex-col gap-2">
         <Label htmlFor={nameId}>{t('createVault.nameLabel')}</Label>
-        <Input id={nameId} data-field="vault-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} disabled={busy || (asking !== null && !askingTheName)} />
+        <Input
+          id={nameId}
+          data-field="vault-name"
+          value={name}
+          maxLength={64}
+          onChange={(e) => setName(e.target.value)}
+          disabled={busy || (asking !== null && !askingTheName)}
+        />
         <p className="text-xs text-muted-foreground">{t('createVault.nameHint')}</p>
       </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor={descriptionId}>{t('createVault.descriptionLabel')}</Label>
-        <Textarea id={descriptionId} data-field="vault-description" value={description} maxLength={1000} onChange={(e) => setDescription(e.target.value)} disabled={busy || (asking !== null && !askingTheName)} />
+        <Textarea
+          id={descriptionId}
+          data-field="vault-description"
+          value={description}
+          maxLength={1000}
+          onChange={(e) => setDescription(e.target.value)}
+          disabled={busy || (asking !== null && !askingTheName)}
+        />
         <p className="text-xs text-muted-foreground">{t('createVault.descriptionHint')}</p>
       </div>
-      {why === null ? null : <p id={whyId} className="text-sm" data-why={ready?.of ?? 'no-company'}>{why}</p>}
+      {why === null ? null : (
+        <p id={whyId} className="text-sm" data-why={ready?.of ?? 'no-company'}>
+          {why}
+        </p>
+      )}
       {ready?.of === ACTED.refused ? <ActRefused why={ready.why} /> : null}
 
       {asking === null ? (
         <div className="flex flex-wrap items-center gap-3">
-          <Button disabled={!canCreate || busy} aria-describedby={!canCreate && why !== null ? whyId : undefined} onClick={() => setAsking({ of: ASKING.create })} data-action="create-vault-now">{t('vaults.create')}</Button>
+          <Button
+            disabled={!canCreate || busy}
+            aria-describedby={!canCreate && why !== null ? whyId : undefined}
+            onClick={() => setAsking({ of: ASKING.create })}
+            data-action="create-vault-now"
+          >
+            {t('vaults.create')}
+          </Button>
           {company === null ? (
-            <Button variant="outline" onClick={() => leadTo(STEP.createCompany)} data-lead-to={STEP.createCompany}>{t('createVault.goCreateCompany')}</Button>
+            <Button variant="outline" onClick={() => leadTo(STEP.createCompany)} data-lead-to={STEP.createCompany}>
+              {t('createVault.goCreateCompany')}
+            </Button>
           ) : null}
           {unfinished ? (
-            <Button variant="outline" className="h-auto whitespace-normal text-start" onClick={() => leadTo(STEP.finishCompany)} data-lead-to={STEP.finishCompany}>
+            <Button
+              variant="outline"
+              className="h-auto whitespace-normal text-start"
+              onClick={() => leadTo(STEP.finishCompany)}
+              data-lead-to={STEP.finishCompany}
+            >
               {t('setup.blocked.go', { step: t('setup.step.finishCompany.name') })}
             </Button>
           ) : null}
           {ready?.of === READY.yoursMissing ? (
-            <Button variant="outline" disabled={busy} onClick={() => { void giveKeys(); }} data-action="give-vault-keys">{t('createVault.goGiveKeys')}</Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                void giveKeys();
+              }}
+              data-action="give-vault-keys"
+            >
+              {t('createVault.goGiveKeys')}
+            </Button>
           ) : null}
           {ready?.of === READY.locked ? (
-            <Button variant="outline" disabled={busy} onClick={() => { void openKeys(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                void openKeys();
+              }}
+              data-action="open-with-your-account"
+            >
+              {t('records.locked.open')}
+            </Button>
           ) : null}
           {ready?.of === READY.othersMissing || ready?.of === READY.notOnChain || ready?.of === ACTED.refused ? (
-            <Button variant="outline" disabled={busy} onClick={() => { void read(); }} data-action="read-again">{t('createVault.readAgain')}</Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                void read();
+              }}
+              data-action="read-again"
+            >
+              {t('createVault.readAgain')}
+            </Button>
           ) : null}
         </div>
-      ) : asking.of === ASKING.start && nameReadFor !== asking.vault ? null : asking.of === ASKING.start && nameUnreadFor === asking.vault ? (
+      ) : asking.of === ASKING.start && nameReadFor !== asking.vault ? null : asking.of === ASKING.start &&
+        nameUnreadFor === asking.vault ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-sm" data-name-unread>{t('createVault.resume.nameUnread')}</p>
-          <Button variant="outline" onClick={() => setAsking(null)}>{t('kit.confirm.cancel')}</Button>
+          <p className="text-sm" data-name-unread>
+            {t('createVault.resume.nameUnread')}
+          </p>
+          <Button variant="outline" onClick={() => setAsking(null)}>
+            {t('kit.confirm.cancel')}
+          </Button>
         </div>
       ) : askingTheName && !named ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-sm" data-name-again>{t('createVault.resume.nameAgain')}</p>
-          <Button variant="outline" onClick={() => setAsking(null)}>{t('kit.confirm.cancel')}</Button>
+          <p className="text-sm" data-name-again>
+            {t('createVault.resume.nameAgain')}
+          </p>
+          <Button variant="outline" onClick={() => setAsking(null)}>
+            {t('kit.confirm.cancel')}
+          </Button>
         </div>
       ) : (
         <ConfirmInYourAccount
           summary={asking.of === ASKING.create ? t('createVault.confirm') : t('createVault.confirmStart')}
           busy={busy}
           onCancel={() => setAsking(null)}
-          onConfirm={() => { void act(asking); }}
+          onConfirm={() => {
+            void act(asking);
+          }}
         />
       )}
-      {stage === null ? null : <p className="text-sm" role="status" data-stage={stage}>{STAGE_SAYS[stage]}</p>}
+      {stage === null ? null : (
+        <p className="text-sm" role="status" data-stage={stage}>
+          {STAGE_SAYS[stage]}
+        </p>
+      )}
       {stage === null || stage === CREATING.done ? null : (
-        <StageProgress stage={stage} elapsedSeconds={secondsSince(now, proofStartedAt ?? stageSince)} usualSeconds={VAULT_USUAL_SECONDS[stage]} />
+        <StageProgress
+          stage={stage}
+          elapsedSeconds={secondsSince(now, proofStartedAt ?? stageSince)}
+          usualSeconds={VAULT_USUAL_SECONDS[stage]}
+        />
       )}
       <div className="flex flex-col gap-4" role="status" data-outcome>
-      {result?.of === ACTED.done ? (
-        <>
-          <p className="text-sm" data-created={result.vault}>{t('createVault.done')}</p>
-          {held === null || HELD_NOTICE[held] === null ? null : <HeldNotice of={HELD_NOTICE[held]} />}
-        </>
-      ) : null}
-      {result?.of === ACTED.done || result?.of === STARTING.awaiting ? (
-        result.said === undefined ? null : (
-          <div className="flex flex-col gap-1" data-said>
-            {result.said.map((code) => <p key={code} className="text-sm" data-said-code={code}>{saidSays[code]}</p>)}
+        {result?.of === ACTED.done ? (
+          <>
+            <p className="text-sm" data-created={result.vault}>
+              {t('createVault.done')}
+            </p>
+            {held === null || HELD_NOTICE[held] === null ? null : <HeldNotice of={HELD_NOTICE[held]} />}
+          </>
+        ) : null}
+        {result?.of === ACTED.done || result?.of === STARTING.awaiting ? (
+          result.said === undefined ? null : (
+            <div className="flex flex-col gap-1" data-said>
+              {result.said.map((code) => (
+                <p key={code} className="text-sm" data-said-code={code}>
+                  {saidSays[code]}
+                </p>
+              ))}
+            </div>
+          )
+        ) : null}
+        {result?.of === STARTING.awaiting || result?.of === STARTING.owed ? (
+          <div
+            className="flex flex-col gap-2"
+            data-result={result.of}
+            data-round={result.of === STARTING.awaiting ? result.round : undefined}
+            data-stopped={result.of === STARTING.owed ? result.stopped : undefined}
+          >
+            <p className="text-sm" data-says>
+              {result.of === STARTING.owed
+                ? result.stopped === undefined
+                  ? t('createVault.startOwed')
+                  : stoppedSays(result.stopped)
+                : result.round === 'adoption'
+                  ? t('createVault.awaiting.adoption', { approvals: result.approvals, needed: result.needed })
+                  : t('createVault.awaiting.firstSecret', { approvals: result.approvals, needed: result.needed })}
+            </p>
+            <StopResolvedBy result={result} disabled={busy || asking !== null} ask={setAsking} />
           </div>
-        )
-      ) : null}
-      {result?.of === STARTING.awaiting || result?.of === STARTING.owed ? (
-        <div
-          className="flex flex-col gap-2" data-result={result.of} data-round={result.of === STARTING.awaiting ? result.round : undefined}
-          data-stopped={result.of === STARTING.owed ? result.stopped : undefined}
-        >
-          <p className="text-sm" data-says>
-            {result.of === STARTING.owed ? (result.stopped === undefined ? t('createVault.startOwed') : stoppedSays(result.stopped))
-              : result.round === 'adoption' ? t('createVault.awaiting.adoption', { approvals: result.approvals, needed: result.needed })
-              : t('createVault.awaiting.firstSecret', { approvals: result.approvals, needed: result.needed })}
-          </p>
-          <StopResolvedBy result={result} disabled={busy || asking !== null} ask={setAsking} />
-        </div>
-      ) : null}
+        ) : null}
       </div>
-      {gave === ACTED.done ? <p className="text-sm" data-gave-keys>{t('createVault.keysGiven')}</p> : null}
+      {gave === ACTED.done ? (
+        <p className="text-sm" data-gave-keys>
+          {t('createVault.keysGiven')}
+        </p>
+      ) : null}
       {gave === null || gave === ACTED.done ? null : <ActRefused why={gave} />}
       {opening === null ? null : <ActRefused why={opening} />}
       {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}

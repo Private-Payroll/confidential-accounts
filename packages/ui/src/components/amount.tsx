@@ -26,7 +26,11 @@ function checkedKind(kind: AmountKind): AmountKind {
  */
 export function AmountFigure({ value }: { value: TokenAmount }) {
   const language = useLanguage();
-  return <span dir="ltr">{formatTokenAmount(value, language)}{' '}{value.symbol}</span>;
+  return (
+    <span dir="ltr">
+      {formatTokenAmount(value, language)} {value.symbol}
+    </span>
+  );
 }
 
 /**
@@ -58,10 +62,18 @@ export function Amount({ value, kind }: AmountProps) {
  */
 export function AmountFigureOnly({ value }: { value: TokenAmount }) {
   const language = useLanguage();
-  return <span dir="ltr" data-slot="amount-figure" data-visibility={visibilityOf(value)}>{formatTokenAmount(value, language)}</span>;
+  return (
+    <span dir="ltr" data-slot="amount-figure" data-visibility={visibilityOf(value)}>
+      {formatTokenAmount(value, language)}
+    </span>
+  );
 }
 
 /** AN AMOUNT WHILE IT IS READ: a bar the width of a figure, in the line, with no figure and no pill, so nothing can be read as the amount. */
 export function AmountLoading() {
-  return <span data-slot="amount-loading" aria-busy={true} className="inline-flex align-middle"><Skeleton data-bar="figure" className="h-4 w-24" /></span>;
+  return (
+    <span data-slot="amount-loading" aria-busy={true} className="inline-flex align-middle">
+      <Skeleton data-bar="figure" className="h-4 w-24" />
+    </span>
+  );
 }

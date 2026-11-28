@@ -51,10 +51,17 @@ export function seatAt(identity: Identity, label: CompanyLabel, n: number, scope
   const leafAt = (s: Hex) => lower(storedSignerLeaf({ signingSecret, blinding, scope: s }, scheme));
   const leaf = leafAt(at);
   return Object.freeze({
-    n, signingSecret, wrappingSecret, salt, blinding, walletKey, scope: at, leaf,
+    n,
+    signingSecret,
+    wrappingSecret,
+    salt,
+    blinding,
+    walletKey,
+    scope: at,
+    leaf,
     leafAtAll: at === all ? leaf : leafAt(all),
     publicKey: lower(scheme.signerPublicKey(signingSecret)),
     signingPublicKey: lower(signingPublicKeyOf(signingSecret)),
-    wrappingPublicKey: lower(toHex(x25519.getPublicKey(keys.wrappingSecret))),
+    wrappingPublicKey: lower(toHex(x25519.getPublicKey(keys.wrappingSecret)))
   });
 }

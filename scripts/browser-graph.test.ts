@@ -23,7 +23,16 @@
  * The first block proves the walker can see what it claims to see, on a
  * fixture built outside the repository. The rest run it on the real builds.
  */
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,32 +73,39 @@ describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY
     root = realpathSync(mkdtempSync(join(tmpdir(), 'browser-graph-')));
     put('node_modules/buffer/package.json', '{"name":"buffer","version":"0.0.0"}');
     put('site/index.html', '<!doctype html><script type="module" src="./main.ts"></script>');
-    put('site/main.ts', [
-      "import type { Stats } from 'node:fs';",
-      "import { type Dirent } from 'node:fs';",
-      "import { StatsFs } from 'node:fs';",
-      "import { Buffer } from 'buffer';",
-      "import { leaf } from './leaf.js';",
-      "import secondWorker from './second-worker.ts?worker&url';",
-      "import { own } from 'own-package/part';",
-      "import { deep } from 'own-package/deep/x';",
-      "export { host } from './passed-on.js';",
-      'export let used: Stats | Dirent | StatsFs | undefined;',
-      "export const worker = () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });",
-      "export const later = () => import('node:fs/promises');",
-      'console.log(leaf, Buffer, secondWorker, own, deep);',
-    ].join('\n'));
+    put(
+      'site/main.ts',
+      [
+        "import type { Stats } from 'node:fs';",
+        "import { type Dirent } from 'node:fs';",
+        "import { StatsFs } from 'node:fs';",
+        "import { Buffer } from 'buffer';",
+        "import { leaf } from './leaf.js';",
+        "import secondWorker from './second-worker.ts?worker&url';",
+        "import { own } from 'own-package/part';",
+        "import { deep } from 'own-package/deep/x';",
+        "export { host } from './passed-on.js';",
+        'export let used: Stats | Dirent | StatsFs | undefined;',
+        "export const worker = () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });",
+        "export const later = () => import('node:fs/promises');",
+        'console.log(leaf, Buffer, secondWorker, own, deep);'
+      ].join('\n')
+    );
     put('site/leaf.ts', "import { readFileSync } from 'node:fs';\nexport const leaf = () => readFileSync;\n");
     put('site/passed-on.ts', "import { hostname } from 'node:os';\nexport const host = hostname;\n");
     put('site/second-worker.ts', "import { gzip } from 'node:zlib';\nexport const z = gzip;\n");
-    put('packages/own/package.json', JSON.stringify({
-      name: 'own-package', type: 'module',
-      exports: {
-        './part': { types: './lib/part.d.ts', import: './lib/part.js', browser: './lib/clean.js' },
-        './*': './lib/wrong/*.js',
-        './deep/*': './lib/deep/*.js',
-      },
-    }));
+    put(
+      'packages/own/package.json',
+      JSON.stringify({
+        name: 'own-package',
+        type: 'module',
+        exports: {
+          './part': { types: './lib/part.d.ts', import: './lib/part.js', browser: './lib/clean.js' },
+          './*': './lib/wrong/*.js',
+          './deep/*': './lib/deep/*.js'
+        }
+      })
+    );
     put('packages/own/lib/part.js', "import { createHash } from 'node:crypto';\nexport const own = createHash;\n");
     put('packages/own/lib/clean.js', 'export const own = 1;\n');
     put('packages/own/lib/deep/x.js', "import { lookup } from 'node:dns';\nexport const deep = lookup;\n");
@@ -97,18 +113,29 @@ describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY
     symlinkSync('../packages/own', join(root, 'node_modules/own-package'));
     put('site/worker.ts', "import { join } from 'node:path';\nexport const j = join;\n");
     put('broken/index.html', '<script type="module" src="./main.ts"></script>');
-    put('broken/main.ts', [
-      "import { gone } from './missing.js';",
-      "import { nowhere } from 'not-installed';",
-      "import { Buffer } from 'node:buffer';",
-      'console.log(gone, nowhere, Buffer);',
-    ].join('\n'));
-    const build = (name: string): BrowserBuild => ({ name, config: '', root: name, pages: [`${name}/index.html`], alias: [] });
+    put(
+      'broken/main.ts',
+      [
+        "import { gone } from './missing.js';",
+        "import { nowhere } from 'not-installed';",
+        "import { Buffer } from 'node:buffer';",
+        'console.log(gone, nowhere, Buffer);'
+      ].join('\n')
+    );
+    const build = (name: string): BrowserBuild => ({
+      name,
+      config: '',
+      root: name,
+      pages: [`${name}/index.html`],
+      alias: []
+    });
     graph = await walkBuild(build('site'), root);
     broken = await walkBuild(build('broken'), root);
   });
 
-  afterAll(() => { if (root !== '') rmSync(root, { recursive: true, force: true }); });
+  afterAll(() => {
+    if (root !== '') rmSync(root, { recursive: true, force: true });
+  });
 
   it('REPORTS A STATIC NODE IMPORT ONE FILE AWAY AND ONE WORKER AWAY, WITH THE WAY THERE', () => {
     /* RED WHEN: relative imports stop being followed, or a `.js` specifier stops being read as its `.ts`
@@ -121,10 +148,18 @@ describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY
     expect(graph.staticNode).toEqual([
       { file: 'site/leaf.ts', specifier: 'node:fs', chain: ['site/main.ts', 'site/leaf.ts'] },
       { file: 'site/second-worker.ts', specifier: 'node:zlib', chain: ['site/main.ts', 'site/second-worker.ts'] },
-      { file: 'packages/own/lib/part.js', specifier: 'node:crypto', chain: ['site/main.ts', 'packages/own/lib/part.js'] },
-      { file: 'packages/own/lib/deep/x.js', specifier: 'node:dns', chain: ['site/main.ts', 'packages/own/lib/deep/x.js'] },
+      {
+        file: 'packages/own/lib/part.js',
+        specifier: 'node:crypto',
+        chain: ['site/main.ts', 'packages/own/lib/part.js']
+      },
+      {
+        file: 'packages/own/lib/deep/x.js',
+        specifier: 'node:dns',
+        chain: ['site/main.ts', 'packages/own/lib/deep/x.js']
+      },
       { file: 'site/passed-on.ts', specifier: 'node:os', chain: ['site/main.ts', 'site/passed-on.ts'] },
-      { file: 'site/worker.ts', specifier: 'node:path', chain: ['site/main.ts', 'site/worker.ts'] },
+      { file: 'site/worker.ts', specifier: 'node:path', chain: ['site/main.ts', 'site/worker.ts'] }
     ]);
     /* RED WHEN: a worker is followed as an ordinary import rather than recorded as an entry of its own. */
     expect(graph.entries).toEqual(['site/main.ts', 'site/second-worker.ts', 'site/worker.ts']);
@@ -136,7 +171,9 @@ describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY
      * a built-in (`buffer`) is taken for the built-in. Both would put `site/main.ts` in `staticNode`. */
     expect(graph.staticNode.map((n) => n.file)).not.toContain('site/main.ts');
     /* RED WHEN: a dynamic import is filed as static, or is dropped instead of reported. */
-    expect(graph.dynamicNode).toEqual([{ file: 'site/main.ts', specifier: 'node:fs/promises', chain: ['site/main.ts'] }]);
+    expect(graph.dynamicNode).toEqual([
+      { file: 'site/main.ts', specifier: 'node:fs/promises', chain: ['site/main.ts'] }
+    ]);
   });
 
   it('REPORTS WHAT IT CANNOT FOLLOW, AND READS node: AS NODE EVEN WHERE A PACKAGE OF THAT NAME EXISTS', () => {
@@ -144,7 +181,7 @@ describe('THE WALKER SEES A NODE IMPORT WHERE A BROWSER WOULD MEET ONE, AND ONLY
      * which is how an alias the walker did not know would hide the files behind it. */
     expect(broken.unresolved).toEqual([
       { file: 'broken/main.ts', specifier: './missing.js' },
-      { file: 'broken/main.ts', specifier: 'not-installed' },
+      { file: 'broken/main.ts', specifier: 'not-installed' }
     ]);
     /* RED WHEN: a `node:` specifier is looked up as the package of the bare name - `buffer` is installed in
      * this fixture, so `node:buffer` would then be taken for it. The bundler never does that. */
@@ -185,24 +222,35 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * the adapter, which is built to run on a server and may reach Node at any time.
      * RED WHEN: any browser file imports a value from `src/midnight/ledger.ts` - restoring the value import
      * in `vault-committee.ts` does. */
-    const reaching = BROWSER_BUILDS.filter((b) => byName(b.name).files.includes('src/midnight/ledger.ts')).map((b) => b.name);
+    const reaching = BROWSER_BUILDS.filter((b) => byName(b.name).files.includes('src/midnight/ledger.ts')).map(
+      (b) => b.name
+    );
     expect(reaching).toEqual([]);
   });
 
-  it('THE APPLICATION\'S PAGE IS WALKED THROUGH EVERY WORKER IT STARTS AND INTO THE VAULT BUILDER', () => {
+  it("THE APPLICATION'S PAGE IS WALKED THROUGH EVERY WORKER IT STARTS AND INTO THE VAULT BUILDER", () => {
     /* A walk that stopped at the page would pass the refusal above for the wrong reason.
      * RED WHEN: workers stop being followed - the worker entries vanish from `entries` and the vault
      * builder and its committee rule vanish from `files`. */
     const g = byName('web');
     expect(g.entries).toEqual([
-      'apps/web/src/main.ts', 'packages/web-shared/src/vault-worker-entry.ts',
+      'apps/web/src/main.ts',
+      'packages/web-shared/src/vault-worker-entry.ts',
       /* The vault worker starts one of its own for each proof of a private deposit (29 Sep). */
-      'packages/web-shared/src/vault-proof-worker-entry.ts',
+      'packages/web-shared/src/vault-proof-worker-entry.ts'
     ]);
-    expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/vault-builder.ts', 'src/midnight/vault-committee.ts', 'src/midnight/authority-replacement.ts']));
+    expect(g.files).toEqual(
+      expect.arrayContaining([
+        'packages/web-shared/src/vault-builder.ts',
+        'src/midnight/vault-committee.ts',
+        'src/midnight/authority-replacement.ts'
+      ])
+    );
     /* RED WHEN: `midnight-identity`, linked into `node_modules` from this repository, stops being followed -
      * the page is served its built `lib/` files and they would go unexamined. */
-    expect(g.files).toEqual(expect.arrayContaining([builtIdentityFile('./profile/company-label'), builtIdentityFile('./network')]));
+    expect(g.files).toEqual(
+      expect.arrayContaining([builtIdentityFile('./profile/company-label'), builtIdentityFile('./network')])
+    );
   });
 
   it('THE ONLY DYNAMIC NODE IMPORTS ARE THE TWO BEHIND THE DISK-BACKED KEY SOURCE', () => {
@@ -218,7 +266,7 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     for (const name of ['web', 'wallet']) {
       expect(byName(name).dynamicNode.map((n) => `${n.file} ${n.specifier}`)).toEqual([
         'src/midnight/wasm-proving.ts node:fs/promises',
-        'src/midnight/wasm-proving.ts node:path',
+        'src/midnight/wasm-proving.ts node:path'
       ]);
     }
   });
@@ -228,28 +276,39 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
      * page is added to a build's root without being listed - its graph would otherwise never be walked. */
     const configs = [
       ...readdirSync(REPO).filter((n) => /^vite(\..+)?\.config\.ts$/.test(n)),
-      ...readdirSync(join(REPO, 'apps')).flatMap((d) => readdirSync(join(REPO, 'apps', d))
-        .filter((n) => /^vite(\..+)?\.config\.ts$/.test(n)).map((n) => `apps/${d}/${n}`)),
+      ...readdirSync(join(REPO, 'apps')).flatMap((d) =>
+        readdirSync(join(REPO, 'apps', d))
+          .filter((n) => /^vite(\..+)?\.config\.ts$/.test(n))
+          .map((n) => `apps/${d}/${n}`)
+      )
     ].sort();
     expect(BROWSER_BUILDS.map((b) => b.config).sort()).toEqual(configs);
     for (const b of BROWSER_BUILDS) expect(b.pages).toEqual(pagesIn(b.root, REPO));
   });
 
   /** The scripts a build's pages name, relative to the repository root. */
-  const pageScriptsOf = (build: BrowserBuild): string[] => build.pages.flatMap((p) => scriptsOf(readFileSync(join(REPO, p), 'utf8'))
-    .map((s) => relative(REPO, join(REPO, dirname(p), s)).split('\\').join('/')));
+  const pageScriptsOf = (build: BrowserBuild): string[] =>
+    build.pages.flatMap((p) =>
+      scriptsOf(readFileSync(join(REPO, p), 'utf8')).map((s) =>
+        relative(REPO, join(REPO, dirname(p), s))
+          .split('\\')
+          .join('/')
+      )
+    );
 
   /** What a build's development server must pre-scan: its pages, and every worker entry its pages do not name. */
-  const scanFor = (build: BrowserBuild, graph: BuildGraph): string[] => [
-    ...build.pages.map((p) => relative(build.root, p)),
-    ...graph.entries.filter((e) => !pageScriptsOf(build).includes(e)).map((e) => relative(build.root, e)),
-  ].sort();
+  const scanFor = (build: BrowserBuild, graph: BuildGraph): string[] =>
+    [
+      ...build.pages.map((p) => relative(build.root, p)),
+      ...graph.entries.filter((e) => !pageScriptsOf(build).includes(e)).map((e) => relative(build.root, e))
+    ].sort();
 
   /** The builds whose pages start a worker. */
-  const withWorkers = (): BrowserBuild[] => BROWSER_BUILDS.filter((b) => {
-    const pageScripts = pageScriptsOf(b);
-    return byName(b.name).entries.some((e) => !pageScripts.includes(e));
-  });
+  const withWorkers = (): BrowserBuild[] =>
+    BROWSER_BUILDS.filter((b) => {
+      const pageScripts = pageScriptsOf(b);
+      return byName(b.name).entries.some((e) => !pageScripts.includes(e));
+    });
 
   /*
    * BUILDS WHOSE PAGES START A WORKER AND WHOSE PRE-SCAN DOES NOT NAME IT, EACH WITH WHY IT IS LEFT SO.
@@ -257,7 +316,8 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
    * turns the test below red until its entry is taken out, so this list cannot outlive what it describes.
    */
   const LEFT_UNSCANNED: Record<string, string> = {
-    wallet: 'its configuration is the wallet\'s own and names no worker; the page reload this guards against is open there',
+    wallet:
+      "its configuration is the wallet's own and names no worker; the page reload this guards against is open there"
   };
 
   it('EVERY BUILD WHOSE PAGES START A WORKER IS HELD TO ITS PRE-SCAN, OR LISTED WITH WHY IT IS NOT', () => {
@@ -268,30 +328,37 @@ describe('EVERY BROWSER BUILD IN THIS REPOSITORY', () => {
     expect(names).toContain('web');
   });
 
-  it.each(BROWSER_BUILDS.map((b) => b.name))('%s: THE DEVELOPMENT SERVER PRE-SCANS EVERY PAGE AND EVERY WORKER IT STARTS', async (name) => {
-    /* A dependency only a worker imports is otherwise found when the worker first starts, and the
-     * development server then reloads the page and loses what was on it.
-     * RED WHEN: a build whose pages start a worker has no `optimizeDeps.entries`, leaves a worker out of it, or
-     * names a page or worker that is not there; its configuration serves a root other than the one listed; or a
-     * build listed above as left unscanned comes to name its workers, and its entry must be taken out.
-     * A build that starts no worker may leave the pre-scan unset, which is every page; if it sets one, it is
-     * held to naming exactly its pages - so the new application's configuration is read and checked too. */
-    const build = BROWSER_BUILDS.find((b) => b.name === name) as BrowserBuild;
-    const { default: made } = await import(/* @vite-ignore */ join(REPO, build.config));
-    /* A configuration given as a function is asked for its development settings. A network reached through a project
-     * token has that setting read while it is made, so the process is given a stand-in value for the test. */
-    const token = networkRecord(NETWORK).endpoints?.projectToken;
-    if (token !== null && token !== undefined) vi.stubEnv(token.setting, 'a value only a test knows');
-    const config = typeof made === 'function' ? await made({ command: 'serve', mode: 'development' }) : made;
-    vi.unstubAllEnvs();
-    expect(relative(REPO, resolve(REPO, config.root ?? '.')).split('\\').join('/')).toBe(build.root);
-    const entries = config.optimizeDeps?.entries as string[] | undefined;
-    const scanned = [...(entries ?? [])].sort();
-    if (!withWorkers().includes(build)) {
-      if (entries !== undefined) expect(scanned).toEqual(build.pages.map((p) => relative(build.root, p)).sort());
-      return;
+  it.each(BROWSER_BUILDS.map((b) => b.name))(
+    '%s: THE DEVELOPMENT SERVER PRE-SCANS EVERY PAGE AND EVERY WORKER IT STARTS',
+    async (name) => {
+      /* A dependency only a worker imports is otherwise found when the worker first starts, and the
+       * development server then reloads the page and loses what was on it.
+       * RED WHEN: a build whose pages start a worker has no `optimizeDeps.entries`, leaves a worker out of it, or
+       * names a page or worker that is not there; its configuration serves a root other than the one listed; or a
+       * build listed above as left unscanned comes to name its workers, and its entry must be taken out.
+       * A build that starts no worker may leave the pre-scan unset, which is every page; if it sets one, it is
+       * held to naming exactly its pages - so the new application's configuration is read and checked too. */
+      const build = BROWSER_BUILDS.find((b) => b.name === name) as BrowserBuild;
+      const { default: made } = await import(/* @vite-ignore */ join(REPO, build.config));
+      /* A configuration given as a function is asked for its development settings. A network reached through a project
+       * token has that setting read while it is made, so the process is given a stand-in value for the test. */
+      const token = networkRecord(NETWORK).endpoints?.projectToken;
+      if (token !== null && token !== undefined) vi.stubEnv(token.setting, 'a value only a test knows');
+      const config = typeof made === 'function' ? await made({ command: 'serve', mode: 'development' }) : made;
+      vi.unstubAllEnvs();
+      expect(
+        relative(REPO, resolve(REPO, config.root ?? '.'))
+          .split('\\')
+          .join('/')
+      ).toBe(build.root);
+      const entries = config.optimizeDeps?.entries as string[] | undefined;
+      const scanned = [...(entries ?? [])].sort();
+      if (!withWorkers().includes(build)) {
+        if (entries !== undefined) expect(scanned).toEqual(build.pages.map((p) => relative(build.root, p)).sort());
+        return;
+      }
+      if (Object.hasOwn(LEFT_UNSCANNED, name)) expect(scanned).not.toEqual(scanFor(build, byName(name)));
+      else expect(scanned).toEqual(scanFor(build, byName(name)));
     }
-    if (Object.hasOwn(LEFT_UNSCANNED, name)) expect(scanned).not.toEqual(scanFor(build, byName(name)));
-    else expect(scanned).toEqual(scanFor(build, byName(name)));
-  });
+  );
 });

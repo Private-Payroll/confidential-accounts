@@ -29,7 +29,9 @@ type OnTheWayIn =
   | ({ readonly notAnchored: string } & FiledAgainOnTheWayIn);
 
 /** What the anchor filed again before it anchored at once: this seat's own entry, or signed changes passed over. */
-interface FiledAgainOnTheWayIn { readonly filedAgain?: 'own-entry' | 'directory-changes' }
+interface FiledAgainOnTheWayIn {
+  readonly filedAgain?: 'own-entry' | 'directory-changes';
+}
 
 /**
  * **THIS SEAT'S OWN DIRECTORY ENTRY, PASSED OVER BY THE COMPANY'S RECORDS, FILED
@@ -44,10 +46,16 @@ async function ownEntryFiledAgain(given: AnchorDoors, here: DirectoryBelieved): 
   const doors = throughTheView(given);
   const mine = signingPublicKeyOf(doors.material.signingSecret as Hex);
   if (doors.fileDirectory === undefined || here.dir.seats.some((x) => x.signingKey === mine)) return false;
-  const own = (here.passedOver ?? []).filter((f) => f.change.kind === 'claim' && f.change.entry.statement.signingKey.toLowerCase() === mine);
+  const own = (here.passedOver ?? []).filter(
+    (f) => f.change.kind === 'claim' && f.change.entry.statement.signingKey.toLowerCase() === mine
+  );
   if (own.length === 0) return false;
   const filings = await doors.directoryFilings();
-  await doors.fileDirectory({ company: doors.accountId, version: filings.length + 1, change: own[own.length - 1]!.change });
+  await doors.fileDirectory({
+    company: doors.accountId,
+    version: filings.length + 1,
+    change: own[own.length - 1]!.change
+  });
   return true;
 }
 
@@ -66,18 +74,24 @@ async function ownEntryFiledAgain(given: AnchorDoors, here: DirectoryBelieved): 
  * anchored is anchored by the next anchor, and a quorum's is kept until it is.
  */
 export async function directoryChangeFiledHere(
-  given: AnchorDoors, change: SignedChange, signedFor: number,
+  given: AnchorDoors,
+  change: SignedChange,
+  signedFor: number
 ): Promise<{ readonly version: number; readonly anchor: Anchored | { readonly notAnchored: string } }> {
   const doors = throughTheView(given);
   if (doors.fileDirectory === undefined) {
-    throw new AnchorNotMade('this page cannot file a change to the company\'s directory. Nothing was filed. Reload the page to get the '
-      + 'current version');
+    throw new AnchorNotMade(
+      "this page cannot file a change to the company's directory. Nothing was filed. Reload the page to get the " +
+        'current version'
+    );
   }
   const filings = await doors.directoryFilings();
   if (filings.length + 1 !== signedFor) {
-    throw new AnchorNotMade(`the change was signed for version ${signedFor} of the company's directory, and the directory holds `
-      + `${filings.length} version${filings.length === 1 ? '' : 's'} now, so its signatures do not fit the next one. Nothing was filed. `
-      + 'Have it signed again as the directory stands now');
+    throw new AnchorNotMade(
+      `the change was signed for version ${signedFor} of the company's directory, and the directory holds ` +
+        `${filings.length} version${filings.length === 1 ? '' : 's'} now, so its signatures do not fit the next one. Nothing was filed. ` +
+        'Have it signed again as the directory stands now'
+    );
   }
   /* A quorum's change is kept before it is filed, so a filing that fails, or that the service later drops, is filed again from here. */
   if (change.kind !== 'rotate') await doors.changes?.keep(doors.accountId, { signedAt: signedFor, change });
@@ -105,25 +119,42 @@ async function quorumChangesFiledAgain(given: AnchorDoors, here: DirectoryBeliev
   const doors = throughTheView(given);
   if (doors.fileDirectory === undefined || here.refiled === undefined) return 0;
   /* Only a quorum's change is filed again: a change of key a store hands back is never a candidate. */
-  const all = (await doors.changes?.all(doors.accountId) ?? [])
-    .filter((k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'retire');
-  for (const k of all) if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
+  const all = ((await doors.changes?.all(doors.accountId)) ?? []).filter(
+    (k): k is { readonly signedAt: number; readonly change: QuorumChange } => k.change.kind === 'retire'
+  );
+  for (const k of all)
+    if (here.anchoredAgain?.has(k.signedAt) === true) await doors.changes!.letGo(doors.accountId, k.signedAt);
   const kept = all.filter((k) => here.anchoredAgain?.has(k.signedAt) !== true);
   /* One kept before its first filing reached the service: its version is still the next, so it is filed as that version. */
   const next = kept.find((k) => k.signedAt === here.dir.version + 1);
   if (next !== undefined) {
-    try { await doors.fileDirectory({ company: doors.accountId, version: next.signedAt, change: next.change }); } catch (e) { goesOnFresh(given, e); return 0; }
+    try {
+      await doors.fileDirectory({ company: doors.accountId, version: next.signedAt, change: next.change });
+    } catch (e) {
+      goesOnFresh(given, e);
+      return 0;
+    }
     return 1;
   }
-  const waiting = new Map<number, { readonly signedAt: number; readonly change: QuorumChange }>((here.notApplied ?? []).map((n) => [n.signedAt, n]));
+  const waiting = new Map<number, { readonly signedAt: number; readonly change: QuorumChange }>(
+    (here.notApplied ?? []).map((n) => [n.signedAt, n])
+  );
   /* A change this device kept is a candidate too - one the service no longer serves included; the replay refuses one already applied. */
   for (const k of kept) if (!waiting.has(k.signedAt)) waiting.set(k.signedAt, k);
   const { filed } = here.refiled([...waiting.values()].sort((a, b) => a.signedAt - b.signedAt));
   let n = 0;
   for (const f of filed) {
-    await doors.changes?.keep(doors.accountId, { signedAt: f.signedAt!, change: f.change as KeptDirectoryChange['change'] });
+    await doors.changes?.keep(doors.accountId, {
+      signedAt: f.signedAt!,
+      change: f.change as KeptDirectoryChange['change']
+    });
     /* One the service refuses, or another filing raced, stays kept for a later anchor; this one is not held back by it. */
-    try { await doors.fileDirectory(f); } catch (e) { goesOnFresh(given, e); break; }
+    try {
+      await doors.fileDirectory(f);
+    } catch (e) {
+      goesOnFresh(given, e);
+      break;
+    }
     n += 1;
   }
   return n;
@@ -135,7 +166,10 @@ const goesOnFresh = (doors: AnchorDoors, e: unknown): void => {
 };
 
 /** Anchors what was just filed again, saying what it filed; a refusal is said, never thrown. */
-async function anchoredAtOnce(doors: AnchorDoors, filedAgain: NonNullable<FiledAgainOnTheWayIn['filedAgain']>): Promise<OnTheWayIn> {
+async function anchoredAtOnce(
+  doors: AnchorDoors,
+  filedAgain: NonNullable<FiledAgainOnTheWayIn['filedAgain']>
+): Promise<OnTheWayIn> {
   try {
     return { ...(await anchorTheRecordsHere(doors)), filedAgain };
   } catch (e) {
@@ -179,20 +213,27 @@ export function anchoredOnTheWayIn(doors: AnchorDoors): Promise<OnTheWayIn> {
        * Filing changes again holds nothing back: this goes on to anchor when one is due, with the directory read
        * again, so a service that passes a change over again and again cannot put the company's anchor off with it.
        */
-      if (await quorumChangesFiledAgain(doors, here) > 0) return await anchoredAtOnce(doors, 'directory-changes');
+      if ((await quorumChangesFiledAgain(doors, here)) > 0) return await anchoredAtOnce(doors, 'directory-changes');
       const { landed, records } = await heldHere({ ...doors, directory: async () => here }, {});
       /* When the account's last anchor call landed: the time its block's author set, as the account's history holds it. */
       const last = landed.length === 0 ? Number.NaN : landed[landed.length - 1]!.at;
       const since = now().getTime() - last;
-      if (records.stopped === null && Number.isFinite(since) && since >= 0 && since < ANCHORED_AT_LEAST_EVERY_MS
-        && directoryNotYetAnchored({ dir: here.dir, records, refusedAt: here.refusedAt }).length === 0) {
+      if (
+        records.stopped === null &&
+        Number.isFinite(since) &&
+        since >= 0 &&
+        since < ANCHORED_AT_LEAST_EVERY_MS &&
+        directoryNotYetAnchored({ dir: here.dir, records, refusedAt: here.refusedAt }).length === 0
+      ) {
         return { waits: 'anchored-within-a-day' };
       }
       return await anchorTheRecordsHere(doors);
     } catch (e) {
       return { notAnchored: (e as Error)?.message ?? String(e) };
     }
-  })().finally(() => { onTheWayIn.delete(doors.accountId); });
+  })().finally(() => {
+    onTheWayIn.delete(doors.accountId);
+  });
   onTheWayIn.set(doors.accountId, attempt);
   return attempt;
 }

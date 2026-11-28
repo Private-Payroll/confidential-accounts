@@ -18,14 +18,24 @@ import type { AccountGovernance } from 'midnight-identity/profile/records-key';
 import type { RoundOnChain } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { SentStraightNotRecorded } from '../../../../packages/web-shared/src/hand-over.js';
-import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import {
+  ApprovalNotOwed,
+  WithdrawnWhileSent
+} from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { addSignerKind, type AddSignerReach } from './add-signer-kind.js';
 import { thresholdKind } from './change-threshold.js';
 import { removalKind, type RemoveSignerReach } from './remove-signer.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import type { CompanyChain, CompanyReach } from './company-reach.js';
 import type { Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { oneOffKind, type OneOffPaymentReach } from './one-off-payment.js';
 import { payrollKind } from './raise-run.js';
 import { ActionStopped } from './run.js';
@@ -66,7 +76,14 @@ export interface Approving {
   paid: boolean;
 }
 
-export const approving = (): Approving => ({ round: null, opened: null, standing: null, needed: null, short: false, paid: false });
+export const approving = (): Approving => ({
+  round: null,
+  opened: null,
+  standing: null,
+  needed: null,
+  short: false,
+  paid: false
+});
 
 /** The company as the steps read it, once per action (`keptReach`). */
 export interface ReadCompany {
@@ -75,7 +92,8 @@ export interface ReadCompany {
 }
 
 /** Why an approval stopped, in words every kind says its own way. */
-export type ApprovalStop = 'not-approved' | 'may-be-sent' | 'withdrawn' | 'closed' | 'counted' | 'not-raised' | 'outrun' | 'not-carried';
+export type ApprovalStop =
+  'not-approved' | 'may-be-sent' | 'withdrawn' | 'closed' | 'counted' | 'not-raised' | 'outrun' | 'not-carried';
 
 /** What one kind of proposal brings to the one approval. */
 export interface ProposalKind {
@@ -129,7 +147,9 @@ export const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
 /** Where the proposal stands, read from the chain through this wallet's own indexer. */
 export const onTheChain = async (r: CompanyReach, chainId: string): Promise<RoundOnChain | undefined> =>
-  (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [chainId] }))[chainId.toLowerCase()];
+  (await r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds: [chainId] }))[
+    chainId.toLowerCase()
+  ];
 
 /** At its bar: open (or cleared, for a run charged to its period) and given at least the approvals the account needs. */
 export const atTheBar = (round: RoundOnChain | null, needed: number | null): boolean =>
@@ -145,7 +165,13 @@ export const readsFirstFor = (kind: ProposalKind, intent: ActIntent): boolean =>
  * lines it shows. Run in the first step, before any step hands anything over; nothing is read again before it is signed.
  * Does nothing for a kind that does not read first. Stops the action when the kind gives nothing to show.
  */
-export async function confirmFirst(kind: ProposalKind, intent: ActIntent, r: CompanyReach, here: Approving, ctx: StepContext): Promise<void> {
+export async function confirmFirst(
+  kind: ProposalKind,
+  intent: ActIntent,
+  r: CompanyReach,
+  here: Approving,
+  ctx: StepContext
+): Promise<void> {
   if (!readsFirstFor(kind, intent)) return;
   const named = await kind.opened(ctx, r, intent);
   if (named.confirm === undefined || named.confirm.length === 0) throw new ActionStopped('step-failed');
@@ -160,22 +186,37 @@ export async function confirmFirst(kind: ProposalKind, intent: ActIntent, r: Com
  * and the bar are read from the chain after. A kind that reads first approves the proposal as the first step opened it
  * and the person confirmed it, never opened again.
  */
-export function approveStep(kind: ProposalKind, intent: ActIntent, read: ReadCompany, here: Approving, title: Words): ActionStep {
+export function approveStep(
+  kind: ProposalKind,
+  intent: ActIntent,
+  read: ReadCompany,
+  here: Approving,
+  title: Words
+): ActionStep {
   return {
     title,
     run: async (ctx) => {
       const r = await read.at(ctx);
-      const named = here.opened ?? await kind.opened(ctx, r, intent);
-      here.round = { id: named.id, chainId: named.chainId.toLowerCase(), ...(named.read === undefined ? {} : { read: named.read }) };
+      const named = here.opened ?? (await kind.opened(ctx, r, intent));
+      here.round = {
+        id: named.id,
+        chainId: named.chainId.toLowerCase(),
+        ...(named.read === undefined ? {} : { read: named.read })
+      };
       const before = await onTheChain(r, here.round.chainId);
       if (before === undefined || before.held === 'never') throw new StepRefused(kind.why('not-raised'));
       if (before.held === 'closed') {
         const cancelled = (before.closedBy ?? []).includes('cancel');
-        const owed = cancelled || kind.afterClosed === undefined ? null : await kind.afterClosed(ctx, r, intent, here.round);
+        const owed =
+          cancelled || kind.afterClosed === undefined ? null : await kind.afterClosed(ctx, r, intent, here.round);
         if (owed === null) throw new StepRefused(kind.why(cancelled ? 'withdrawn' : 'closed'));
         /* Finished here: no carry step runs after it. */
         here.round = null;
-        ctx.tell({ state: owed, approvals: before.approvals, ...(before.needed === undefined ? {} : { needed: before.needed }) });
+        ctx.tell({
+          state: owed,
+          approvals: before.approvals,
+          ...(before.needed === undefined ? {} : { needed: before.needed })
+        });
         return;
       }
       if (kind.changesTheCompany && before.outrun === true) throw new StepRefused(kind.why('outrun'));
@@ -193,16 +234,24 @@ export function approveStep(kind: ProposalKind, intent: ActIntent, read: ReadCom
           if (e instanceof ApprovalNotOwed && e.why === 'carried-out') throw new StepRefused(kind.why('closed'), code);
           if (e instanceof WithdrawnWhileSent) throw new StepRefused(kind.why('withdrawn'), code);
           if (e instanceof ApprovalNotOwed) counted = true;
-          else throw new StepRefused(kind.why(!handed.over || nothingWasSentBy(e) ? 'not-approved' : 'may-be-sent', { says: said(e) }), code);
+          else
+            throw new StepRefused(
+              kind.why(!handed.over || nothingWasSentBy(e) ? 'not-approved' : 'may-be-sent', { says: said(e) }),
+              code
+            );
         }
       }
       if (counted && kind.carry === undefined) throw new StepRefused(kind.why('counted'), 'approval-not-owed');
-      const after = approvedNow ? (await onTheChain(r, here.round.chainId)) ?? before : before;
+      const after = approvedNow ? ((await onTheChain(r, here.round.chainId)) ?? before) : before;
       here.standing = after;
       here.needed = kind.needed(after, await r.holders(), intent);
       const state = kind.stateAt(atTheBar(after, here.needed), approvedNow, after.outrun === true);
-      ctx.tell({ ...(state === null ? {} : { state }), approvals: after.approvals, ...(here.needed === null ? {} : { needed: here.needed }) });
-    },
+      ctx.tell({
+        ...(state === null ? {} : { state }),
+        approvals: after.approvals,
+        ...(here.needed === null ? {} : { needed: here.needed })
+      });
+    }
   };
 }
 
@@ -212,9 +261,13 @@ export function approveStep(kind: ProposalKind, intent: ActIntent, read: ReadCom
  * than the approvals (a removal whose retirement is not yet signed by enough seats).
  */
 export type CarryOut = (
-  ctx: StepContext, r: CompanyReach, intent: ActIntent, round: RoundHere, handed: Handed,
+  ctx: StepContext,
+  r: CompanyReach,
+  intent: ActIntent,
+  round: RoundHere,
+  handed: Handed,
   /** The company read again from the chain and its records, for what runs after a carrying out that changed it. */
-  renewed: () => Promise<CompanyReach>,
+  renewed: () => Promise<CompanyReach>
 ) => Promise<void | { readonly state: string }>;
 
 /** What the page is told the carry step got to. */
@@ -240,15 +293,23 @@ const carrying = (ctx: StepContext, kind: ProposalKind, intent: ActIntent, round
       const moving = calls.filter((c) => movesWhoHoldsByCircuit(c.circuit));
       if (moving.length > 0) {
         const own = moves === undefined ? null : carriedCall(moves, account());
-        const stranger = moving.find((c) => own === null || own.circuit !== c.circuit || own.contract !== c.contract.toLowerCase());
+        const stranger = moving.find(
+          (c) => own === null || own.circuit !== c.circuit || own.contract !== c.contract.toLowerCase()
+        );
         if (stranger !== undefined) {
-          return Promise.reject(Object.assign(new Error(`the call ${stranger.circuit} is not what carries this proposal out, so this wallet sent nothing.`),
-            { nothingWasSent: true, thisSendNotSent: true }));
+          return Promise.reject(
+            Object.assign(
+              new Error(
+                `the call ${stranger.circuit} is not what carries this proposal out, so this wallet sent nothing.`
+              ),
+              { nothingWasSent: true, thisSendNotSent: true }
+            )
+          );
         }
         ctx.movesWhoHolds([...carryWrites(round.id, moves!), own!], moves!.move);
       }
       return ctx.sendStraight(send, into, calls);
-    },
+    }
   };
   return { ctx: carryingCtx, declare };
 };
@@ -261,7 +322,14 @@ const carrying = (ctx: StepContext, kind: ProposalKind, intent: ActIntent, round
  * and that the change was carried out, or the state its kind answered instead. What it carries out reads and sends
  * through `carrying`, which holds the step's views to the move its kind names.
  */
-export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompany, here: Approving, title: Words, carryOut: CarryOut): ActionStep {
+export function carryStep(
+  kind: ProposalKind,
+  intent: ActIntent,
+  read: ReadCompany,
+  here: Approving,
+  title: Words,
+  carryOut: CarryOut
+): ActionStep {
   return {
     title,
     run: async (outer) => {
@@ -273,7 +341,8 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
       account = r.account;
       const now = await onTheChain(r, round.chainId);
       if (now === undefined || now.held === 'never') throw new StepRefused(kind.why('not-raised'));
-      if (now.held === 'closed') throw new StepRefused(kind.why((now.closedBy ?? []).includes('cancel') ? 'withdrawn' : 'closed'));
+      if (now.held === 'closed')
+        throw new StepRefused(kind.why((now.closedBy ?? []).includes('cancel') ? 'withdrawn' : 'closed'));
       if (kind.changesTheCompany && now.outrun === true) throw new StepRefused(kind.why('outrun'));
       const needed = kind.needed(now, await r.holders(), intent);
       here.standing = now;
@@ -287,7 +356,10 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
       let carried: void | { readonly state: string };
       declare();
       try {
-        carried = await carryOut(ctx, r, intent, round, handed, async () => { read.renew(); return read.at(ctx); });
+        carried = await carryOut(ctx, r, intent, round, handed, async () => {
+          read.renew();
+          return read.at(ctx);
+        });
       } catch (e) {
         if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
         /* A call our service may have sent, or that is on the chain, is never said as not carried. */
@@ -295,17 +367,20 @@ export function carryStep(kind: ProposalKind, intent: ActIntent, read: ReadCompa
         throw new StepRefused(kind.why(mayBeSent ? 'may-be-sent' : 'not-carried', { says: said(e) }), codeOfError(e));
       }
       ctx.tell({ state: carried?.state ?? CARRY_STATE.carried, ...told });
-    },
+    }
   };
 }
 
 /** Everything the kinds read: the company's chain and builder, the wallet's clock and pause, and each kind's own. */
-export type ProposalKindsReach = AddSignerReach & OneOffPaymentReach & Pick<RemoveSignerReach, 'afterCarried' | 'beforeCarried'> & {
-  readonly chain: () => CompanyChain;
-  readonly builder: () => VaultBuilderClient;
-  /** The chain, the heads this device kept and the person's own wallet, for a recovery; absent, a recovery is refused. */
-  readonly recovery?: RecoveryReach;
-} & Pick<StartKindsReach, 'indexerHttp'> & Pick<RetireVaultReach, 'inFlight'>;
+export type ProposalKindsReach = AddSignerReach &
+  OneOffPaymentReach &
+  Pick<RemoveSignerReach, 'afterCarried' | 'beforeCarried'> & {
+    readonly chain: () => CompanyChain;
+    readonly builder: () => VaultBuilderClient;
+    /** The chain, the heads this device kept and the person's own wallet, for a recovery; absent, a recovery is refused. */
+    readonly recovery?: RecoveryReach;
+  } & Pick<StartKindsReach, 'indexerHttp'> &
+  Pick<RetireVaultReach, 'inFlight'>;
 
 /**
  * **A KIND APPROVED ON THE CHAIN AND THE PERSON'S OWN WALLET ALONE**: its own
@@ -323,21 +398,23 @@ export interface ChainOnlyKind {
 }
 
 /** True of a kind that runs on the chain and the person's own wallet alone. */
-export const isChainOnly = (kind: ProposalKind | ChainOnlyKind): kind is ChainOnlyKind => 'chainOnly' in kind && kind.chainOnly === true;
+export const isChainOnly = (kind: ProposalKind | ChainOnlyKind): kind is ChainOnlyKind =>
+  'chainOnly' in kind && kind.chainOnly === true;
 
 /** **THE KINDS THE ONE APPROVAL KNOWS**, by the name the page gives in the intent's `kind`. */
-export const proposalKinds = (reach: ProposalKindsReach): Readonly<Record<string, ProposalKind | ChainOnlyKind>> => Object.freeze({
-  'add-signer': addSignerKind(reach),
-  'one-off': oneOffKind(reach),
-  threshold: thresholdKind(reach, 'threshold'),
-  'vault-threshold': thresholdKind(reach, 'vault-threshold'),
-  removal: removalKind(reach),
-  payroll: payrollKind(reach),
-  recovery: recoveryKind(reach.recovery),
-  'spending-policy': spendingPolicyKind(reach),
-  'policy-bar': policyBarKind(reach),
-  'adopt-vault': adoptVaultKind(reach),
-  'vault-secret': vaultSecretKind(reach),
-  'pay-key': payKeyKind(reach),
-  'retire-vault': retireVaultKind(reach),
-});
+export const proposalKinds = (reach: ProposalKindsReach): Readonly<Record<string, ProposalKind | ChainOnlyKind>> =>
+  Object.freeze({
+    'add-signer': addSignerKind(reach),
+    'one-off': oneOffKind(reach),
+    threshold: thresholdKind(reach, 'threshold'),
+    'vault-threshold': thresholdKind(reach, 'vault-threshold'),
+    removal: removalKind(reach),
+    payroll: payrollKind(reach),
+    recovery: recoveryKind(reach.recovery),
+    'spending-policy': spendingPolicyKind(reach),
+    'policy-bar': policyBarKind(reach),
+    'adopt-vault': adoptVaultKind(reach),
+    'vault-secret': vaultSecretKind(reach),
+    'pay-key': payKeyKind(reach),
+    'retire-vault': retireVaultKind(reach)
+  });

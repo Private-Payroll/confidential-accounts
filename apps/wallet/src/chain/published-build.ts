@@ -1,6 +1,10 @@
 import { ContractState } from '@midnightntwrk/ledger-v9';
 import { operationsFromContractState, releasedVersionOf } from 'midnight-identity/profile/contract-keys';
-import { RELEASED_VERSIONS, type ReleasedContract, type ReleasedVersion } from 'midnight-identity/wallet/released-versions';
+import {
+  RELEASED_VERSIONS,
+  type ReleasedContract,
+  type ReleasedVersion
+} from 'midnight-identity/wallet/released-versions';
 
 /** What a read of one contract's verifier keys came to, and nothing about whether the company is real. */
 export type PublishedBuild =
@@ -12,7 +16,8 @@ export type PublishedBuild =
 export type StateReader = (address: string) => Promise<string | null>;
 
 /** The bytes a hex string spells. */
-export const bytesOf = (hex: string): Uint8Array => Uint8Array.from(hex.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
+export const bytesOf = (hex: string): Uint8Array =>
+  Uint8Array.from(hex.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 
 /** The contract state a hex string holds, or null when it is not one. */
 export function contractStateOfHex(hex: string): ContractState | null {
@@ -29,7 +34,10 @@ export function contractStateOfHex(hex: string): ContractState | null {
  * each released version. A state whose keys cannot be read is `unchecked`, never either verdict.
  */
 export function publishedBuildOfState(
-  state: unknown, address: string, contract: ReleasedContract, versions: readonly ReleasedVersion[] = RELEASED_VERSIONS,
+  state: unknown,
+  address: string,
+  contract: ReleasedContract,
+  versions: readonly ReleasedVersion[] = RELEASED_VERSIONS
 ): PublishedBuild {
   const read = operationsFromContractState(state, address);
   if (read.state !== 'read') return { of: 'unchecked' };
@@ -39,7 +47,10 @@ export function publishedBuildOfState(
 
 /** The same judgment for the contract at an address, reading its state through `read`. */
 export async function publishedBuildAt(
-  read: StateReader, address: string, contract: ReleasedContract, versions: readonly ReleasedVersion[] = RELEASED_VERSIONS,
+  read: StateReader,
+  address: string,
+  contract: ReleasedContract,
+  versions: readonly ReleasedVersion[] = RELEASED_VERSIONS
 ): Promise<PublishedBuild> {
   let hex: string | null;
   try {

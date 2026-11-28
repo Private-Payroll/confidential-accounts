@@ -4,8 +4,17 @@ import { COMPANY_LABEL_ENTRY, companyLabelOf } from 'midnight-identity/profile/c
 import type { AccountAddress } from 'midnight-identity/profile/company-label';
 import { Contract, ledger, pureCircuits } from '../../../../contracts/managed/contract/index.js';
 import { witnesses } from '../../../../contracts/src/witnesses.js';
-import { AccountSimulator, COMPANY_LABEL, change, leafOfDevice, privateStateFor } from '../../../../contracts/test/simulator.js';
-import { Contract as VaultContract, ledger as vaultLedger } from '../../../../contracts/managed-vault/contract/index.js';
+import {
+  AccountSimulator,
+  COMPANY_LABEL,
+  change,
+  leafOfDevice,
+  privateStateFor
+} from '../../../../contracts/test/simulator.js';
+import {
+  Contract as VaultContract,
+  ledger as vaultLedger
+} from '../../../../contracts/managed-vault/contract/index.js';
 import type { VaultAddress } from 'midnight-identity/profile/company-label';
 import { ChargedState, ContractMaintenanceAuthority, ContractState, StateValue } from '@midnightntwrk/ledger-v9';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -15,17 +24,37 @@ vi.mock('midnight-identity/profile/contract-authority', async (original) => {
   return { ...real, authorityIn: vi.fn(real.authorityIn) };
 });
 const { authorityIn } = await import('midnight-identity/profile/contract-authority');
-const { authorityIn: realAuthorityIn } = await vi.importActual<typeof import('midnight-identity/profile/contract-authority')>('midnight-identity/profile/contract-authority');
+const { authorityIn: realAuthorityIn } = await vi.importActual<
+  typeof import('midnight-identity/profile/contract-authority')
+>('midnight-identity/profile/contract-authority');
 /* A value queued for one test never reaches the next: the reader goes back to the real one. */
 afterEach(() => {
   vi.mocked(authorityIn).mockReset();
   vi.mocked(authorityIn).mockImplementation(realAuthorityIn);
 });
 const {
-  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, VAULT_ACCOUNT_FIELD, VAULT_FIELDS,
-  accountCarries, deployFromIndexerAt, foundingInDeployState, fromIndexerAt, holdersInAccountState, holdersOnChain,
-  labelInAccountState, labelOnAccount, paymentsInAccountState, rolesInAccountState, seatsInAccountState, vaultInState, vaultOnChain,
-  contractsOnChain,
+  ACCOUNT_THRESHOLD_FIELD,
+  ADOPTED_VAULTS_FIELD,
+  MOVEMENTS_FIELD,
+  OPEN_PROPOSALS_FIELD,
+  ROLES_FIELD,
+  SIGNER_LEAVES_FIELD,
+  VAULT_ACCOUNT_FIELD,
+  VAULT_FIELDS,
+  accountCarries,
+  deployFromIndexerAt,
+  foundingInDeployState,
+  fromIndexerAt,
+  holdersInAccountState,
+  holdersOnChain,
+  labelInAccountState,
+  labelOnAccount,
+  paymentsInAccountState,
+  rolesInAccountState,
+  seatsInAccountState,
+  vaultInState,
+  vaultOnChain,
+  contractsOnChain
 } = await import('./company-label-on-chain.js');
 import { PAY_KEY_COMMITMENT_ENTRY } from 'midnight-identity/profile/records-key';
 import { THRESHOLDS_FIELD, governanceInAccountState } from 'midnight-identity/profile/account-state';
@@ -46,7 +75,10 @@ const deployedState = async (label: Uint8Array): Promise<Uint8Array> => {
   const founder = privateStateFor(1);
   const contract = new Contract(witnesses);
   const { currentContractState } = await contract.initialState(
-    createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), label);
+    createConstructorContext(founder, '0'.repeat(64)),
+    leafOfDevice(founder),
+    label
+  );
   return (currentContractState as { serialize(): Uint8Array }).serialize();
 };
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -55,7 +87,11 @@ const FOUNDING_KEY = Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(41
 /** The state a company's deploy leaves: the constructor's, held by the founding signer's committee key alone. */
 const deployHeld = async (label: Uint8Array, keys: string[] = [FOUNDING_KEY]): Promise<Uint8Array> => {
   const state = ContractState.deserialize(await deployedState(label));
-  state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, keys.length, 0n);
+  state.maintenanceAuthority = new ContractMaintenanceAuthority(
+    keys.map((value) => ({ tag: 'schnorr', value })) as never,
+    keys.length,
+    0n
+  );
   return state.serialize();
 };
 
@@ -73,11 +109,14 @@ describe('THE LABEL, READ OFF THE ACCOUNT', () => {
     }
   });
 
-  it('agrees with the contract\'s own decoder about what the account holds', async () => {
+  it("agrees with the contract's own decoder about what the account holds", async () => {
     const founder = privateStateFor(1);
     const contract = new Contract(witnesses);
     const { currentContractState } = await contract.initialState(
-      createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), LABEL_BYTES);
+      createConstructorContext(founder, '0'.repeat(64)),
+      leafOfDevice(founder),
+      LABEL_BYTES
+    );
     const roles = ledger((currentContractState as unknown as { data: never }).data).signerRoles;
     expect(hexOf(roles.lookup(pureCircuits.companyLabelKey()))).toBe(hexOf(LABEL_BYTES));
     expect(ROLES_FIELD).toBe(13);
@@ -86,22 +125,33 @@ describe('THE LABEL, READ OFF THE ACCOUNT', () => {
   it('A READ THAT FAILS IS NEVER AN ANSWER, AND NO ACCOUNT IS NOT A LABEL', async () => {
     const label = companyLabelOf(LABEL_BYTES);
     const state = hexOf(await deployedState(LABEL_BYTES));
-    expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({ of: 'carries', label, seats: seatsInAccountState(Buffer.from(state, 'hex')) });
+    expect(await labelOnAccount(ACCOUNT, async () => state)).toEqual({
+      of: 'carries',
+      label,
+      seats: seatsInAccountState(Buffer.from(state, 'hex'))
+    });
     expect(accountCarries(await labelOnAccount(ACCOUNT, async () => state), label)).toBe(true);
     /* RED WHEN: a different label is taken as the one asked about. */
-    expect(accountCarries(await labelOnAccount(ACCOUNT, async () => state), companyLabelOf(TRAILING_ZEROS))).toBe(false);
+    expect(accountCarries(await labelOnAccount(ACCOUNT, async () => state), companyLabelOf(TRAILING_ZEROS))).toBe(
+      false
+    );
     /* RED WHEN: a failed or empty read lets a screen proceed. */
     const none = await labelOnAccount(ACCOUNT, async () => null);
     expect(none).toEqual({ of: 'no-account' });
     expect(accountCarries(none, label)).toBe(false);
-    const failed = await labelOnAccount(ACCOUNT, async () => { throw new Error('offline'); });
+    const failed = await labelOnAccount(ACCOUNT, async () => {
+      throw new Error('offline');
+    });
     expect(failed.of).toBe('unreadable');
     expect(accountCarries(failed, label)).toBe(false);
     const garbage = await labelOnAccount(ACCOUNT, async () => 'abcd');
     expect(garbage.of).toBe('unreadable');
     /* And a label is never read as the account to look at. */
     const asked: string[] = [];
-    const notAnAccount = await labelOnAccount(label as unknown as AccountAddress, async (a) => { asked.push(a); return state; });
+    const notAnAccount = await labelOnAccount(label as unknown as AccountAddress, async (a) => {
+      asked.push(a);
+      return state;
+    });
     expect(notAnAccount.of).toBe('unreadable');
     expect(asked).toEqual([]);
   });
@@ -113,11 +163,15 @@ describe('WHO HOLDS THE ACCOUNT, READ OFF IT IN THE SAME ANSWER AS ITS LABEL', (
   /* The deployed account's state, with a committee put on it the way a handover leaves one. */
   const heldBy = async (keys: string[], threshold: number): Promise<Uint8Array> => {
     const state = ContractState.deserialize(await deployedState(LABEL_BYTES));
-    state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, threshold, 1n);
+    state.maintenanceAuthority = new ContractMaintenanceAuthority(
+      keys.map((value) => ({ tag: 'schnorr', value })) as never,
+      threshold,
+      1n
+    );
     return state.serialize();
   };
 
-  it('reads the committee and its threshold from the account\'s own maintenance authority', async () => {
+  it("reads the committee and its threshold from the account's own maintenance authority", async () => {
     const keys = [key(1), key(2)];
     const seats = seatsInAccountState(await heldBy(keys, 2));
     /* RED WHEN: the committee or the threshold is read from anywhere but the account's maintenance authority. */
@@ -125,11 +179,14 @@ describe('WHO HOLDS THE ACCOUNT, READ OFF IT IN THE SAME ANSWER AS ITS LABEL', (
     expect(seats.threshold).toBe(2);
   });
 
-  it('reads every seat the account holds now, from the contract\'s own set of seated leaves', async () => {
+  it("reads every seat the account holds now, from the contract's own set of seated leaves", async () => {
     const founder = privateStateFor(1);
     const contract = new Contract(witnesses);
     const { currentContractState } = await contract.initialState(
-      createConstructorContext(founder, '0'.repeat(64)), leafOfDevice(founder), LABEL_BYTES);
+      createConstructorContext(founder, '0'.repeat(64)),
+      leafOfDevice(founder),
+      LABEL_BYTES
+    );
     const leaves = ledger((currentContractState as unknown as { data: never }).data).signerLeaves;
     /* RED WHEN: the field read is not the contract's set of seated leaves, or a seat is read with any other bytes. */
     const seated = [...leaves].map((l: Uint8Array) => Buffer.from(l).toString('hex'));
@@ -149,33 +206,48 @@ describe('WHO HOLDS THE ACCOUNT, READ OFF IT IN THE SAME ANSWER AS ITS LABEL', (
 describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
   const VAULT = '9a'.repeat(32) as VaultAddress;
   /* The vault's constructor calls no witness; the contract still asks that both exist. */
-  const noWitnesses = { noteToSpend: () => { throw new Error('none'); }, nonceSecret: () => { throw new Error('none'); } };
+  const noWitnesses = {
+    noteToSpend: () => {
+      throw new Error('none');
+    },
+    nonceSecret: () => {
+      throw new Error('none');
+    }
+  };
   const key = (n: number): string => Buffer.from(schnorr.getPublicKey(new Uint8Array(32).fill(n))).toString('hex');
   /* The state the real compiled vault's constructor produces for this account, with a committee put on it as a handover leaves one. */
   const vaultState = async (account: string, keys: string[] | null, threshold = 1): Promise<Uint8Array> => {
     const { currentContractState } = await new VaultContract(noWitnesses as never).initialState(
-      createConstructorContext({} as never, '0'.repeat(64)), { bytes: Buffer.from(account, 'hex') } as never);
+      createConstructorContext({} as never, '0'.repeat(64)),
+      { bytes: Buffer.from(account, 'hex') } as never
+    );
     const bytes = (currentContractState as { serialize(): Uint8Array }).serialize();
     if (keys === null) return bytes;
     const state = ContractState.deserialize(bytes);
-    state.maintenanceAuthority = new ContractMaintenanceAuthority(keys.map((value) => ({ tag: 'schnorr', value })) as never, threshold, 1n);
+    state.maintenanceAuthority = new ContractMaintenanceAuthority(
+      keys.map((value) => ({ tag: 'schnorr', value })) as never,
+      threshold,
+      1n
+    );
     return state.serialize();
   };
 
-  it('counts a vault\'s fields as the compiled vault\'s own constructor lays them out', async () => {
+  it("counts a vault's fields as the compiled vault's own constructor lays them out", async () => {
     const fields = ContractState.deserialize(await vaultState(ACCOUNT, null)).data.state.asArray()!;
     /* RED WHEN: the count a vault is read at is written by hand and the contract gains or loses a field. */
     expect(VAULT_FIELDS).toBe(fields.length);
     expect(vaultInState(VAULT, await vaultState(ACCOUNT, [key(1)])).account).toBe(ACCOUNT);
   });
 
-  it('reads the account the vault is pinned to, as the vault\'s own decoder does, and who holds it', async () => {
+  it("reads the account the vault is pinned to, as the vault's own decoder does, and who holds it", async () => {
     const bytes = await vaultState(ACCOUNT, [key(1), key(2)], 2);
     const bytesZero = await vaultState('00'.repeat(32), null);
     const read = vaultInState(VAULT, bytes);
     /* RED WHEN: the field read is not the one the vault's constructor writes its account into, or its bytes are read wrong. */
     const { currentContractState } = await new VaultContract(noWitnesses as never).initialState(
-      createConstructorContext({} as never, '0'.repeat(64)), { bytes: Buffer.from(ACCOUNT, 'hex') } as never);
+      createConstructorContext({} as never, '0'.repeat(64)),
+      { bytes: Buffer.from(ACCOUNT, 'hex') } as never
+    );
     expect(hexOf(vaultLedger((currentContractState as unknown as { data: never }).data).account.bytes)).toBe(ACCOUNT);
     expect(read.account).toBe(ACCOUNT);
     expect(VAULT_ACCOUNT_FIELD).toBe(0);
@@ -190,13 +262,17 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     expect(vaultInState(VAULT, await vaultState(trailing, null)).account).toBe(trailing);
   });
 
-  it('reads who holds the vault through the one reader of a contract\'s authority', async () => {
+  it("reads who holds the vault through the one reader of a contract's authority", async () => {
     const bytes = await vaultState(ACCOUNT, [key(1)], 1);
     const asked = vi.mocked(authorityIn);
     asked.mockClear();
-    asked.mockReturnValueOnce(Object.freeze({
-      committee: Object.freeze([Object.freeze({ tag: 'schnorr', value: key(9) })]), threshold: 5, counter: 0n,
-    }));
+    asked.mockReturnValueOnce(
+      Object.freeze({
+        committee: Object.freeze([Object.freeze({ tag: 'schnorr', value: key(9) })]),
+        threshold: 5,
+        counter: 0n
+      })
+    );
     const read = vaultInState(VAULT, bytes);
     /* RED WHEN: the wallet reads who holds a vault its own way, so there are two readings of who holds a contract. */
     expect(asked).toHaveBeenCalledTimes(1);
@@ -206,10 +282,13 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
 
   it('refuses a vault whose authority cannot be read, saying what was missing', async () => {
     const bytes = await vaultState(ACCOUNT, [key(1)], 1);
-    vi.mocked(authorityIn).mockReturnValueOnce({ why: 'the contract\'s threshold is not a whole number of at least zero.' });
+    vi.mocked(authorityIn).mockReturnValueOnce({
+      why: "the contract's threshold is not a whole number of at least zero."
+    });
     /* RED WHEN: an authority the reader refused is read anyway, or is refused without saying why. */
-    expect(() => vaultInState(VAULT, bytes))
-      .toThrow(/not laid out as a company's vault: the contract's threshold is not a whole number/);
+    expect(() => vaultInState(VAULT, bytes)).toThrow(
+      /not laid out as a company's vault: the contract's threshold is not a whole number/
+    );
   });
 
   it('a vault still held by the key it was deployed with reads as that, and an account read as a vault is no answer', async () => {
@@ -231,31 +310,57 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     expect(() => vaultInState(VAULT, shorter.serialize())).toThrow(/not laid out as a company's vault/);
   });
 
-  it('A READ THAT FAILS IS NEVER AN ANSWER: no vault, an unreadable answer, and an account in a vault\'s place', async () => {
+  it("A READ THAT FAILS IS NEVER AN ANSWER: no vault, an unreadable answer, and an account in a vault's place", async () => {
     const good = hexOf(await vaultState(ACCOUNT, [key(1)]));
-    expect(await vaultOnChain(VAULT, async () => good)).toEqual({ of: 'read', holders: vaultInState(VAULT, Buffer.from(good, 'hex')) });
+    expect(await vaultOnChain(VAULT, async () => good)).toEqual({
+      of: 'read',
+      holders: vaultInState(VAULT, Buffer.from(good, 'hex'))
+    });
     /* RED WHEN: an empty, failed or garbled read lets a screen sign. */
     expect(await vaultOnChain(VAULT, async () => null)).toEqual({ of: 'no-vault' });
-    expect((await vaultOnChain(VAULT, async () => { throw new Error('offline'); })).of).toBe('unreadable');
+    expect(
+      (
+        await vaultOnChain(VAULT, async () => {
+          throw new Error('offline');
+        })
+      ).of
+    ).toBe('unreadable');
     expect((await vaultOnChain(VAULT, async () => 'abcd')).of).toBe('unreadable');
     /* RED WHEN: a company's account, read in a vault's place, is read as a vault. */
     expect((await vaultOnChain(VAULT, async () => hexOf(await deployedState(LABEL_BYTES)))).of).toBe('unreadable');
     /* And something that is not an address is never read at all. */
     const asked: string[] = [];
-    expect((await vaultOnChain('co_x' as VaultAddress, async (a) => { asked.push(a); return good; })).of).toBe('unreadable');
+    expect(
+      (
+        await vaultOnChain('co_x' as VaultAddress, async (a) => {
+          asked.push(a);
+          return good;
+        })
+      ).of
+    ).toBe('unreadable');
     expect(asked).toEqual([]);
   });
-  it('READS EACH CONTRACT A COMMITTEE ASK NAMES AT THE WALLET\'S OWN INDEXER: WHO HOLDS IT, ITS COUNTER, AND THE ACCOUNT A VAULT IS PINNED TO', async () => {
+  it("READS EACH CONTRACT A COMMITTEE ASK NAMES AT THE WALLET'S OWN INDEXER: WHO HOLDS IT, ITS COUNTER, AND THE ACCOUNT A VAULT IS PINNED TO", async () => {
     const account = ContractState.deserialize(await deployedState(LABEL_BYTES));
-    account.maintenanceAuthority = new ContractMaintenanceAuthority([{ tag: 'schnorr', value: key(3) }] as never, 1, 6n);
+    account.maintenanceAuthority = new ContractMaintenanceAuthority(
+      [{ tag: 'schnorr', value: key(3) }] as never,
+      1,
+      6n
+    );
     const accountHex = hexOf(account.serialize());
     const vault = ContractState.deserialize(await vaultState(ACCOUNT, [key(1), key(2)], 2));
-    vault.maintenanceAuthority = new ContractMaintenanceAuthority([key(1), key(2)].map((value) => ({ tag: 'schnorr', value })) as never, 2, 4n);
+    vault.maintenanceAuthority = new ContractMaintenanceAuthority(
+      [key(1), key(2)].map((value) => ({ tag: 'schnorr', value })) as never,
+      2,
+      4n
+    );
     const OTHER_VAULT = '9b'.repeat(32);
     const FOREIGN = '9c'.repeat(32);
     const states: Record<string, string | null> = {
-      [ACCOUNT]: accountHex, [VAULT]: hexOf(vault.serialize()), [OTHER_VAULT]: null,
-      [FOREIGN]: hexOf(await vaultState('ee'.repeat(32), [key(1)], 1)),
+      [ACCOUNT]: accountHex,
+      [VAULT]: hexOf(vault.serialize()),
+      [OTHER_VAULT]: null,
+      [FOREIGN]: hexOf(await vaultState('ee'.repeat(32), [key(1)], 1))
     };
     const asked: string[] = [];
     const read = await contractsOnChain(ACCOUNT, [ACCOUNT, VAULT, OTHER_VAULT, FOREIGN, '9d'.repeat(32)], async (a) => {
@@ -265,9 +370,20 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
     });
     expect(asked.sort()).toEqual([ACCOUNT, VAULT, OTHER_VAULT, FOREIGN, '9d'.repeat(32)].sort());
     /* RED WHEN: the counter is not the contract's own, so an update would be signed against a counter the chain does not hold. */
-    expect(read.get(ACCOUNT)).toEqual({ of: 'read', committee: [{ tag: 'schnorr', value: key(3) }], threshold: 1, counter: 6n, pinnedTo: null, vaults: [] });
+    expect(read.get(ACCOUNT)).toEqual({
+      of: 'read',
+      committee: [{ tag: 'schnorr', value: key(3) }],
+      threshold: 1,
+      counter: 6n,
+      pinnedTo: null,
+      vaults: []
+    });
     expect(read.get(VAULT)).toEqual({
-      of: 'read', committee: [key(1), key(2)].map((value) => ({ tag: 'schnorr', value })), threshold: 2, counter: 4n, pinnedTo: ACCOUNT,
+      of: 'read',
+      committee: [key(1), key(2)].map((value) => ({ tag: 'schnorr', value })),
+      threshold: 2,
+      counter: 4n,
+      pinnedTo: ACCOUNT
     });
     /* RED WHEN: the account a vault is pinned to is not read from the vault, so a foreign vault passes as this company's. */
     expect(read.get(FOREIGN)).toMatchObject({ of: 'read', pinnedTo: 'ee'.repeat(32) });
@@ -281,7 +397,7 @@ describe('WHO HOLDS A VAULT, READ OFF THE VAULT ITSELF', () => {
 });
 
 describe('MORE THAN ONE SEAT', () => {
-  it('reads every seat of an account that seats two signers, as the account\'s own decoder lists them', async () => {
+  it("reads every seat of an account that seats two signers, as the account's own decoder lists them", async () => {
     const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
     const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
     const listed = [...sim.ledger.signerLeaves].map((l: Uint8Array) => hexOf(l)).sort();
@@ -293,10 +409,13 @@ describe('MORE THAN ONE SEAT', () => {
 });
 
 describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED', () => {
-  it('reads the account\'s threshold and its adopted vaults as the account\'s own decoder does', async () => {
+  it("reads the account's threshold and its adopted vaults as the account's own decoder does", async () => {
     const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
     /* A vault address ending in a zero byte, which the state holds trimmed. */
-    const vaults = [Uint8Array.from({ length: 32 }, (_, i) => i + 1), Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x40 + i : 0))];
+    const vaults = [
+      Uint8Array.from({ length: 32 }, (_, i) => i + 1),
+      Uint8Array.from({ length: 32 }, (_, i) => (i < 31 ? 0x40 + i : 0))
+    ];
     for (const v of vaults) await sim.adoptVault(v, [privateStateFor(1), privateStateFor(2)], 391 + v[0]!);
     const bytes = (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
     const read = holdersInAccountState(bytes, hexOf(pureCircuits.policyBarKey()));
@@ -311,7 +430,7 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     expect(read.seats).toEqual(seatsInAccountState(bytes).seats);
   });
 
-  it('reads each vault\'s own approvals, the approvals a policy change needs, and the seat bar, as the account holds them', async () => {
+  it("reads each vault's own approvals, the approvals a policy change needs, and the seat bar, as the account holds them", async () => {
     const [A, B, C] = [privateStateFor(1), privateStateFor(2), privateStateFor(3)];
     const sim = await AccountSimulator.liveAccount([A, B, C], 2n);
     const vault = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
@@ -319,7 +438,12 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     const barKey = hexOf(pureCircuits.policyBarKey());
     const state = () => (sim.contractStateForCall as { serialize(): Uint8Array }).serialize();
     /* RED WHEN: an account with no policy bar stored is read with one, or with a seat bar other than its threshold. */
-    expect(governanceInAccountState(state(), barKey)).toEqual({ approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2 });
+    expect(governanceInAccountState(state(), barKey)).toEqual({
+      approvals: 2,
+      vaultThresholds: [],
+      policyBar: null,
+      seatBar: 2
+    });
     /* A vault's threshold set above the bar raises the bar the account stores to it. */
     const c = change(0n, 401);
     const payload = pureCircuits.setVaultThresholdPayload(vault, 3n);
@@ -336,31 +460,69 @@ describe('WHO HOLDS THE ACCOUNT, ITS OWN THRESHOLD AND THE VAULTS IT HAS ADOPTED
     expect(read.seatBar).toBe(3);
     expect(THRESHOLDS_FIELD).toBe(6);
     /* RED WHEN: a read with no key for the policy bar's row reads every row as a vault's and the seat bar as the threshold. */
-    expect(() => governanceInAccountState(state(), '')).toThrow(/key the approvals a policy change needs are kept under was not given/);
+    expect(() => governanceInAccountState(state(), '')).toThrow(
+      /key the approvals a policy change needs are kept under was not given/
+    );
     /* RED WHEN: the wallet's answer is not read under the key the account's own compiled contract makes. */
     const deployed = hexOf(state());
     const label = companyLabelOf(sim.companyLabel());
-    const held = await holdersOnChain(ACCOUNT, label, async () => deployed, async () => hexOf(await deployHeld(sim.companyLabel())));
+    const held = await holdersOnChain(
+      ACCOUNT,
+      label,
+      async () => deployed,
+      async () => hexOf(await deployHeld(sim.companyLabel()))
+    );
     if (held.of !== 'read') throw new Error(`not read: ${JSON.stringify(held)}`);
     expect([held.holders.policyBar, held.holders.seatBar]).toEqual([3, 3]);
   });
 
   it('a read for an account carrying another label is not an answer, and no account is not unreadable', async () => {
     const state = hexOf(await deployHeld(LABEL_BYTES));
-    expect((await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state)).of).toBe('read');
+    expect(
+      (
+        await holdersOnChain(
+          ACCOUNT,
+          companyLabelOf(LABEL_BYTES),
+          async () => state,
+          async () => state
+        )
+      ).of
+    ).toBe('read');
     /* RED WHEN: the holders of another company's account are handed back for this label. */
-    expect((await holdersOnChain(ACCOUNT, companyLabelOf(TRAILING_ZEROS), async () => state, async () => state)).of).toBe('other-label');
-    expect(await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => null, async () => null)).toEqual({ of: 'no-account' });
+    expect(
+      (
+        await holdersOnChain(
+          ACCOUNT,
+          companyLabelOf(TRAILING_ZEROS),
+          async () => state,
+          async () => state
+        )
+      ).of
+    ).toBe('other-label');
+    expect(
+      await holdersOnChain(
+        ACCOUNT,
+        companyLabelOf(LABEL_BYTES),
+        async () => null,
+        async () => null
+      )
+    ).toEqual({ of: 'no-account' });
   });
 });
 
-describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO HOLDS A SLOT NOW', () => {
+describe("THE FOUNDING SEAT, READ FROM THE ACCOUNT'S DEPLOY AND NEVER FROM WHO HOLDS A SLOT NOW", () => {
   const [F, B, C, D] = [privateStateFor(1), privateStateFor(2), privateStateFor(3), privateStateFor(4)];
   /* The label the simulator's accounts are deployed with. */
   const LABEL = companyLabelOf(COMPANY_LABEL);
 
   /** A proposal over `payload` raised by `by` under `seed`'s salt (which counts as its approval) and approved by `approvers`; its id and salt. */
-  const approved = async (sim: AccountSimulator, by: typeof F, payload: Uint8Array, seed: number, approvers: Array<typeof F>) => {
+  const approved = async (
+    sim: AccountSimulator,
+    by: typeof F,
+    payload: Uint8Array,
+    seed: number,
+    approvers: Array<typeof F>
+  ) => {
     const c = change(0n, seed);
     await sim.as(sim.applying(by, c)).propose(payload);
     const id = sim.proposalId(payload, c.salt);
@@ -381,25 +543,36 @@ describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO 
   it('THE ONE SEAT THE DEPLOY SEATED IS THE FOUNDING SEAT, AND A DEPLOY OF ANOTHER LABEL OR MORE SEATS IS NO ANSWER', async () => {
     const deploy = await deployHeld(COMPANY_LABEL);
     /* RED WHEN: the founding seat or its committee key is read from anything but the deploy's one seated leaf and its own committee. */
-    expect(foundingInDeployState(deploy, LABEL)).toEqual({ seat: hexOf(leafOfDevice(F)), committee: [{ tag: 'schnorr', value: FOUNDING_KEY }] });
+    expect(foundingInDeployState(deploy, LABEL)).toEqual({
+      seat: hexOf(leafOfDevice(F)),
+      committee: [{ tag: 'schnorr', value: FOUNDING_KEY }]
+    });
     /* RED WHEN: a deploy of another company's account names this company's founding signer. */
-    expect(() => foundingInDeployState(deploy, companyLabelOf(TRAILING_ZEROS))).toThrow(/does not carry this company's label/);
+    expect(() => foundingInDeployState(deploy, companyLabelOf(TRAILING_ZEROS))).toThrow(
+      /does not carry this company's label/
+    );
     /* RED WHEN: a deploy held by no committee names a founding committee, so any entry for the seat would be believed. */
     const unheld = await deployedState(COMPANY_LABEL);
     expect(() => foundingInDeployState(unheld, LABEL)).toThrow(/held by no committee/);
     /* RED WHEN: a state with two seats is read as a deploy, so whichever is listed first is taken as the founding signer. */
     const two = await AccountSimulator.liveAccount([F, B], 2n);
-    expect(() => foundingInDeployState((two.contractStateForCall as { serialize(): Uint8Array }).serialize(), LABEL))
-      .toThrow(/did not seat exactly one signer/);
+    expect(() =>
+      foundingInDeployState((two.contractStateForCall as { serialize(): Uint8Array }).serialize(), LABEL)
+    ).toThrow(/did not seat exactly one signer/);
   });
 
-  it('A FOUNDER REMOVED AND ANOTHER SEAT IN THE FIRST SLOT: THE FOUNDING SEAT IS STILL THE DEPLOY\'S', async () => {
+  it("A FOUNDER REMOVED AND ANOTHER SEAT IN THE FIRST SLOT: THE FOUNDING SEAT IS STILL THE DEPLOY'S", async () => {
     const sim = await founderReplaced();
     /* The chain as it is now: the founding signer gone, D seated in the founding signer's slot. */
     expect(sim.slotOf(D)).toBe(0n);
     const now = hexOf((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
     const deploy = hexOf(await deployHeld(COMPANY_LABEL));
-    const read = await holdersOnChain(ACCOUNT, LABEL, async () => now, async () => deploy);
+    const read = await holdersOnChain(
+      ACCOUNT,
+      LABEL,
+      async () => now,
+      async () => deploy
+    );
     if (read.of !== 'read') throw new Error(`not read: ${JSON.stringify(read)}`);
     /* RED WHEN: the founding seat is read as whoever holds the first slot now, or as any seat held now. */
     expect(read.holders.founding).toBe(hexOf(leafOfDevice(F)));
@@ -408,43 +581,73 @@ describe('THE FOUNDING SEAT, READ FROM THE ACCOUNT\'S DEPLOY AND NEVER FROM WHO 
     expect(read.holders.seats).not.toContain(read.holders.founding);
     expect([...read.holders.seats].sort()).toEqual([B, C, D].map((d) => hexOf(sim.leafOf(d))).sort());
     /* RED WHEN: an account the indexer holds no deploy for is answered with a founding seat. */
-    expect(await holdersOnChain(ACCOUNT, LABEL, async () => now, async () => null))
-      .toEqual({ of: 'unreadable', why: 'the indexer holds no deploy for that account.' });
+    expect(
+      await holdersOnChain(
+        ACCOUNT,
+        LABEL,
+        async () => now,
+        async () => null
+      )
+    ).toEqual({ of: 'unreadable', why: 'the indexer holds no deploy for that account.' });
   });
 });
 
-describe('THE INDEXER\'S ANSWERS, READ AS WHAT THEY ARE', () => {
-  const answering = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
-  const withFetch = async <T,>(f: typeof fetch, run: () => Promise<T>): Promise<T> => {
+describe("THE INDEXER'S ANSWERS, READ AS WHAT THEY ARE", () => {
+  const answering = (body: unknown) =>
+    (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  const withFetch = async <T>(f: typeof fetch, run: () => Promise<T>): Promise<T> => {
     const was = globalThis.fetch;
     globalThis.fetch = f;
-    try { return await run(); } finally { globalThis.fetch = was; }
+    try {
+      return await run();
+    } finally {
+      globalThis.fetch = was;
+    }
   };
 
   it('AN EMPTY STATE IS NO CONTRACT, NOT AN UNREADABLE ONE', async () => {
     /* RED WHEN: an action that left no state is read as a state that will not read, so a screen says to wait where nothing is there. */
-    expect(await withFetch(answering({ data: { contract: { state: '' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).toBeNull();
-    expect(await withFetch(answering({ data: { contract: { state: '' } } }), () => vaultOnChain('9a'.repeat(32) as VaultAddress, fromIndexerAt('https://indexer.example')))).toEqual({ of: 'no-vault' });
+    expect(
+      await withFetch(answering({ data: { contract: { state: '' } } }), () =>
+        fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress)
+      )
+    ).toBeNull();
+    expect(
+      await withFetch(answering({ data: { contract: { state: '' } } }), () =>
+        vaultOnChain('9a'.repeat(32) as VaultAddress, fromIndexerAt('https://indexer.example'))
+      )
+    ).toEqual({ of: 'no-vault' });
     /* And a state that is not hex is still refused. */
-    await expect(withFetch(answering({ data: { contract: { state: 'zz' } } }), () => fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress))).rejects.toThrow(/not a state/);
+    await expect(
+      withFetch(answering({ data: { contract: { state: 'zz' } } }), () =>
+        fromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress)
+      )
+    ).rejects.toThrow(/not a state/);
   });
 
-  it('THE DEPLOY IS READ AS THE ACCOUNT\'S ONE DEPLOY ACTION, AND ANYTHING ELSE IS NO DEPLOY', async () => {
+  it("THE DEPLOY IS READ AS THE ACCOUNT'S ONE DEPLOY ACTION, AND ANYTHING ELSE IS NO DEPLOY", async () => {
     const read = () => deployFromIndexerAt('https://indexer.example')('ab'.repeat(32) as AccountAddress);
     let asked = '';
-    const asking = (body: unknown) => (async (_u: unknown, init: { body: string }) => {
-      asked = init.body;
-      return new Response(JSON.stringify(body), { status: 200 });
-    }) as unknown as typeof fetch;
+    const asking = (body: unknown) =>
+      (async (_u: unknown, init: { body: string }) => {
+        asked = init.body;
+        return new Response(JSON.stringify(body), { status: 200 });
+      }) as unknown as typeof fetch;
     /* RED WHEN: the read asks for anything but the contract's deploy action, so a call's or an update's state is taken as the deploy's. */
     expect(await withFetch(asking({ data: { contract: { actions: [{ state: 'abcd' }] } } }), read)).toBe('abcd');
     expect(JSON.parse(asked).query).toMatch(/actions\(type: DEPLOY, limit: 1\) \{ state \}/);
     /* RED WHEN: no contract is read as a deploy, or none or two deploy actions are read as one. */
     expect(await withFetch(answering({ data: { contract: null } }), read)).toBeNull();
     await expect(withFetch(answering({ data: { contract: { actions: [] } } }), read)).rejects.toThrow(/one deploy/);
-    await expect(withFetch(answering({ data: { contract: { actions: [{ state: 'ab' }, { state: 'cd' }] } } }), read)).rejects.toThrow(/one deploy/);
-    await expect(withFetch(answering({ data: { contract: { actions: [{ state: 'zz' }] } } }), read)).rejects.toThrow(/not a state/);
-    await expect(withFetch(answering({ errors: [{ message: 'no' }] }), read)).rejects.toThrow('the indexer refused the read.');
+    await expect(
+      withFetch(answering({ data: { contract: { actions: [{ state: 'ab' }, { state: 'cd' }] } } }), read)
+    ).rejects.toThrow(/one deploy/);
+    await expect(withFetch(answering({ data: { contract: { actions: [{ state: 'zz' }] } } }), read)).rejects.toThrow(
+      /not a state/
+    );
+    await expect(withFetch(answering({ errors: [{ message: 'no' }] }), read)).rejects.toThrow(
+      'the indexer refused the read.'
+    );
   });
 
   it('AN INDEXER THAT FAILS, REFUSES OR ANSWERS WITH NOTHING IS NEVER A LABEL', async () => {
@@ -453,7 +656,9 @@ describe('THE INDEXER\'S ANSWERS, READ AS WHAT THEY ARE', () => {
     /* RED WHEN: an answer the indexer marked as failed is read as a state. */
     await expect(withFetch(status(502), read)).rejects.toThrow('the indexer answered 502.');
     /* RED WHEN: an answer carrying errors is read past them. */
-    await expect(withFetch(answering({ errors: [{ message: 'no' }], data: { contract: { state: 'abcd' } } }), read)).rejects.toThrow('the indexer refused the read.');
+    await expect(
+      withFetch(answering({ errors: [{ message: 'no' }], data: { contract: { state: 'abcd' } } }), read)
+    ).rejects.toThrow('the indexer refused the read.');
     /* RED WHEN: no contract at the address is read as an unreadable one, or as a state. */
     expect(await withFetch(answering({ data: { contract: null } }), read)).toBeNull();
     /* RED WHEN: a state that is not a string is taken as one. */
@@ -474,7 +679,9 @@ describe('A LABEL ENTRY THAT HOLDS ZERO', () => {
     const { alignment } = roles.get(key)!.asCell()!;
     const entries = StateValue.newMap(roles.insert(key, StateValue.newCell({ value: [new Uint8Array(0)], alignment })));
     let rebuilt = (StateValue as any).newArray();
-    fields.forEach((f, i) => { rebuilt = rebuilt.arrayPush(i === ROLES_FIELD ? entries : f); });
+    fields.forEach((f, i) => {
+      rebuilt = rebuilt.arrayPush(i === ROLES_FIELD ? entries : f);
+    });
     zeroed.data = new ChargedState(rebuilt);
     const state = hexOf(zeroed.serialize());
     /* RED WHEN: an entry written as zero is read as a company's label. */
@@ -489,7 +696,7 @@ describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
     expect(PAY_KEY_COMMITMENT_ENTRY).toBe(hexOf(pureCircuits.payKeyCommitmentKey()));
   });
 
-  it('reads the account\'s record of payments from the field the account\'s own decoder reads it from', async () => {
+  it("reads the account's record of payments from the field the account's own decoder reads it from", async () => {
     const sim = await AccountSimulator.liveAccount([privateStateFor(1), privateStateFor(2)], 2n);
     const state = ContractState.deserialize((sim.contractStateForCall as { serialize(): Uint8Array }).serialize());
     const fields = state.data.state.asArray()!;
@@ -498,7 +705,12 @@ describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
     expect(fields[MOVEMENTS_FIELD]!.asMap()!.keys().length).toBe(Number(sim.ledger.movements.size()));
     const asked = ['a1'.repeat(32), 'b2'.repeat(32)];
     /* A new account has paid nobody, committed to no pay-record key and holds nothing open. */
-    expect(paymentsInAccountState(state.serialize(), asked)).toEqual({ payKeyCommitment: null, held: [], openRounds: [], entries: 0 });
+    expect(paymentsInAccountState(state.serialize(), asked)).toEqual({
+      payKeyCommitment: null,
+      held: [],
+      openRounds: [],
+      entries: 0
+    });
     /* RED WHEN: a state that is not a company's account is read as one that paid nobody. */
     expect(() => paymentsInAccountState(new Uint8Array([1, 2, 3]), asked)).toThrow();
   });
@@ -524,10 +736,21 @@ describe('WHAT THE ACCOUNT RECORDS ABOUT PAYMENTS, READ WITH NO PRESS', () => {
   it('A HOLDERS READ THAT ASKS ABOUT PAYMENTS ANSWERS THEM IN THE SAME READ, AND ONE THAT DOES NOT ANSWERS NOTHING ABOUT THEM', async () => {
     const state = hexOf(await deployHeld(LABEL_BYTES));
     const asked = ['c3'.repeat(32)];
-    const withPayments = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, asked);
+    const withPayments = await holdersOnChain(
+      ACCOUNT,
+      companyLabelOf(LABEL_BYTES),
+      async () => state,
+      async () => state,
+      asked
+    );
     /* RED WHEN: the payments asked about are dropped from the answer, or read from another state than the holders. */
     expect(withPayments).toMatchObject({ of: 'read', payments: { payKeyCommitment: null, held: [] } });
-    const without = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state);
+    const without = await holdersOnChain(
+      ACCOUNT,
+      companyLabelOf(LABEL_BYTES),
+      async () => state,
+      async () => state
+    );
     /* RED WHEN: a read nobody asked payments of says anything about them. */
     expect(without.of === 'read' && 'payments' in without).toBe(false);
   });
@@ -541,7 +764,10 @@ describe('WHAT THE ACCOUNT HOLDS UNDER ENTRIES OF ITS MAP OF ROLES, READ WITH NO
       /* The constructor writes the company's label under its entry: an entry the contract itself wrote. */
       const read = rolesInAccountState(state, [NOT_HELD, COMPANY_LABEL_ENTRY]);
       /* RED WHEN: an entry is read from another field, its value is cut short where it ends in zeroes, or the order asked is not kept. */
-      expect(read).toEqual([{ key: NOT_HELD, value: null }, { key: COMPANY_LABEL_ENTRY, value: hexOf(label) }]);
+      expect(read).toEqual([
+        { key: NOT_HELD, value: null },
+        { key: COMPANY_LABEL_ENTRY, value: hexOf(label) }
+      ]);
     }
     /* RED WHEN: a state that is not a company's account is read as one holding nothing. */
     expect(() => rolesInAccountState(new Uint8Array([1, 2, 3]), [NOT_HELD])).toThrow();
@@ -549,13 +775,32 @@ describe('WHAT THE ACCOUNT HOLDS UNDER ENTRIES OF ITS MAP OF ROLES, READ WITH NO
 
   it('A HOLDERS READ THAT ASKS ABOUT ENTRIES ANSWERS THEM IN THE SAME READ, AND ONE THAT DOES NOT ANSWERS NOTHING ABOUT THEM', async () => {
     const state = hexOf(await deployHeld(LABEL_BYTES));
-    const read = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, undefined, [COMPANY_LABEL_ENTRY]);
+    const read = await holdersOnChain(
+      ACCOUNT,
+      companyLabelOf(LABEL_BYTES),
+      async () => state,
+      async () => state,
+      undefined,
+      [COMPANY_LABEL_ENTRY]
+    );
     /* RED WHEN: the entries asked about are dropped from the answer, or read from another state than the holders. */
     expect(read).toMatchObject({ of: 'read', roles: [{ key: COMPANY_LABEL_ENTRY, value: hexOf(LABEL_BYTES) }] });
     expect(read.of === 'read' && 'payments' in read).toBe(false);
-    const both = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state, ['a1'.repeat(32)], [COMPANY_LABEL_ENTRY]);
+    const both = await holdersOnChain(
+      ACCOUNT,
+      companyLabelOf(LABEL_BYTES),
+      async () => state,
+      async () => state,
+      ['a1'.repeat(32)],
+      [COMPANY_LABEL_ENTRY]
+    );
     expect(both).toMatchObject({ of: 'read', payments: { held: [] }, roles: [{ key: COMPANY_LABEL_ENTRY }] });
-    const without = await holdersOnChain(ACCOUNT, companyLabelOf(LABEL_BYTES), async () => state, async () => state);
+    const without = await holdersOnChain(
+      ACCOUNT,
+      companyLabelOf(LABEL_BYTES),
+      async () => state,
+      async () => state
+    );
     /* RED WHEN: a read nobody asked entries of says anything about them. */
     expect(without.of === 'read' && 'roles' in without).toBe(false);
   });

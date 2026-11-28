@@ -9,14 +9,25 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  createScreen, WouldHaveShownASecret, phaseClock, withTimeout, describeError, SECRET_WINDOW,
+  createScreen,
+  WouldHaveShownASecret,
+  phaseClock,
+  withTimeout,
+  describeError,
+  SECRET_WINDOW
 } from './deploy-report.js';
 
 const VAULT = '7c'.repeat(32);
 
 const screenOver = (secrets: Array<{ what: string; value: string }>) => {
   const shown: string[] = [];
-  return { shown, say: createScreen(() => secrets, (l) => shown.push(l)) };
+  return {
+    shown,
+    say: createScreen(
+      () => secrets,
+      (l) => shown.push(l)
+    )
+  };
 };
 
 describe('a report cannot print a vault address, even by accident', () => {
@@ -44,7 +55,14 @@ describe('a report cannot print a vault address, even by accident', () => {
 
   it('says why, so the next person does not widen the rule to get past it', () => {
     const { say } = screenOver([{ what: "the vault's address", value: VAULT }]);
-    const failure = (() => { try { say(VAULT); return null; } catch (e) { return e as Error; } })();
+    const failure = (() => {
+      try {
+        say(VAULT);
+        return null;
+      } catch (e) {
+        return e as Error;
+      }
+    })();
     expect(failure!.message).toMatch(/nobody can spend/);
     expect(failure!.message).toMatch(/say the name/);
   });
@@ -60,7 +78,8 @@ describe('a report cannot print a vault address, even by accident', () => {
     const shown: string[] = [];
     const say = createScreen(
       () => (address ? [{ what: "the vault's address", value: address }] : []),
-      (l) => shown.push(l));
+      (l) => shown.push(l)
+    );
     // Before the deploy there is no address, so nothing is forbidden.
     say(`about to deploy ${VAULT}`);
     expect(shown).toHaveLength(1);
@@ -84,8 +103,7 @@ describe('the phase clock', () => {
     clock.begin(2, 2, 'Deploying');
     const rows = clock.rows('stopped');
     expect(rows.map((r) => r.name)).toEqual(['startup', 'Preparing', 'Deploying  (did not finish)']);
-    expect(clock.rows('finished').map((r) => r.name))
-      .toEqual(['startup', 'Preparing', 'Deploying']);
+    expect(clock.rows('finished').map((r) => r.name)).toEqual(['startup', 'Preparing', 'Deploying']);
   });
 
   it('names the current stage, which is what a failure block prints', () => {
@@ -98,8 +116,9 @@ describe('the phase clock', () => {
 
 describe('silence is turned into an error', () => {
   it('gives up out loud on a promise that never settles', async () => {
-    await expect(withTimeout('the thing', 20, new Promise(() => {})))
-      .rejects.toThrow(/the thing did not answer within/);
+    await expect(withTimeout('the thing', 20, new Promise(() => {}))).rejects.toThrow(
+      /the thing did not answer within/
+    );
   });
 
   it('returns the value when it arrives', async () => {
@@ -119,7 +138,8 @@ describe('an error is walked rather than printed', () => {
   });
 
   it('says a dropped socket means the chain never saw the transaction', () => {
-    expect(describeError(new Error('1000:: Normal Closure'), () => null))
-      .toMatch(/never submitted, so this is worth retrying/);
+    expect(describeError(new Error('1000:: Normal Closure'), () => null)).toMatch(
+      /never submitted, so this is worth retrying/
+    );
   });
 });

@@ -95,7 +95,10 @@ export type SignedInHere =
   | { readonly of: 'gone' };
 
 /** One wallet in this browser's list: its place and the fingerprint the list keeps for it in the clear, if written. */
-export interface HeldPlace { readonly id: string; readonly fingerprint: string | null }
+export interface HeldPlace {
+  readonly id: string;
+  readonly fingerprint: string | null;
+}
 
 /**
  * Reads `origin`'s sign-in record against `held`, this browser's list of wallets. A wallet whose fingerprint the
@@ -131,7 +134,12 @@ export function pickedHere(port: Port, origin: string, held: readonly HeldPlace[
     if (typeof parsed?.walletId !== 'string') return null;
     const place = held.find((wallet) => wallet.id === parsed.walletId);
     if (place === undefined) return null;
-    if (typeof parsed.fingerprint === 'string' && place.fingerprint !== null && place.fingerprint !== parsed.fingerprint) return null;
+    if (
+      typeof parsed.fingerprint === 'string' &&
+      place.fingerprint !== null &&
+      place.fingerprint !== parsed.fingerprint
+    )
+      return null;
     return place.id;
   } catch {
     return null;
@@ -156,11 +164,13 @@ export function noteWalletId(port: Port, origin: string, wallet: string, walletI
 export function whyNotThisWallet(port: Port, origin: string, wallet: string): string | null {
   const answered = walletSignedInTo(port, origin);
   if (answered === null || answered === wallet) return null;
-  return `The last sign-in to ${origin} from this browser was answered by another of the wallets `
-    + 'held here. A company\'s key is made from the wallet that gives it, so this wallet\'s key '
-    + 'is not the one that page is expecting, and anything saved under it could only ever be '
-    + 'opened with this wallet. Open the wallet you signed in to that page with - the one that '
-    + 'answered its last sign-in here, unless the page did not accept that sign-in. Signing in to that '
-    + 'page again with this wallet also works, but signing out of it first drops anything it has '
-    + 'not finished saving, such as a company that is not finished.';
+  return (
+    `The last sign-in to ${origin} from this browser was answered by another of the wallets ` +
+    "held here. A company's key is made from the wallet that gives it, so this wallet's key " +
+    'is not the one that page is expecting, and anything saved under it could only ever be ' +
+    'opened with this wallet. Open the wallet you signed in to that page with - the one that ' +
+    'answered its last sign-in here, unless the page did not accept that sign-in. Signing in to that ' +
+    'page again with this wallet also works, but signing out of it first drops anything it has ' +
+    'not finished saving, such as a company that is not finished.'
+  );
 }

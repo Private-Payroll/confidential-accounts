@@ -28,12 +28,26 @@ import { isSignerRole } from '../../../../src/core/roles.js';
 import type { SeatRights } from '../../../../src/core/vault-approvers.js';
 import type { DirectorySeat } from '../../../../src/midnight/seat-directory.js';
 import { refusalSaid, removalThresholdRefusal } from '../../../../src/core/vault-approvers.js';
-import { roleChangeKeyOf, withRoleChangeDone, withRoleChangeKept } from '../../../../packages/web-shared/src/keyring-blob.js';
 import {
-  addressTieOf, keptRoleChangeRefusal, roleAskedRefusal, roleChangeStageOf,
+  roleChangeKeyOf,
+  withRoleChangeDone,
+  withRoleChangeKept
+} from '../../../../packages/web-shared/src/keyring-blob.js';
+import {
+  addressTieOf,
+  keptRoleChangeRefusal,
+  roleAskedRefusal,
+  roleChangeStageOf
 } from '../../../../packages/web-shared/src/role-change-on-device.js';
 import { companyReachFor, keptReach, type CompanyReach } from './company-reach.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { inviteAction, vaultsNotAdopted, type InviteReach } from './invite.js';
 import { watchFor } from '../keyring/nothing-secret-crosses.js';
 import { removeSignerAction, type RemoveSignerReach } from './remove-signer.js';
@@ -43,7 +57,8 @@ import { rosterForARemovalHere } from './roster-for-a-removal.js';
 export type ChangeRoleReach = RemoveSignerReach & InviteReach;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.change-role.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.change-role.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 
 /** What the page asked: the company, the seat, the new role, the address of the wallet that holds the seat, the person's name, and the invitation's token if it gave one. */
@@ -83,17 +98,25 @@ const coinOf = (address: string, network: NetworkName): string | Words => {
  * `becomes` names the removal as the first half of a change to that role, for the signers who approve it.
  */
 const removalIntent = (intent: ActIntent, a: Asked): ActIntent => ({
-  ...intent, name: 'remove-signer',
-  fields: { record: a.record, company: a.company, account: a.account, leaf: a.leaf, threshold: '0', becomes: a.role },
+  ...intent,
+  name: 'remove-signer',
+  fields: { record: a.record, company: a.company, account: a.account, leaf: a.leaf, threshold: '0', becomes: a.role }
 });
 
 /** The invitation's own intent: a signer invited by address at the new role, on `vaults` (every vault when none), under `token`. */
 const invitationIntent = (intent: ActIntent, a: Asked, vaults?: readonly string[]): ActIntent => ({
-  ...intent, name: 'invite',
+  ...intent,
+  name: 'invite',
   fields: {
-    record: a.record, company: a.company, account: a.account,
-    kind: 'signer', role: a.role, address: a.address, personName: a.name, ...(vaults === undefined ? {} : { vaults: vaults.join(',') }),
-  },
+    record: a.record,
+    company: a.company,
+    account: a.account,
+    kind: 'signer',
+    role: a.role,
+    address: a.address,
+    personName: a.name,
+    ...(vaults === undefined ? {} : { vaults: vaults.join(',') })
+  }
 });
 
 /**
@@ -107,15 +130,21 @@ const vaultsHeldBy = (seat: Pick<DirectorySeat, 'rights'> | undefined): readonly
 };
 
 /** What the second press acts on: the kept token and the vaults the seat held. */
-interface InviteDecided { readonly token: Hex; readonly vaults: readonly string[] | undefined }
+interface InviteDecided {
+  readonly token: Hex;
+  readonly vaults: readonly string[] | undefined;
+}
 
 /** The act a role change runs next: the seat's removal, or the person's invitation at the new role. */
 type Stage = 'remove' | 'invite';
 
 /** What the removal does beyond the seat, shown before the change and confirmed before the removal is raised. */
 const REMOVAL_DOES: readonly Words[] = [
-  { key: 'act.remove-signer.shown.retirement' }, { key: 'act.remove-signer.shown.other-changes' },
-  { key: 'act.remove-signer.shown.open-runs' }, { key: 'act.remove-signer.shown.checks' }, { key: 'act.remove-signer.shown.vault-secrets' },
+  { key: 'act.remove-signer.shown.retirement' },
+  { key: 'act.remove-signer.shown.other-changes' },
+  { key: 'act.remove-signer.shown.open-runs' },
+  { key: 'act.remove-signer.shown.checks' },
+  { key: 'act.remove-signer.shown.vault-secrets' }
 ];
 
 /**
@@ -125,9 +154,16 @@ const REMOVAL_DOES: readonly Words[] = [
  * not name the same vaults, so the seat is never removed only to be refused its way back.
  */
 async function nextActHere(
-  ctx: StepContext, r: CompanyReach, intent: ActIntent, a: Asked, reach: ChangeRoleReach,
+  ctx: StepContext,
+  r: CompanyReach,
+  intent: ActIntent,
+  a: Asked,
+  reach: ChangeRoleReach
 ): Promise<{ readonly stage: Stage; readonly invite?: InviteDecided }> {
-  const [here, held] = await Promise.all([r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)(), r.holders()]);
+  const [here, held] = await Promise.all([
+    r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)(),
+    r.holders()
+  ]);
   const stage = roleChangeStageOf(here.dir.seats, held.seats, a.leaf);
   ctx.tell({ stage });
   if (stage === 'removal-under-way') throw new StepRefused(why('removal-under-way', { leaf: a.leaf }));
@@ -144,7 +180,9 @@ async function nextActHere(
   if (vaults === null) throw new StepRefused(why('rights-unread', { leaf: a.leaf }));
   const retired = vaultsNotAdopted(held.adoptedVaults, vaults);
   if (retired.length > 0) {
-    throw new StepRefused(why(stage === 'invite' ? 'vaults-retired' : 'vaults-retired-first', { leaf: a.leaf, vaults: retired.join(', ') }));
+    throw new StepRefused(
+      why(stage === 'invite' ? 'vaults-retired' : 'vaults-retired-first', { leaf: a.leaf, vaults: retired.join(', ') })
+    );
   }
   if (stage === 'invite') {
     const held = ctx.keyring.open().read();
@@ -153,21 +191,30 @@ async function nextActHere(
     if (kept !== null || token === null) throw new StepRefused(why(kept ?? 'not-started-here', { leaf: a.leaf }));
     await ctx.confirm([
       { key: 'act.change-role.confirm.invite', values: { leaf: a.leaf, role, name: a.name, address: a.address } },
-      vaults === undefined ? { key: 'act.change-role.confirm.every-vault' } : { key: 'act.change-role.confirm.vaults', values: { vaults: vaults.join(', ') } },
+      vaults === undefined
+        ? { key: 'act.change-role.confirm.every-vault' }
+        : { key: 'act.change-role.confirm.vaults', values: { vaults: vaults.join(', ') } }
     ]);
     const no = await inviteAction(reach, { token }).check(invitationIntent(intent, a, vaults), ctx.held);
     if (no !== null) throw new StepRefused(no);
     return { stage, invite: { token, vaults } };
   }
-  const fewer = removalThresholdRefusal({ seats: held.seats, approvals: held.approvals, policyBar: held.policyBar }, a.leaf as Hex, 0);
+  const fewer = removalThresholdRefusal(
+    { seats: held.seats, approvals: held.approvals, policyBar: held.policyBar },
+    a.leaf as Hex,
+    0
+  );
   if (fewer !== null) throw new StepRefused(why('fewer-approvals-first'));
   const roster = await rosterForARemovalHere(r, a.leaf);
-  const tie = addressTieOf(roster.signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf)?.coinPublicKey, coin);
+  const tie = addressTieOf(
+    roster.signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf)?.coinPublicKey,
+    coin
+  );
   if (tie !== 'tied' && tie !== 'untied') throw new StepRefused(why('refused', { says: `${refusalSaid(tie)}.` }));
   await ctx.confirm([
     { key: 'act.change-role.confirm.remove', values: { leaf: a.leaf, role, name: a.name, address: a.address } },
     ...(tie === 'untied' ? [{ key: 'act.change-role.confirm.address-untied', values: { address: a.address } }] : []),
-    ...REMOVAL_DOES,
+    ...REMOVAL_DOES
   ]);
   const no = await removeSignerAction(reach).check(removalIntent(intent, a), ctx.held);
   if (no !== null) throw new StepRefused(no);
@@ -182,10 +229,17 @@ async function nextActHere(
  * A step of the act `stage` names, as this act's own: it runs only when the change was decided to be at that stage,
  * and is listed as not needed otherwise.
  */
-const atStage = (stage: Stage, decided: () => Stage | null, step: ActionStep, current: () => ActionStep = () => step): ActionStep => ({
+const atStage = (
+  stage: Stage,
+  decided: () => Stage | null,
+  step: ActionStep,
+  current: () => ActionStep = () => step
+): ActionStep => ({
   title: step.title,
   notNeeded: (told) => told['stage'] !== stage || (current().notNeeded?.(told) ?? false),
-  run: async (ctx) => { if (decided() === stage) await current().run(ctx); },
+  run: async (ctx) => {
+    if (decided() === stage) await current().run(ctx);
+  }
 });
 
 /**
@@ -198,18 +252,28 @@ export function changeRoleAction(reach: ChangeRoleReach): ActionDefinition {
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       { key: 'act.change-role.shown.seat', values: { leaf: intent.fields['leaf'] ?? '' }, from: 'page' },
       { key: 'act.change-role.shown.role', values: { role: intent.fields['role'] ?? '' }, from: 'page' },
-      { key: 'act.change-role.shown.address', values: { address: intent.fields['address'] ?? '', name: intent.fields['personName'] ?? '' }, from: 'page' },
+      {
+        key: 'act.change-role.shown.address',
+        values: { address: intent.fields['address'] ?? '', name: intent.fields['personName'] ?? '' },
+        from: 'page'
+      },
       { key: 'act.change-role.shown.two-acts', from: 'action' },
       ...REMOVAL_DOES.map((w): ShownLine => ({ ...w, from: 'action' })),
-      { key: 'act.change-role.shown.nothing-else', from: 'action' },
+      { key: 'act.change-role.shown.nothing-else', from: 'action' }
     ],
-    checks: [{ key: 'act.change-role.check.stage' }, { key: 'act.change-role.check.role' }, { key: 'act.change-role.check.address' }],
+    checks: [
+      { key: 'act.change-role.check.stage' },
+      { key: 'act.change-role.check.role' },
+      { key: 'act.change-role.check.address' }
+    ],
     check: async (intent: ActIntent) => {
       const a = askedOf(intent);
       return 'key' in a ? a : null;
     },
     steps: (intent: ActIntent): readonly ActionStep[] => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const a = askedOf(intent);
       let stage: Stage | null = null;
       let accountId = '';
@@ -222,9 +286,12 @@ export function changeRoleAction(reach: ChangeRoleReach): ActionDefinition {
           const r = await read.at(ctx);
           const next = await nextActHere(ctx, r, intent, a, reach);
           stage = next.stage;
-          if (next.invite !== undefined) inviting = inviteAction(reach, { token: next.invite.token }).steps(invitationIntent(intent, a, next.invite.vaults));
+          if (next.invite !== undefined)
+            inviting = inviteAction(reach, { token: next.invite.token }).steps(
+              invitationIntent(intent, a, next.invite.vaults)
+            );
           accountId = r.accountId;
-        },
+        }
       };
       if ('key' in a) return [decide];
       const decided = (): Stage | null => stage;
@@ -232,16 +299,19 @@ export function changeRoleAction(reach: ChangeRoleReach): ActionDefinition {
         title: { key: 'act.change-role.step.done' },
         notNeeded: (told) => told['stage'] !== 'invite',
         run: async (ctx) => {
-          if (stage === 'invite' && ctx.keyring !== null) await ctx.keyring.keep((k) => withRoleChangeDone(k, accountId, a.leaf));
-        },
+          if (stage === 'invite' && ctx.keyring !== null)
+            await ctx.keyring.keep((k) => withRoleChangeDone(k, accountId, a.leaf));
+        }
       };
       return [
         decide,
-        ...removeSignerAction(reach).steps(removalIntent(intent, a)).map((s) => atStage('remove', decided, s)),
+        ...removeSignerAction(reach)
+          .steps(removalIntent(intent, a))
+          .map((s) => atStage('remove', decided, s)),
         ...inviting.map((s, i) => atStage('invite', decided, s, () => inviting[i] ?? s)),
-        done,
+        done
       ];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
@@ -249,7 +319,8 @@ export function changeRoleAction(reach: ChangeRoleReach): ActionDefinition {
 const dropAskedOf = (intent: ActIntent): { readonly accountId: string; readonly leaf: string } | Words => {
   const { record } = intent.fields;
   const leaf = (intent.fields['leaf'] ?? '').toLowerCase();
-  if (record === undefined || intent.fields['company'] === undefined || intent.fields['account'] === undefined) return why('not-a-company');
+  if (record === undefined || intent.fields['company'] === undefined || intent.fields['account'] === undefined)
+    return why('not-a-company');
   return HEX64.test(leaf) ? { accountId: record, leaf } : why('not-a-seat');
 };
 
@@ -263,27 +334,29 @@ export function dropRoleChangeAction(): ActionDefinition {
     headline: 'act.drop-role-change.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       { key: 'act.drop-role-change.shown.seat', values: { leaf: intent.fields['leaf'] ?? '' }, from: 'page' },
-      { key: 'act.drop-role-change.shown.nothing-sent', from: 'action' },
+      { key: 'act.drop-role-change.shown.nothing-sent', from: 'action' }
     ],
     checks: [{ key: 'act.drop-role-change.check.kept' }],
     check: async (intent: ActIntent) => {
       const a = dropAskedOf(intent);
       return 'key' in a ? a : null;
     },
-    steps: (intent: ActIntent): readonly ActionStep[] => [{
-      title: { key: 'act.drop-role-change.step.drop' },
-      run: async (ctx) => {
-        const a = dropAskedOf(intent);
-        if ('key' in a) throw new StepRefused(a);
-        if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
-        if (ctx.keyring.open().read().roleChangesKept?.[roleChangeKeyOf(a.accountId, a.leaf)] === undefined) {
-          ctx.tell({ state: 'not-kept' });
-          return;
+    steps: (intent: ActIntent): readonly ActionStep[] => [
+      {
+        title: { key: 'act.drop-role-change.step.drop' },
+        run: async (ctx) => {
+          const a = dropAskedOf(intent);
+          if ('key' in a) throw new StepRefused(a);
+          if (ctx.keyring === null) throw new StepRefused(why('no-saved-keys'));
+          if (ctx.keyring.open().read().roleChangesKept?.[roleChangeKeyOf(a.accountId, a.leaf)] === undefined) {
+            ctx.tell({ state: 'not-kept' });
+            return;
+          }
+          await ctx.confirm([{ key: 'act.drop-role-change.confirm.drop', values: { leaf: a.leaf } }]);
+          await ctx.keyring.keep((k) => withRoleChangeDone(k, a.accountId, a.leaf));
+          ctx.tell({ state: 'dropped' });
         }
-        await ctx.confirm([{ key: 'act.drop-role-change.confirm.drop', values: { leaf: a.leaf } }]);
-        await ctx.keyring.keep((k) => withRoleChangeDone(k, a.accountId, a.leaf));
-        ctx.tell({ state: 'dropped' });
-      },
-    }],
+      }
+    ]
   } satisfies ActionDefinition);
 }

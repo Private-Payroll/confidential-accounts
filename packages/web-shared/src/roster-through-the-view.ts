@@ -5,7 +5,11 @@
  * its baseline moves by what the write's own entries enter.
  */
 import { ROSTER_ID } from '../../../src/core/roster-record.js';
-import { fromCompanyWire, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  type CompanyRecordKind,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import type { CompanyView } from './company-view.js';
 import { manifestFollowing, type ManifestService } from './record-entered-here.js';
 import type { RecordWrite } from './records-source.js';
@@ -14,7 +18,9 @@ import type { RecordWrite } from './records-source.js';
 export type RosterView = Pick<CompanyView<unknown>, 'account' | 'list' | 'records' | 'manifest' | 'write'>;
 
 /** The view a roster follows: the step's or screen's current one, opened again after the step's own send. */
-export interface RosterViewHeld { current(): RosterView }
+export interface RosterViewHeld {
+  current(): RosterView;
+}
 
 /** What a roster read and filing reads and writes. */
 interface RosterService {
@@ -30,9 +36,15 @@ interface RosterService {
 }
 
 /** The versions of every version's answer, its first one picked out, or null when the record was never filed. */
-export const firstOf = (answer: unknown, company: string, kind: CompanyRecordKind, id: string): SealedCompanyRecord | null => {
+export const firstOf = (
+  answer: unknown,
+  company: string,
+  kind: CompanyRecordKind,
+  id: string
+): SealedCompanyRecord | null => {
   const versions = (answer as { versions?: unknown } | null)?.versions;
-  if (!Array.isArray(versions)) throw new Error(`the service did not answer with the versions of the company's ${kind} record`);
+  if (!Array.isArray(versions))
+    throw new Error(`the service did not answer with the versions of the company's ${kind} record`);
   for (const wire of versions) {
     const rec = fromCompanyWire(wire, { company, kind, id }).sealed;
     if (rec.version === 1) return rec;
@@ -42,8 +54,12 @@ export const firstOf = (answer: unknown, company: string, kind: CompanyRecordKin
 
 /** The first version of one of the company's records read through `held`'s view, or null when none was filed. */
 export const firstFiledThrough = async (
-  held: { current(): Pick<RosterView, 'records'> }, company: string, kind: CompanyRecordKind, id: string,
-): Promise<SealedCompanyRecord | null> => firstOf((await held.current().records([{ kind, id, every: true }]))[0], company, kind, id);
+  held: { current(): Pick<RosterView, 'records'> },
+  company: string,
+  kind: CompanyRecordKind,
+  id: string
+): Promise<SealedCompanyRecord | null> =>
+  firstOf((await held.current().records([{ kind, id, every: true }]))[0], company, kind, id);
 
 const throughTheView = (held: RosterViewHeld, company: string): RosterService => ({
   account: () => held.current().account(),
@@ -52,7 +68,7 @@ const throughTheView = (held: RosterViewHeld, company: string): RosterService =>
   rosterVersions: async () => (await held.current().records([{ kind: 'roster', id: ROSTER_ID, every: true }]))[0],
   first: (kind, id) => firstFiledThrough(held, company, kind, id),
   manifest: manifestFollowing(held),
-  file: async (w) => (await held.current().write([w]))[0],
+  file: async (w) => (await held.current().write([w]))[0]
 });
 
 /** The roster's reads and writes, through `view`. */

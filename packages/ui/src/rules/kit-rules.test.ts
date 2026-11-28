@@ -3,9 +3,36 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../../src/core/assets.js';
 import {
-  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, CODES, codesUnder, colourValues, declaredBy, filesUnder, hasPhrase, inlineStyles, isShippingCode,
-  bracketedStatesOf, KIT_ENTRIES, keysAskedFor, namedOutside, OWN_STATES, paletteClasses, RADIX_STATES, statesNothingSets, physicalClasses, secondCn, SIDE_NAMES, spansOf, stateVariantsOf, stringWordsOf, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode,
-  type Source,
+  amountsMadeOutsideTheAdapters,
+  amountsOutsideTheComponent,
+  arbitraryValues,
+  CODES,
+  codesUnder,
+  colourValues,
+  declaredBy,
+  filesUnder,
+  hasPhrase,
+  inlineStyles,
+  isShippingCode,
+  bracketedStatesOf,
+  KIT_ENTRIES,
+  keysAskedFor,
+  namedOutside,
+  OWN_STATES,
+  paletteClasses,
+  RADIX_STATES,
+  statesNothingSets,
+  physicalClasses,
+  secondCn,
+  SIDE_NAMES,
+  spansOf,
+  stateVariantsOf,
+  stringWordsOf,
+  undeclaredImports,
+  waysIntoSharedCode,
+  wordingCensus,
+  wordingInCode,
+  type Source
 } from './source-rules.test-support.js';
 
 /*
@@ -22,7 +49,7 @@ const ASSET_CODES = new Set(SEED_ASSETS.map((a) => a.symbol));
 
 describe('the kit is read', () => {
   /* RED WHEN: the walk reads nothing, so every rule below passes over an empty list. */
-  it('reads the kit\'s code', () => {
+  it("reads the kit's code", () => {
     expect(CODE.map((f) => f.path)).toContain('packages/ui/src/lib/utils.ts');
     expect(CODE.map((f) => f.path)).toContain('packages/ui/src/format/token-amount.ts');
     expect(CODE.every((f) => !/\.test(-support)?\./.test(f.path))).toBe(true);
@@ -36,10 +63,16 @@ describe('the kit is read', () => {
     expect(census.byPosition['translation key']).toBeGreaterThan(5);
     const words = CODE.flatMap(stringWordsOf).map((w) => w.word);
     expect(words.length).toBeGreaterThan(300);
-    expect(words).toEqual(expect.arrayContaining(['bg-primary', 'text-muted-foreground', 'rounded-[min(var(--radius-md),10px)]']));
-    expect(stringWordsOf(STYLES).map((w) => w.word)).toEqual(expect.arrayContaining(['bg-background', 'text-foreground']));
+    expect(words).toEqual(
+      expect.arrayContaining(['bg-primary', 'text-muted-foreground', 'rounded-[min(var(--radius-md),10px)]'])
+    );
+    expect(stringWordsOf(STYLES).map((w) => w.word)).toEqual(
+      expect.arrayContaining(['bg-background', 'text-foreground'])
+    );
     /* With no homes, the amount rule finds the conversions the homes make. */
-    expect(new Set(amountsOutsideTheComponent(CODE, {}).map((b) => b.path))).toEqual(new Set(['packages/ui/src/components/amount.tsx', 'packages/ui/src/format/token-amount.ts']));
+    expect(new Set(amountsOutsideTheComponent(CODE, {}).map((b) => b.path))).toEqual(
+      new Set(['packages/ui/src/components/amount.tsx', 'packages/ui/src/format/token-amount.ts'])
+    );
   });
 
   /* RED WHEN: an entry of CODES for the kit names a declaration that is not there, so it lets through whatever is written under that name later; or CODES names a file outside the kit and the application. */
@@ -52,7 +85,9 @@ describe('the kit is read', () => {
 describe('every rule, over the kit', () => {
   /* RED WHEN: a kit file imports a package the kit's package.json does not declare. */
   it('declares every package it imports', async () => {
-    expect(await undeclaredImports(CODE, declaredBy(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')))).toEqual([]);
+    expect(await undeclaredImports(CODE, declaredBy(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')))).toEqual(
+      []
+    );
   });
 
   /* RED WHEN: a kit file imports the shared browser package, reaches outside the kit's own source by a path, calls the network or talks to the wallet: the kit reaches none of them, and only the application's adapters do. */
@@ -63,13 +98,21 @@ describe('every rule, over the kit', () => {
   /* RED WHEN: a kit file other than the amount's own and the index that re-exports it makes an amount: the kit shows amounts it is given, and makes none. */
   it('makes no amount of its own', () => {
     const own = ['packages/ui/src/format/token-amount.ts', 'packages/ui/src/index.ts'];
-    expect(amountsMadeOutsideTheAdapters(CODE.filter((f) => !own.includes(f.path)), ROOT, null)).toEqual([]);
+    expect(
+      amountsMadeOutsideTheAdapters(
+        CODE.filter((f) => !own.includes(f.path)),
+        ROOT,
+        null
+      )
+    ).toEqual([]);
     expect(new Set(amountsMadeOutsideTheAdapters(CODE, ROOT, null).map((b) => b.path))).toEqual(new Set(own));
   });
 
   /* RED WHEN: the kit's package names an entry beside its index that the rule letting the application import it does not, or the other way round, or an entry points at no file. */
   it('names the same entries beside its index as the rule that lets them be imported', () => {
-    const exported = (JSON.parse(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')) as { exports: Record<string, string> }).exports;
+    const exported = (
+      JSON.parse(readFileSync(ROOT + 'packages/ui/package.json', 'utf8')) as { exports: Record<string, string> }
+    ).exports;
     const entries = Object.entries(exported).filter(([k]) => k !== '.' && !k.includes('*'));
     expect(entries.map(([k]) => `vaults-ui/${k.slice(2)}`).sort()).toEqual(Object.keys(KIT_ENTRIES).sort());
     for (const [, file] of entries) expect(existsSync(ROOT + 'packages/ui/' + file.slice(2)), file).toBe(true);
@@ -78,8 +121,12 @@ describe('every rule, over the kit', () => {
   /* RED WHEN: a second cn is declared, or the cn package or what cn is made of is imported anywhere but the kit's cn. */
   it('has one cn', async () => {
     expect(await secondCn(CODE, 'packages/ui/src/lib/utils.ts')).toEqual([]);
-    const components = JSON.parse(readFileSync(ROOT + 'packages/ui/components.json', 'utf8')) as { aliases: { utils: string } };
-    expect(components.aliases.utils.replace(/^vaults-ui\//, 'packages/ui/src/') + '.ts').toBe('packages/ui/src/lib/utils.ts');
+    const components = JSON.parse(readFileSync(ROOT + 'packages/ui/components.json', 'utf8')) as {
+      aliases: { utils: string };
+    };
+    expect(components.aliases.utils.replace(/^vaults-ui\//, 'packages/ui/src/') + '.ts').toBe(
+      'packages/ui/src/lib/utils.ts'
+    );
   });
 
   /* RED WHEN: a colour value, a palette colour or an arbitrary value that is not a token is written in any string of a component or in the stylesheet, or a colour is set inline. */
@@ -128,8 +175,9 @@ describe('every rule, over the kit', () => {
   /* RED WHEN: the kit asks for a key the English file lacks, a key outside kit., or a key built at run time. */
   it('asks only for its own keys, and each is in the English file', () => {
     /* The provider hands a caller's key through to the library, so it is the one file whose key is not its own. */
-    const asked = CODE.filter((f) => f.path !== 'packages/ui/src/i18n/provider.tsx')
-      .flatMap((f) => keysAskedFor(f).map((k) => ({ path: f.path, ...k })));
+    const asked = CODE.filter((f) => f.path !== 'packages/ui/src/i18n/provider.tsx').flatMap((f) =>
+      keysAskedFor(f).map((k) => ({ path: f.path, ...k }))
+    );
     expect(asked.length).toBeGreaterThan(5);
     expect(asked.filter((k) => k.key === null || !k.key.startsWith('kit.') || !hasPhrase(ENGLISH, k.key))).toEqual([]);
   });
@@ -153,7 +201,9 @@ describe('every rule, over the kit', () => {
    */
   it('uses only bracketed states something it draws sets', () => {
     expect(CODE.flatMap(bracketedStatesOf).length).toBeGreaterThan(3);
-    expect(CODE.map((f) => ({ path: f.path, unset: statesNothingSets(f) })).filter((x) => x.unset.length > 0)).toEqual([]);
+    expect(CODE.map((f) => ({ path: f.path, unset: statesNothingSets(f) })).filter((x) => x.unset.length > 0)).toEqual(
+      []
+    );
   });
 
   /*
@@ -163,7 +213,9 @@ describe('every rule, over the kit', () => {
    */
   it('lists only states the primitives and the kit set', () => {
     for (const [name, { states, packages }] of Object.entries(RADIX_STATES)) {
-      const built = packages.map((p) => readFileSync(`${ROOT}node_modules/@radix-ui/${p}/dist/index.mjs`, 'utf8')).join('\n');
+      const built = packages
+        .map((p) => readFileSync(`${ROOT}node_modules/@radix-ui/${p}/dist/index.mjs`, 'utf8'))
+        .join('\n');
       for (const v of states) expect(built.includes(`"${v}"`), `${name} ${v}`).toBe(true);
     }
     for (const [path, states] of Object.entries(OWN_STATES)) {
@@ -176,8 +228,12 @@ describe('every rule, over the kit', () => {
 
 describe('the kit owns no English', () => {
   /* RED WHEN: a language file appears in the kit, or in the application outside its locales folder, or the application's first-download English file is gone. */
-  it('has its English files in the application\'s locales folder only', () => {
-    const inKit = filesUnder(ROOT, 'packages/ui', (p) => p.endsWith('.json') && !/\/(package|components|tsconfig)\.json$/.test(p));
+  it("has its English files in the application's locales folder only", () => {
+    const inKit = filesUnder(
+      ROOT,
+      'packages/ui',
+      (p) => p.endsWith('.json') && !/\/(package|components|tsconfig)\.json$/.test(p)
+    );
     const inApp = filesUnder(ROOT, 'apps/web', (p) => /(^|\/)[a-z]{2,3}(-[A-Za-z0-9]+)*\.json$/.test(p));
     expect(inKit).toEqual([]);
     expect(inApp.filter((p) => !p.startsWith('apps/web/src/locales/'))).toEqual([]);

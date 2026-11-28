@@ -30,12 +30,20 @@ on:
   # strength of a run that never read it.
   pull_request:
     types: [opened, synchronize, reopened, edited, ready_for_review]
+  # EVERY NIGHT, ON MAIN, THE TESTS THAT READ A PROVING KEY, AND NOTHING ELSE.
+  # A key test can go red with no change here at all, when something it fetches
+  # moves; every other job skips on this run.
+  schedule:
+    - cron: '41 21 * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: check-${{ github.ref }}
+  # THE NIGHTLY RUN HAS A GROUP OF ITS OWN. Its key tests take up to forty-five
+  # minutes, and sharing a group with the runs on main would hold a merge's run
+  # waiting behind them, or let a second merge replace it before it started.
+  group: check-${{ github.event_name }}-${{ github.ref }}
   # CANCELLED ON A PULL REQUEST AND NEVER ON THE DEFAULT BRANCH. Pushing twice
   # to a branch under review should stop the first run: nobody is reading it any
   # more. Pushing twice to the default branch and cancelling the first leaves a
@@ -50,9 +58,59 @@ jobs:
   # ran: the page shows one mark, and reading which half of it failed means
   # opening a log. Separate jobs cost a repeated setup and buy a page that
   # answers the question by itself.
+  #
+  # THE PAGE ENDS IN ONE MARK, `done`, which is green only when every other job
+  # passed or was skipped for a reason it names. It is the one check a pull
+  # request may be made to wait for: the key tests skip on a change that cannot
+  # break them, and a skipped matrix job shows no mark under its group's name,
+  # so a required key check would wait for ever.
+
+  changes:
+    # WHETHER THIS CHANGE CAN BREAK A TEST THAT READS A PROVING KEY. Those take
+    # up to forty-five minutes a group, so a pull request runs them only when it
+    # changes a file they load, and a merge to main not at all: its pull request
+    # and the nightly run already have. The nightly run and a run by hand always
+    # run them. The list and the rule are in .github/checks/keys-paths.mjs, which
+    # answers true when it cannot tell.
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Reading whether an earlier run of the same commit already passed the key
+    # tests needs to read this repository's runs, and nothing more.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      keys: ${{ steps.paths.outputs.keys }}
+    steps:
+      - uses: actions/checkout@v4
+        # THE WHOLE HISTORY, so the files a pull request changes can be read
+        # against the point it branched from.
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - id: paths
+        name: read the changed files against the files a key test loads
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/checks/keys-paths.mjs
+      # Anything but true or false would skip the key tests with nothing said.
+      - name: the answer is true or false
+        env:
+          KEYS: ${{ steps.paths.outputs.keys }}
+        run: test "$KEYS" = true || test "$KEYS" = false
 
   compile:
     name: compile
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     # A CEILING ON EVERY JOB. Without one a hung step runs for six hours, on
     # every machine in the matrix, and the first anybody knows is the bill.
@@ -72,6 +130,7 @@ jobs:
     # settings, and running them as one step means the first refusal hides the
     # others.
     name: typecheck (${{ matrix.what }})
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -101,8 +160,75 @@ jobs:
       - uses: ./.github/actions/build
       - run: ${{ matrix.run }}
 
-  # THE ASSERTIONS THAT READ A PROVING KEY run in .github/workflows/keys.yml,
-  # in six named groups, only when a change can break them and every night.
+  keys:
+    # THE ASSERTIONS THAT READ A PROVING OR VERIFIER KEY, WHICH THE TEST JOB
+    # SKIPS. Those keys come from the proving backend rather than an ordinary
+    # compile: minutes, and a hundred megabytes nothing else reads. So they are
+    # built here, only when `changes` says a change can break one of these
+    # tests, every night on main, and by hand.
+    #
+    # SIX NAMED GROUPS, ONE MACHINE EACH, AT ONCE. Each builds the keys for
+    # itself and runs its own files; every file is in exactly one group.
+    name: keys (${{ matrix.group }})
+    needs: changes
+    if: needs.changes.outputs.keys == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: account
+            about: the company account's real proofs
+            files: src/midnight/a-contracts-maintenance-authority-is-read-planned-and-refused.test.ts src/midnight/deferred-set.test.ts src/midnight/the-key-reaches-the-circuit.test.ts src/midnight/the-secret-comes-from-the-keyring.test.ts contracts/test/the-record-anchor-from-the-page.test.ts contracts/test/a-recovery-is-carried-out-on-the-chain.test.ts contracts/test/a-company-seats-its-signers-from-the-page.test.ts src/midnight/a-company-is-created-in-two-steps.test.ts contracts/test/a-company-born-held-from-the-browser.test.ts contracts/test/keys-on-disk.test.ts contracts/test/the-compiled-keys-are-the-keys-on-disk.test.ts contracts/test/a-company-before-its-second-step-lands.test.ts
+          - group: vault
+            about: the vault's real proofs
+            files: src/wiring/vault-submission.test.ts contracts/test/a-company-vault-from-the-page.test.ts contracts/test/a-vaults-committee-changes-with-its-signers.test.ts contracts/test/vault-recovery.test.ts contracts/test/vault-registry.test.ts contracts/test/vault-split.test.ts contracts/test/vault-threshold-recovery.test.ts contracts/test/vault-unshielded.test.ts src/midnight/vault-coin-nonces.test.ts contracts/test/a-vault-rebuilt-with-us-gone.test.ts contracts/test/a-vaults-secret-is-replaced-by-a-signer-who-did-not-raise-it.test.ts contracts/test/the-new-vault.test.ts contracts/test/transcript.test.ts contracts/test/vault-batch-and-merge.test.ts contracts/test/vault-client.test.ts contracts/test/vault-payout.test.ts
+          - group: payroll
+            about: runs, private payments and spending policies, proved for real
+            files: contracts/test/a-private-payment-from-the-page.test.ts contracts/test/a-spending-policy-is-set-from-a-device.test.ts contracts/test/a-run-raised-and-approved-from-the-page.test.ts contracts/test/a-run-is-raised-approved-and-paid-on-the-signers-devices.test.ts contracts/test/a-payment-needs-a-vaults-receipt.test.ts contracts/test/a-deposit-made-on-the-device.test.ts
+          - group: wallet
+            about: the wallet's own proofs
+            files: apps/wallet/src/chain/this-builds-account-keys.test.ts apps/wallet/src/screens/approve-creation.test.tsx apps/wallet/src/chain/creation-screen-in-a-browser.test.ts apps/wallet/src/chain/the-wallet-builds-a-vault-with-its-own-keys.test.ts apps/wallet/src/actions/finish-company.test.ts apps/wallet/src/chain/the-wallet-anchors-with-its-own-keys.test.ts apps/wallet/src/chain/a-signer-invited-by-address-is-seated-from-the-wallet.test.ts apps/wallet/src/chain/a-company-account-is-read-at-one-block.test.ts apps/wallet/src/chain/account-circuits.test.ts apps/wallet/the-newest-released-version-is-this-build.test.ts
+          - group: wallet-pay-key
+            about: the single slowest proof, the wallet proving the pay key
+            files: apps/wallet/src/chain/the-wallet-proves-the-pay-key.test.ts
+          - group: device-and-service
+            about: the device's and the service's proofs
+            files: src/server/proving-parameters.test.ts packages/web-shared/src/a-deposit-built-on-the-device.test.ts src/server/account-creation.test.ts packages/web-shared/src/a-vault-is-read-as-it-was-born.test.ts packages/web-shared/src/the-worker-builds-an-account-only-with-this-builds-keys.test.ts packages/web-shared/src/the-device-proves-only-with-this-builds-keys.test.ts packages/web-shared/src/a-public-deposit-is-proved-on-the-device.test.ts packages/web-shared/src/vault-on-chain-here.test.ts packages/web-shared/src/vault-worker-client.test.ts
+    # One proof of a full-size account circuit takes minutes on one thread.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+      # Chromium, for the test that draws the wallet's creation screen over a deploy the
+      # web application's worker built (apps/wallet/src/chain/creation-screen-in-a-browser.test.ts).
+      - run: npx playwright install chromium
+      - name: build the proving and verifier keys
+        run: npm run compact
+      # The vault is a second contract with keys of its own, which the account's
+      # full build does not produce. Built after the account, because the
+      # vault's generated caller reaches the account's generated module.
+      - name: build the vault's proving and verifier keys
+        run: npm run compact:vault -- --full
+      # The real prover checks a proof against Midnight's public parameters,
+      # which are not in the checkout. They are fetched and checked against the
+      # digests Midnight publishes, so the deposit test proves here rather than
+      # standing down.
+      - name: fetch Midnight's public proving parameters
+        timeout-minutes: 10
+        run: npx tsx scripts/fetch-proving-parameters.ts
+      - name: fetch the network's shielded circuits for this build's wallet
+        run: npm run vendor-keys
+      # The wallet proves the company account's calls itself, and a new vault's
+      # first secret and its copies, with the account's and the vault's keys
+      # copied from the builds above into its own folder and pinned there.
+      - name: copy the company account's and the vault's keys into the wallet
+        run: npm run vendor-keys:account
+      - run: npx vitest run ${{ matrix.files }}
+        env:
+          KEYS_MUST_BE_BUILT: '1'
 
   test:
     # THE SUITE AS vitest.config.ts's NAMED PROJECTS, ONE MACHINE EACH, AT ONCE.
@@ -110,6 +236,7 @@ jobs:
     # projectOf puts every test file in exactly one project. The mark is green
     # only when every project is.
     name: test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -157,11 +284,12 @@ jobs:
   rules:
     # THE RULES THE JOB BELOW APPLIES, CHECKED BEFORE IT APPLIES THEM.
     #
-    # They are pure functions with no dependencies, so this needs nothing
-    # installed and finishes in about a second. It runs on a push as well as on
-    # a pull request, because a rule that stopped refusing passes every case
+    # The comment rules are tested through ESLint's own rule tester, so the
+    # linter's pinned install comes first. It runs on a push as well as on a
+    # pull request, because a rule that stopped refusing passes every case
     # that was ever written to show it working.
     name: rules
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -175,6 +303,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      - name: install the linter as its lockfile pins it
+        run: npm ci --prefix lint
       - run: npm run test:checks
 
   message:
@@ -219,3 +349,85 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
         run: node .github/checks/message-check.mjs "$RUNNER_TEMP/message" --branch "$BRANCH"
+
+  lint:
+    # THE CODE FOLLOWS ONE STYLE AND ONE LAYOUT, AND NO CHANGE ADDS A VIOLATION.
+    # The linter reads types, so an unawaited promise - a payment step that can
+    # finish after the code that depends on it - is refused before it lands.
+    # The violations the code held when the linter was added are recorded in
+    # eslint-suppressions.json so they can be fixed in passes; that record may
+    # only fall, and the last step holds it to the copy it replaces.
+    name: lint
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        # THE WHOLE HISTORY, so the record of violations can be read as it was
+        # before this change.
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The root install: the linter reads the web app's types through the
+      # declarations its build writes, which `npm run lint` builds first.
+      - uses: ./.github/actions/build
+      # The linter and the formatter have an install of their own, pinned by
+      # their own lockfile, so they read types with the TypeScript they support
+      # while the build keeps its own.
+      - name: install the linter and the formatter as their lockfile pins them
+        run: npm ci --prefix lint
+      - run: npm run lint
+      - run: npm run format:check
+      # Against the base branch on a pull request, and against the commit
+      # before on any other run. A base that cannot be read fails this step; a
+      # base with no record yet is allowed, and the check says so.
+      - name: the recorded violations only fall
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then against="$BASE"; else against="$(git rev-parse HEAD^)"; fi
+          git cat-file -e "$against^{commit}"
+          if git cat-file -e "$against:eslint-suppressions.json" 2>/dev/null; then
+            git show "$against:eslint-suppressions.json" > "$RUNNER_TEMP/base-suppressions.json"
+          fi
+          node .github/checks/suppressions-fall.mjs "$RUNNER_TEMP/base-suppressions.json" eslint-suppressions.json
+
+  done:
+    # THE ONE MARK A PULL REQUEST MAY BE MADE TO WAIT FOR. A job whose need
+    # failed is skipped, and a skipped job reports green, so this always runs
+    # and reads every job's result by name: each must have passed, or have
+    # skipped for a reason allowed here, never for one it was not told.
+    name: done
+    if: always()
+    # EVERY OTHER JOB ON THIS PAGE, AND A NEW JOB IS ADDED HERE WITH IT.
+    needs: [changes, compile, typecheck, keys, test, rules, message, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Allowed to skip: the key tests when `changes` answered false; the
+      # message off a pull request; and on the nightly run every job but
+      # `changes` and the key tests.
+      - name: every job passed, or skipped where skipping is allowed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          KEYS: ${{ needs.changes.outputs.keys }}
+        run: |
+          bad=0
+          jobs="$(jq -r 'keys[]' <<<"$NEEDS")"
+          if [ -z "$jobs" ]; then echo "::error::no job results were read"; exit 1; fi
+          for job in $jobs; do
+            result="$(jq -r --arg j "$job" '.[$j].result' <<<"$NEEDS")"
+            may_skip=no
+            if [ "$job" = keys ] && [ "$KEYS" = false ]; then may_skip=yes; fi
+            if [ "$job" = message ] && [ "$EVENT" != pull_request ]; then may_skip=yes; fi
+            if [ "$EVENT" = schedule ] && [ "$job" != changes ] && [ "$job" != keys ]; then may_skip=yes; fi
+            if [ "$result" = success ] || { [ "$result" = skipped ] && [ "$may_skip" = yes ]; }; then
+              echo "$job: $result"
+            else
+              echo "::error::$job: $result"
+              bad=1
+            fi
+          done
+          exit "$bad"

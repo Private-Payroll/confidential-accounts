@@ -22,7 +22,7 @@ import { paysCoins } from './approve-slot.js';
  * for an ask whose only cost from that account is a network fee not covered for the person.
  */
 export const paidWords = (request: Ask, key: 'ask.pays.choose-why' | 'ask.pays.choose-open'): string =>
-  (paysCoins(request) ? key : `${key}-fee`);
+  paysCoins(request) ? key : `${key}-fee`;
 
 /**
  * How the account an ask pays from came to be its account: picked in the window before the passkey, picked here in a
@@ -40,8 +40,18 @@ const paysFromWords = (request: Ask, how: PickedHow): string => {
  * The account the ask pays from, and the wallet it is in, by name; and, when other sites already hold that account's
  * address, which ones, so the press is made knowing it.
  */
-export function PaysFromAccount({ request, how, secret, account, shared, recordUnread = false }: {
-  readonly request: Ask; readonly how: PickedHow; readonly secret: Secret; readonly account: number;
+export function PaysFromAccount({
+  request,
+  how,
+  secret,
+  account,
+  shared,
+  recordUnread = false
+}: {
+  readonly request: Ask;
+  readonly how: PickedHow;
+  readonly secret: Secret;
+  readonly account: number;
   readonly shared: readonly string[];
   /** This wallet's record could not be read, so whether another site holds the account's address is not known. */
   readonly recordUnread?: boolean;
@@ -53,11 +63,19 @@ export function PaysFromAccount({ request, how, secret, account, shared, recordU
       <p className="m-0 text-sm" data-pays-from-account>
         {t(paysFromWords(request, how), { account: displayNameOf(account, loadSubwallets(secret).names), wallet })}
       </p>
-      {recordUnread && <p className="m-0 text-sm" data-pays-from-record-unread>{t('ask.pays.record-unread')}</p>}
+      {recordUnread && (
+        <p className="m-0 text-sm" data-pays-from-record-unread>
+          {t('ask.pays.record-unread')}
+        </p>
+      )}
       {shared.length > 0 && (
         <StatusAlert tone="warning" role={null} title={t('ask.pays.shared-title')}>
           <div data-pays-from-shared>
-            {shared.map((origin) => <p className="m-0 font-mono text-foreground" key={origin}>{origin}</p>)}
+            {shared.map((origin) => (
+              <p className="m-0 font-mono text-foreground" key={origin}>
+                {origin}
+              </p>
+            ))}
           </div>
           <p className="m-0">{t('ask.pays.shared')}</p>
         </StatusAlert>
@@ -71,19 +89,29 @@ export function PaysFromAccount({ request, how, secret, account, shared, recordU
  * passkey opened is not the one picked. Nothing runs. Pick again locks this wallet, so the window before the passkey
  * shows the list again for the same ask; Decline answers declined.
  */
-export function PaysFromRefused({ why, onDecline }: {
-  readonly why: 'another-wallet'; readonly onDecline: () => void;
+export function PaysFromRefused({
+  why,
+  onDecline
+}: {
+  readonly why: 'another-wallet';
+  readonly onDecline: () => void;
 }): ReactNode {
   const t = useText();
   const { lock } = useSession();
   return (
     <>
       <StatusAlert tone="danger" title={t('ask.pays.refused-title')}>
-        <p className="m-0" data-pays-from-refused={why}>{t(`ask.pays.${why}`)}</p>
+        <p className="m-0" data-pays-from-refused={why}>
+          {t(`ask.pays.${why}`)}
+        </p>
       </StatusAlert>
       <div className="flex flex-wrap gap-2" data-ask-actions>
-        <Button size="lg" type="button" variant="default" onClick={() => lock()} data-pick-again>{t('ask.pays.again')}</Button>
-        <Button size="lg" type="button" variant="ghost" onClick={onDecline} data-decline>{t('ask.decline')}</Button>
+        <Button size="lg" type="button" variant="default" onClick={() => lock()} data-pick-again>
+          {t('ask.pays.again')}
+        </Button>
+        <Button size="lg" type="button" variant="ghost" onClick={onDecline} data-decline>
+          {t('ask.decline')}
+        </Button>
       </div>
     </>
   );
@@ -105,22 +133,39 @@ export function PaysWhenPicked(props: PaysWhenPickedProps): ReactNode {
 }
 
 interface PaysWhenPickedProps {
-  readonly request: Ask; readonly thisWallet: string; readonly secret: Secret; readonly onDecline: () => void;
+  readonly request: Ask;
+  readonly thisWallet: string;
+  readonly secret: Secret;
+  readonly onDecline: () => void;
   readonly render: (account: number, how: PickedHow) => ReactNode;
   /** The account this wallet offers the asking site, once this wallet's record is read; null until then. */
   readonly offered: number | null;
 }
 
-function PaysWhenPickedFor({ request, thisWallet, secret, onDecline, render, offered }: PaysWhenPickedProps): ReactNode {
+function PaysWhenPickedFor({
+  request,
+  thisWallet,
+  secret,
+  onDecline,
+  render,
+  offered
+}: PaysWhenPickedProps): ReactNode {
   const t = useText();
   const [pays, setPays] = useState<PaysFrom>(() => paidFromOpen(request, thisWallet));
   const [pickedHere, setPickedHere] = useState(false);
   if (pays.of === 'another-wallet') return <PaysFromRefused why="another-wallet" onDecline={onDecline} />;
   /* The account offered to the site is read from this wallet's record, so nothing runs or is offered before it is. */
   const waitsForOffered = offered === null && (pays.of === 'picked' ? pays.account === OFFERED : !paysCoins(request));
-  if (waitsForOffered) return <p className="m-0 text-sm text-muted-foreground" data-reading-offered>{t('ask.pays.reading-offered')}</p>;
+  if (waitsForOffered)
+    return (
+      <p className="m-0 text-sm text-muted-foreground" data-reading-offered>
+        {t('ask.pays.reading-offered')}
+      </p>
+    );
   if (pays.of === 'picked') {
-    return pays.account === OFFERED ? render(offered!, 'offered') : render(pays.account, pickedHere ? 'here' : 'before');
+    return pays.account === OFFERED
+      ? render(offered!, 'offered')
+      : render(pays.account, pickedHere ? 'here' : 'before');
   }
   const pick = (account: number): void => {
     keepPayingPick(request, { walletId: openWalletId(), fingerprint: thisWallet, account });
@@ -132,24 +177,47 @@ function PaysWhenPickedFor({ request, thisWallet, secret, onDecline, render, off
   return <PickInOpenWallet request={request} secret={secret} first={first} onPick={pick} onDecline={onDecline} />;
 }
 
-function PickInOpenWallet({ request, secret, first, onPick, onDecline }: {
-  readonly request: Ask; readonly secret: Secret; readonly first: number; readonly onPick: (account: number) => void;
+function PickInOpenWallet({
+  request,
+  secret,
+  first,
+  onPick,
+  onDecline
+}: {
+  readonly request: Ask;
+  readonly secret: Secret;
+  readonly first: number;
+  readonly onPick: (account: number) => void;
   readonly onDecline: () => void;
 }): ReactNode {
   const t = useText();
   const [account, setAccount] = useState<number>(first);
   const { names } = loadSubwallets(secret);
   return (
-    <Section list={false} box={false} aria-label={t('ask.pays.choose')} title={t('ask.pays.choose')} description={t(paidWords(request, 'ask.pays.choose-open'))}>
+    <Section
+      list={false}
+      box={false}
+      aria-label={t('ask.pays.choose')}
+      title={t('ask.pays.choose')}
+      description={t(paidWords(request, 'ask.pays.choose-open'))}
+    >
       <ul className="plain" data-accounts-in-open-wallet>
         <AccountChoices
-          names={names} group="paying-account-open" picked={(each) => account === each} disabled={false}
-          onPick={setAccount} marked={(each) => ({ 'data-pays-from-open': String(each) })}
+          names={names}
+          group="paying-account-open"
+          picked={(each) => account === each}
+          disabled={false}
+          onPick={setAccount}
+          marked={(each) => ({ 'data-pays-from-open': String(each) })}
         />
       </ul>
       <div className="flex flex-wrap gap-2" data-ask-actions>
-        <Button size="lg" type="button" variant="default" onClick={() => onPick(account)} data-pay-from-open>{t('ask.pays.use')}</Button>
-        <Button size="lg" type="button" variant="ghost" onClick={onDecline} data-decline>{t('ask.decline')}</Button>
+        <Button size="lg" type="button" variant="default" onClick={() => onPick(account)} data-pay-from-open>
+          {t('ask.pays.use')}
+        </Button>
+        <Button size="lg" type="button" variant="ghost" onClick={onDecline} data-decline>
+          {t('ask.decline')}
+        </Button>
       </div>
     </Section>
   );
@@ -159,10 +227,22 @@ function PickInOpenWallet({ request, secret, first, onPick, onDecline }: {
  * A wallet's accounts as one choice each, by name: the list the window before the passkey shows for every wallet,
  * and the one an open wallet shows when no account was picked for the ask.
  */
-export function AccountChoices({ names, group, picked, disabled, onPick, marked, valueFor = String }: {
-  readonly names: Readonly<Record<string, string>>; readonly group: string; readonly picked: (account: number) => boolean;
-  readonly disabled: boolean; readonly onPick: (account: number) => void;
-  readonly marked: (account: number) => Readonly<Record<string, string>>; readonly valueFor?: (account: number) => string;
+export function AccountChoices({
+  names,
+  group,
+  picked,
+  disabled,
+  onPick,
+  marked,
+  valueFor = String
+}: {
+  readonly names: Readonly<Record<string, string>>;
+  readonly group: string;
+  readonly picked: (account: number) => boolean;
+  readonly disabled: boolean;
+  readonly onPick: (account: number) => void;
+  readonly marked: (account: number) => Readonly<Record<string, string>>;
+  readonly valueFor?: (account: number) => string;
 }): ReactNode {
   return (
     <>
@@ -170,8 +250,13 @@ export function AccountChoices({ names, group, picked, disabled, onPick, marked,
         <li key={each}>
           <label className="flex items-baseline gap-2">
             <input
-              type="radio" name={group} value={valueFor(each)} checked={picked(each)}
-              disabled={disabled} onChange={() => onPick(each)} {...marked(each)}
+              type="radio"
+              name={group}
+              value={valueFor(each)}
+              checked={picked(each)}
+              disabled={disabled}
+              onChange={() => onPick(each)}
+              {...marked(each)}
             />
             <span>{displayNameOf(each, names)}</span>
           </label>

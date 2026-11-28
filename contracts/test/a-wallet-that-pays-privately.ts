@@ -26,7 +26,10 @@ export interface AWalletThatPaysPrivately {
   payFor(deposit: unknown): unknown;
 }
 
-export function aWalletThatPaysPrivately(network: string, seed = new Uint8Array(32).fill(0x61)): AWalletThatPaysPrivately {
+export function aWalletThatPaysPrivately(
+  network: string,
+  seed = new Uint8Array(32).fill(0x61)
+): AWalletThatPaysPrivately {
   const keys = L.ZswapSecretKeys.fromSeed(seed);
   let local = new L.ZswapLocalState();
   const used = new Set<string>();
@@ -35,7 +38,11 @@ export function aWalletThatPaysPrivately(network: string, seed = new Uint8Array(
       let offer: any;
       for (const value of values) {
         const coin = L.createShieldedCoinInfo(token as never, value);
-        const out = L.ZswapOffer.fromOutput(L.ZswapOutput.new(coin, 0, keys.coinPublicKey, keys.encryptionPublicKey), token as never, value);
+        const out = L.ZswapOffer.fromOutput(
+          L.ZswapOutput.new(coin, 0, keys.coinPublicKey, keys.encryptionPublicKey),
+          token as never,
+          value
+        );
         offer = offer === undefined ? out : offer.merge(out);
       }
       const tx: any = L.Transaction.fromParts(network, offer);
@@ -45,10 +52,13 @@ export function aWalletThatPaysPrivately(network: string, seed = new Uint8Array(
     payFor(deposit) {
       const d = deposit as any;
       const owed = [...(d.guaranteedOffer?.deltas?.entries() ?? [])].filter(([, v]: [string, bigint]) => v < 0n);
-      if (owed.length !== 1) throw new Error(`this stand-in pays for one private token, and the deposit owes ${owed.length}`);
+      if (owed.length !== 1)
+        throw new Error(`this stand-in pays for one private token, and the deposit owes ${owed.length}`);
       const [token, delta] = owed[0] as [string, bigint];
       const need = -delta;
-      const coin = [...local.coins].find((c: any) => String(c.type) === token && c.value >= need && !used.has(String(c.nonce)));
+      const coin = [...local.coins].find(
+        (c: any) => String(c.type) === token && c.value >= need && !used.has(String(c.nonce))
+      );
       if (coin === undefined) throw new Error('this stand-in holds no coin that covers the deposit; seed it with more');
       used.add(String((coin as any).nonce));
       const [next, input] = local.spend(keys, coin, 0);
@@ -57,10 +67,15 @@ export function aWalletThatPaysPrivately(network: string, seed = new Uint8Array(
       const rest = (coin as any).value - need;
       if (rest > 0n) {
         const change = L.createShieldedCoinInfo(token as never, rest);
-        offer = offer.merge(L.ZswapOffer.fromOutput(
-          L.ZswapOutput.new(change, 0, keys.coinPublicKey, keys.encryptionPublicKey), token as never, rest));
+        offer = offer.merge(
+          L.ZswapOffer.fromOutput(
+            L.ZswapOutput.new(change, 0, keys.coinPublicKey, keys.encryptionPublicKey),
+            token as never,
+            rest
+          )
+        );
       }
       return d.merge(L.Transaction.fromParts(network, offer));
-    },
+    }
   };
 }

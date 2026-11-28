@@ -22,7 +22,15 @@ export function Vaults({ children }: { children?: ReactNode }) {
     <div className="flex flex-col gap-6" data-screen="vaults">
       <PageHeader
         title={t('page.vaults.name')}
-        actions={<Button onClick={() => actions.inPanel(t('vaults.create'), (props) => <CreateVault {...props} />)} data-action="create-vault"><HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />{t('vaults.create')}</Button>}
+        actions={
+          <Button
+            onClick={() => actions.inPanel(t('vaults.create'), (props) => <CreateVault {...props} />)}
+            data-action="create-vault"
+          >
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+            {t('vaults.create')}
+          </Button>
+        }
       />
       <WithRecords>
         {(records) => (
@@ -31,9 +39,11 @@ export function Vaults({ children }: { children?: ReactNode }) {
               <>
                 <VaultsPending rows={rows} />
                 <div data-part="vaults" data-count={rows.length}>
-                  {rows.length === 0
-                    ? <EmptyState icon={SafeIcon}>{t('vaults.none')}</EmptyState>
-                    : <VaultTiles company={records.id} rows={rows} />}
+                  {rows.length === 0 ? (
+                    <EmptyState icon={SafeIcon}>{t('vaults.none')}</EmptyState>
+                  ) : (
+                    <VaultTiles company={records.id} rows={rows} />
+                  )}
                 </div>
               </>
             )}

@@ -60,7 +60,10 @@ export function committeeInstallRefusals(committee: unknown, threshold: unknown)
   const out: CommitteeInstallRefusal[] = [];
   const keys: readonly unknown[] = Array.isArray(committee) ? committee : [];
   if (!Array.isArray(committee)) {
-    out.push({ code: 'malformed-committee-key', why: 'the committee is not a list of keys. Name the keys that are to hold the contract.' });
+    out.push({
+      code: 'malformed-committee-key',
+      why: 'the committee is not a list of keys. Name the keys that are to hold the contract.'
+    });
   }
   const seen = new Map<string, number>();
   keys.forEach((k, i) => {
@@ -70,39 +73,46 @@ export function committeeInstallRefusals(committee: unknown, threshold: unknown)
     if (tag === null || value === null || !isWalletCommitteeKey(tag, value)) {
       out.push({
         code: 'malformed-committee-key',
-        why: `key ${i + 1} is not a schnorr key a wallet derives - sixty-four hex digits naming a point on the curve - so `
-          + 'nobody could sign for that place. Name it by the key its holder\'s wallet gives.',
+        why:
+          `key ${i + 1} is not a schnorr key a wallet derives - sixty-four hex digits naming a point on the curve - so ` +
+          "nobody could sign for that place. Name it by the key its holder's wallet gives."
       });
     }
     if (tag === null || value === null) return;
     const id = `${tag.toLowerCase()}:${value.toLowerCase()}`;
     const first = seen.get(id);
-    if (first === undefined) { seen.set(id, i); return; }
+    if (first === undefined) {
+      seen.set(id, i);
+      return;
+    }
     out.push({
       code: 'repeated-committee-member',
-      why: `keys ${first + 1} and ${i + 1} are the same key, so its holder would sign once and count at both places, and `
-        + 'the threshold would need fewer people than it reads as. Name each key once.',
+      why:
+        `keys ${first + 1} and ${i + 1} are the same key, so its holder would sign once and count at both places, and ` +
+        'the threshold would need fewer people than it reads as. Name each key once.'
     });
   });
   const whole = typeof threshold === 'number' && Number.isInteger(threshold);
   if (!whole || (threshold as number) < 1) {
     out.push({
       code: 'threshold-below-one',
-      why: `a threshold of ${String(threshold)} is not a whole number of at least one, and at zero anybody could change the `
-        + 'contract\'s rules with no signature at all. Choose a whole number from 1 to the number of keys.',
+      why:
+        `a threshold of ${String(threshold)} is not a whole number of at least one, and at zero anybody could change the ` +
+        "contract's rules with no signature at all. Choose a whole number from 1 to the number of keys."
     });
   }
   if (keys.length === 0) {
     out.push({
       code: 'committee-emptied',
-      why: 'the committee holds no keys, so nobody could ever change the contract\'s rules again. Name at least one key.',
+      why: "the committee holds no keys, so nobody could ever change the contract's rules again. Name at least one key."
     });
   }
   if (whole && (threshold as number) > keys.length) {
     out.push({
       code: 'threshold-above-committee',
-      why: `a threshold of ${threshold as number} over ${keys.length} key${keys.length === 1 ? '' : 's'} can never be met, so nobody `
-        + `could ever change the contract's rules again. Choose a threshold from 1 to ${keys.length}.`,
+      why:
+        `a threshold of ${threshold as number} over ${keys.length} key${keys.length === 1 ? '' : 's'} can never be met, so nobody ` +
+        `could ever change the contract's rules again. Choose a threshold from 1 to ${keys.length}.`
     });
   }
   return out;

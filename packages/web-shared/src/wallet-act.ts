@@ -1,5 +1,19 @@
-import { ACT_CALLED_SCHEMA, ACT_KEPT_SCHEMA, ACT_RELAYED_SCHEMA, MOST_ACT_STEPS, PROGRESS_SCHEMA } from 'midnight-identity/profile/channel';
-import { intentShapeOf, readActCall, readActEnded, readActKeep, readActRelay, routeOf, sendsIn } from 'midnight-identity/profile/act-channel';
+import {
+  ACT_CALLED_SCHEMA,
+  ACT_KEPT_SCHEMA,
+  ACT_RELAYED_SCHEMA,
+  MOST_ACT_STEPS,
+  PROGRESS_SCHEMA
+} from 'midnight-identity/profile/channel';
+import {
+  intentShapeOf,
+  readActCall,
+  readActEnded,
+  readActKeep,
+  readActRelay,
+  routeOf,
+  sendsIn
+} from 'midnight-identity/profile/act-channel';
 import type { KeyringHandedIn, SealedKeyring } from 'midnight-identity/profile/unlock';
 import type { ServedHandedIn } from 'midnight-identity/profile/request';
 import type { ActEnded, ActStop, StepAt } from 'midnight-identity/profile/channel';
@@ -8,7 +22,13 @@ import { buildSetting } from 'midnight-identity/profile/origin';
 import { randomBytes, toHex } from '../../../src/core/crypto.js';
 import { serviceNotReached } from './hand-over.js';
 import {
-  askWallet, openWalletDialog, UNREADABLE_SAYS, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
+  askWallet,
+  openWalletDialog,
+  UNREADABLE_SAYS,
+  US_TO_A_WALLET,
+  WalletClosed,
+  type Openable,
+  type WalletDialog
 } from './wallet-sign-in.js';
 
 /**
@@ -34,8 +54,8 @@ const ACT_MINUTES = 25;
 const MOST_ACT_MINUTES = 30;
 
 const ACT_PURPOSE =
-  'To run this action from your wallet: it shows what it will do, then builds each transaction itself and hands it to '
-  + 'this page to send.';
+  'To run this action from your wallet: it shows what it will do, then builds each transaction itself and hands it to ' +
+  'this page to send.';
 
 /**
  * **HOW OFTEN A RUNNING ACTION IS WRITTEN DOWN AS STILL RUNNING.** In a development build that reports the page's
@@ -52,7 +72,11 @@ export const ACT_LOG_EVERY_MS = 60_000;
  * bundler's settings and then the process's, so a script that loads this file outside a bundler is nowhere too.
  */
 const actLogInDevelopment = (): ((line: string) => void) | undefined =>
-  (buildSetting('DEV') === true && buildSetting('VITE_DEV_ERROR_SINK') === '1' ? (line: string) => { console.warn(line); } : undefined);
+  buildSetting('DEV') === true && buildSetting('VITE_DEV_ERROR_SINK') === '1'
+    ? (line: string) => {
+        console.warn(line);
+      }
+    : undefined;
 
 /**
  * An error as one line: its kind and message, or a refusal's code and message; never anything else it carries. Not
@@ -60,7 +84,11 @@ const actLogInDevelopment = (): ((line: string) => void) | undefined =>
  * would no longer look like one.
  */
 const errorLine = (e: unknown): string =>
-  (e instanceof WalletClosed ? `${e.refusal.of}: ${e.message}` : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+  e instanceof WalletClosed
+    ? `${e.refusal.of}: ${e.message}`
+    : e instanceof Error
+      ? `${e.name}: ${e.message}`
+      : String(e);
 
 /** Why a page sees an action stopped: the wallet's own reasons, or the wallet going quiet or being given up on. */
 type ActStoppedWhy = ActStop | 'went-quiet' | 'gave-up';
@@ -74,18 +102,21 @@ type ActStoppedWhy = ActStop | 'went-quiet' | 'gave-up';
 export type ActOutcome = (
   | { readonly of: 'done'; readonly steps: number; readonly relayed: number }
   | {
-    readonly of: 'stopped'; readonly step: number; readonly steps: number; readonly relayed: number;
-    /**
-     * Transactions that may land and were not confirmed sent: those this page was handed and did not hand to the
-     * service, or, when the wallet's own end counts more, those the wallet sent itself without this page. Whether any
-     * landed is read from the chain.
-     */
-    readonly unconfirmed: number;
-    readonly why: ActStoppedWhy;
-    /** On a refused check: the key of the words the wallet refused with, and the kind of refusal, never the words' values. */
-    readonly refused?: string;
-    readonly code?: string;
-  }
+      readonly of: 'stopped';
+      readonly step: number;
+      readonly steps: number;
+      readonly relayed: number;
+      /**
+       * Transactions that may land and were not confirmed sent: those this page was handed and did not hand to the
+       * service, or, when the wallet's own end counts more, those the wallet sent itself without this page. Whether any
+       * landed is read from the chain.
+       */
+      readonly unconfirmed: number;
+      readonly why: ActStoppedWhy;
+      /** On a refused check: the key of the words the wallet refused with, and the kind of refusal, never the words' values. */
+      readonly refused?: string;
+      readonly code?: string;
+    }
 ) & {
   /** What the wallet said the action got to, when its entry lists any: public facts only, the wallet's word. */
   readonly outcome?: Readonly<Record<string, string | number>>;
@@ -105,7 +136,10 @@ export interface ActAsked {
    * says it is for, from the action's list, and `also` a second transaction sent
    * with it; a page refuses a `what` it does not know rather than guess.
    */
-  readonly relay: (transaction: string, at: StepAt & { readonly n: number; readonly what?: string; readonly also?: string }) => Promise<boolean>;
+  readonly relay: (
+    transaction: string,
+    at: StepAt & { readonly n: number; readonly what?: string; readonly also?: string }
+  ) => Promise<boolean>;
   /**
    * Makes one call to the service for the wallet, only ever one the action's
    * route list names (this page checks it before calling): resolves the
@@ -113,7 +147,10 @@ export interface ActAsked {
    * Throws when this page will not make it; the wallet then stops the action at
    * that step. Without it, every call is refused.
    */
-  readonly call?: (request: { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: string; readonly body?: string }, at: StepAt & { readonly n: number }) => Promise<{ readonly status: number; readonly body: unknown }>;
+  readonly call?: (
+    request: { readonly method: 'GET' | 'PUT' | 'POST'; readonly path: string; readonly body?: string },
+    at: StepAt & { readonly n: number }
+  ) => Promise<{ readonly status: number; readonly body: unknown }>;
   /**
    * For an action that opens the person's saved keys: the site's identifier for the person, the saved keys as the
    * service holds them now, and `keep`, which writes saved keys the wallet sealed again over the version it names and
@@ -170,7 +207,10 @@ export interface ActAsked {
  * cannot be written is dropped and never stops the action.
  */
 export async function actInTheWallet(
-  view: Openable, walletOrigin: string, asked: ActAsked, dialog: WalletDialog = openWalletDialog(view, walletOrigin),
+  view: Openable,
+  walletOrigin: string,
+  asked: ActAsked,
+  dialog: WalletDialog = openWalletDialog(view, walletOrigin)
 ): Promise<ActOutcome> {
   const now = asked.now ?? (() => Date.now());
   const nonce = asked.nonce ?? toHex(randomBytes(16));
@@ -186,7 +226,9 @@ export async function actInTheWallet(
     progress: PROGRESS_SCHEMA,
     intent: Object.freeze({ ...asked.intent }),
     ...(asked.savedKeys === undefined ? {} : { person: asked.savedKeys.person, keyring: asked.savedKeys.keyring }),
-    ...(asked.savedKeys?.served === undefined || asked.savedKeys.served.length === 0 ? {} : { served: asked.savedKeys.served }),
+    ...(asked.savedKeys?.served === undefined || asked.savedKeys.served.length === 0
+      ? {}
+      : { served: asked.savedKeys.served })
   });
 
   let at: StepAt | null = null;
@@ -196,11 +238,16 @@ export async function actInTheWallet(
   const write = asked.log ?? actLogInDevelopment();
   const log = (line: string): void => {
     if (write === undefined) return;
-    try { write(`action ${intentName}: ${line}`); } catch { /* a line that cannot be written never stops the action */ }
+    try {
+      write(`action ${intentName}: ${line}`);
+    } catch {
+      /* a line that cannot be written never stops the action */
+    }
   };
   const counts = (): string => `relayed ${relayed}, unconfirmed ${handedOver - relayed}`;
   /* A clock that reads no time leaves the line without one; writing a line never stops the action. */
-  const handedAt = (at: number): string => (Number.isFinite(at) ? `handed at ${new Date(at).toISOString()}` : 'handed at a time the clock did not read');
+  const handedAt = (at: number): string =>
+    Number.isFinite(at) ? `handed at ${new Date(at).toISOString()}` : 'handed at a time the clock did not read';
   const tookSince = (at: number): string => `in ${Math.max(0, now() - at)} ms`;
   let stepSince = now();
   let heardAt = now();
@@ -211,7 +258,10 @@ export async function actInTheWallet(
    * is on; those are written under this step, and only progress moves it.
    */
   let shown: StepAt | null = null;
-  const under = (own: StepAt): string => { const s = shown ?? own; return `step ${s.step} of ${s.steps}`; };
+  const under = (own: StepAt): string => {
+    const s = shown ?? own;
+    return `step ${s.step} of ${s.steps}`;
+  };
   const minutesSince = (from: number): number => Math.floor((now() - from) / 60_000);
   const beatOnce = (): void => {
     beat = null;
@@ -219,9 +269,11 @@ export async function actInTheWallet(
     if (running >= 1) {
       const where = shown ?? (at as StepAt | null);
       const heard = `the wallet last heard from ${Math.round((now() - heardAt) / 1000)} s ago; ${counts()}`;
-      log(where === null
-        ? `still waiting for the wallet to begin, ${running} minute${running === 1 ? '' : 's'} (${heard})`
-        : `still running step ${where.step} of ${where.steps}, ${running} minute${running === 1 ? '' : 's'} (${heard})`);
+      log(
+        where === null
+          ? `still waiting for the wallet to begin, ${running} minute${running === 1 ? '' : 's'} (${heard})`
+          : `still running step ${where.step} of ${where.steps}, ${running} minute${running === 1 ? '' : 's'} (${heard})`
+      );
     }
     beat = view.setTimeout(beatOnce, ACT_LOG_EVERY_MS);
   };
@@ -241,23 +293,37 @@ export async function actInTheWallet(
   let expectedCall = 1;
   const shape = intentShapeOf(intentName);
   const acknowledgeCall = (n: number, answer: { status: number; body: unknown } | null | 'unreached'): void => {
-    dialog.wallet?.postMessage(answer === null || answer === 'unreached'
-      ? { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: answer ?? 'refused' }
-      : { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: 'answered', status: answer.status, body: answer.body }, walletOrigin);
+    dialog.wallet?.postMessage(
+      answer === null || answer === 'unreached'
+        ? { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: answer ?? 'refused' }
+        : { schema: ACT_CALLED_SCHEMA, nonce, n, outcome: 'answered', status: answer.status, body: answer.body },
+      walletOrigin
+    );
   };
   let expectedKeep = 1;
   const acknowledgeKeep = (n: number, version: number | null): void => {
-    dialog.wallet?.postMessage(version === null
-      ? { schema: ACT_KEPT_SCHEMA, nonce, n, outcome: 'refused' }
-      : { schema: ACT_KEPT_SCHEMA, nonce, n, outcome: 'kept', version }, walletOrigin);
+    dialog.wallet?.postMessage(
+      version === null
+        ? { schema: ACT_KEPT_SCHEMA, nonce, n, outcome: 'refused' }
+        : { schema: ACT_KEPT_SCHEMA, nonce, n, outcome: 'kept', version },
+      walletOrigin
+    );
   };
   const hears = (body: Readonly<Record<string, unknown>>): void => {
     heardAt = now();
     if (body['schema'] === PROGRESS_SCHEMA) {
       const step = body['step'];
       const steps = body['steps'];
-      if (typeof steps === 'number' && Number.isSafeInteger(steps) && steps >= 1 && steps <= MOST_ACT_STEPS
-        && typeof step === 'number' && Number.isSafeInteger(step) && step >= 1 && step <= steps) {
+      if (
+        typeof steps === 'number' &&
+        Number.isSafeInteger(steps) &&
+        steps >= 1 &&
+        steps <= MOST_ACT_STEPS &&
+        typeof step === 'number' &&
+        Number.isSafeInteger(step) &&
+        step >= 1 &&
+        step <= steps
+      ) {
         reached({ step, steps });
         asked.onStep?.({ step, steps });
       }
@@ -266,12 +332,19 @@ export async function actInTheWallet(
     const keeping = readActKeep(body, nonce);
     if (keeping !== null) {
       /* In order, and in turn with the transactions: saved keys out of turn are refused, never written. */
-      if (keeping.n !== expectedKeep) { log(`saved keys ${keeping.n} out of turn, refused`); acknowledgeKeep(keeping.n, null); return; }
+      if (keeping.n !== expectedKeep) {
+        log(`saved keys ${keeping.n} out of turn, refused`);
+        acknowledgeKeep(keeping.n, null);
+        return;
+      }
       expectedKeep += 1;
       log(`${under(keeping)}: the wallet handed saved keys ${keeping.n} to keep`);
       relaying = relaying.then(async () => {
         let version: number | null = null;
-        try { version = asked.savedKeys === undefined ? null : await asked.savedKeys.keep(keeping.sealed, keeping.ifVersion); } catch (e) {
+        try {
+          version =
+            asked.savedKeys === undefined ? null : await asked.savedKeys.keep(keeping.sealed, keeping.ifVersion);
+        } catch (e) {
           log(`${under(keeping)}: keeping saved keys ${keeping.n} failed: ${errorLine(e)}`);
           version = null;
         }
@@ -284,10 +357,18 @@ export async function actInTheWallet(
     const calling = readActCall(body, nonce);
     if (calling !== null) {
       const called = `call ${calling.n} ${calling.method} ${calling.path}`;
-      if (calling.n !== expectedCall) { log(`${called} out of turn, refused`); acknowledgeCall(calling.n, null); return; }
+      if (calling.n !== expectedCall) {
+        log(`${called} out of turn, refused`);
+        acknowledgeCall(calling.n, null);
+        return;
+      }
       expectedCall += 1;
       const route = shape === undefined ? null : routeOf(shape, calling.method, calling.path);
-      if (route === null || asked.call === undefined) { log(`${called} is not on the action's list, refused`); acknowledgeCall(calling.n, null); return; }
+      if (route === null || asked.call === undefined) {
+        log(`${called} is not on the action's list, refused`);
+        acknowledgeCall(calling.n, null);
+        return;
+      }
       const sends = sendsIn(route, calling.body);
       if (sends) handedOver += 1;
       at = { step: calling.step, steps: calling.steps };
@@ -296,16 +377,28 @@ export async function actInTheWallet(
       relaying = relaying.then(async () => {
         let answer: { status: number; body: unknown } | null | 'unreached' = null;
         try {
-          const got = await asked.call!({ method: calling.method, path: calling.path, ...(calling.body === undefined ? {} : { body: calling.body }) },
-            { step: calling.step, steps: calling.steps, n: calling.n });
-          answer = Number.isSafeInteger(got.status) && got.status >= 100 && got.status <= 599 ? { status: got.status, body: got.body ?? null } : null;
+          const got = await asked.call!(
+            {
+              method: calling.method,
+              path: calling.path,
+              ...(calling.body === undefined ? {} : { body: calling.body })
+            },
+            { step: calling.step, steps: calling.steps, n: calling.n }
+          );
+          answer =
+            Number.isSafeInteger(got.status) && got.status >= 100 && got.status <= 599
+              ? { status: got.status, body: got.body ?? null }
+              : null;
         } catch (e) {
           log(`${under(calling)}: ${called} failed ${tookSince(calledAt)}: ${errorLine(e)}`);
           /* No answer came back from the service at all: the wallet is told so, never that the call was refused, so it can go around it. */
           answer = serviceNotReached(e) ? 'unreached' : null;
         }
-        if (answer !== null && answer !== 'unreached' && sends && answer.status >= 200 && answer.status < 300) relayed += 1;
-        log(`${under(calling)}: ${called} ${answer === null ? 'refused' : answer === 'unreached' ? 'not answered by the service' : `answered ${answer.status}`} ${tookSince(calledAt)} (${counts()})`);
+        if (answer !== null && answer !== 'unreached' && sends && answer.status >= 200 && answer.status < 300)
+          relayed += 1;
+        log(
+          `${under(calling)}: ${called} ${answer === null ? 'refused' : answer === 'unreached' ? 'not answered by the service' : `answered ${answer.status}`} ${tookSince(calledAt)} (${counts()})`
+        );
         acknowledgeCall(calling.n, answer);
       });
       return;
@@ -314,7 +407,11 @@ export async function actInTheWallet(
     /* One at a time and in order: a transaction out of turn is refused, never sent. */
     if (handed === null) return;
     const transaction = `transaction ${handed.n}${handed.what === undefined ? '' : ` (${handed.what})`}`;
-    if (handed.n !== expected) { log(`${transaction} out of turn, refused`); acknowledge(handed.n, 'refused'); return; }
+    if (handed.n !== expected) {
+      log(`${transaction} out of turn, refused`);
+      acknowledge(handed.n, 'refused');
+      return;
+    }
     expected += 1;
     handedOver += 1;
     at = { step: handed.step, steps: handed.steps };
@@ -322,10 +419,15 @@ export async function actInTheWallet(
     log(`${under(handed)}: the wallet handed over ${transaction}, ${handedAt(handedOverAt)}; sending`);
     relaying = relaying.then(async () => {
       let sent = false;
-      try { sent = await asked.relay(handed.transaction, {
-        step: handed.step, steps: handed.steps, n: handed.n,
-        ...(handed.what === undefined ? {} : { what: handed.what }), ...(handed.also === undefined ? {} : { also: handed.also }),
-      }); } catch (e) {
+      try {
+        sent = await asked.relay(handed.transaction, {
+          step: handed.step,
+          steps: handed.steps,
+          n: handed.n,
+          ...(handed.what === undefined ? {} : { what: handed.what }),
+          ...(handed.also === undefined ? {} : { also: handed.also })
+        });
+      } catch (e) {
         log(`${under(handed)}: sending ${transaction} failed ${tookSince(handedOverAt)}: ${errorLine(e)}`);
         sent = false;
       }
@@ -345,24 +447,38 @@ export async function actInTheWallet(
       if (started === null || !(e instanceof WalletClosed)) throw e;
       log(`the wallet's window ended without an answer: ${errorLine(e)}`);
       return Object.freeze({
-        of: 'stopped' as const, step: started.step, steps: started.steps, relayed, unconfirmed: handedOver - relayed,
-        why: e.refusal.of === 'gave-up' ? 'gave-up' as const : e.refusal.of === 'expired' ? 'out-of-time' as const : 'went-quiet' as const,
+        of: 'stopped' as const,
+        step: started.step,
+        steps: started.steps,
+        relayed,
+        unconfirmed: handedOver - relayed,
+        why:
+          e.refusal.of === 'gave-up'
+            ? ('gave-up' as const)
+            : e.refusal.of === 'expired'
+              ? ('out-of-time' as const)
+              : ('went-quiet' as const)
       });
     }
     await relaying;
     const ended = readActEnded(answer, { nonce, intent: intentName });
     if (ended === null) {
-      log('the wallet\'s answer could not be read');
+      log("the wallet's answer could not be read");
       const started = at as StepAt | null;
       if (started === null) throw new WalletClosed({ of: 'unreadable' }, UNREADABLE_SAYS);
       return Object.freeze({
-        of: 'stopped' as const, step: started.step, steps: started.steps, relayed, unconfirmed: handedOver - relayed,
-        why: 'went-quiet' as const,
+        of: 'stopped' as const,
+        step: started.step,
+        steps: started.steps,
+        relayed,
+        unconfirmed: handedOver - relayed,
+        why: 'went-quiet' as const
       });
     }
     const told = {
-      ...(ended.outcome === undefined ? {} : { outcome: ended.outcome }), ...(ended.keys === undefined ? {} : { keys: ended.keys }),
-      ...(ended.readKeys === undefined ? {} : { readKeys: ended.readKeys }),
+      ...(ended.outcome === undefined ? {} : { outcome: ended.outcome }),
+      ...(ended.keys === undefined ? {} : { keys: ended.keys }),
+      ...(ended.readKeys === undefined ? {} : { readKeys: ended.readKeys })
     };
     if (ended.ended === 'done') return Object.freeze({ of: 'done' as const, steps: ended.steps, relayed, ...told });
     /*
@@ -372,10 +488,16 @@ export async function actInTheWallet(
      */
     const theWalletHandedOver = ended.relayed + ended.unconfirmed;
     return Object.freeze({
-      of: 'stopped' as const, step: ended.step, steps: ended.steps, relayed, unconfirmed: Math.max(handedOver - relayed, theWalletHandedOver - relayed),
+      of: 'stopped' as const,
+      step: ended.step,
+      steps: ended.steps,
+      relayed,
+      unconfirmed: Math.max(handedOver - relayed, theWalletHandedOver - relayed),
       why: ended.why ?? 'step-failed',
-      ...(ended.refused === undefined ? {} : { refused: ended.refused, ...(ended.code === undefined ? {} : { code: ended.code }) }),
-      ...told,
+      ...(ended.refused === undefined
+        ? {}
+        : { refused: ended.refused, ...(ended.code === undefined ? {} : { code: ended.code }) }),
+      ...told
     });
   };
 
@@ -383,10 +505,14 @@ export async function actInTheWallet(
   if (write !== undefined) beat = view.setTimeout(beatOnce, ACT_LOG_EVERY_MS);
   try {
     const outcome = await ending();
-    log(outcome.of === 'done'
-      ? `done, ${outcome.steps} of ${outcome.steps} steps (relayed ${outcome.relayed})`
-      : `stopped at step ${outcome.step} of ${outcome.steps}: ${outcome.why} (relayed ${outcome.relayed}, unconfirmed ${outcome.unconfirmed})`
-        + (outcome.refused === undefined ? '' : ` (refused: ${outcome.refused}${outcome.code === undefined ? '' : ` ${outcome.code}`})`));
+    log(
+      outcome.of === 'done'
+        ? `done, ${outcome.steps} of ${outcome.steps} steps (relayed ${outcome.relayed})`
+        : `stopped at step ${outcome.step} of ${outcome.steps}: ${outcome.why} (relayed ${outcome.relayed}, unconfirmed ${outcome.unconfirmed})` +
+            (outcome.refused === undefined
+              ? ''
+              : ` (refused: ${outcome.refused}${outcome.code === undefined ? '' : ` ${outcome.code}`})`)
+    );
     return outcome;
   } catch (e) {
     log(`ended with an error: ${errorLine(e)}`);

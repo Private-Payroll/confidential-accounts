@@ -43,7 +43,11 @@ import { sealingWith } from '../../../src/core/company-key.js';
 import { randomBytes, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
 import { AnswerToAnOldInvitation, answerOpenedWith } from '../../../src/core/answer-opened.js';
 import {
-  personChanged, sealPerson, stopDateRefusal, type MadeBy, type PersonChange,
+  personChanged,
+  sealPerson,
+  stopDateRefusal,
+  type MadeBy,
+  type PersonChange
 } from '../../../src/core/person-record.js';
 import { isCalendarDate, utcMomentOf } from '../../../src/core/invitation.js';
 import { earliestStopOf } from '../../../src/core/payable-days.js';
@@ -62,14 +66,29 @@ import { payeeAt, writtenOrRefused, type InvitingCompany } from './invitation-on
 import { serviceNotReached } from './hand-over.js';
 import type { CompanyWrites, RecordWrite } from './records-source.js';
 import {
-  readClaimedHandover, typedAddressIsShielded, type AddressClaim,
+  readClaimedHandover,
+  typedAddressIsShielded,
+  type AddressClaim
 } from 'midnight-identity/profile/address-claim';
 import { readJoinParts } from 'midnight-identity/profile/join-code';
 import {
-  claimFor, readPeopleHere, typedAddressOf, type ClaimRefusal, type ListsView, type PeopleHere, type PersonHere,
+  claimFor,
+  readPeopleHere,
+  typedAddressOf,
+  type ClaimRefusal,
+  type ListsView,
+  type PeopleHere,
+  type PersonHere
 } from './people-read-here.js';
 
-export { claimFor, readPeopleHere, type ClaimRefusal, type PeopleHere, type PeopleReader, type PersonHere } from './people-read-here.js';
+export {
+  claimFor,
+  readPeopleHere,
+  type ClaimRefusal,
+  type PeopleHere,
+  type PeopleReader,
+  type PersonHere
+} from './people-read-here.js';
 
 /** What a device acting on a company's people needs: the company opened, its seat, and the company's view it reads through. */
 export interface PeopleDevice {
@@ -101,7 +120,10 @@ export class PersonNotChanged extends Error {
 }
 
 /** Who makes a version on this device, and when: this seat's signing key, and this device's clock as one UTC moment. */
-export const madeHere = (signingSecret: Hex): MadeBy => ({ madeBy: signingPublicKeyOf(signingSecret), madeAt: utcMomentOf(Date.now()) });
+export const madeHere = (signingSecret: Hex): MadeBy => ({
+  madeBy: signingPublicKeyOf(signingSecret),
+  madeAt: utcMomentOf(Date.now())
+});
 
 /**
  * **A VERSION OF A PERSON, SEALED AND SIGNED ON THIS DEVICE, FILED BY THE WRITE
@@ -111,7 +133,11 @@ export const madeHere = (signingSecret: Hex): MadeBy => ({ madeBy: signingPublic
  * naming this seat as its maker.
  */
 const filedAndEntered = async (
-  d: PeopleDevice, write: (body: unknown) => RecordWrite, person: RosterEmployee, version: number, made: MadeBy = madeHere(d.signingSecret),
+  d: PeopleDevice,
+  write: (body: unknown) => RecordWrite,
+  person: RosterEmployee,
+  version: number,
+  made: MadeBy = madeHere(d.signingSecret)
 ): Promise<RosterEmployee> => {
   const refused = await mayFileHere(() => d.directory(), signingPublicKeyOf(d.signingSecret), 'person');
   if (refused?.why === 'role') throw new PersonNotChanged(refused.says);
@@ -136,30 +162,38 @@ const filedAndEntered = async (
  * `leaving.pastDraft`, as a leaving date set on its own is).
  */
 export async function setStatusHere(
-  d: PeopleDevice, here: PersonHere, status: 'active' | 'leaver',
-  leaving?: { readonly leavingDate?: string; readonly pastDraft: () => Promise<readonly string[]> },
+  d: PeopleDevice,
+  here: PersonHere,
+  status: 'active' | 'leaver',
+  leaving?: { readonly leavingDate?: string; readonly pastDraft: () => Promise<readonly string[]> }
 ): Promise<RosterEmployee> {
   const p = here.person;
   if (status === 'active' && !p.address) {
-    throw new PersonNotChanged(`${p.name} has no address on file, so there is nowhere to pay them and nothing to make active. An address comes from their own wallet when they accept, and becomes payable when it is admitted.`);
+    throw new PersonNotChanged(
+      `${p.name} has no address on file, so there is nowhere to pay them and nothing to make active. An address comes from their own wallet when they accept, and becomes payable when it is admitted.`
+    );
   }
   let next: RosterEmployee = { ...p, status };
   if (status === 'leaver' && p.status !== 'pending') {
     if (leaving === undefined) {
-      throw new PersonNotChanged(`${p.name} is made a leaver on the day they leave, checked against the months already raised, and this page gave neither. Give their leaving date and mark them a leaver again.`);
+      throw new PersonNotChanged(
+        `${p.name} is made a leaver on the day they leave, checked against the months already raised, and this page gave neither. Give their leaving date and mark them a leaver again.`
+      );
     }
     next = leaving.leavingDate === undefined ? next : { ...next, leavingDate: leaving.leavingDate };
     const stop = earliestStopOf(next);
     if (stop === null) {
-      throw new PersonNotChanged(`${p.name} has no leaving date or end date, so the days they worked are not known and they would go unpaid for them. Give their leaving date and mark them a leaver again.`);
+      throw new PersonNotChanged(
+        `${p.name} has no leaving date or end date, so the days they worked are not known and they would go unpaid for them. Give their leaving date and mark them a leaver again.`
+      );
     }
-    if (isCalendarDate(stop.day) && stop.day < p.startDate) throw new PersonNotChanged(`${p.name}'s ${stop.said}, ${stop.day}, is before their start date, ${p.startDate}.`);
+    if (isCalendarDate(stop.day) && stop.day < p.startDate)
+      throw new PersonNotChanged(`${p.name}'s ${stop.said}, ${stop.day}, is before their start date, ${p.startDate}.`);
     const why = stopDateRefusal(stop.day, stop.said, await leaving.pastDraft());
     if (why !== null) throw new PersonNotChanged(`${p.name} is not made a leaver: ${why}.`);
   }
   return filedAndEntered(d, (body) => ({ to: 'person', id: p.id, act: 'status', body }), next, here.version + 1);
 }
-
 
 /**
  * **A CHANGE TO A PERSON AFTER THEY WERE INVITED**: a salary line, a classification line, an end date or a leaving
@@ -169,16 +203,27 @@ export async function setStatusHere(
  * they stand is not changed here: that is `setStatusHere`'s.
  */
 export async function changePersonHere(
-  d: PeopleDevice, here: PersonHere, change: PersonChange, pastDraft: () => Promise<readonly string[]>,
+  d: PeopleDevice,
+  here: PersonHere,
+  change: PersonChange,
+  pastDraft: () => Promise<readonly string[]>
 ): Promise<RosterEmployee> {
   const made = madeHere(d.signingSecret);
   let next: RosterEmployee;
   try {
     next = personChanged(here.person, change, await pastDraft(), made);
   } catch (e) {
-    throw new PersonNotChanged(`${here.person.name} is not changed: ${String((e as Error)?.message ?? e).replace(/\.?\s*$/u, '')}.`);
+    throw new PersonNotChanged(
+      `${here.person.name} is not changed: ${String((e as Error)?.message ?? e).replace(/\.?\s*$/u, '')}.`
+    );
   }
-  return filedAndEntered(d, (body) => ({ to: 'person', id: here.person.id, act: 'details', body }), next, here.version + 1, made);
+  return filedAndEntered(
+    d,
+    (body) => ({ to: 'person', id: here.person.id, act: 'details', body }),
+    next,
+    here.version + 1,
+    made
+  );
 }
 
 /** The address a payee's code names, decoded as the platform decodes one, at this device's network. */
@@ -186,13 +231,18 @@ const payeeOfCode = (parts: PayeeParts, network: NetworkName): Payee => {
   try {
     return payeeAt(parts.address, network);
   } catch (e) {
-    throw new PersonNotChanged(`the address in this code is not one money can be sent to on this network: ${(e as Error).message}`);
+    throw new PersonNotChanged(
+      `the address in this code is not one money can be sent to on this network: ${(e as Error).message}`
+    );
   }
 };
 
 /** The checks a payee's code passes before it makes anybody payable, whichever way it arrived. */
 const refuseACodeThatCannotBePaid = (
-  d: PeopleDevice, person: RosterEmployee, code: JoinCode, read: PeopleHere,
+  d: PeopleDevice,
+  person: RosterEmployee,
+  code: JoinCode,
+  read: PeopleHere
 ): Payee => {
   /*
    * One payable record per person is checked against every person on the
@@ -200,27 +250,42 @@ const refuseACodeThatCannotBePaid = (
    * check, so nothing is made payable while one is there.
    */
   if (read.notBelieved.length > 0) {
-    throw new PersonNotChanged(`the payroll holds ${read.notBelieved.length} record(s) no seat this device believes filed (${read.notBelieved.join(', ')}), so whether this person is already payable cannot be checked. One a seat this device does not believe filed is filed again by a signer whose seat it believes; one whose record does not open here is read on a seat's device that holds the key it was sealed under, and this person is added from there.`);
+    throw new PersonNotChanged(
+      `the payroll holds ${read.notBelieved.length} record(s) no seat this device believes filed (${read.notBelieved.join(', ')}), so whether this person is already payable cannot be checked. One a seat this device does not believe filed is filed again by a signer whose seat it believes; one whose record does not open here is read on a seat's device that holds the key it was sealed under, and this person is added from there.`
+    );
   }
   const activeNotPayable = read.notPayable.filter((x) => x.here.person.status === 'active');
   if (activeNotPayable.length > 0) {
-    throw new PersonNotChanged(`the payroll holds ${activeNotPayable.length} active record(s) whose address or payslip key is not what their own wallet signed (${activeNotPayable.map((x) => x.here.person.name).join(', ')}), so whether this person is already payable cannot be checked. Mark those people leavers, and add them again.`);
+    throw new PersonNotChanged(
+      `the payroll holds ${activeNotPayable.length} active record(s) whose address or payslip key is not what their own wallet signed (${activeNotPayable.map((x) => x.here.person.name).join(', ')}), so whether this person is already payable cannot be checked. Mark those people leavers, and add them again.`
+    );
   }
   const others = read.people;
   if (code.parts.kind !== 'payee' || !joinCodeSignedBy(code) || code.company !== d.company.label) {
-    throw new PersonNotChanged('what was handed over is not a payee\'s code signed by their own wallet for this company. An invitation is accepted once: mark this person a leaver and invite them again.');
+    throw new PersonNotChanged(
+      "what was handed over is not a payee's code signed by their own wallet for this company. An invitation is accepted once: mark this person a leaver and invite them again."
+    );
   }
   const wallet = code.committeeKey.value;
   const same = (a: string) => a.trim().toLowerCase();
-  const clash = others.find((p) => p.person.id !== person.id && p.person.status === 'active'
-    && ((p.person.handedOverBy !== null && p.person.handedOverBy === wallet)
-      || (p.person.email !== null && person.email !== null && same(p.person.email) === same(person.email))));
+  const clash = others.find(
+    (p) =>
+      p.person.id !== person.id &&
+      p.person.status === 'active' &&
+      ((p.person.handedOverBy !== null && p.person.handedOverBy === wallet) ||
+        (p.person.email !== null && person.email !== null && same(p.person.email) === same(person.email)))
+  );
   if (clash !== undefined) {
-    throw new PersonNotChanged(`${person.email ?? 'the person whose wallet signed this'} is already payable on this company. One person gets one payable record, because two records is two salaries. To pay them at a different address, mark the existing record a leaver and add them again.`);
+    throw new PersonNotChanged(
+      `${person.email ?? 'the person whose wallet signed this'} is already payable on this company. One person gets one payable record, because two records is two salaries. To pay them at a different address, mark the existing record a leaver and add them again.`
+    );
   }
   const address = payeeOfCode(code.parts, d.network);
   const unreachable = whyTheMoneyCannotReach((d.registry ?? defaultAssets).require(person.asset), address.kind);
-  if (unreachable !== null) throw new PersonNotChanged(`not admitted. ${unreachable} An invitation is accepted once: mark this person a leaver and invite them again, to accept with an address that can be paid.`);
+  if (unreachable !== null)
+    throw new PersonNotChanged(
+      `not admitted. ${unreachable} An invitation is accepted once: mark this person a leaver and invite them again, to accept with an address that can be paid.`
+    );
   return address;
 };
 
@@ -234,44 +299,75 @@ const refuseACodeThatCannotBePaid = (
  * than the one read out. People and vendors are admitted through it alike.
  */
 export async function payeeCodeHandedOver(
-  d: PeopleDevice, who: { readonly id: string; readonly name: string; readonly invitedAddress?: string | null },
-  box: NonNullable<Invite['handover']>, readOut: string, typed: string | null,
+  d: PeopleDevice,
+  who: { readonly id: string; readonly name: string; readonly invitedAddress?: string | null },
+  box: NonNullable<Invite['handover']>,
+  readOut: string,
+  typed: string | null
 ): Promise<{ readonly code: JoinCode; readonly claim: AddressClaim | null }> {
   const byAddress = typed !== null;
   const byClaim = typed !== null && !typedAddressIsShielded(typed);
   let code: JoinCode;
   let opened: unknown;
-  try { opened = answerOpenedWith<unknown>(d.company.viewingKey, box, d.company.id).value; } catch (e) {
+  try {
+    opened = answerOpenedWith<unknown>(d.company.viewingKey, box, d.company.id).value;
+  } catch (e) {
     if (e instanceof AnswerToAnOldInvitation) {
-      throw new PersonNotChanged('what was handed over was sealed to the company\'s key from before it changed, and the signer who changed the key did not find it waiting, so it is not admitted. An invitation is accepted once: mark this person a leaver and invite them again.');
+      throw new PersonNotChanged(
+        "what was handed over was sealed to the company's key from before it changed, and the signer who changed the key did not find it waiting, so it is not admitted. An invitation is accepted once: mark this person a leaver and invite them again."
+      );
     }
-    throw new PersonNotChanged('what was handed over does not open with this company\'s key, so it was sealed for somebody else. An invitation is accepted once: mark this person a leaver and invite them again.');
+    throw new PersonNotChanged(
+      "what was handed over does not open with this company's key, so it was sealed for somebody else. An invitation is accepted once: mark this person a leaver and invite them again."
+    );
   }
   const claimed = readClaimedHandover(opened);
   if (byAddress && !byClaim && claimed !== null) {
-    throw new PersonNotChanged(`${who.name} was added by a private address, which is admitted on the fingerprint they read out, and what was handed over is a claim of it that no device can check. An invitation is accepted once: mark this person a leaver and add them again.`);
+    throw new PersonNotChanged(
+      `${who.name} was added by a private address, which is admitted on the fingerprint they read out, and what was handed over is a claim of it that no device can check. An invitation is accepted once: mark this person a leaver and add them again.`
+    );
   }
   if (byClaim) {
-    const given = claimed === null ? null : claimed.code as JoinCode;
+    const given = claimed === null ? null : (claimed.code as JoinCode);
     const parts = given === null ? null : readJoinParts(given.parts);
-    const read = given !== null && parts !== null && joinCodeSignedBy(given) && given.company === d.company.label ? { ...given, parts } : null;
+    const read =
+      given !== null && parts !== null && joinCodeSignedBy(given) && given.company === d.company.label
+        ? { ...given, parts }
+        : null;
     if (read === null || read.parts.kind !== 'payee') {
-      throw new PersonNotChanged(`${who.name} was added by address, and what was handed over is not their wallet's claim of it with a payee's code for this company. An invitation is accepted once: mark this person a leaver and add them again.`);
+      throw new PersonNotChanged(
+        `${who.name} was added by address, and what was handed over is not their wallet's claim of it with a payee's code for this company. An invitation is accepted once: mark this person a leaver and add them again.`
+      );
     }
     code = read;
     if (code.person !== who.id || (code.parts as PayeeParts).address !== typed) {
-      throw new PersonNotChanged(`what was handed over names another address or record than the one ${who.name} was added by, so it is not admitted. Mark this person a leaver and add them again.`);
+      throw new PersonNotChanged(
+        `what was handed over names another address or record than the one ${who.name} was added by, so it is not admitted. Mark this person a leaver and add them again.`
+      );
     }
     const why = await d.claimRefusal(claimed!.claim, claimFor(d, who, (code.parts as PayeeParts).payslipKey));
-    if (why !== null) throw new PersonNotChanged(`the claim of the address ${who.name} was added by is refused: ${why}. Nothing they handed over is used.`);
+    if (why !== null)
+      throw new PersonNotChanged(
+        `the claim of the address ${who.name} was added by is refused: ${why}. Nothing they handed over is used.`
+      );
   } else {
     code = opened as JoinCode;
-    if (byAddress && (code?.person !== who.id || code?.parts?.kind !== 'payee' || (code.parts as PayeeParts).address !== typed)) {
-      throw new PersonNotChanged(`what was handed over names another address or record than the private address ${who.name} was added by, so it is not admitted. Mark this person a leaver and add them again.`);
+    if (
+      byAddress &&
+      (code?.person !== who.id || code?.parts?.kind !== 'payee' || (code.parts as PayeeParts).address !== typed)
+    ) {
+      throw new PersonNotChanged(
+        `what was handed over names another address or record than the private address ${who.name} was added by, so it is not admitted. Mark this person a leaver and add them again.`
+      );
     }
   }
-  if (code?.parts?.kind !== 'payee' || (!byClaim && tidyFingerprint(readOut) !== payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }))) {
-    throw new PersonNotChanged('the fingerprint this person read out is not the fingerprint of the code that arrived, so the address or payslip key is not the one their wallet showed them. An invitation is accepted once: mark this person a leaver and invite them again; if it does not match a second time, the page they accepted on is not ours.');
+  if (
+    code?.parts?.kind !== 'payee' ||
+    (!byClaim && tidyFingerprint(readOut) !== payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts }))
+  ) {
+    throw new PersonNotChanged(
+      'the fingerprint this person read out is not the fingerprint of the code that arrived, so the address or payslip key is not the one their wallet showed them. An invitation is accepted once: mark this person a leaver and invite them again; if it does not match a second time, the page they accepted on is not ours.'
+    );
   }
   return { code, claim: byClaim ? claimed!.claim : null };
 }
@@ -292,7 +388,8 @@ export const readForTheAdmission = async <T>(what: string, read: () => Promise<T
   try {
     return await read();
   } catch (e) {
-    if (typeof (e as { status?: unknown } | null)?.status === 'number' || serviceNotReached(e)) throw new AdmissionNotRead(what, e);
+    if (typeof (e as { status?: unknown } | null)?.status === 'number' || serviceNotReached(e))
+      throw new AdmissionNotRead(what, e);
     throw e;
   }
 };
@@ -312,37 +409,65 @@ export const readForTheAdmission = async <T>(what: string, read: () => Promise<T
 export async function admitHere(d: PeopleDevice, here: PersonHere, readOut: string): Promise<RosterEmployee> {
   const id = here.person.id;
   if (here.person.status === 'active') throw new PersonNotChanged(`${here.person.name} has already been admitted.`);
-  const box = ((await readForTheAdmission(`what ${here.person.name} handed over`, () => d.view.handovers([id])))[0] as { readonly inbox?: Invite['handover'] } | undefined)?.inbox;
-  if (!box) throw new PersonNotChanged(`${here.person.name} has not handed anything over yet, so there is nothing to admit.`);
+  const box = (
+    (await readForTheAdmission(`what ${here.person.name} handed over`, () => d.view.handovers([id])))[0] as
+      { readonly inbox?: Invite['handover'] } | undefined
+  )?.inbox;
+  if (!box)
+    throw new PersonNotChanged(`${here.person.name} has not handed anything over yet, so there is nothing to admit.`);
   /* Version 1 is the record being admitted when nothing was filed for them since the invitation; otherwise it is read. */
-  const first = here.version === 1 ? { typed: here.person.invitedAddress ?? null }
-    : await typedAddressOf(d, id, null, judgeIn(await d.directory(kindAsked('company', 'person'))));
+  const first =
+    here.version === 1
+      ? { typed: here.person.invitedAddress ?? null }
+      : await typedAddressOf(d, id, null, judgeIn(await d.directory(kindAsked('company', 'person'))));
   if ('refused' in first) throw new PersonNotChanged(`${here.person.name} is not admitted: ${first.refused}.`);
   if (first.typed !== (here.person.invitedAddress ?? null)) {
-    throw new PersonNotChanged(`${here.person.name}'s record does not name the address its first version was filed with, so they are not admitted. Mark this person a leaver and add them again.`);
+    throw new PersonNotChanged(
+      `${here.person.name}'s record does not name the address its first version was filed with, so they are not admitted. Mark this person a leaver and add them again.`
+    );
   }
   const typed = first.typed;
   const byAddress = typed !== null;
   const { code, claim } = await payeeCodeHandedOver(d, here.person, box, readOut, typed);
-  const invites = await readForTheAdmission('the company\'s invitations', () => d.view.list('invites')) as (Invite & { subjectId?: string })[];
-  const invite = (Array.isArray(invites) ? invites : []).filter((i) => i.subjectId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-  if (invite === undefined) throw new PersonNotChanged(`there is no invitation on record for ${here.person.name}, so there is no way to tell who set this address. Invite them again rather than admitting it.`);
+  const invites = (await readForTheAdmission("the company's invitations", () => d.view.list('invites'))) as (Invite & {
+    subjectId?: string;
+  })[];
+  const invite = (Array.isArray(invites) ? invites : [])
+    .filter((i) => i.subjectId === id)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (invite === undefined)
+    throw new PersonNotChanged(
+      `there is no invitation on record for ${here.person.name}, so there is no way to tell who set this address. Invite them again rather than admitting it.`
+    );
   if (typeof invite.revokedAt === 'string') {
-    throw new PersonNotChanged('this invitation was taken back before this was admitted, so admitting it would put somebody on the payroll whose hire was called off. Withdraw this person, and invite them again if the hire is back on.');
+    throw new PersonNotChanged(
+      'this invitation was taken back before this was admitted, so admitting it would put somebody on the payroll whose hire was called off. Withdraw this person, and invite them again if the hire is back on.'
+    );
   }
   if (!invite.createdBy) {
-    throw new PersonNotChanged('nothing records who raised this invitation, so nothing says the address was set by the payee rather than by whoever invited them. Mark this person a leaver, then invite them again.');
+    throw new PersonNotChanged(
+      'nothing records who raised this invitation, so nothing says the address was set by the payee rather than by whoever invited them. Mark this person a leaver, then invite them again.'
+    );
   }
   const raisedBy = await raisingWalletOf(d, invite.createdBy);
   if (!byAddress && here.person.email === null && raisedBy !== code.committeeKey.value) {
-    throw new PersonNotChanged('this record is not addressed to an email address, and two different wallets opened and accepted its invitation, so nobody can say whose it is. Mark this person a leaver and invite them again.');
+    throw new PersonNotChanged(
+      'this record is not addressed to an email address, and two different wallets opened and accepted its invitation, so nobody can say whose it is. Mark this person a leaver and invite them again.'
+    );
   }
   const address = refuseACodeThatCannotBePaid(d, here.person, code, await readPeopleHere(d));
   const admitted: RosterEmployee = {
-    ...here.person, status: 'active', address, wrappingPublicKey: (code.parts as PayeeParts).payslipKey, payslipKeyFrom: code.company,
-    handedOverBy: code.committeeKey.value, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(),
-    selfRaised: raisedBy === code.committeeKey.value, payeeCode: code,
-    ...(claim !== null ? { addressClaim: claim } : {}),
+    ...here.person,
+    status: 'active',
+    address,
+    wrappingPublicKey: (code.parts as PayeeParts).payslipKey,
+    payslipKeyFrom: code.company,
+    handedOverBy: code.committeeKey.value,
+    admittedBy: d.signedInAs,
+    admittedAt: new Date().toISOString(),
+    selfRaised: raisedBy === code.committeeKey.value,
+    payeeCode: code,
+    ...(claim !== null ? { addressClaim: claim } : {})
   };
   return filedAndEntered(d, (body) => ({ to: 'person', id, act: 'admit', body }), admitted, here.version + 1);
 }
@@ -373,23 +498,47 @@ interface MyPay {
  * person record, active, filed from here. Nobody else's sign-in is involved.
  */
 export async function makeMyselfPayableHere(d: PeopleDevice, code: JoinCode, pay: MyPay): Promise<RosterEmployee> {
-  if (typeof pay.baseAmount !== 'bigint' || pay.baseAmount <= 0n) throw new PersonNotChanged('pay is above nothing, in the token\'s smallest unit.');
-  if (!isCalendarDate(pay.startDate)) throw new PersonNotChanged('the day you start paying yourself from is not a date: a start date is a calendar date such as 2026-07-01.');
+  if (typeof pay.baseAmount !== 'bigint' || pay.baseAmount <= 0n)
+    throw new PersonNotChanged("pay is above nothing, in the token's smallest unit.");
+  if (!isCalendarDate(pay.startDate))
+    throw new PersonNotChanged(
+      'the day you start paying yourself from is not a date: a start date is a calendar date such as 2026-07-01.'
+    );
   const raisedBy = await raisingWalletOf(d, d.signedInAs);
   if (raisedBy === null || raisedBy !== code.committeeKey.value) {
-    throw new PersonNotChanged('this code is not signed by the wallet your seat on this company was entered with, so it is not yours to be paid by.');
+    throw new PersonNotChanged(
+      'this code is not signed by the wallet your seat on this company was entered with, so it is not yours to be paid by.'
+    );
   }
   const made = madeHere(d.signingSecret);
   const person: RosterEmployee = {
-    id: `emp_${toHex(randomBytes(10))}`, accountId: d.company.id, name: pay.name, email: null, title: pay.title,
-    asset: pay.asset, baseAmount: pay.baseAmount, startDate: pay.startDate, status: 'active', wrappingPublicKey: null,
-    handedOverBy: null, admittedBy: null, admittedAt: null, selfRaised: true, address: null,
-    pay: [{ amount: pay.baseAmount, from: pay.startDate, ...made }],
+    id: `emp_${toHex(randomBytes(10))}`,
+    accountId: d.company.id,
+    name: pay.name,
+    email: null,
+    title: pay.title,
+    asset: pay.asset,
+    baseAmount: pay.baseAmount,
+    startDate: pay.startDate,
+    status: 'active',
+    wrappingPublicKey: null,
+    handedOverBy: null,
+    admittedBy: null,
+    admittedAt: null,
+    selfRaised: true,
+    address: null,
+    pay: [{ amount: pay.baseAmount, from: pay.startDate, ...made }]
   };
   const address = refuseACodeThatCannotBePaid(d, person, code, await readPeopleHere(d));
   const payable: RosterEmployee = {
-    ...person, address, wrappingPublicKey: (code.parts as PayeeParts).payslipKey, payslipKeyFrom: code.company,
-    handedOverBy: code.committeeKey.value, admittedBy: d.signedInAs, admittedAt: new Date().toISOString(), payeeCode: code,
+    ...person,
+    address,
+    wrappingPublicKey: (code.parts as PayeeParts).payslipKey,
+    payslipKeyFrom: code.company,
+    handedOverBy: code.committeeKey.value,
+    admittedBy: d.signedInAs,
+    admittedAt: new Date().toISOString(),
+    payeeCode: code
   };
   return filedAndEntered(d, (body) => ({ to: 'self-payee', body }), payable, 1, made);
 }

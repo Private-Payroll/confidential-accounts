@@ -60,9 +60,15 @@ export interface RoundOnThePage {
 export interface GovernedCallService {
   callState(accountId: string): Promise<AccountCallChainOnTheWire & { readonly account: string }>;
   /** A proposal's raise this device proved, sent. */
-  send(proposalId: string, body: { tx: string; version: typeof DEVICE_RAISE_VERSION; filer: string }): Promise<RoundOnThePage>;
+  send(
+    proposalId: string,
+    body: { tx: string; version: typeof DEVICE_RAISE_VERSION; filer: string }
+  ): Promise<RoundOnThePage>;
   /** An approval this device proved, sent, with this seat's signature over a removal's retirement where it signs one. */
-  approve(proposalId: string, body: { tx: string; filer: string; retirement?: RetirementSignature }): Promise<RoundOnThePage>;
+  approve(
+    proposalId: string,
+    body: { tx: string; filer: string; retirement?: RetirementSignature }
+  ): Promise<RoundOnThePage>;
   /** This seat's signature over a removal's retirement, signed again for the directory version next now. Sends no call. */
   retire?(proposalId: string, body: { signature: RetirementSignature; filer: string }): Promise<RoundOnThePage>;
   /** Where a proposal stands on the chain now. Sends nothing. */
@@ -73,19 +79,24 @@ export interface GovernedCallService {
    * A proposal this device sealed and signed, written down, and its raise sent with it; with no `tx`, written down
    * only, for a proposal the chain already holds.
    */
-  file?(accountId: string, body: {
-    proposal: SignedProposalFiling; tx?: string; version?: typeof DEVICE_RAISE_VERSION;
-    /**
-     * The proposal's salt, so the service can hold a vault's or a governance proposal's identity on the chain to the
-     * vault it names, or to none. A run's commitment to what it pays is keyed with the company's asset blinding too, so
-     * the salt does not open it.
-     */
-    salt: string;
-    /** A new vault's first secret run, whose one leaf pays a zero amount of no asset: the vault its identity on the chain is made for. */
-    vault?: string;
-    /** A payroll run's leg: the run re-filed as raised. What the raise pays is never sent: it is sealed in the two records. */
-    run?: SignedRunFiling;
-  }): Promise<RoundOnThePage>;
+  file?(
+    accountId: string,
+    body: {
+      proposal: SignedProposalFiling;
+      tx?: string;
+      version?: typeof DEVICE_RAISE_VERSION;
+      /**
+       * The proposal's salt, so the service can hold a vault's or a governance proposal's identity on the chain to the
+       * vault it names, or to none. A run's commitment to what it pays is keyed with the company's asset blinding too, so
+       * the salt does not open it.
+       */
+      salt: string;
+      /** A new vault's first secret run, whose one leaf pays a zero amount of no asset: the vault its identity on the chain is made for. */
+      vault?: string;
+      /** A payroll run's leg: the run re-filed as raised. What the raise pays is never sent: it is sealed in the two records. */
+      run?: SignedRunFiling;
+    }
+  ): Promise<RoundOnThePage>;
   /** An approved governance proposal carried out by the call this device proved. */
   carry?(proposalId: string, body: { tx: string; circuit: CarryCircuit; filer: string }): Promise<RoundOnThePage>;
   /**
@@ -105,9 +116,11 @@ export interface GovernedCallService {
 }
 
 /** The calls that carry out an approved governance proposal. */
-export type CarryCircuit = 'removeSignerAndSetThreshold' | 'setThreshold' | 'setVaultThreshold' | 'setPolicy' | 'setPolicyBar';
+export type CarryCircuit =
+  'removeSignerAndSetThreshold' | 'setThreshold' | 'setVaultThreshold' | 'setPolicy' | 'setPolicyBar';
 
-type GovernedStage = 'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
+type GovernedStage =
+  'checking-the-vault' | 'writing-down' | 'reading-the-chain' | 'building' | 'sending' | 'waiting-for-the-chain';
 
 export interface GovernedCallDoors {
   readonly service: GovernedCallService;
@@ -144,15 +157,30 @@ export const HEX64 = /^[0-9a-f]{64}$/u;
 export const hexOfBytes = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 /** One proposal, opened on this device from the company's own records (`openTheRoundHere`), and from nowhere else. */
-export const opensFor = (doors: LeavingReads) => (proposalId: string, viewingKey: KeysHeld, forARaise: boolean, onlyKind?: string): Promise<OpenedRound> =>
-  openTheRoundHere(doors.service, doors.accountId, proposalId, viewingKey, forARaise, doors.records, doors.leaves, false, onlyKind);
+export const opensFor =
+  (doors: LeavingReads) =>
+  (proposalId: string, viewingKey: KeysHeld, forARaise: boolean, onlyKind?: string): Promise<OpenedRound> =>
+    openTheRoundHere(
+      doors.service,
+      doors.accountId,
+      proposalId,
+      viewingKey,
+      forARaise,
+      doors.records,
+      doors.leaves,
+      false,
+      onlyKind
+    );
 
 /** Sent, and the chain has not shown it yet. Not a failure, and not to be sent again. */
 export class SentAndNotYetSeen extends Error {
-  constructor(what: string, readonly round: RoundOnThePage) {
+  constructor(
+    what: string,
+    readonly round: RoundOnThePage
+  ) {
     super(
       `${what} was sent and the chain has not shown it yet. Do not send it again: open the run later ` +
-        'and it will say where the proposal stands.',
+        'and it will say where the proposal stands.'
     );
     this.name = 'SentAndNotYetSeen';
   }
@@ -162,16 +190,18 @@ export class SentAndNotYetSeen extends Error {
  * The service's own mark of whether a refused send reached the chain, kept rather than guessed. A call the service
  * gave no answer to is never read as nothing sent: a step that handed anything over before it says it may have been.
  */
-export const nothingWasSentBy = (e: unknown): boolean => !serviceNotReached(e) && (
-  (e as { nothingWasSent?: unknown } | null)?.nothingWasSent === true
-  || /Nothing was sent/u.test(String((e as { message?: unknown } | null)?.message ?? '')));
+export const nothingWasSentBy = (e: unknown): boolean =>
+  !serviceNotReached(e) &&
+  ((e as { nothingWasSent?: unknown } | null)?.nothingWasSent === true ||
+    /Nothing was sent/u.test(String((e as { message?: unknown } | null)?.message ?? '')));
 
 /**
  * The approvals a proposal counts toward carrying it out: the chain's count while it is open, and none once closed. A
  * closed proposal's `approvalCount` is its count when it closed, kept for showing; withdrawn or carried out, it can no
  * longer be approved or carried out, so that count never decides either.
  */
-export const counted = (r: RoundOnThePage): number => (r.status === 'open' && typeof r.approvalCount === 'number' ? r.approvalCount : 0);
+export const counted = (r: RoundOnThePage): number =>
+  r.status === 'open' && typeof r.approvalCount === 'number' ? r.approvalCount : 0;
 
 /**
  * **WHERE A PROPOSAL STANDS, AS THE CHAIN SAYS** (`standingOnChainHere`): what the
@@ -182,14 +212,20 @@ export const counted = (r: RoundOnThePage): number => (r.status === 'open' && ty
  */
 export const onChainHere = async (doors: GovernedCallDoors, round: RoundOnThePage): Promise<RoundOnThePage> => {
   if (doors.records === undefined) {
-    throw new NotOpenedOnThisDevice('This page cannot read the company\'s records, so it cannot say where this proposal stands on '
-      + 'the chain. Reload the page to get the current version.');
+    throw new NotOpenedOnThisDevice(
+      "This page cannot read the company's records, so it cannot say where this proposal stands on " +
+        'the chain. Reload the page to get the current version.'
+    );
   }
   return (await standingOnChainHere(doors.records, [round]))[0]!;
 };
 
 /** The proposal the service names by `proposalId`, standing where the chain says. */
-export const standingHere = async (doors: GovernedCallDoors, proposalId: string, chainId?: string): Promise<RoundOnThePage> =>
+export const standingHere = async (
+  doors: GovernedCallDoors,
+  proposalId: string,
+  chainId?: string
+): Promise<RoundOnThePage> =>
   onChainHere(doors, theRoundAsked(await doors.service.standing(proposalId), proposalId, chainId));
 
 /**
@@ -200,16 +236,22 @@ export const standingHere = async (doors: GovernedCallDoors, proposalId: string,
  */
 class AnswerNotForThisProposal extends Error {
   constructor() {
-    super('The company\'s service answered about another proposal than the one this device asked about, so nothing is '
-      + 'decided from its answer. Do not send it again: open the proposal later, and it will say where it stands on the chain.');
+    super(
+      "The company's service answered about another proposal than the one this device asked about, so nothing is " +
+        'decided from its answer. Do not send it again: open the proposal later, and it will say where it stands on the chain.'
+    );
     this.name = 'AnswerNotForThisProposal';
   }
 }
 
 /** The answer when it names `proposalId` and, where this device knows it, the identity `chainId`; refused otherwise. */
 export const theRoundAsked = (answer: RoundOnThePage, proposalId: string, chainId?: string): RoundOnThePage => {
-  if (answer === null || typeof answer !== 'object' || String(answer.id) !== String(proposalId)
-    || (chainId !== undefined && String(answer.chainId).toLowerCase() !== String(chainId).toLowerCase())) {
+  if (
+    answer === null ||
+    typeof answer !== 'object' ||
+    String(answer.id) !== String(proposalId) ||
+    (chainId !== undefined && String(answer.chainId).toLowerCase() !== String(chainId).toLowerCase())
+  ) {
     throw new AnswerNotForThisProposal();
   }
   return answer;
@@ -217,8 +259,11 @@ export const theRoundAsked = (answer: RoundOnThePage, proposalId: string, chainI
 
 /** Asks where a proposal stands, on the chain, until `seen` says so, or until the wait is over. */
 export const waitFor = async (
-  doors: GovernedCallDoors, what: string, proposalId: string,
-  seen: (r: RoundOnThePage) => boolean, last: RoundOnThePage,
+  doors: GovernedCallDoors,
+  what: string,
+  proposalId: string,
+  seen: (r: RoundOnThePage) => boolean,
+  last: RoundOnThePage
 ): Promise<RoundOnThePage> => {
   const sleep = doors.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const waitMs = doors.waitMs ?? 5 * 60_000;
@@ -241,14 +286,20 @@ export const waitFor = async (
 /** Refuses, before anything is paid or sent, a call straight to the chain whose service cannot close its record. */
 export const closesOnRecord = (service: GovernedCallService): void => {
   if (service.closed === undefined) {
-    throw new NotHandedOver('this page cannot close the company\'s record of a proposal closed straight on the chain. Reload '
-      + 'the page to get the current version. Nothing was sent.');
+    throw new NotHandedOver(
+      "this page cannot close the company's record of a proposal closed straight on the chain. Reload " +
+        'the page to get the current version. Nothing was sent.'
+    );
   }
 };
 
 /** The service's record of a proposal closed straight on the chain, as the service's own read of the chain allows. */
 export const closedOnRecord = async (
-  service: GovernedCallService, proposalId: string, chainId: string, filer: string, how: 'carried' | 'withdrawn',
+  service: GovernedCallService,
+  proposalId: string,
+  chainId: string,
+  filer: string,
+  how: 'carried' | 'withdrawn'
 ): Promise<RoundOnThePage> => theRoundAsked(await service.closed!(proposalId, { filer, how }), proposalId, chainId);
 
 /**
@@ -257,7 +308,10 @@ export const closedOnRecord = async (
  * service's record stands; where the proposal stands is always read from the chain afterwards.
  */
 export const closedOnTheChainHere = async (
-  doors: GovernedCallDoors, proposalId: string, chainId: string, how: 'carried' | 'withdrawn',
+  doors: GovernedCallDoors,
+  proposalId: string,
+  chainId: string,
+  how: 'carried' | 'withdrawn'
 ): Promise<RoundOnThePage> => {
   const sleep = doors.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const waitMs = doors.waitMs ?? 5 * 60_000;
@@ -280,8 +334,8 @@ export const closedOnTheChainHere = async (
  * The filing key of the seat this device files under, made from the signing secret it holds: sent with every relay so
  * the service pays for that seat, among every entry the person filed. It is a public key; no secret leaves the device.
  */
-export const filerHere = (doors: Pick<GovernedCallDoors, 'material'>): string => signingPublicKeyOf(doors.material.signingSecret as Hex);
-
+export const filerHere = (doors: Pick<GovernedCallDoors, 'material'>): string =>
+  signingPublicKeyOf(doors.material.signingSecret as Hex);
 
 /**
  * A refusal from the service keeps the service's own mark of whether anything was sent. A service that gave no answer
@@ -305,7 +359,13 @@ export { marked as markedNothingSent };
  * company's, opened by a seat, never a wallet's own key; the wallet builds every door that carries them through this,
  * so no wallet source names the field.
  */
-export const withCompanyKeys = <T extends object>(door: T, keys: KeysHeld): T & { readonly viewingKey: KeysHeld } => ({ ...door, viewingKey: keys });
+export const withCompanyKeys = <T extends object>(door: T, keys: KeysHeld): T & { readonly viewingKey: KeysHeld } => ({
+  ...door,
+  viewingKey: keys
+});
 
 /** A door's fields with the one company key a record is sealed under, added the same way, for the doors that take a single key and not the keys held. */
-export const withCompanyKey = <T extends object>(door: T, key: Hex): T & { readonly viewingKey: Hex } => ({ ...door, viewingKey: key });
+export const withCompanyKey = <T extends object>(door: T, key: Hex): T & { readonly viewingKey: Hex } => ({
+  ...door,
+  viewingKey: key
+});

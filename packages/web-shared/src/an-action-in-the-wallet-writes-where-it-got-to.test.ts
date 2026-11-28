@@ -9,7 +9,13 @@ vi.mock('midnight-identity/profile/act-channel', async (importOriginal) => {
   const shape = { fields: { company: 'record' }, calls: [{ method: 'GET', path: '/api/accounts/:company' }] };
   return { ...actual, intentShapeOf: (name: string) => (name === 'name-a-vault' ? shape : actual.intentShapeOf(name)) };
 });
-import { ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_RELAY_SCHEMA, PROGRESS_SCHEMA, READY_PING } from 'midnight-identity/profile/channel';
+import {
+  ACT_CALL_SCHEMA,
+  ACT_ENDED_SCHEMA,
+  ACT_RELAY_SCHEMA,
+  PROGRESS_SCHEMA,
+  READY_PING
+} from 'midnight-identity/profile/channel';
 import { appendWebConsole } from '../../../src/server/web-console-log.js';
 import { installErrorSink, type SinkWindow } from './error-sink.js';
 import { ACT_LOG_EVERY_MS, actInTheWallet } from './wallet-act.js';
@@ -37,20 +43,42 @@ class APage implements Openable {
   private next = 1;
   readonly wallet: WalletWindow = { postMessage: () => {}, close: () => {}, focus: () => {}, closed: false };
 
-  open(): WalletWindow { return this.wallet; }
-  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void { this.handler = h; }
-  removeEventListener(): void { this.handler = null; }
-  setTimeout(run: () => void, ms: number): number { const id = this.next++; this.timers.set(id, { run, at: this.clock + ms }); return id; }
-  clearTimeout(id: number): void { this.timers.delete(id); }
-  now(): number { return this.clock; }
+  open(): WalletWindow {
+    return this.wallet;
+  }
+  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
+    this.handler = h;
+  }
+  removeEventListener(): void {
+    this.handler = null;
+  }
+  setTimeout(run: () => void, ms: number): number {
+    const id = this.next++;
+    this.timers.set(id, { run, at: this.clock + ms });
+    return id;
+  }
+  clearTimeout(id: number): void {
+    this.timers.delete(id);
+  }
+  now(): number {
+    return this.clock;
+  }
   pass(ms: number): void {
     this.clock += ms;
-    for (const [id, t] of [...this.timers]) if (t.at <= this.clock) { this.timers.delete(id); t.run(); }
+    for (const [id, t] of [...this.timers])
+      if (t.at <= this.clock) {
+        this.timers.delete(id);
+        t.run();
+      }
   }
-  say(data: unknown): void { this.handler?.({ origin: WALLET, source: this.wallet, data } as unknown as MessageEvent); }
+  say(data: unknown): void {
+    this.handler?.({ origin: WALLET, source: this.wallet, data } as unknown as MessageEvent);
+  }
 }
 
-const settle = async (): Promise<void> => { for (let i = 0; i < 10; i += 1) await Promise.resolve(); };
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 10; i += 1) await Promise.resolve();
+};
 
 let logPath = '';
 const consoleWas = { warn: console.warn, error: console.error };
@@ -62,13 +90,19 @@ beforeEach(() => {
   console.warn = () => {};
   console.error = () => {};
   /* The report as a development page installs it, on this test's console, posting straight to the service's writer. */
-  installErrorSink({
-    addEventListener: () => {},
-    fetch: async () => ({ ok: true, status: 204 }),
-    console,
-    location: { href: 'http://localhost:5173/setup' },
-    setTimeout: (fn: () => void) => { fn(); return 0; },
-  } as unknown as SinkWindow, (body) => appendWebConsole(body.page, body.entries));
+  installErrorSink(
+    {
+      addEventListener: () => {},
+      fetch: async () => ({ ok: true, status: 204 }),
+      console,
+      location: { href: 'http://localhost:5173/setup' },
+      setTimeout: (fn: () => void) => {
+        fn();
+        return 0;
+      }
+    } as unknown as SinkWindow,
+    (body) => appendWebConsole(body.page, body.entries)
+  );
 });
 afterEach(() => {
   console.warn = consoleWas.warn;
@@ -81,11 +115,21 @@ describe('an action in the wallet writes where it got to in the console report',
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
       intent: { name: 'move-between-vaults', vault: 'c'.repeat(64), memo: SECRET_FIELD },
-      relay: async () => true, nonce: NONCE, now: () => page.clock,
+      relay: async () => true,
+      nonce: NONCE,
+      now: () => page.clock
     });
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 3 });
-    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 3, transaction: SECRET_TRANSACTION, what: 'creation' });
+    page.say({
+      schema: ACT_RELAY_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 3,
+      transaction: SECRET_TRANSACTION,
+      what: 'creation'
+    });
     await settle();
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 2, steps: 3 });
     /* Step 2 stalls: the wallet keeps saying it is on step 2 for two and a half minutes. */
@@ -93,7 +137,17 @@ describe('an action in the wallet writes where it got to in the console report',
       page.pass(30_000);
       page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 2, steps: 3 });
     }
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'move-between-vaults', ended: 'stopped', step: 2, steps: 3, relayed: 1, unconfirmed: 0, why: 'step-failed' });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'move-between-vaults',
+      ended: 'stopped',
+      step: 2,
+      steps: 3,
+      relayed: 1,
+      unconfirmed: 0,
+      why: 'step-failed'
+    });
     await settle();
     expect(await run).toMatchObject({ of: 'stopped', step: 2, why: 'step-failed' });
 
@@ -103,14 +157,18 @@ describe('an action in the wallet writes where it got to in the console report',
     /* RED WHEN: the step before is not written as finished, with what was relayed by then. */
     expect(report).toContain('action move-between-vaults: step 1 of 3 finished (relayed 1, unconfirmed 0)');
     /* RED WHEN: a transaction the page relays is not written by its number, its kind and what became of it. */
-    expect(report).toContain('action move-between-vaults: step 1 of 3: transaction 1 (creation) relayed in 0 ms (relayed 1, unconfirmed 0)');
+    expect(report).toContain(
+      'action move-between-vaults: step 1 of 3: transaction 1 (creation) relayed in 0 ms (relayed 1, unconfirmed 0)'
+    );
     /* RED WHEN: a step running past a minute is not written as still running, with its minutes, each minute. */
     expect(report).toContain('action move-between-vaults: still running step 2 of 3, 1 minute (');
     expect(report).toContain('action move-between-vaults: still running step 2 of 3, 2 minutes (');
     /* RED WHEN: the heartbeat lines the wallet sends while a step runs are written as the step starting again. */
     expect(report.split('step 2 of 3 started').length - 1).toBe(1);
     /* RED WHEN: the stop is not written with its step, its reason and its counts. */
-    expect(report).toContain('action move-between-vaults: stopped at step 2 of 3: step-failed (relayed 1, unconfirmed 0)');
+    expect(report).toContain(
+      'action move-between-vaults: stopped at step 2 of 3: step-failed (relayed 1, unconfirmed 0)'
+    );
     /* RED WHEN: a line carries the action's fields or the transaction the page relayed. */
     expect(report).not.toContain(SECRET_FIELD);
     expect(report).not.toContain(SECRET_TRANSACTION);
@@ -121,20 +179,40 @@ describe('an action in the wallet writes where it got to in the console report',
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
       intent: { name: 'move-between-vaults', vault: 'c'.repeat(64), memo: SECRET_FIELD },
-      relay: async () => true, nonce: NONCE, now: () => page.clock,
+      relay: async () => true,
+      nonce: NONCE,
+      now: () => page.clock
     });
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 3 });
     page.say({
-      schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'move-between-vaults', ended: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 0,
-      why: 'check-failed', refused: 'act.move-between-vaults.why.start-owed', code: 'chain-unread', says: SECRET_FIELD,
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'move-between-vaults',
+      ended: 'stopped',
+      step: 1,
+      steps: 3,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.move-between-vaults.why.start-owed',
+      code: 'chain-unread',
+      says: SECRET_FIELD
     });
     await settle();
-    expect(await run).toMatchObject({ of: 'stopped', step: 1, why: 'check-failed', refused: 'act.move-between-vaults.why.start-owed', code: 'chain-unread' });
+    expect(await run).toMatchObject({
+      of: 'stopped',
+      step: 1,
+      why: 'check-failed',
+      refused: 'act.move-between-vaults.why.start-owed',
+      code: 'chain-unread'
+    });
     const report = readFileSync(logPath, 'utf8');
     /* RED WHEN: a stop for a refused check does not say which refusal ended it, and of what kind. */
-    expect(report).toContain('action move-between-vaults: stopped at step 1 of 3: check-failed (relayed 0, unconfirmed 0) '
-      + '(refused: act.move-between-vaults.why.start-owed chain-unread)');
+    expect(report).toContain(
+      'action move-between-vaults: stopped at step 1 of 3: check-failed (relayed 0, unconfirmed 0) ' +
+        '(refused: act.move-between-vaults.why.start-owed chain-unread)'
+    );
     /* RED WHEN: the refusal's words, or anything the wallet put beside its key, reach the report. */
     expect(report).not.toContain(SECRET_FIELD);
   });
@@ -142,18 +220,54 @@ describe('an action in the wallet writes where it got to in the console report',
   it('calls and transactions inside a later step are written under that step, whatever step their message carries', async () => {
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'name-a-vault', company: 'acc_1' }, nonce: NONCE, now: () => page.clock,
-      relay: async () => true, call: async () => ({ status: 200, body: {} }),
+      intent: { name: 'name-a-vault', company: 'acc_1' },
+      nonce: NONCE,
+      now: () => page.clock,
+      relay: async () => true,
+      call: async () => ({ status: 200, body: {} })
     });
     page.say({ schema: READY_PING });
     for (let step = 1; step <= 4; step += 1) page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step, steps: 5 });
     /* Inside step 4: one call whose message carries step 1, one that carries step 4, and a transaction that carries step 1. */
-    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 5, method: 'GET', path: '/api/accounts/acc_1' });
-    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 2, step: 4, steps: 5, method: 'GET', path: '/api/accounts/acc_1' });
-    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 5, transaction: SECRET_TRANSACTION, what: 'creation' });
+    page.say({
+      schema: ACT_CALL_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 5,
+      method: 'GET',
+      path: '/api/accounts/acc_1'
+    });
+    page.say({
+      schema: ACT_CALL_SCHEMA,
+      nonce: NONCE,
+      n: 2,
+      step: 4,
+      steps: 5,
+      method: 'GET',
+      path: '/api/accounts/acc_1'
+    });
+    page.say({
+      schema: ACT_RELAY_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 5,
+      transaction: SECRET_TRANSACTION,
+      what: 'creation'
+    });
     await settle();
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 5, steps: 5 });
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 5, steps: 5, relayed: 1, unconfirmed: 0 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'name-a-vault',
+      ended: 'done',
+      step: 5,
+      steps: 5,
+      relayed: 1,
+      unconfirmed: 0
+    });
     await settle();
     await run;
     const report = readFileSync(logPath, 'utf8');
@@ -174,24 +288,62 @@ describe('an action in the wallet writes where it got to in the console report',
   it('each call and transaction the page relays is written with the time it was handed over and how long it took to be answered or to fail', async () => {
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'name-a-vault', company: 'acc_1' }, nonce: NONCE, now: () => page.clock,
-      relay: async () => { page.clock += 1200; return true; },
+      intent: { name: 'name-a-vault', company: 'acc_1' },
+      nonce: NONCE,
+      now: () => page.clock,
+      relay: async () => {
+        page.clock += 1200;
+        return true;
+      },
       call: async (_c, where) => {
         page.clock += where.n === 2 ? 75 : 250;
         if (where.n === 2) throw new Error('the service is gone');
         return { status: 200, body: {} };
-      },
+      }
     });
     const at = new Date(START).toISOString();
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 2 });
-    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 2, method: 'GET', path: '/api/accounts/acc_1' });
+    page.say({
+      schema: ACT_CALL_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 2,
+      method: 'GET',
+      path: '/api/accounts/acc_1'
+    });
     await settle();
-    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 2, step: 1, steps: 2, method: 'GET', path: '/api/accounts/acc_1' });
+    page.say({
+      schema: ACT_CALL_SCHEMA,
+      nonce: NONCE,
+      n: 2,
+      step: 1,
+      steps: 2,
+      method: 'GET',
+      path: '/api/accounts/acc_1'
+    });
     await settle();
-    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 2, transaction: SECRET_TRANSACTION, what: 'creation' });
+    page.say({
+      schema: ACT_RELAY_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 2,
+      transaction: SECRET_TRANSACTION,
+      what: 'creation'
+    });
     await settle();
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 2, steps: 2, relayed: 1, unconfirmed: 0 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'name-a-vault',
+      ended: 'done',
+      step: 2,
+      steps: 2,
+      relayed: 1,
+      unconfirmed: 0
+    });
     await settle();
     await run;
     const report = readFileSync(logPath, 'utf8');
@@ -199,7 +351,9 @@ describe('an action in the wallet writes where it got to in the console report',
     expect(report).toContain(`step 1 of 2: call 1 GET /api/accounts/acc_1, handed at ${at}`);
     expect(report).toContain('step 1 of 2: call 1 GET /api/accounts/acc_1 answered 200 in 250 ms');
     /* RED WHEN: a call that fails is written with no time it took to fail. */
-    expect(report).toContain(`step 1 of 2: call 2 GET /api/accounts/acc_1, handed at ${new Date(START + 250).toISOString()}`);
+    expect(report).toContain(
+      `step 1 of 2: call 2 GET /api/accounts/acc_1, handed at ${new Date(START + 250).toISOString()}`
+    );
     expect(report).toContain('call 2 GET /api/accounts/acc_1 failed in 75 ms: ');
     /* RED WHEN: a relayed transaction is written with no time it was handed over, or with no time it took to be sent. */
     expect(report).toContain(`transaction 1 (creation), handed at ${new Date(START + 325).toISOString()}; sending`);
@@ -210,32 +364,76 @@ describe('an action in the wallet writes where it got to in the console report',
     const page = new APage();
     const relayed: number[] = [];
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'name-a-vault', company: 'acc_1' }, nonce: NONCE, now: () => Number.NaN,
-      relay: async (_t, where) => { relayed.push(where.n); return true; },
-      call: async () => ({ status: 200, body: {} }),
+      intent: { name: 'name-a-vault', company: 'acc_1' },
+      nonce: NONCE,
+      now: () => Number.NaN,
+      relay: async (_t, where) => {
+        relayed.push(where.n);
+        return true;
+      },
+      call: async () => ({ status: 200, body: {} })
     });
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 1 });
-    page.say({ schema: ACT_CALL_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 1, method: 'GET', path: '/api/accounts/acc_1' });
+    page.say({
+      schema: ACT_CALL_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 1,
+      method: 'GET',
+      path: '/api/accounts/acc_1'
+    });
     await settle();
-    page.say({ schema: ACT_RELAY_SCHEMA, nonce: NONCE, n: 1, step: 1, steps: 1, transaction: SECRET_TRANSACTION, what: 'creation' });
+    page.say({
+      schema: ACT_RELAY_SCHEMA,
+      nonce: NONCE,
+      n: 1,
+      step: 1,
+      steps: 1,
+      transaction: SECRET_TRANSACTION,
+      what: 'creation'
+    });
     await settle();
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'name-a-vault', ended: 'done', step: 1, steps: 1, relayed: 1, unconfirmed: 0 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'name-a-vault',
+      ended: 'done',
+      step: 1,
+      steps: 1,
+      relayed: 1,
+      unconfirmed: 0
+    });
     await settle();
     await run;
     /* RED WHEN: a time the clock did not read stops a handed-over transaction from being sent. */
     expect(relayed).toEqual([1]);
-    expect(readFileSync(logPath, 'utf8')).toContain('call 1 GET /api/accounts/acc_1, handed at a time the clock did not read');
+    expect(readFileSync(logPath, 'utf8')).toContain(
+      'call 1 GET /api/accounts/acc_1, handed at a time the clock did not read'
+    );
   });
 
   it('the minute line stops once the action has ended', async () => {
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) }, relay: async () => true, nonce: NONCE, now: () => page.clock,
+      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) },
+      relay: async () => true,
+      nonce: NONCE,
+      now: () => page.clock
     });
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 1 });
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'move-between-vaults', ended: 'done', step: 1, steps: 1, relayed: 0, unconfirmed: 0 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'move-between-vaults',
+      ended: 'done',
+      step: 1,
+      steps: 1,
+      relayed: 0,
+      unconfirmed: 0
+    });
     await run;
     page.pass(3 * ACT_LOG_EVERY_MS);
     const report = readFileSync(logPath, 'utf8');
@@ -247,7 +445,10 @@ describe('an action in the wallet writes where it got to in the console report',
   it('an action whose wallet window fails writes the error it ended with', async () => {
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) }, relay: async () => true, nonce: NONCE, now: () => page.clock,
+      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) },
+      relay: async () => true,
+      nonce: NONCE,
+      now: () => page.clock
     });
     page.say({ schema: READY_PING });
     page.say({ schema: 'not-an-answer' });
@@ -262,11 +463,23 @@ describe('an action in the wallet writes where it got to in the console report',
     vi.stubEnv('VITE_DEV_ERROR_SINK', '');
     const page = new APage();
     const run = actInTheWallet(page, WALLET, {
-      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) }, relay: async () => true, nonce: NONCE, now: () => page.clock,
+      intent: { name: 'move-between-vaults', vault: 'c'.repeat(64) },
+      relay: async () => true,
+      nonce: NONCE,
+      now: () => page.clock
     });
     page.say({ schema: READY_PING });
     page.say({ schema: PROGRESS_SCHEMA, stage: 'proving', step: 1, steps: 1 });
-    page.say({ schema: ACT_ENDED_SCHEMA, nonce: NONCE, intent: 'move-between-vaults', ended: 'done', step: 1, steps: 1, relayed: 0, unconfirmed: 0 });
+    page.say({
+      schema: ACT_ENDED_SCHEMA,
+      nonce: NONCE,
+      intent: 'move-between-vaults',
+      ended: 'done',
+      step: 1,
+      steps: 1,
+      relayed: 0,
+      unconfirmed: 0
+    });
     await run;
     /* RED WHEN: the page writes an action's lines to the console when the console report is not on. */
     expect(() => readFileSync(logPath, 'utf8')).toThrow();

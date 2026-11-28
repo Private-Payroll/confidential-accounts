@@ -81,9 +81,12 @@ import type { LabelReader } from './company-on-chain.js';
 /** Why the page did not ask, in this wallet's words: the page sends only which of these it was. */
 const NOT_ASKED_SAYS: Readonly<Record<NotAskedWhy, string>> = Object.freeze({
   'signed-out': 'The page that opened this wallet stopped before asking anything: you are no longer signed in there.',
-  'saved-keys-unread': 'The page that opened this wallet stopped before asking anything: it could not read your saved keys from its service.',
-  'saved-keys-older': 'The page that opened this wallet stopped before asking anything: the saved keys its service handed back are older than the ones it last opened.',
-  'ask-not-built': 'The page that opened this wallet stopped before asking anything: it could not put together what it wanted to ask.',
+  'saved-keys-unread':
+    'The page that opened this wallet stopped before asking anything: it could not read your saved keys from its service.',
+  'saved-keys-older':
+    'The page that opened this wallet stopped before asking anything: the saved keys its service handed back are older than the ones it last opened.',
+  'ask-not-built':
+    'The page that opened this wallet stopped before asking anything: it could not put together what it wanted to ask.'
 });
 const NOT_ASKED_UNNAMED = 'The page that opened this wallet stopped before asking anything.';
 
@@ -107,7 +110,15 @@ export interface ApproveEntryProps {
 }
 
 export function ApproveEntry({
-  phase, entry, view, now = Date.now, embedder = EMBEDDER, readHolders, port, readLabel, readLedger,
+  phase,
+  entry,
+  view,
+  now = Date.now,
+  embedder = EMBEDDER,
+  readHolders,
+  port,
+  readLabel,
+  readLedger
 }: ApproveEntryProps): ReactNode {
   const { createAccount, busy, error } = useSession();
   const [channelState, setChannelState] = useState<ChannelState>({ of: 'waiting' });
@@ -130,8 +141,7 @@ export function ApproveEntry({
    * rendered. What is worth saying is that the window belongs to a page, and
    * which one.
    */
-  const askedBy = channelState.of === 'request'
-    ? channelState.request.requester.origin : null;
+  const askedBy = channelState.of === 'request' ? channelState.request.requester.origin : null;
 
   /* An action's outcome is shown only until a different request comes in. */
   const asked = channelState.of === 'request' ? channelState.request.nonce : null;
@@ -159,8 +169,13 @@ export function ApproveEntry({
    */
   if (channelState.of === 'request' && channelState.request.kind === 'holders') {
     return (
-      <AnswerHolders request={channelState.request} channel={channel} consent={quietConsentFor(framing)} now={now}
-        {...(readHolders === undefined ? {} : { readHolders })} />
+      <AnswerHolders
+        request={channelState.request}
+        channel={channel}
+        consent={quietConsentFor(framing)}
+        now={now}
+        {...(readHolders === undefined ? {} : { readHolders })}
+      />
     );
   }
   if (channelState.of === 'not-asked') {
@@ -196,8 +211,8 @@ export function ApproveEntry({
       <>
         <h1 data-waiting-for-ask>Waiting for the request</h1>
         <p className="lede">
-          The page around this wallet is still preparing what it wants to ask. Nothing has been
-          sent and nothing has been signed.
+          The page around this wallet is still preparing what it wants to ask. Nothing has been sent and nothing has
+          been signed.
         </p>
       </>
     );
@@ -206,8 +221,12 @@ export function ApproveEntry({
   if (phase.name === 'locked' && channelState.of === 'request') {
     return (
       <ApproveWindow
-        request={channelState.request} channel={channel} framing={framing} port={port ?? browserPort()}
-        {...(readLabel === undefined ? {} : { readLabel })} {...(readLedger === undefined ? {} : { readLedger })}
+        request={channelState.request}
+        channel={channel}
+        framing={framing}
+        port={port ?? browserPort()}
+        {...(readLabel === undefined ? {} : { readLabel })}
+        {...(readLedger === undefined ? {} : { readLedger })}
       />
     );
   }
@@ -225,20 +244,22 @@ export function ApproveEntry({
             : framed
               ? `${askedBy} is asking you for something, and there is `
               : `${askedBy} opened this window to ask you for something, and there is `}
-          nothing in this browser to answer with. Make one here — it takes one touch — and
-          the question is still waiting when you come back to it.
+          nothing in this browser to answer with. Make one here — it takes one touch — and the question is still waiting
+          when you come back to it.
         </p>
         <p className="muted small">
           {framed
             ? 'Nothing has been sent and nothing has been agreed.'
-            : 'Nothing has been sent and nothing has been agreed. The page that asked is still '
-              + 'open behind this window, exactly where you left it.'}
+            : 'Nothing has been sent and nothing has been agreed. The page that asked is still ' +
+              'open behind this window, exactly where you left it.'}
         </p>
         <div className="actions">
           <Button
             type="button"
             size="lg"
-            onClick={() => { void createAccount(); }}
+            onClick={() => {
+              void createAccount();
+            }}
             disabled={busy !== null}
           >
             Create your wallet
@@ -251,29 +272,30 @@ export function ApproveEntry({
       <section className="card">
         <h2>Already have a wallet?</h2>
         <p className="muted small">
-          It is in the browser you made it in. A wallet made in another browser, or on
-          another machine, is not in this one — these are the two ways it gets here.
+          It is in the browser you made it in. A wallet made in another browser, or on another machine, is not in this
+          one — these are the two ways it gets here.
         </p>
         <div className="step">
-          <div className="dot" aria-hidden="true">→</div>
+          <div className="dot" aria-hidden="true">
+            →
+          </div>
           <div className="body">
             <h2>
               <a href={hrefOf('add-device')}>Move it onto this machine</a>
             </h2>
-            <p className="muted small">
-              Scan a code shown by a device that already has it, then compare two digits.
-            </p>
+            <p className="muted small">Scan a code shown by a device that already has it, then compare two digits.</p>
           </div>
         </div>
         <div className="step">
-          <div className="dot" aria-hidden="true">→</div>
+          <div className="dot" aria-hidden="true">
+            →
+          </div>
           <div className="body">
             <h2>
               <a href={hrefOf('recover')}>Recover it from pieces</a>
             </h2>
             <p className="muted small">
-              Gather enough of the pieces you placed, and the account comes back —
-              even on a machine that never had it.
+              Gather enough of the pieces you placed, and the account comes back — even on a machine that never had it.
             </p>
           </div>
         </div>

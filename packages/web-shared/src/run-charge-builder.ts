@@ -25,7 +25,13 @@ import type { AccountPrivateState, PolicyOpening } from '../../../contracts/src/
 import { SPENDS_NO_COIN } from './contract-call-built.js';
 import { fromHex } from '../../../src/core/crypto.js';
 import { sumTreeOfLeaves } from '../../../src/midnight/payout-tree.js';
-import { NO_LEG, periodOf, policyOpeningFromWire, retryArgsOf, type PolicyOpeningOnTheWire } from '../../../src/midnight/spending-policy-record.js';
+import {
+  NO_LEG,
+  periodOf,
+  policyOpeningFromWire,
+  retryArgsOf,
+  type PolicyOpeningOnTheWire
+} from '../../../src/midnight/spending-policy-record.js';
 import type { AccountCallChain, GovernedCallDeps } from './governed-call-builder.js';
 import { throwawayKeys } from './vault-builder.js';
 
@@ -108,8 +114,17 @@ type ChargePure = GovernedCallDeps['accountPure'] & {
 };
 
 const CHARGE_FUNCTIONS = [
-  'assetKeyOf', 'policyKeyOf', 'policyCommitmentOf', 'periodKeyOf', 'periodBlindingOf', 'periodTotalOf', 'chargedKeyOf', 'clearedMark',
-  'chargedMark', 'legTakenOf', 'retrySaltOf',
+  'assetKeyOf',
+  'policyKeyOf',
+  'policyCommitmentOf',
+  'periodKeyOf',
+  'periodBlindingOf',
+  'periodTotalOf',
+  'chargedKeyOf',
+  'clearedMark',
+  'chargedMark',
+  'legTakenOf',
+  'retrySaltOf'
 ] as const;
 
 /**
@@ -123,7 +138,7 @@ const MOST_RETRIES_OF_A_LEG = 20;
 const pureOf = (deps: Pick<GovernedCallDeps, 'accountPure'>): ChargePure => {
   const P = deps.accountPure as Partial<ChargePure>;
   if (CHARGE_FUNCTIONS.some((f) => typeof P[f] !== 'function')) {
-    throw new ChargeNotBuilt('this device was not given the account\'s functions for charging a run to its period');
+    throw new ChargeNotBuilt("this device was not given the account's functions for charging a run to its period");
   }
   return P as ChargePure;
 };
@@ -134,19 +149,26 @@ interface ChargeLedgerView {
   readonly signerRoles: { member(key: Uint8Array): boolean; lookup(key: Uint8Array): Uint8Array };
 }
 
-const viewOf = (deps: Pick<GovernedCallDeps, 'runtimeState' | 'accountLedger'>, accountState: Uint8Array): ChargeLedgerView => {
+const viewOf = (
+  deps: Pick<GovernedCallDeps, 'runtimeState' | 'accountLedger'>,
+  accountState: Uint8Array
+): ChargeLedgerView => {
   if (deps.accountLedger === undefined) {
-    throw new ChargeNotBuilt('this device was not given the account\'s reader, so it cannot read what the chain holds');
+    throw new ChargeNotBuilt("this device was not given the account's reader, so it cannot read what the chain holds");
   }
-  return deps.accountLedger((deps.runtimeState.deserialize(accountState) as { data: unknown }).data) as ChargeLedgerView;
+  return deps.accountLedger(
+    (deps.runtimeState.deserialize(accountState) as { data: unknown }).data
+  ) as ChargeLedgerView;
 };
 
 const bytesOf = (name: string, value: string): Uint8Array => {
-  if (typeof value !== 'string' || !HEX64.test(value)) throw new ChargeNotBuilt(`the ${name} this device was handed is not thirty-two bytes`);
+  if (typeof value !== 'string' || !HEX64.test(value))
+    throw new ChargeNotBuilt(`the ${name} this device was handed is not thirty-two bytes`);
   return fromHex(value);
 };
 const digitsOf = (name: string, value: string): bigint => {
-  if (typeof value !== 'string' || !DIGITS.test(value)) throw new ChargeNotBuilt(`the ${name} this device was handed is not a whole number`);
+  if (typeof value !== 'string' || !DIGITS.test(value))
+    throw new ChargeNotBuilt(`the ${name} this device was handed is not a whole number`);
   return BigInt(value);
 };
 const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -156,11 +178,22 @@ const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length &&
  * total and top node, or null when they do not make the root its record names.
  */
 const treeOf = (run: RunTreeOnTheWire, asset: string): { root: string; total: bigint; top: bigint } | null => {
-  if (!Array.isArray(run.leaves) || !Array.isArray(run.amounts) || run.leaves.length === 0
-    || run.leaves.length !== run.amounts.length || !run.leaves.every((l) => HEX64.test(String(l)))
-    || !run.amounts.every((a) => DIGITS.test(String(a))) || !HEX64.test(String(run.root))) return null;
+  if (
+    !Array.isArray(run.leaves) ||
+    !Array.isArray(run.amounts) ||
+    run.leaves.length === 0 ||
+    run.leaves.length !== run.amounts.length ||
+    !run.leaves.every((l) => HEX64.test(String(l))) ||
+    !run.amounts.every((a) => DIGITS.test(String(a))) ||
+    !HEX64.test(String(run.root))
+  )
+    return null;
   try {
-    const tree = sumTreeOfLeaves(run.leaves.map((l) => l as `${string}`) as never, run.amounts.map((a) => BigInt(a)), asset as never);
+    const tree = sumTreeOfLeaves(
+      run.leaves.map((l) => l as `${string}`) as never,
+      run.amounts.map((a) => BigInt(a)),
+      asset as never
+    );
     if (tree.root.toLowerCase() !== run.root.toLowerCase()) return null;
     return { root: tree.root.toLowerCase(), total: tree.total, top: tree.top as unknown as bigint };
   } catch {
@@ -169,7 +202,11 @@ const treeOf = (run: RunTreeOnTheWire, asset: string): { root: string; total: bi
 };
 
 /** Where the chain keeps a vault's policy for one token and one period's running total, made by the contract's own functions. */
-interface PeriodKeys { readonly policyKey: Uint8Array; readonly commitment: Uint8Array; readonly periodKey: Uint8Array }
+interface PeriodKeys {
+  readonly policyKey: Uint8Array;
+  readonly commitment: Uint8Array;
+  readonly periodKey: Uint8Array;
+}
 
 /**
  * **THE PERIOD'S RUNNING TOTAL, WORKED OUT AGAIN FROM THE CHAIN AND THE
@@ -182,22 +219,31 @@ interface PeriodKeys { readonly policyKey: Uint8Array; readonly commitment: Uint
  * company's records do not account for.
  */
 function periodTotalIn(
-  deps: Pick<GovernedCallDeps, 'accountPure'>, view: ChargeLedgerView, ask: PeriodTotalAskOnTheWire,
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  view: ChargeLedgerView,
+  ask: PeriodTotalAskOnTheWire
 ): { readonly spent: bigint; readonly keys: PeriodKeys; readonly policy: PolicyOpening; readonly period: bigint } {
   const P = pureOf(deps);
   const policy = policyOpeningFromWire(ask.policy);
   const period = digitsOf('period', ask.period);
   const asset = String(ask.asset).toLowerCase();
-  const assetKey = P.assetKeyOf(bytesOf('currency', asset), bytesOf('account\'s asset blinding', String(ask.assetBlinding).toLowerCase()));
+  const assetKey = P.assetKeyOf(
+    bytesOf('currency', asset),
+    bytesOf("account's asset blinding", String(ask.assetBlinding).toLowerCase())
+  );
   const policyKey = P.policyKeyOf(bytesOf('vault', String(ask.vault).toLowerCase()), assetKey);
   if (!view.signerRoles.member(policyKey)) {
-    throw new ChargeNotBuilt('the chain holds no spending policy for this vault in the currency this run pays in, so there is no '
-      + 'period to charge it to. Set a policy for this currency first');
+    throw new ChargeNotBuilt(
+      'the chain holds no spending policy for this vault in the currency this run pays in, so there is no ' +
+        'period to charge it to. Set a policy for this currency first'
+    );
   }
   const commitment = view.signerRoles.lookup(policyKey);
   if (!same(commitment, P.policyCommitmentOf(policy))) {
-    throw new ChargeNotBuilt('the policy this device opened is not the one the chain holds for this vault and currency. Reload the '
-      + 'page to get the current policy and try again');
+    throw new ChargeNotBuilt(
+      'the policy this device opened is not the one the chain holds for this vault and currency. Reload the ' +
+        'page to get the current policy and try again'
+    );
   }
   const periodKey = P.periodKeyOf(policyKey, commitment, period);
   const counted = new Set<string>();
@@ -215,9 +261,11 @@ function periodTotalIn(
     return { spent, keys, policy, period };
   }
   if (!same(view.signerRoles.lookup(periodKey), P.periodTotalOf(spent, P.periodBlindingOf(policy.blinding, period)))) {
-    throw new ChargeNotBuilt('the company\'s records do not account for everything the chain has charged to this vault in this '
-      + 'period, so this device cannot say what the period has been charged. Reload the page and try again; if it happens '
-      + 'again, a run charged to this period is missing from the company\'s records');
+    throw new ChargeNotBuilt(
+      "the company's records do not account for everything the chain has charged to this vault in this " +
+        'period, so this device cannot say what the period has been charged. Reload the page and try again; if it happens ' +
+        "again, a run charged to this period is missing from the company's records"
+    );
   }
   return { spent, keys, policy, period };
 }
@@ -239,12 +287,17 @@ function periodTotalIn(
  * of their own would cost, and builds nothing.
  */
 function legTakenHere(
-  P: ChargePure, view: ChargeLedgerView,
+  P: ChargePure,
+  view: ChargeLedgerView,
   input: {
-    readonly keys: PeriodKeys; readonly policy: PolicyOpening; readonly period: bigint; readonly asset: string;
-    readonly leg: { readonly root: string; readonly total: bigint }; readonly run: { readonly root: string; readonly total: bigint };
+    readonly keys: PeriodKeys;
+    readonly policy: PolicyOpening;
+    readonly period: bigint;
+    readonly asset: string;
+    readonly leg: { readonly root: string; readonly total: bigint };
+    readonly run: { readonly root: string; readonly total: bigint };
     readonly others: readonly OtherRetryOnTheWire[];
-  },
+  }
 ): bigint {
   const chargedLeg = P.chargedKeyOf(input.keys.periodKey, fromHex(input.leg.root));
   if (!view.signerRoles.member(chargedLeg)) return 0n;
@@ -260,15 +313,22 @@ function legTakenHere(
    * not take only widens the search, never the charge.
    */
   const others = input.others
-    .filter((o) => o.proposal === null || standingIn(P, view, bytesOf('a retry\'s identity', o.proposal.toLowerCase())) !== 'open')
-    .map((o) => treeOf(o, input.asset)).filter((t): t is NonNullable<typeof t> => t !== null);
+    .filter(
+      (o) =>
+        o.proposal === null || standingIn(P, view, bytesOf("a retry's identity", o.proposal.toLowerCase())) !== 'open'
+    )
+    .map((o) => treeOf(o, input.asset))
+    .filter((t): t is NonNullable<typeof t> => t !== null);
   const missing = (why: string): never => {
-    throw new ChargeNotBuilt(`what the chain keeps for the earlier retries of this run's leg is not ${why}, so a retry of this leg `
-      + 'that was charged is missing from the company\'s records this device believes. This retry was not charged as a run of its '
-      + `own instead: that would charge its whole ${input.run.total} to the period, counting its people a second time. Reload the `
-      + 'page and try again; if it happens again, find the missing retry\'s record before paying these people');
+    throw new ChargeNotBuilt(
+      `what the chain keeps for the earlier retries of this run's leg is not ${why}, so a retry of this leg ` +
+        "that was charged is missing from the company's records this device believes. This retry was not charged as a run of its " +
+        `own instead: that would charge its whole ${input.run.total} to the period, counting its people a second time. Reload the ` +
+        "page and try again; if it happens again, find the missing retry's record before paying these people"
+    );
   };
-  if (others.length > MOST_RETRIES_OF_A_LEG) missing(`worked out over more than ${MOST_RETRIES_OF_A_LEG} retries of one leg`);
+  if (others.length > MOST_RETRIES_OF_A_LEG)
+    missing(`worked out over more than ${MOST_RETRIES_OF_A_LEG} retries of one leg`);
   /* Every total some of the other retries make together, up to the leg's own total, which the chain never lets them pass. */
   let totals = new Set<bigint>([0n]);
   for (const o of others) {
@@ -279,7 +339,7 @@ function legTakenHere(
   for (const t of [...totals].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (same(stored, P.legTakenOf(t, blinding))) return t;
   }
-  return missing('any total of the leg\'s other retries in the company\'s records');
+  return missing("any total of the leg's other retries in the company's records");
 }
 
 /**
@@ -299,16 +359,19 @@ const standingIn = (P: ChargePure, view: ChargeLedgerView, id: Uint8Array): RunC
  */
 export function runChargeStandingOf(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'runtimeState' | 'accountLedger'>,
-  input: { readonly accountState: Uint8Array; readonly proposal: string },
+  input: { readonly accountState: Uint8Array; readonly proposal: string }
 ): RunChargeStanding {
-  return standingIn(pureOf(deps), viewOf(deps, input.accountState),
-    bytesOf('proposal\'s identity', String(input.proposal).toLowerCase()));
+  return standingIn(
+    pureOf(deps),
+    viewOf(deps, input.accountState),
+    bytesOf("proposal's identity", String(input.proposal).toLowerCase())
+  );
 }
 
 /** **WHAT A VAULT HAS BEEN CHARGED IN ONE PERIOD UNDER ITS POLICY FOR ONE TOKEN**, worked out again from one block's state. */
 export function periodTotalOf(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'runtimeState' | 'accountLedger'>,
-  input: { readonly accountState: Uint8Array; readonly ask: PeriodTotalAskOnTheWire },
+  input: { readonly accountState: Uint8Array; readonly ask: PeriodTotalAskOnTheWire }
 ): bigint {
   return periodTotalIn(deps, viewOf(deps, input.accountState), input.ask).spent;
 }
@@ -319,13 +382,29 @@ export function periodTotalOf(
  * The charge reads nothing else, and any other field it read would be a
  * refusal rather than a value.
  */
-const recordForACharge = (fields: Pick<AccountPrivateState, 'assetId' | 'assetBlinding' | 'policy' | 'periodSpent' | 'legTaken'>): AccountPrivateState => {
+const recordForACharge = (
+  fields: Pick<AccountPrivateState, 'assetId' | 'assetBlinding' | 'policy' | 'periodSpent' | 'legTaken'>
+): AccountPrivateState => {
   const record = {} as AccountPrivateState;
-  for (const [field, value] of Object.entries(fields)) Object.defineProperty(record, field, { enumerable: true, value });
-  for (const field of ['secretKey', 'blinding', 'scope', 'rights', 'runOpenings', 'proposalSalt', 'changeAmount', 'changeBatchDigest', 'pinnedPath', 'pinAnyLeaf']) {
+  for (const [field, value] of Object.entries(fields))
+    Object.defineProperty(record, field, { enumerable: true, value });
+  for (const field of [
+    'secretKey',
+    'blinding',
+    'scope',
+    'rights',
+    'runOpenings',
+    'proposalSalt',
+    'changeAmount',
+    'changeBatchDigest',
+    'pinnedPath',
+    'pinAnyLeaf'
+  ]) {
     Object.defineProperty(record, field, {
       enumerable: false,
-      get: () => { throw new ChargeNotBuilt(`charging a run read "${field}" from this device, and a charge has never needed it`); },
+      get: () => {
+        throw new ChargeNotBuilt(`charging a run read "${field}" from this device, and a charge has never needed it`);
+      }
     });
   }
   return Object.freeze(record);
@@ -337,7 +416,11 @@ const recordForACharge = (fields: Pick<AccountPrivateState, 'assetId' | 'assetBl
  * error's own message.
  */
 const whatTheContractSaid = (e: unknown): string => {
-  for (let x = e as { message?: unknown; cause?: unknown } | null | undefined, depth = 0; x != null && depth < 8; x = x.cause as typeof x, depth += 1) {
+  for (
+    let x = e as { message?: unknown; cause?: unknown } | null | undefined, depth = 0;
+    x != null && depth < 8;
+    x = x.cause as typeof x, depth += 1
+  ) {
     const m = typeof x.message === 'string' ? /^failed assert: (.+)$/su.exec(x.message) : null;
     if (m !== null) return m[1]!;
   }
@@ -357,18 +440,27 @@ interface ChargeBuilt {
  * fresh half and the leg's tree, or null for a run of its own.
  */
 const raisedAs = (P: ChargePure, r: RunToChargeOnTheWire, asset: string) => {
-  const fresh = bytesOf('run\'s fresh salt', String(r.fresh ?? '').toLowerCase());
+  const fresh = bytesOf("run's fresh salt", String(r.fresh ?? '').toLowerCase());
   const leg = r.retry === undefined ? null : treeOf(r.retry.leg, asset);
   if (r.retry !== undefined && leg === null) {
-    throw new ChargeNotBuilt('the leg this retry pays again does not make the root its record names, so this device cannot say what '
-      + 'the retry may take without a charge. Reload the page and try again; if it happens again, do not pay it');
+    throw new ChargeNotBuilt(
+      'the leg this retry pays again does not make the root its record names, so this device cannot say what ' +
+        'the retry may take without a charge. Reload the page and try again; if it happens again, do not pay it'
+    );
   }
-  if (!same(P.retrySaltOf(leg === null ? NO_LEG() : fromHex(leg.root), fresh), bytesOf('proposal\'s salt', String(r.salt).toLowerCase()))) {
-    throw new ChargeNotBuilt(leg === null
-      ? 'this run\'s proposal was not raised as a run of its own with the salt its record holds, so the chain will not charge it. If it '
-        + 'was raised before this version, withdraw it and raise it again'
-      : 'this retry\'s proposal was not raised over the leg its record names, so the chain will not charge it. If it was raised '
-        + 'before this version, withdraw it and raise it again');
+  if (
+    !same(
+      P.retrySaltOf(leg === null ? NO_LEG() : fromHex(leg.root), fresh),
+      bytesOf("proposal's salt", String(r.salt).toLowerCase())
+    )
+  ) {
+    throw new ChargeNotBuilt(
+      leg === null
+        ? "this run's proposal was not raised as a run of its own with the salt its record holds, so the chain will not charge it. If it " +
+            'was raised before this version, withdraw it and raise it again'
+        : "this retry's proposal was not raised over the leg its record names, so the chain will not charge it. If it was raised " +
+            'before this version, withdraw it and raise it again'
+    );
   }
   return { fresh, leg };
 };
@@ -386,33 +478,44 @@ const raisedAs = (P: ChargePure, r: RunToChargeOnTheWire, asset: string) => {
 export async function buildClearRun(
   deps: GovernedCallDeps,
   input: {
-    readonly account: string; readonly run: RunToChargeOnTheWire; readonly runs: readonly RunTreeOnTheWire[];
+    readonly account: string;
+    readonly run: RunToChargeOnTheWire;
+    readonly runs: readonly RunTreeOnTheWire[];
     readonly chain: AccountCallChain;
-  },
+  }
 ): Promise<ChargeBuilt> {
   const account = String(input.account).toLowerCase();
   if (!HEX64.test(account)) throw new ChargeNotBuilt('this charge is not for a company account this device can name');
   const r = input.run;
   const asset = String(r.asset).toLowerCase();
   const vault = String(r.vault).toLowerCase();
-  const window = { opensAt: digitsOf('window\'s opening', r.opensAt), closesAt: digitsOf('window\'s closing', r.closesAt) };
+  const window = {
+    opensAt: digitsOf("window's opening", r.opensAt),
+    closesAt: digitsOf("window's closing", r.closesAt)
+  };
   const required = digitsOf('approvals needed', r.required);
   const tree = treeOf(r, asset);
-  if (tree === null) throw new ChargeNotBuilt('this run\'s leaves and amounts do not make the root its record names');
-  const id = bytesOf('proposal\'s identity', String(r.proposal).toLowerCase());
+  if (tree === null) throw new ChargeNotBuilt("this run's leaves and amounts do not make the root its record names");
+  const id = bytesOf("proposal's identity", String(r.proposal).toLowerCase());
   const payees = BigInt(r.leaves.length);
   const made = deps.accountPure.proposalIdOf(
     deps.accountPure.runPayload(fromHex(tree.root), payees, window.opensAt, window.closesAt, required),
-    bytesOf('vault', vault), bytesOf('proposal\'s salt', String(r.salt).toLowerCase()));
+    bytesOf('vault', vault),
+    bytesOf("proposal's salt", String(r.salt).toLowerCase())
+  );
   if (!same(made, id)) {
-    throw new ChargeNotBuilt('this run, its window, its vault or the approvals it needs are not the ones its proposal was raised '
-      + 'with. Reload the page and try again; if it happens again, do not pay it');
+    throw new ChargeNotBuilt(
+      'this run, its window, its vault or the approvals it needs are not the ones its proposal was raised ' +
+        'with. Reload the page and try again; if it happens again, do not pay it'
+    );
   }
   const opening = policyOpeningFromWire(r.policy);
   const period = periodOf(opening, window);
   if (period === null) {
-    throw new ChargeNotBuilt('this run\'s window does not lie inside one period of its vault\'s spending policy, so it cannot be '
-      + 'charged; raise it again inside one period');
+    throw new ChargeNotBuilt(
+      "this run's window does not lie inside one period of its vault's spending policy, so it cannot be " +
+        'charged; raise it again inside one period'
+    );
   }
   const P = pureOf(deps);
   const view = viewOf(deps, input.chain.accountState);
@@ -422,36 +525,75 @@ export async function buildClearRun(
   }
   if (standing === 'charged') return { proven: null, spent: null };
   const { spent, keys: periodKeys } = periodTotalIn(deps, view, {
-    vault, asset, assetBlinding: r.assetBlinding, policy: r.policy, period: period.toString(), runs: input.runs,
+    vault,
+    asset,
+    assetBlinding: r.assetBlinding,
+    policy: r.policy,
+    period: period.toString(),
+    runs: input.runs
   });
   const { fresh, leg } = raisedAs(P, r, asset);
-  const taken = leg === null ? 0n : legTakenHere(P, view, { keys: periodKeys, policy: opening, period, leg, run: tree, others: r.retry!.others, asset });
+  const taken =
+    leg === null
+      ? 0n
+      : legTakenHere(P, view, {
+          keys: periodKeys,
+          policy: opening,
+          period,
+          leg,
+          run: tree,
+          others: r.retry!.others,
+          asset
+        });
   const record = recordForACharge({
-    assetId: bytesOf('currency', asset), assetBlinding: bytesOf('account\'s asset blinding', String(r.assetBlinding).toLowerCase()),
-    policy: opening, periodSpent: spent, legTaken: taken,
+    assetId: bytesOf('currency', asset),
+    assetBlinding: bytesOf("account's asset blinding", String(r.assetBlinding).toLowerCase()),
+    policy: opening,
+    periodSpent: spent,
+    legTaken: taken
   });
   const { coinPublicKey, encryptionPublicKey } = throwawayKeys(deps);
   let built: Awaited<ReturnType<GovernedCallDeps['contracts']['buildCall']>>;
   try {
-    built = await deps.contracts.buildCall(deps.accountZkConfig, {
-      compiledContract: deps.accountCompiled,
-      circuitId: 'clearRun',
-      contractAddress: account,
-      coinPublicKey,
-      /* A charge moves no coin, so the builder is given no commitment tree to read. */
-      network: deps.network,
-      read: { contract: input.chain.accountState, zswap: SPENDS_NO_COIN, parameters: input.chain.parameters },
-      initialPrivateState: record,
-      args: [id, fromHex(vault), fromHex(tree.root), payees, window.opensAt, window.closesAt, required,
-        fromHex(String(r.salt).toLowerCase()), tree.top, tree.total, period,
-        ...retryArgsOf(fresh, leg === null ? undefined : { leg: fromHex(leg.root), legTop: leg.top, legTotal: leg.total })],
-    }, encryptionPublicKey);
+    built = await deps.contracts.buildCall(
+      deps.accountZkConfig,
+      {
+        compiledContract: deps.accountCompiled,
+        circuitId: 'clearRun',
+        contractAddress: account,
+        coinPublicKey,
+        /* A charge moves no coin, so the builder is given no commitment tree to read. */
+        network: deps.network,
+        read: { contract: input.chain.accountState, zswap: SPENDS_NO_COIN, parameters: input.chain.parameters },
+        initialPrivateState: record,
+        args: [
+          id,
+          fromHex(vault),
+          fromHex(tree.root),
+          payees,
+          window.opensAt,
+          window.closesAt,
+          required,
+          fromHex(String(r.salt).toLowerCase()),
+          tree.top,
+          tree.total,
+          period,
+          ...retryArgsOf(
+            fresh,
+            leg === null ? undefined : { leg: fromHex(leg.root), legTop: leg.top, legTotal: leg.total }
+          )
+        ]
+      },
+      encryptionPublicKey
+    );
   } catch (e) {
     if (e instanceof ChargeNotBuilt) throw e;
     throw new ChargeNotBuilt(`this run could not be charged to its period: ${whatTheContractSaid(e)}`, { cause: e });
   }
   if (built.private.nextPrivateState !== record) {
-    throw new ChargeNotBuilt('the charge changed this device\'s record for the company, and nothing here keeps a record between calls');
+    throw new ChargeNotBuilt(
+      "the charge changed this device's record for the company, and nothing here keeps a record between calls"
+    );
   }
   const proven = await deps.prove(built.private.unprovenTx, 'clearRun');
   return { proven: proven.serialize(), spent };

@@ -4,7 +4,10 @@
  */
 import type { CallAsBuilt } from '../../../src/midnight/note-index.js';
 import {
-  PUBLIC_DEPOSIT_ENTRY, type PublicDepositCallRefusal, publicTakesOfTranscript, readPublicDepositCall,
+  PUBLIC_DEPOSIT_ENTRY,
+  type PublicDepositCallRefusal,
+  publicTakesOfTranscript,
+  readPublicDepositCall
 } from './public-deposit-call.js';
 import { hex, type VaultBuilderDeps } from './vault-builder.js';
 
@@ -59,7 +62,10 @@ const coinsForContractsIn = (offer: unknown): CoinForAContract[] | null => {
   if (offer === undefined || offer === null) return [];
   const o = offer as { outputs?: unknown; transients?: unknown };
   const found: CoinForAContract[] = [];
-  for (const [list, madeAndSpent] of [[o.outputs, false], [o.transients, true]] as const) {
+  for (const [list, madeAndSpent] of [
+    [o.outputs, false],
+    [o.transients, true]
+  ] as const) {
     if (list === undefined || list === null) continue;
     if (!Array.isArray(list)) return null;
     for (const coin of list as Array<{ contractAddress?: unknown; commitment?: unknown } | null>) {
@@ -69,7 +75,7 @@ const coinsForContractsIn = (offer: unknown): CoinForAContract[] | null => {
       found.push({
         contract: bareHex(coin.contractAddress),
         commitment: coin.commitment instanceof Uint8Array ? hex(coin.commitment) : bareHex(coin.commitment),
-        ...(madeAndSpent ? { madeAndSpent: true as const } : {}),
+        ...(madeAndSpent ? { madeAndSpent: true as const } : {})
       });
     }
   }
@@ -77,7 +83,11 @@ const coinsForContractsIn = (offer: unknown): CoinForAContract[] | null => {
 };
 
 /** The public tokens one call's transcripts take in, or null when a transcript cannot be read. */
-const publicTakesOf = (address: string, entryPoint: string, action: { guaranteedTranscript?: unknown; fallibleTranscript?: unknown }): PublicTake[] | null => {
+const publicTakesOf = (
+  address: string,
+  entryPoint: string,
+  action: { guaranteedTranscript?: unknown; fallibleTranscript?: unknown }
+): PublicTake[] | null => {
   const takes: PublicTake[] = [];
   for (const transcript of [action.guaranteedTranscript, action.fallibleTranscript]) {
     if (transcript === undefined || transcript === null) continue;
@@ -111,7 +121,7 @@ export function readTransaction(deps: Pick<VaultBuilderDeps, 'ledger'>, bytes: U
   } catch {
     return null;
   }
-  const intents = tx?.intents instanceof Map ? [...tx.intents.entries()] as Array<[unknown, any]> : [];
+  const intents = tx?.intents instanceof Map ? ([...tx.intents.entries()] as Array<[unknown, any]>) : [];
   let timeToLive: number | null = intents.length === 0 ? null : Number.POSITIVE_INFINITY;
   const calls: CallAsBuilt[] = [];
   let publicTakes: PublicTake[] | null = [];
@@ -126,14 +136,20 @@ export function readTransaction(deps: Pick<VaultBuilderDeps, 'ledger'>, bytes: U
       if (action.guaranteedTranscript !== undefined && action.guaranteedTranscript !== null) parts.push(0);
       if (action.fallibleTranscript !== undefined && action.fallibleTranscript !== null) parts.push(Number(segment));
       const address = String(action.address).toLowerCase().replace(/^0x/u, '');
-      const entryPoint = action.entryPoint instanceof Uint8Array ? new TextDecoder().decode(action.entryPoint) : String(action.entryPoint);
+      const entryPoint =
+        action.entryPoint instanceof Uint8Array
+          ? new TextDecoder().decode(action.entryPoint)
+          : String(action.entryPoint);
       calls.push({ address, entryPoint, segments: parts });
       const takes = publicTakesOf(address, entryPoint, action);
       publicTakes = publicTakes === null || takes === null ? null : [...publicTakes, ...takes];
       if (entryPoint === PUBLIC_DEPOSIT_ENTRY) {
         const deposit = readPublicDepositCall(action, address);
-        publicDeposits.push('refused' in deposit ? { vault: address, refused: deposit.refused }
-          : { vault: address, colour: deposit.colour, amount: deposit.amount.toString() });
+        publicDeposits.push(
+          'refused' in deposit
+            ? { vault: address, refused: deposit.refused }
+            : { vault: address, colour: deposit.colour, amount: deposit.amount.toString() }
+        );
       }
     }
   }
@@ -156,7 +172,10 @@ export function readTransaction(deps: Pick<VaultBuilderDeps, 'ledger'>, bytes: U
  * them can no longer land, each one's own being its earliest intent's (`readTransaction`). Null when there are none or
  * any one cannot be read, so a transaction this cannot read is never taken for one that has run out.
  */
-export function newestTimeToLive(deps: Pick<VaultBuilderDeps, 'ledger'>, transactions: readonly Uint8Array[]): number | null {
+export function newestTimeToLive(
+  deps: Pick<VaultBuilderDeps, 'ledger'>,
+  transactions: readonly Uint8Array[]
+): number | null {
   let newest: number | null = null;
   for (const bytes of transactions) {
     const ttl = readTransaction(deps, bytes)?.timeToLive ?? null;

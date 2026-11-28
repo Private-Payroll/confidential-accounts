@@ -74,7 +74,14 @@ const forRefusal = (f: AddressClaimFor): string | null => {
 export function addressClaimChallenge(f: AddressClaimFor): string {
   const why = forRefusal(f);
   if (why !== null) throw new Error(`this is not something an address can be claimed for: ${why}.`);
-  const text = JSON.stringify([ADDRESS_CLAIM_DOMAIN, f.company, f.person, f.payslipKey.toLowerCase(), f.address, f.network]);
+  const text = JSON.stringify([
+    ADDRESS_CLAIM_DOMAIN,
+    f.company,
+    f.person,
+    f.payslipKey.toLowerCase(),
+    f.address,
+    f.network
+  ]);
   return Buffer.from(sha256(new TextEncoder().encode(text))).toString('hex');
 }
 
@@ -83,11 +90,22 @@ export function readAddressClaim(value: unknown): AddressClaim | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Record<string, unknown>;
   const keys = Object.keys(v).sort().join(',');
-  if (v.kind === 'unshielded' && keys === 'address,kind,signature,verifyingKey'
-    && typeof v.address === 'string' && ADDRESS.test(v.address)
-    && typeof v.verifyingKey === 'string' && HEX64.test(v.verifyingKey)
-    && typeof v.signature === 'string' && HEX128.test(v.signature)) {
-    return Object.freeze({ kind: 'unshielded', address: v.address, verifyingKey: v.verifyingKey, signature: v.signature });
+  if (
+    v.kind === 'unshielded' &&
+    keys === 'address,kind,signature,verifyingKey' &&
+    typeof v.address === 'string' &&
+    ADDRESS.test(v.address) &&
+    typeof v.verifyingKey === 'string' &&
+    HEX64.test(v.verifyingKey) &&
+    typeof v.signature === 'string' &&
+    HEX128.test(v.signature)
+  ) {
+    return Object.freeze({
+      kind: 'unshielded',
+      address: v.address,
+      verifyingKey: v.verifyingKey,
+      signature: v.signature
+    });
   }
   return null;
 }

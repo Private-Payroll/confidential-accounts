@@ -19,18 +19,24 @@ const seeds = [{ epoch: 0, seed: '5e'.repeat(32) }];
 const identity = { accountId: 'acc_1', runId: 'run_1', epoch: 0 };
 const TOKEN = 'ab'.repeat(32);
 const facts = [1, 2, 3].map((i) => ({
-  payee: payeeFor(toHex(new Uint8Array(32).fill(i)), 'undeployed'), token: TOKEN, amount: BigInt(i * 1_000),
+  payee: payeeFor(toHex(new Uint8Array(32).fill(i)), 'undeployed'),
+  token: TOKEN,
+  amount: BigInt(i * 1_000)
 }));
 
-describe('what the payee\'s device looks for is what the account records', () => {
-  it('EVERY PAYEE\'S VALUE, BUILT FROM WHAT THAT PAYEE HOLDS, IS THE VALUE OF THEIR OWN LEAF', async () => {
+describe("what the payee's device looks for is what the account records", () => {
+  it("EVERY PAYEE'S VALUE, BUILT FROM WHAT THAT PAYEE HOLDS, IS THE VALUE OF THEIR OWN LEAF", async () => {
     const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TOKEN);
     /* The worker's own loader: the vault's and the account's compiled contracts, loaded side by side. */
     const circuits = await contractCircuits();
     facts.forEach((f, i) => {
       const args = run.payeeArgs(i);
       const built = movementOfPayslip(circuits, {
-        paidTo: f.payee.bech32, token: TOKEN, amount: f.amount.toString(), nonce: args.nonce, blinding: args.blinding,
+        paidTo: f.payee.bech32,
+        token: TOKEN,
+        amount: f.amount.toString(),
+        nonce: args.nonce,
+        blinding: args.blinding
       });
       /*
        * RED WHEN any step is not the contract's own: the unshielded details
@@ -41,15 +47,23 @@ describe('what the payee\'s device looks for is what the account records', () =>
     });
   });
 
-  it('A COLLEAGUE\'S SECRETS, OR ANOTHER ADDRESS, BUILD A VALUE THAT IS NOBODY\'S', async () => {
+  it("A COLLEAGUE'S SECRETS, OR ANOTHER ADDRESS, BUILD A VALUE THAT IS NOBODY'S", async () => {
     const run = buildRun(seeds, identity, facts, vaultDetails, payFor(facts), TOKEN);
     const circuits = await contractCircuits();
     const all = new Set(run.tree.leaves.map(paidMovementOfLeaf));
     const eli = run.payeeArgs(1);
     /* Dana's address with Eli's nonce and blinding. RED WHEN the address is not bound into the value. */
-    expect(all.has(movementOfPayslip(circuits, {
-      paidTo: facts[0]!.payee.bech32, token: TOKEN, amount: facts[1]!.amount.toString(), nonce: eli.nonce, blinding: eli.blinding,
-    }))).toBe(false);
+    expect(
+      all.has(
+        movementOfPayslip(circuits, {
+          paidTo: facts[0]!.payee.bech32,
+          token: TOKEN,
+          amount: facts[1]!.amount.toString(),
+          nonce: eli.nonce,
+          blinding: eli.blinding
+        })
+      )
+    ).toBe(false);
   });
 
   it('A MAINNET ADDRESS, WHICH NAMES NO NETWORK, BUILDS THE SAME VALUE AS ITS OWN LEAF', async () => {
@@ -63,13 +77,18 @@ describe('what the payee\'s device looks for is what the account records', () =>
      * its own value at all, which a network check that refused the symbol
      * without mapping it would do.
      */
-    expect(movementOfPayslip(await contractCircuits(), {
-      paidTo: onMainnet[0]!.payee.bech32, token: TOKEN, amount: onMainnet[0]!.amount.toString(),
-      nonce: args.nonce, blinding: args.blinding,
-    })).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
+    expect(
+      movementOfPayslip(await contractCircuits(), {
+        paidTo: onMainnet[0]!.payee.bech32,
+        token: TOKEN,
+        amount: onMainnet[0]!.amount.toString(),
+        nonce: args.nonce,
+        blinding: args.blinding
+      })
+    ).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
   });
 
-  it('A PUBLIC PAYEE\'S VALUE, BUILT FROM WHAT THEY HOLD, IS THE VALUE OF THEIR OWN PUBLIC LEAF', async () => {
+  it("A PUBLIC PAYEE'S VALUE, BUILT FROM WHAT THEY HOLD, IS THE VALUE OF THEIR OWN PUBLIC LEAF", async () => {
     /*
      * One person paid publicly and one privately, from the SAME thirty-two
      * bytes. One run pays one form, so they are two runs side by side, as a
@@ -78,21 +97,35 @@ describe('what the payee\'s device looks for is what the account records', () =>
     const bytes = toHex(new Uint8Array(32).fill(9));
     const mixed = [
       { payee: unshieldedPayeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
-      { payee: payeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n },
+      { payee: payeeFor(bytes, 'undeployed'), token: TOKEN, amount: 4_000n }
     ];
     const circuits = await contractCircuits();
     mixed.forEach((f) => {
       const alone = [f];
-      const run = buildRun(seeds, { ...identity, runId: `run_1:${f.payee.kind}` }, alone, vaultDetails, payFor(alone), TOKEN);
+      const run = buildRun(
+        seeds,
+        { ...identity, runId: `run_1:${f.payee.kind}` },
+        alone,
+        vaultDetails,
+        payFor(alone),
+        TOKEN
+      );
       const args = run.payeeArgs(0);
       /*
        * RED WHEN the device builds every value with the shielded details
        * circuit, or reads the kind from anything but the address: the public
        * payee's value is then not their leaf's.
        */
-      expect(movementOfPayslip(circuits, {
-        paidTo: f.payee.bech32, token: TOKEN, amount: f.amount.toString(), nonce: args.nonce, blinding: args.blinding,
-      }), f.payee.kind).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
+      expect(
+        movementOfPayslip(circuits, {
+          paidTo: f.payee.bech32,
+          token: TOKEN,
+          amount: f.amount.toString(),
+          nonce: args.nonce,
+          blinding: args.blinding
+        }),
+        f.payee.kind
+      ).toBe(paidMovementOfLeaf(run.tree.leaves[0]!));
     });
   });
 
@@ -100,9 +133,17 @@ describe('what the payee\'s device looks for is what the account records', () =>
     const circuits = await contractCircuits();
     for (const paidTo of ['', 'mn_addr_undeployed1qqqq', 'nonsense']) {
       /* RED WHEN something that does not decode builds a value anyway. */
-      expect(() => movementOfPayslip(circuits, {
-        paidTo, token: TOKEN, amount: '1', nonce: '01'.repeat(32), blinding: '02'.repeat(32),
-      }), paidTo).toThrow();
+      expect(
+        () =>
+          movementOfPayslip(circuits, {
+            paidTo,
+            token: TOKEN,
+            amount: '1',
+            nonce: '01'.repeat(32),
+            blinding: '02'.repeat(32)
+          }),
+        paidTo
+      ).toThrow();
     }
   });
 });

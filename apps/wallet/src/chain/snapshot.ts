@@ -40,12 +40,19 @@ const bytesOf = (hex: string): Uint8Array => {
 export function snapshotFacts(serialized: string): SnapshotFacts | null {
   try {
     const snapshot = JSON.parse(serialized) as {
-      publicKeys?: { coinPublicKey?: unknown }; networkId?: unknown; state?: unknown;
+      publicKeys?: { coinPublicKey?: unknown };
+      networkId?: unknown;
+      state?: unknown;
     } | null;
     const coinPublicKey = snapshot?.publicKeys?.coinPublicKey;
     const networkId = snapshot?.networkId;
     const state = snapshot?.state;
-    if (typeof coinPublicKey !== 'string' || typeof networkId !== 'string' || typeof state !== 'string' || !HEX.test(state)) {
+    if (
+      typeof coinPublicKey !== 'string' ||
+      typeof networkId !== 'string' ||
+      typeof state !== 'string' ||
+      !HEX.test(state)
+    ) {
       return null;
     }
     const local = ZswapLocalState.deserialize(bytesOf(state));

@@ -34,11 +34,12 @@ export const toldOf = (changed: VaultsChanged): VaultsChangedTold => ({
   vaultsAwaiting: changed.filter((v) => v.state === 'awaiting-approvals').length,
   vaultsOwed: changed.filter((v) => v.state === 'owed').length,
   vaultsWaiting: changed.filter((v) => v.state === 'waits' || v.state === 'not-this-seat').length,
-  vaultsNotChanged: changed.filter((v) => v.state === 'not-rotated').length,
+  vaultsNotChanged: changed.filter((v) => v.state === 'not-rotated').length
 });
 
 /** True when a vault still owes its change: anything but a vault on its new secret or one that owed nothing. */
-export const stillOwed = (changed: VaultsChanged): boolean => changed.some((v) => v.state !== 'rotated' && v.state !== 'not-owed');
+export const stillOwed = (changed: VaultsChanged): boolean =>
+  changed.some((v) => v.state !== 'rotated' && v.state !== 'not-owed');
 
 /**
  * Changes the secret of `o.vault`, or of every vault the account has adopted on the chain and every retired one whose
@@ -50,24 +51,32 @@ export const stillOwed = (changed: VaultsChanged): boolean => changed.some((v) =
  * it throws only when the company's account, the retired vaults it was not handed, or this seat's doors cannot be read.
  */
 export async function vaultSecretsChangedHere(
-  ctx: StepContext, r: CompanyReach, reach: VaultDoorsReach, rotation: Pick<RotationDoors, 'leaving' | 'admitted'>,
-  may: 'raise' | 'finish', o: { readonly leaf?: string; readonly vault?: Hex; readonly retired?: readonly Hex[] } = {},
+  ctx: StepContext,
+  r: CompanyReach,
+  reach: VaultDoorsReach,
+  rotation: Pick<RotationDoors, 'leaving' | 'admitted'>,
+  may: 'raise' | 'finish',
+  o: { readonly leaf?: string; readonly vault?: Hex; readonly retired?: readonly Hex[] } = {}
 ): Promise<VaultsChanged> {
   const base = vaultDoorsFor(ctx, r, reach);
   const adopted = (await r.holders()).adoptedVaults.map((v) => v.toLowerCase() as Hex);
-  const asked = o.vault === undefined ? undefined : o.vault.toLowerCase() as Hex;
+  const asked = o.vault === undefined ? undefined : (o.vault.toLowerCase() as Hex);
   /*
    * The retired vaults whose secret is kept, as the caller read them (`o.retired`), or read here only when one may be
    * changed: every vault asked, or one named that the account does not hold.
    */
-  const retired = o.retired ?? (asked !== undefined && adopted.includes(asked) ? [] : await retiredVaultsKeptHere(r, base));
+  const retired =
+    o.retired ?? (asked !== undefined && adopted.includes(asked) ? [] : await retiredVaultsKeptHere(r, base));
   const vaults = asked !== undefined ? [asked] : [...adopted, ...retired];
   if (vaults.length === 0) return [];
   const doors = {
     ...base,
     leaving: rotation.leaving,
     ...(rotation.admitted === undefined ? {} : { admitted: rotation.admitted }),
-    directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster),
+    directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)
   };
-  return vaultSecretsRotatedHere(doors, vaults, may, { ...(o.leaf === undefined ? {} : { leaf: o.leaf }), ...(retired.length === 0 ? {} : { retired }) });
+  return vaultSecretsRotatedHere(doors, vaults, may, {
+    ...(o.leaf === undefined ? {} : { leaf: o.leaf }),
+    ...(retired.length === 0 ? {} : { retired })
+  });
 }

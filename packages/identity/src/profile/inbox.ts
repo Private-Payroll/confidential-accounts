@@ -170,8 +170,9 @@ export function sealToInbox(plaintext: string, inboxPublicKey: string): SealedAc
   if (!/^[0-9a-fA-F]{64}$/u.test(inboxPublicKey)) {
     throw new InboxError(
       'not-an-inbox-key',
-      `an inbox key is ${KEY_BYTES} bytes written as ${KEY_BYTES * 2} hex characters, `
-      + `and that one is ${inboxPublicKey.length} characters. Nothing has been sealed.`);
+      `an inbox key is ${KEY_BYTES} bytes written as ${KEY_BYTES * 2} hex characters, ` +
+        `and that one is ${inboxPublicKey.length} characters. Nothing has been sealed.`
+    );
   }
   const theirPublic = hexToBytes(inboxPublicKey.toLowerCase());
   const ephemeral = x25519.keygen();
@@ -187,8 +188,9 @@ export function sealToInbox(plaintext: string, inboxPublicKey: string): SealedAc
      */
     throw new InboxError(
       'will-not-agree',
-      'that inbox key is the right length and this wallet cannot agree a secret with '
-      + `it: ${(e as Error).message}. Nothing has been sealed and nothing has been sent.`);
+      'that inbox key is the right length and this wallet cannot agree a secret with ' +
+        `it: ${(e as Error).message}. Nothing has been sealed and nothing has been sent.`
+    );
   }
   /* THE BYTES OF THE DIGEST, NOT ITS SPELLING. The header's third instinct. */
   const key = sha256(shared);
@@ -200,10 +202,9 @@ export function sealToInbox(plaintext: string, inboxPublicKey: string): SealedAc
     iv: bytesToHex(iv),
     /* THE READER EMITS `''` AND NEVER READS IT. Not a placeholder to fill in. */
     tag: '',
-    body: bytesToHex(body),
+    body: bytesToHex(body)
   });
 }
-
 
 /* ══════════════════════════════════════════════════════════════════════════
  * THE DIRECTION BACK. THE POLLED INBOX.
@@ -477,13 +478,12 @@ export function inboxKeypair(identity: Identity, index = INBOX_INDEX): InboxKeyp
   const secretKey = identity.authority(Purposes.Inbox, index);
   return Object.freeze({
     publicKey: bytesToHex(x25519.getPublicKey(secretKey)),
-    secretKey,
+    secretKey
   });
 }
 
 /** What a person publishes so a company can write to them. */
-export const inboxKeyOf = (identity: Identity, index = INBOX_INDEX): string =>
-  inboxKeypair(identity, index).publicKey;
+export const inboxKeyOf = (identity: Identity, index = INBOX_INDEX): string => inboxKeypair(identity, index).publicKey;
 
 const HEX_32 = /^[0-9a-f]{64}$/u;
 const HEX_12 = /^[0-9a-f]{24}$/u;
@@ -531,29 +531,31 @@ export function openFromInbox(item: SealedItem, keys: InboxKeypair): Notice {
    * names nothing they or anybody else could act on.
    */
   if (item.tag !== '') {
-    shape('its `tag` is not empty. The authentication tag belongs inside `body` — '
-      + 'it is the last sixteen bytes of what AES-GCM returns — and an item that '
-      + 'carries it here has it in two places.');
+    shape(
+      'its `tag` is not empty. The authentication tag belongs inside `body` — ' +
+        'it is the last sixteen bytes of what AES-GCM returns — and an item that ' +
+        'carries it here has it in two places.'
+    );
   }
 
   let plaintext: string;
   try {
     const shared = x25519.getSharedSecret(keys.secretKey, hexToBytes(item.ephemeral));
     const key = sha256(shared);
-    plaintext = new TextDecoder().decode(
-      gcm(key, hexToBytes(item.iv)).decrypt(hexToBytes(item.body)));
+    plaintext = new TextDecoder().decode(gcm(key, hexToBytes(item.iv)).decrypt(hexToBytes(item.body)));
   } catch (e) {
     throw new InboxError(
       'will-not-open',
-      'this wallet cannot open that item. It is sealed to a key this wallet does not '
-      + `hold, or it was altered after it was sealed: ${(e as Error).message}`);
+      'this wallet cannot open that item. It is sealed to a key this wallet does not ' +
+        `hold, or it was altered after it was sealed: ${(e as Error).message}`
+    );
   }
 
   let body: unknown;
-  try { body = JSON.parse(plaintext); } catch (e) {
-    throw new InboxError(
-      'not-a-notice',
-      `that item opened and what came out is not JSON: ${(e as Error).message}`);
+  try {
+    body = JSON.parse(plaintext);
+  } catch (e) {
+    throw new InboxError('not-a-notice', `that item opened and what came out is not JSON: ${(e as Error).message}`);
   }
   const said = body as Record<string, unknown> | null;
   const wrong: (why: string) => never = (why) => {
@@ -561,27 +563,32 @@ export function openFromInbox(item: SealedItem, keys: InboxKeypair): Notice {
   };
   if (said === null || typeof said !== 'object') wrong('what came out is not an object.');
   if (said.schema !== NOTICE_SCHEMA) {
-    wrong(`it is not a notice: its \`schema\` is ${JSON.stringify(said.schema)} and this `
-      + `wallet reads ${JSON.stringify(NOTICE_SCHEMA)}.`);
+    wrong(
+      `it is not a notice: its \`schema\` is ${JSON.stringify(said.schema)} and this ` +
+        `wallet reads ${JSON.stringify(NOTICE_SCHEMA)}.`
+    );
   }
   const kind = (NOTICE_KINDS as readonly string[]).find((k) => k === said.kind);
   if (kind === undefined) {
-    wrong(`its \`kind\` is ${JSON.stringify(said.kind)}, which this wallet has no words `
-      + `for. It reads ${NOTICE_KINDS.map((k) => `'${k}'`).join(', ')}.`);
+    wrong(
+      `its \`kind\` is ${JSON.stringify(said.kind)}, which this wallet has no words ` +
+        `for. It reads ${NOTICE_KINDS.map((k) => `'${k}'`).join(', ')}.`
+    );
   }
   if (typeof said.at !== 'number' || !Number.isFinite(said.at)) {
     wrong('its `at` is not a number of milliseconds.');
   }
   const from = said.from as Record<string, unknown> | undefined;
-  if (from === undefined || typeof from !== 'object' || from === null
-    || !isText(from.name) || !isText(from.rdns)) {
+  if (from === undefined || typeof from !== 'object' || from === null || !isText(from.name) || !isText(from.rdns)) {
     wrong('its `from` does not carry a `name` and an `rdns` this wallet can show.');
   }
   if (!isText(said.where)) wrong('its `where` is not a place written down.');
   if (!isOrigin(said.where as string)) {
-    wrong(`its \`where\` is ${JSON.stringify(said.where)}, which is not an \`https:\` origin. `
-      + 'This wallet shows a place a person can go to and check; a path, a query or a '
-      + 'scheme that is not https is not one.');
+    wrong(
+      `its \`where\` is ${JSON.stringify(said.where)}, which is not an \`https:\` origin. ` +
+        'This wallet shows a place a person can go to and check; a path, a query or a ' +
+        'scheme that is not https is not one.'
+    );
   }
   if (said.says !== undefined && !isText(said.says)) {
     wrong('its `says` is present and is not one line of text.');
@@ -592,7 +599,7 @@ export function openFromInbox(item: SealedItem, keys: InboxKeypair): Notice {
     at: said.at as number,
     from: Object.freeze({ name: (from as { name: string }).name, rdns: (from as { rdns: string }).rdns }),
     where: said.where as string,
-    ...(said.says === undefined ? {} : { says: said.says as string }),
+    ...(said.says === undefined ? {} : { says: said.says as string })
   });
 }
 
@@ -605,7 +612,11 @@ export function openFromInbox(item: SealedItem, keys: InboxKeypair): Notice {
  */
 function isOrigin(value: string): boolean {
   let url: URL;
-  try { url = new URL(value); } catch { return false; }
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
   return url.protocol === 'https:' && url.origin === value;
 }
 
@@ -623,21 +634,21 @@ function isOrigin(value: string): boolean {
 export type Opening =
   | { readonly of: 'notice'; readonly id: string; readonly notice: Notice }
   | {
-    readonly of: 'unopenable';
-    readonly id: string;
-    readonly code: InboxFailure;
-    readonly why: string;
-  };
+      readonly of: 'unopenable';
+      readonly id: string;
+      readonly code: InboxFailure;
+      readonly why: string;
+    };
 
-export function openAll(
-  items: readonly SealedItem[], keys: InboxKeypair,
-): readonly Opening[] {
+export function openAll(items: readonly SealedItem[], keys: InboxKeypair): readonly Opening[] {
   return items.map((item) => {
     /* The host chose `id`, so it may be anything at all, including absent. A
      * reference nobody can quote is worse than a made-up one only if it is
      * presented as the host's; this says which it is. */
-    const id = typeof item?.id === 'string' && item.id.length > 0 && item.id.length <= 200
-      ? item.id : '(the host gave this item no reference)';
+    const id =
+      typeof item?.id === 'string' && item.id.length > 0 && item.id.length <= 200
+        ? item.id
+        : '(the host gave this item no reference)';
     try {
       return { of: 'notice', id, notice: openFromInbox(item, keys) } as const;
     } catch (e) {
@@ -646,7 +657,7 @@ export function openAll(
         of: 'unopenable',
         id,
         code: error.code ?? 'not-a-sealed-item',
-        why: error.message,
+        why: error.message
       } as const;
     }
   });

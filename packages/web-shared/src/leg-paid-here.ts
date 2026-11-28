@@ -24,8 +24,15 @@ import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { Hex } from '../../../src/core/crypto.js';
 import { planRun, type PlanStep } from '../../../src/midnight/payment-plan.js';
 import { SealedNotePool } from '../../../src/midnight/vault-pool.js';
-import type { PrivatePaymentOnTheWire, PrivatePaymentOrderOnTheWire } from '../../../src/midnight/private-payment-wire.js';
-import { mergeNotesInCompanyVault, NotesMovedUnderAStep, payPrivatelyFromCompanyVault } from './vault-pay-privately-and-merge.js';
+import type {
+  PrivatePaymentOnTheWire,
+  PrivatePaymentOrderOnTheWire
+} from '../../../src/midnight/private-payment-wire.js';
+import {
+  mergeNotesInCompanyVault,
+  NotesMovedUnderAStep,
+  payPrivatelyFromCompanyVault
+} from './vault-pay-privately-and-merge.js';
 import { payPubliclyFromCompanyVault } from './vault-public-payout.js';
 import { vaultNotesHere } from './vault-notes-here.js';
 import { wireOf, type PayoutDoors } from './vault-payment-in-flight.js';
@@ -78,16 +85,23 @@ export interface LegHere {
 export type LegStepSent =
   /** The run charged to its vault's period, before anything was paid; `spentBefore` is what the period had been charged. */
   | { readonly kind: 'charge'; readonly spentBefore: bigint }
-  | { readonly kind: 'merge'; readonly spent: readonly Hex[]; readonly kept: NoteOnTheWire; readonly transactionHash: string }
+  | {
+      readonly kind: 'merge';
+      readonly spent: readonly Hex[];
+      readonly kept: NoteOnTheWire;
+      readonly transactionHash: string;
+    }
   /**
    * A person's payment. `seenAs` is the step's own: `by-what-it-left` when the
    * send named no transaction and the payment was found only by what it left,
    * which cannot say whose payment it was.
    */
   | {
-    readonly kind: 'payment'; readonly index: number; readonly transactionHash: string;
-    readonly seenAs: 'its-own-transaction' | 'by-what-it-left';
-  }
+      readonly kind: 'payment';
+      readonly index: number;
+      readonly transactionHash: string;
+      readonly seenAs: 'its-own-transaction' | 'by-what-it-left';
+    }
   | { readonly kind: 'public-payment'; readonly index: number; readonly txRef: string };
 
 /**
@@ -119,24 +133,31 @@ export class LegNotPayable extends Error {
  * paid, and a step still on its way is waited for, never sent twice.
  */
 export class LegStopped extends Error {
-  constructor(readonly done: LegPaid & { readonly payees: number }, readonly cause: unknown) {
+  constructor(
+    readonly done: LegPaid & { readonly payees: number },
+    readonly cause: unknown
+  ) {
     const sentTo = done.paid.length + done.sentNotNamed.length;
-    super(`${String((cause as Error)?.message ?? cause).replace(/\s*$/u, '')} Before this stop, ${sentTo} of the leg's ${done.payees} `
-      + `payment(s) were sent${done.alreadyPaid.length === 0 ? '' : ` and ${done.alreadyPaid.length} were already paid`}. Paying the `
-      + 'leg again pays only the people still owed.', { cause });
+    super(
+      `${String((cause as Error)?.message ?? cause).replace(/\s*$/u, '')} Before this stop, ${sentTo} of the leg's ${done.payees} ` +
+        `payment(s) were sent${done.alreadyPaid.length === 0 ? '' : ` and ${done.alreadyPaid.length} were already paid`}. Paying the ` +
+        'leg again pays only the people still owed.',
+      { cause }
+    );
     this.name = 'LegStopped';
   }
 }
 
 /** Why a plan with a merge step is not started here: this wallet cannot yet prove the merge. */
-const A_MERGE_IS_NOT_PROVED_HERE = 'This leg\'s plan merges some of the vault\'s notes into one before it pays, and this wallet does not '
-  + 'yet hold the key a merge is proved with, so the run was not charged. Update the wallet and pay the run again.';
+const A_MERGE_IS_NOT_PROVED_HERE =
+  "This leg's plan merges some of the vault's notes into one before it pays, and this wallet does not " +
+  'yet hold the key a merge is proved with, so the run was not charged. Update the wallet and pay the run again.';
 
 /** How many times a leg is planned again after the vault's notes moved under one of its steps, before it stops. */
 const PLANS_AT_MOST = 3;
 
 /** Why a plan with a batch step is not paid: no raise groups payees into batches yet. */
-const A_BATCH_IS_NOT_PAID_YET = 'This leg\'s plan has a batch step, and paying a batch is not built yet.';
+const A_BATCH_IS_NOT_PAID_YET = "This leg's plan has a batch step, and paying a batch is not built yet.";
 
 /**
  * **ONE STEP OF THE PLAN, SENT, BY ITS KIND.** A batch is a step the planner
@@ -144,19 +165,29 @@ const A_BATCH_IS_NOT_PAID_YET = 'This leg\'s plan has a batch step, and paying a
  * batches yet; it is refused by name rather than sent some other way.
  */
 async function sendStep(
-  doors: LegDoors, order: PrivatePaymentOrderOnTheWire, owed: readonly PrivatePaymentOnTheWire[],
-  step: PlanStep, notes: readonly NoteOnTheWire[], beforeAPayment: () => Promise<void>,
+  doors: LegDoors,
+  order: PrivatePaymentOrderOnTheWire,
+  owed: readonly PrivatePaymentOnTheWire[],
+  step: PlanStep,
+  notes: readonly NoteOnTheWire[],
+  beforeAPayment: () => Promise<void>
 ): Promise<{ readonly sent: LegStepSent; readonly kept: NoteOnTheWire | null }> {
   switch (step.kind) {
     case 'merge': {
       const r = await mergeNotesInCompanyVault(doors, { vault: order.vault, notes });
-      return { sent: { kind: 'merge', spent: r.spent, kept: r.kept, transactionHash: r.transactionHash }, kept: r.kept };
+      return {
+        sent: { kind: 'merge', spent: r.spent, kept: r.kept, transactionHash: r.transactionHash },
+        kept: r.kept
+      };
     }
     case 'payment': {
       await beforeAPayment();
       const payment = owed[step.unit]!;
       const r = await payPrivatelyFromCompanyVault(doors, { order, payment, notes });
-      return { sent: { kind: 'payment', index: payment.index, transactionHash: r.transactionHash, seenAs: r.seenAs }, kept: r.change };
+      return {
+        sent: { kind: 'payment', index: payment.index, transactionHash: r.transactionHash, seenAs: r.seenAs },
+        kept: r.change
+      };
     }
     case 'batch':
       throw new LegNotPayable(A_BATCH_IS_NOT_PAID_YET);
@@ -186,10 +217,16 @@ export async function payAnApprovedLeg(doors: LegDoors, leg: LegHere): Promise<L
     return await legPaidStepByStep(doors, leg, done);
   } catch (e) {
     if (done.steps.length === 0 || e instanceof LegStopped) throw e;
-    throw new LegStopped({
-      paid: [...done.paid], sentNotNamed: [...done.sentNotNamed], alreadyPaid: [...(done.alreadyPaid ?? [])], steps: [...done.steps],
-      payees: done.payees,
-    }, e);
+    throw new LegStopped(
+      {
+        paid: [...done.paid],
+        sentNotNamed: [...done.sentNotNamed],
+        alreadyPaid: [...(done.alreadyPaid ?? [])],
+        steps: [...done.steps],
+        payees: done.payees
+      },
+      e
+    );
   }
 }
 
@@ -210,14 +247,25 @@ async function legPaidStepByStep(doors: LegDoors, leg: LegHere, done: LegProgres
   const chargedFirst = async (toPay: Awaited<ReturnType<typeof legToPayHere>>): Promise<void> => {
     if (chargeSettled) return;
     const charged = await chargeTheRunHere(
-      { ...doors, records: leg.records, accountId: leg.accountId, viewingKey: leg.viewingKey }, toPay);
+      { ...doors, records: leg.records, accountId: leg.accountId, viewingKey: leg.viewingKey },
+      toPay
+    );
     chargeSettled = true;
     if (charged.state === 'charged') steps.push({ kind: 'charge', spentBefore: charged.spentBefore });
   };
   for (let plans = 1; ; plans += 1) {
-    const toPay = await legToPayHere(leg.records, leg.accountId, leg.runId, leg.viewingKey, leg.deps, leg.which, leg.retry);
+    const toPay = await legToPayHere(
+      leg.records,
+      leg.accountId,
+      leg.runId,
+      leg.viewingKey,
+      leg.deps,
+      leg.which,
+      leg.retry
+    );
     const { order } = toPay;
-    const beforeAPayment = () => refuseARunALeaverRaisedHere(leg.records, leg.accountId, leg.viewingKey, toPay.proposalId);
+    const beforeAPayment = () =>
+      refuseARunALeaverRaisedHere(leg.records, leg.accountId, leg.viewingKey, toPay.proposalId);
     alreadyPaid ??= order.payments.filter((p) => p.paid === true).map((p) => p.index);
     done.alreadyPaid = alreadyPaid;
     done.payees = order.payments.length;
@@ -231,7 +279,10 @@ async function legPaidStepByStep(doors: LegDoors, leg: LegHere, done: LegProgres
       await chargedFirst(toPay);
       for (const payment of owed) {
         await beforeAPayment();
-        const r = await payPubliclyFromCompanyVault({ ...doors, paidYet: () => doors.paidYet(payment) }, { order, payment });
+        const r = await payPubliclyFromCompanyVault(
+          { ...doors, paidYet: () => doors.paidYet(payment) },
+          { order, payment }
+        );
         paid.push(payment.index);
         steps.push({ kind: 'public-payment', index: payment.index, txRef: r.txRef });
       }
@@ -244,17 +295,32 @@ async function legPaidStepByStep(doors: LegDoors, leg: LegHere, done: LegProgres
      * them; the leg is planned only from the record as filed (`vaultNotesHere` says, and never throws, what it could not do).
      */
     await vaultNotesHere(doors, order.vault);
-    const pool = await new SealedNotePool(doors.records('pool'),
-      { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers).load(order.vault);
+    const pool = await new SealedNotePool(
+      doors.records('pool'),
+      { signerId: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+      doors.signers
+    ).load(order.vault);
     const first = owed[0]!;
     const plan = planRun({
       token: first.token,
-      notes: pool.notes.map((n) => ({ id: n.nonce, token: n.token, value: n.value, spendable: n.createdIn !== undefined })),
-      units: owed.map((p) => ({ kind: 'payment' as const, payees: [{ id: String(p.index), amount: BigInt(p.amount), nonce: p.nonce }] })),
+      notes: pool.notes.map((n) => ({
+        id: n.nonce,
+        token: n.token,
+        value: n.value,
+        spendable: n.createdIn !== undefined
+      })),
+      units: owed.map((p) => ({
+        kind: 'payment' as const,
+        payees: [{ id: String(p.index), amount: BigInt(p.amount), nonce: p.nonce }]
+      }))
     });
     if (plan.ok === false) throw new LegNotPayable(plan.message);
     if (plan.steps.some((st) => st.kind === 'batch')) throw new LegNotPayable(A_BATCH_IS_NOT_PAID_YET);
-    if (plan.steps.some((st) => st.kind === 'merge') && doors.mergesProvedHere !== undefined && !(await doors.mergesProvedHere())) {
+    if (
+      plan.steps.some((st) => st.kind === 'merge') &&
+      doors.mergesProvedHere !== undefined &&
+      !(await doors.mergesProvedHere())
+    ) {
       throw new LegNotPayable(A_MERGE_IS_NOT_PROVED_HERE);
     }
     /* ---- the leg is payable as planned: the run charged to its period before the plan's first step is sent ---- */
@@ -265,7 +331,8 @@ async function legPaidStepByStep(doors: LegDoors, leg: LegHere, done: LegProgres
       for (const [i, step] of plan.steps.entries()) {
         const notes = step.notes.map((ref) => {
           const note = ref.kind === 'held' ? held.get(ref.id as Hex) : made.get(ref.step);
-          if (note === undefined) throw new LegNotPayable('A step of this leg\'s plan spends a coin no earlier step kept.');
+          if (note === undefined)
+            throw new LegNotPayable("A step of this leg's plan spends a coin no earlier step kept.");
           return note;
         });
         const { sent, kept } = await sendStep(doors, order, owed, step, notes, beforeAPayment);

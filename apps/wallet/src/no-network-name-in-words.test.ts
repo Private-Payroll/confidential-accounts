@@ -9,9 +9,10 @@ import { NETWORK_IDS } from '../../../src/core/networks.js';
  * and never writes one. This reads the send screen's files and refuses any that spell a network id.
  */
 
-const readAll = (folder: URL, pattern: RegExp): { name: string; text: string }[] => readdirSync(folder)
-  .filter((name) => pattern.test(name) && !name.includes('.test.'))
-  .map((name) => ({ name, text: readFileSync(new URL(name, folder), 'utf8') }));
+const readAll = (folder: URL, pattern: RegExp): { name: string; text: string }[] =>
+  readdirSync(folder)
+    .filter((name) => pattern.test(name) && !name.includes('.test.'))
+    .map((name) => ({ name, text: readFileSync(new URL(name, folder), 'utf8') }));
 
 const files = readAll(new URL('./screens/', import.meta.url), /^send(-[a-z-]+)?\.tsx?$/u);
 

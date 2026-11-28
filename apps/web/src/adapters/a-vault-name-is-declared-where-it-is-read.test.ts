@@ -9,14 +9,19 @@ vi.mock('./keyring-person.js', () => ({ keyringFor: async () => false, keysOnThe
 
 const viewWithDeclared = () => {
   const declared: unknown[] = [];
-  const view = { company: 'c1', declare: (asks: unknown) => { declared.push(asks); } } as unknown as PageView;
+  const view = {
+    company: 'c1',
+    declare: (asks: unknown) => {
+      declared.push(asks);
+    }
+  } as unknown as PageView;
   return { view, declared };
 };
 const infoOf = (vault: string) => ({ store: PROVEN.company, kind: VAULT_INFO_KIND, id: vault.toLowerCase() });
 
 describe('A VAULT NAME IS DECLARED ON THE VIEW WHERE IT IS READ', () => {
   /* RED WHEN: a name's record is named to the view after the read's first await, or not at all, so a name drawn on its own asks a proof of its own. */
-  it('names the vault\'s info record to the view before the read awaits anything', async () => {
+  it("names the vault's info record to the view before the read awaits anything", async () => {
     const { view, declared } = viewWithDeclared();
     const read = readVaultName('u1', view, 'AB'.repeat(32));
     expect(declared).toEqual([{ records: [infoOf('ab'.repeat(32))] }]);

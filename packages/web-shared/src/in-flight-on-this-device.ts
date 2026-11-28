@@ -88,8 +88,10 @@ const SALT = utf8('vault operation in flight on this device');
 /** Raised when the signer's secret is not open here: nothing can be kept or read until it is. */
 export class InFlightKeysNotOpen extends Error {
   constructor() {
-    super('your keys for this company are not open on this device, so nothing about a deposit or a payment on its way '
-      + 'can be kept or read here. Open the company with your wallet and try again. Nothing was sent.');
+    super(
+      'your keys for this company are not open on this device, so nothing about a deposit or a payment on its way ' +
+        'can be kept or read here. Open the company with your wallet and try again. Nothing was sent.'
+    );
     this.name = 'InFlightKeysNotOpen';
   }
 }
@@ -104,7 +106,7 @@ const keysOf = (me: InFlightOpener): { seal: Uint8Array; slot: Uint8Array } => {
   if (secret.length !== 32) throw new InFlightKeysNotOpen();
   return {
     seal: hkdf(sha256, secret, SALT, utf8(`seal\u0000${me.signerId}`), 32),
-    slot: hkdf(sha256, secret, SALT, utf8(`slot\u0000${me.signerId}`), 32),
+    slot: hkdf(sha256, secret, SALT, utf8(`slot\u0000${me.signerId}`), 32)
   };
 };
 
@@ -117,7 +119,11 @@ export const slotFor = (me: InFlightOpener, kind: InFlightKind, vault: Hex): str
 
 /** Seals one record. The claim is random and new unless one is given. */
 export const sealInFlight = (
-  me: InFlightOpener, kind: InFlightKind, vault: Hex, value: unknown, claim: Hex = toHex(randomBytes(16)),
+  me: InFlightOpener,
+  kind: InFlightKind,
+  vault: Hex,
+  value: unknown,
+  claim: Hex = toHex(randomBytes(16))
 ): SealedInFlight => {
   const iv = randomBytes(12);
   const body = gcm(keysOf(me).seal, iv, bound(kind, vault, claim)).encrypt(utf8(JSON.stringify(value)));
@@ -125,7 +131,12 @@ export const sealInFlight = (
 };
 
 /** Opens one record, or `null` when this signer's key does not open it for this vault and kind. */
-export const openInFlight = <T>(me: InFlightOpener, kind: InFlightKind, vault: Hex, sealed: SealedInFlight): T | null => {
+export const openInFlight = <T>(
+  me: InFlightOpener,
+  kind: InFlightKind,
+  vault: Hex,
+  sealed: SealedInFlight
+): T | null => {
   const key = keysOf(me).seal;
   try {
     const plain = gcm(key, fromHex(sealed.iv), bound(kind, vault, sealed.claim)).decrypt(fromHex(sealed.body));
@@ -143,7 +154,11 @@ export const openInFlight = <T>(me: InFlightOpener, kind: InFlightKind, vault: H
  * takes its place. It names no coin anybody here can recover, and the vault's
  * own journals name every coin a deposit or a payment was about to make.
  */
-export function sealedOnThisDevice<T>(records: InFlightRecords, me: InFlightOpener, kind: InFlightKind): KeptOnThisDevice<T> {
+export function sealedOnThisDevice<T>(
+  records: InFlightRecords,
+  me: InFlightOpener,
+  kind: InFlightKind
+): KeptOnThisDevice<T> {
   return {
     get: async (vault) => {
       const sealed = await records.get(slotFor(me, kind, vault));
@@ -156,8 +171,12 @@ export function sealedOnThisDevice<T>(records: InFlightRecords, me: InFlightOpen
       const sealed = sealInFlight(me, kind, vault, record);
       if (await records.add(slot, sealed)) return sealed.claim;
       const there = await records.get(slot);
-      if (there !== null && openInFlight(me, kind, vault, there) === null
-        && await records.replace(slot, there.claim, sealed)) return sealed.claim;
+      if (
+        there !== null &&
+        openInFlight(me, kind, vault, there) === null &&
+        (await records.replace(slot, there.claim, sealed))
+      )
+        return sealed.claim;
       return null;
     },
     update: async (vault, claim, record) => {
@@ -165,12 +184,14 @@ export function sealedOnThisDevice<T>(records: InFlightRecords, me: InFlightOpen
     },
     forget: async (vault, claim) => {
       await records.remove(slotFor(me, kind, vault), claim);
-    },
+    }
   };
 }
 
 /** Records kept in memory, for a test. */
-export function inFlightInMemory(kept = new Map<string, SealedInFlight>()): InFlightRecords & { readonly kept: Map<string, SealedInFlight> } {
+export function inFlightInMemory(
+  kept = new Map<string, SealedInFlight>()
+): InFlightRecords & { readonly kept: Map<string, SealedInFlight> } {
   return {
     kept,
     get: async (slot) => kept.get(slot) ?? null,
@@ -186,6 +207,6 @@ export function inFlightInMemory(kept = new Map<string, SealedInFlight>()): InFl
     },
     remove: async (slot, claim) => {
       if (kept.get(slot)?.claim === claim) kept.delete(slot);
-    },
+    }
   };
 }

@@ -83,9 +83,12 @@ const PIECE_HEADER = 2 + FINGERPRINT_BYTES + SET_ID_BYTES;
  */
 export function fingerprintOf(secret: Secret): Uint8Array {
   return hkdf(
-    sha256, secret, undefined,
+    sha256,
+    secret,
+    undefined,
     new TextEncoder().encode(`midnight-identity/piece-fingerprint/v${PIECE_VERSION}`),
-    FINGERPRINT_BYTES);
+    FINGERPRINT_BYTES
+  );
 }
 
 export type RecoveryFailure =
@@ -156,13 +159,16 @@ export interface PieceSet {
  * one caller and this is the only door.
  */
 export async function splitSecret(
-  secret: Secret, placements: readonly Placement[], threshold: number,
+  secret: Secret,
+  placements: readonly Placement[],
+  threshold: number
 ): Promise<PieceSet> {
   if (secret?.length !== SECRET_BYTES) {
     throw new RecoveryError(
       'secret-wrong-length',
-      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}. `
-      + 'This is the entropy, not the 64-byte seed.');
+      `a secret is ${SECRET_BYTES} bytes; got ${secret?.length ?? 'nothing'}. ` +
+        'This is the entropy, not the 64-byte seed.'
+    );
   }
   checkPlan(placements, threshold);
 
@@ -174,10 +180,14 @@ export async function splitSecret(
     threshold,
     fingerprint: toHex(fingerprint),
     setId: toHex(setId),
-    pieces: Object.freeze(placements.map((placement, i) => Object.freeze({
-      placement,
-      bytes: wrap(shares[i] as Uint8Array, threshold, fingerprint, setId),
-    }))),
+    pieces: Object.freeze(
+      placements.map((placement, i) =>
+        Object.freeze({
+          placement,
+          bytes: wrap(shares[i] as Uint8Array, threshold, fingerprint, setId)
+        })
+      )
+    )
   });
 
   /*
@@ -202,9 +212,7 @@ export async function splitSecret(
   return set;
 }
 
-function wrap(
-  share: Uint8Array, threshold: number, fingerprint: Uint8Array, setId: Uint8Array,
-): Uint8Array {
+function wrap(share: Uint8Array, threshold: number, fingerprint: Uint8Array, setId: Uint8Array): Uint8Array {
   const out = new Uint8Array(PIECE_HEADER + share.length);
   out[0] = PIECE_VERSION;
   out[1] = threshold;
@@ -225,25 +233,27 @@ function unwrap(piece: Uint8Array): Unwrapped {
   if (!piece || piece.length <= PIECE_HEADER) {
     throw new RecoveryError(
       'not-a-piece',
-      `a recovery piece is more than ${PIECE_HEADER} bytes; this one is ${piece?.length ?? 0}.`);
+      `a recovery piece is more than ${PIECE_HEADER} bytes; this one is ${piece?.length ?? 0}.`
+    );
   }
   if (piece[0] !== PIECE_VERSION) {
     throw new RecoveryError(
       'not-a-piece',
-      `this piece is format ${piece[0]} and this library reads format ${PIECE_VERSION}.`);
+      `this piece is format ${piece[0]} and this library reads format ${PIECE_VERSION}.`
+    );
   }
   const threshold = piece[1] as number;
   if (threshold < 2 || threshold > MAX_PIECES) {
     throw new RecoveryError(
       'not-a-piece',
-      `this piece says ${threshold} pieces are needed, which is not a threshold this `
-      + 'library ever writes.');
+      `this piece says ${threshold} pieces are needed, which is not a threshold this ` + 'library ever writes.'
+    );
   }
   return {
     threshold,
     fingerprint: toHex(piece.slice(2, 2 + FINGERPRINT_BYTES)),
     setId: toHex(piece.slice(2 + FINGERPRINT_BYTES, PIECE_HEADER)),
-    share: piece.slice(PIECE_HEADER),
+    share: piece.slice(PIECE_HEADER)
   };
 }
 
@@ -280,25 +290,27 @@ export function checkPlan(placements: readonly Placement[], threshold: number): 
   if (placements.length < 2) {
     throw new RecoveryError(
       'too-few-pieces',
-      'a recovery set needs at least two pieces. One piece that opens everything '
-      + 'is not a threshold, it is a copy.');
+      'a recovery set needs at least two pieces. One piece that opens everything ' + 'is not a threshold, it is a copy.'
+    );
   }
   if (placements.length > MAX_PIECES) {
     throw new RecoveryError(
       'too-many-pieces',
-      `at most ${MAX_PIECES} pieces. More places to keep track of is not more safety.`);
+      `at most ${MAX_PIECES} pieces. More places to keep track of is not more safety.`
+    );
   }
   if (threshold < 2) {
     throw new RecoveryError(
       'threshold-of-one',
-      'a threshold of one is refused. That is not a threshold, it is copies — '
-      + 'whoever holds any single piece holds the whole account.');
+      'a threshold of one is refused. That is not a threshold, it is copies — ' +
+        'whoever holds any single piece holds the whole account.'
+    );
   }
   if (threshold > placements.length) {
     throw new RecoveryError(
       'threshold-above-count',
-      `${threshold} pieces cannot be required out of ${placements.length}. `
-      + 'That set can never be recovered.');
+      `${threshold} pieces cannot be required out of ${placements.length}. ` + 'That set can never be recovered.'
+    );
   }
 
   /*
@@ -310,15 +322,15 @@ export function checkPlan(placements: readonly Placement[], threshold: number): 
   for (const placement of placements) {
     const holder = placement.holder.trim().toLowerCase();
     if (!holder) {
-      throw new RecoveryError(
-        'holders-collide', `"${placement.label}" does not say who controls it.`);
+      throw new RecoveryError('holders-collide', `"${placement.label}" does not say who controls it.`);
     }
     const already = seen.get(holder);
     if (already !== undefined) {
       throw new RecoveryError(
         'holders-collide',
-        `"${placement.label}" and "${already}" are both behind ${placement.holder}. `
-        + 'Two pieces in one place are one piece — whoever opens it opens both.');
+        `"${placement.label}" and "${already}" are both behind ${placement.holder}. ` +
+          'Two pieces in one place are one piece — whoever opens it opens both.'
+      );
     }
     seen.set(holder, placement.label);
   }
@@ -351,15 +363,18 @@ export const hasNoMargin = (count: number, threshold: number): boolean => thresh
  * N-of-N. That is the case this returns rather than assumes.
  */
 export function warningsFor(
-  placements: readonly Placement[], threshold: number, hostHolder?: string,
+  placements: readonly Placement[],
+  threshold: number,
+  hostHolder?: string
 ): readonly Warning[] {
   const out: Warning[] = [];
   if (hasNoMargin(placements.length, threshold)) {
     out.push({
       kind: 'no-margin',
-      says: `All ${threshold} pieces will be needed. Lose any one of them — a `
-        + 'wiped device, a lost print, an account you cannot get back into — and '
-        + 'this account is gone. Most people want at least one to spare.',
+      says:
+        `All ${threshold} pieces will be needed. Lose any one of them — a ` +
+        'wiped device, a lost print, an account you cannot get back into — and ' +
+        'this account is gone. Most people want at least one to spare.'
     });
   }
   if (hostHolder) {
@@ -368,9 +383,10 @@ export function warningsFor(
     if (hostHas && hasNoMargin(placements.length, threshold)) {
       out.push({
         kind: 'host-holds-a-necessary-piece',
-        says: 'One of these pieces is held for you, and every piece is needed — so '
-          + 'getting this account back would depend on us. That is exactly what this '
-          + 'design exists to avoid. Add one more place you control.',
+        says:
+          'One of these pieces is held for you, and every piece is needed — so ' +
+          'getting this account back would depend on us. That is exactly what this ' +
+          'design exists to avoid. Add one more place you control.'
       });
     }
   }
@@ -387,15 +403,17 @@ export function warningsFor(
  * with it.
  */
 export function suggestDefault(available: readonly Placement[]): {
-  readonly placements: readonly Placement[]; readonly threshold: number;
+  readonly placements: readonly Placement[];
+  readonly threshold: number;
 } {
   const loadBearing = available.filter((p) => !p.isThisDevice);
   if (loadBearing.length < 3) {
     throw new RecoveryError(
       'too-few-pieces',
-      'a suggested set needs three places that are not this device. '
-      + 'The machine somebody is standing on is the one most likely to be the reason '
-      + 'they are recovering, so it is never one of the load-bearing pieces.');
+      'a suggested set needs three places that are not this device. ' +
+        'The machine somebody is standing on is the one most likely to be the reason ' +
+        'they are recovering, so it is never one of the load-bearing pieces.'
+    );
   }
   return { placements: Object.freeze(loadBearing.slice(0, 3)), threshold: 2 };
 }
@@ -414,7 +432,8 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
   if (pieces.length < 2) {
     throw new RecoveryError(
       'not-enough-pieces',
-      `putting a secret back needs at least two pieces; ${pieces.length} were offered.`);
+      `putting a secret back needs at least two pieces; ${pieces.length} were offered.`
+    );
   }
 
   /*
@@ -429,8 +448,9 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
   if (pieces.length > MAX_PIECES) {
     throw new RecoveryError(
       'too-many-pieces',
-      `at most ${MAX_PIECES} pieces can be offered at once; ${pieces.length} were. `
-      + 'A set this library cut never has more.');
+      `at most ${MAX_PIECES} pieces can be offered at once; ${pieces.length} were. ` +
+        'A set this library cut never has more.'
+    );
   }
 
   const unwrapped = pieces.map(unwrap);
@@ -446,10 +466,11 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
   if (unwrapped.some((p) => p.fingerprint !== fingerprint || p.setId !== setId)) {
     throw new RecoveryError(
       'pieces-from-different-sets',
-      'these pieces are not all from the same set. Mixing an old set with a current '
-      + 'one produces an answer rather than an error, so it is refused here — and '
-      + 'that includes two sets cut from the SAME account, which is the ordinary way '
-      + 'somebody ends up with both.');
+      'these pieces are not all from the same set. Mixing an old set with a current ' +
+        'one produces an answer rather than an error, so it is refused here — and ' +
+        'that includes two sets cut from the SAME account, which is the ordinary way ' +
+        'somebody ends up with both.'
+    );
   }
 
   /*
@@ -459,13 +480,13 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
    */
   const threshold = unwrapped[0]!.threshold;
   if (unwrapped.some((p) => p.threshold !== threshold)) {
-    throw new RecoveryError(
-      'pieces-from-different-sets', 'these pieces disagree about how many are needed.');
+    throw new RecoveryError('pieces-from-different-sets', 'these pieces disagree about how many are needed.');
   }
   if (unwrapped.length < threshold) {
     throw new RecoveryError(
       'not-enough-pieces',
-      `this set needs ${threshold} pieces and ${unwrapped.length} were offered.`);
+      `this set needs ${threshold} pieces and ${unwrapped.length} were offered.`
+    );
   }
 
   /*
@@ -485,7 +506,10 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
    * the defect: it is why somebody could be handed twenty-four valid words for
    * an account that had never existed.
    */
-  for (const subset of combinations(unwrapped.map((p) => p.share), threshold)) {
+  for (const subset of combinations(
+    unwrapped.map((p) => p.share),
+    threshold
+  )) {
     let candidate: Uint8Array;
     try {
       candidate = await combine(subset);
@@ -499,9 +523,10 @@ export async function combinePieces(pieces: readonly Uint8Array[]): Promise<Secr
 
   throw new RecoveryError(
     'wrong-secret',
-    `no ${threshold} of these ${unwrapped.length} pieces rebuild the account they say `
-    + 'they belong to. Nothing has been opened. At least one of them has been altered '
-    + 'where it was stored, or is from an older set.');
+    `no ${threshold} of these ${unwrapped.length} pieces rebuild the account they say ` +
+      'they belong to. Nothing has been opened. At least one of them has been altered ' +
+      'where it was stored, or is from an older set.'
+  );
 }
 
 /**
@@ -525,8 +550,9 @@ export async function proveRecoverable(secret: Secret, set: PieceSet): Promise<v
     if (toHex(rebuilt) !== expected) {
       throw new RecoveryError(
         'wrong-secret',
-        'this set of pieces does not rebuild the account. It has not been saved, '
-        + 'because a recovery that has never been run is not a recovery.');
+        'this set of pieces does not rebuild the account. It has not been saved, ' +
+          'because a recovery that has never been run is not a recovery.'
+      );
     }
   }
 }
@@ -547,5 +573,4 @@ function* combinations<T>(items: readonly T[], take: number): Generator<T[]> {
   yield* walk(0);
 }
 
-const toHex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+const toHex = (bytes: Uint8Array): string => Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');

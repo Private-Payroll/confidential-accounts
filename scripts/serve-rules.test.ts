@@ -11,16 +11,27 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
-  APPLICATION_PAGES, LAUNCHER_COMMAND, PAGE_SETTING, applicationPageFrom, commandOf, leadingAssignments,
-  originsNotStarted, pageStartsFor, refuseWhatTheServerSaid, SERVICE_PROXY, theWalletsBuiltPageOrigin,
+  APPLICATION_PAGES,
+  LAUNCHER_COMMAND,
+  PAGE_SETTING,
+  applicationPageFrom,
+  commandOf,
+  leadingAssignments,
+  originsNotStarted,
+  pageStartsFor,
+  refuseWhatTheServerSaid,
+  SERVICE_PROXY,
+  theWalletsBuiltPageOrigin
 } from './serve-rules.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const SCRIPTS: Record<string, string> = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts;
 const DEV = SCRIPTS.dev;
-const devSettings = () => Object.fromEntries(leadingAssignments(DEV).map(a => [a.name, a.value]));
-const code = (file: string) => readFileSync(join(ROOT, file), 'utf8')
-  .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+const devSettings = () => Object.fromEntries(leadingAssignments(DEV).map((a) => [a.name, a.value]));
+const code = (file: string) =>
+  readFileSync(join(ROOT, file), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
 
 describe('every origin a script names is an origin the development script starts', () => {
   /*
@@ -40,7 +51,7 @@ describe('every origin a script names is an origin the development script starts
   it('refuses the development script that named a wallet it never started', () => {
     const before = {
       ...SCRIPTS,
-      dev: DEV.replace(LAUNCHER_COMMAND, "sh -c 'tsx src/server/index.ts & vite'"),
+      dev: DEV.replace(LAUNCHER_COMMAND, "sh -c 'tsx src/server/index.ts & vite'")
     };
     const out = originsNotStarted(before);
     expect(out).toContain('"dev" names WALLET_ORIGIN=http://localhost:5180, and "dev" starts nothing there');
@@ -49,15 +60,22 @@ describe('every origin a script names is an origin the development script starts
 
   /* RED WHEN: an origin the page opens the wallet at is not compared with where the wallet starts. */
   it('refuses a page that opens the wallet on a port nothing serves', () => {
-    const moved = { ...SCRIPTS, dev: DEV.replace('VITE_WALLET_ORIGIN=http://localhost:5180', 'VITE_WALLET_ORIGIN=http://localhost:5181') };
+    const moved = {
+      ...SCRIPTS,
+      dev: DEV.replace('VITE_WALLET_ORIGIN=http://localhost:5180', 'VITE_WALLET_ORIGIN=http://localhost:5181')
+    };
     expect(originsNotStarted(moved).join('\n')).toMatch(/VITE_WALLET_ORIGIN=http:\/\/localhost:5181/);
   });
 
   /* RED WHEN: the wallet's own script is left out of the check. */
   it('refuses a wallet told to sit inside an application nothing starts', () => {
-    const moved = { ...SCRIPTS, wallet: SCRIPTS.wallet.replace('VITE_APP_ORIGIN=http://localhost:5173', 'VITE_APP_ORIGIN=http://localhost:5174') };
-    expect(originsNotStarted(moved)).toEqual(
-      ['"wallet" names VITE_APP_ORIGIN=http://localhost:5174, and "dev" starts nothing there']);
+    const moved = {
+      ...SCRIPTS,
+      wallet: SCRIPTS.wallet.replace('VITE_APP_ORIGIN=http://localhost:5173', 'VITE_APP_ORIGIN=http://localhost:5174')
+    };
+    expect(originsNotStarted(moved)).toEqual([
+      '"wallet" names VITE_APP_ORIGIN=http://localhost:5174, and "dev" starts nothing there'
+    ]);
   });
 
   /* RED WHEN: a switch named like an origin (`VITE_ALLOW_LOCALHOST_ORIGIN=1`) is read as one. */
@@ -81,14 +99,31 @@ describe('where each page is started', () => {
   it('starts the application and the wallet on their own origins, pinned, on loopback', () => {
     const plan = pageStartsFor(devSettings());
     if (!('starts' in plan)) throw new Error(plan.refusals.join('; '));
-    expect(plan.starts.map(s => [s.setting, s.origin])).toEqual([
+    expect(plan.starts.map((s) => [s.setting, s.origin])).toEqual([
       ['APP_ORIGIN', 'http://localhost:5173'],
-      ['WALLET_ORIGIN', 'http://localhost:5180'],
+      ['WALLET_ORIGIN', 'http://localhost:5180']
     ]);
-    expect(plan.starts[0].command).toEqual(
-      ['node_modules/.bin/vite', '--config', 'apps/web/vite.config.ts', '--host', 'localhost', '--port', '5173', '--strictPort']);
-    expect(plan.starts[1].command).toEqual(
-      ['npm', 'run', 'wallet', '--', '--host', 'localhost', '--port', '5180', '--strictPort']);
+    expect(plan.starts[0].command).toEqual([
+      'node_modules/.bin/vite',
+      '--config',
+      'apps/web/vite.config.ts',
+      '--host',
+      'localhost',
+      '--port',
+      '5173',
+      '--strictPort'
+    ]);
+    expect(plan.starts[1].command).toEqual([
+      'npm',
+      'run',
+      'wallet',
+      '--',
+      '--host',
+      'localhost',
+      '--port',
+      '5180',
+      '--strictPort'
+    ]);
   });
 
   /*
@@ -96,10 +131,16 @@ describe('where each page is started', () => {
    * are made for the origin it is served from, so that would bind every wallet
    * to wherever the application is hosted.
    */
-  it('refuses to serve the wallet from the application\'s origin', () => {
-    const one = { APP_ORIGIN: 'http://localhost:5173', WALLET_ORIGIN: 'http://localhost:5173', VITE_WALLET_ORIGIN: 'http://localhost:5173' };
+  it("refuses to serve the wallet from the application's origin", () => {
+    const one = {
+      APP_ORIGIN: 'http://localhost:5173',
+      WALLET_ORIGIN: 'http://localhost:5173',
+      VITE_WALLET_ORIGIN: 'http://localhost:5173'
+    };
     const plan = pageStartsFor(one);
-    expect('refusals' in plan && plan.refusals.join('\n')).toMatch(/are on one port. The wallet is served on an origin of its own/);
+    expect('refusals' in plan && plan.refusals.join('\n')).toMatch(
+      /are on one port. The wallet is served on an origin of its own/
+    );
   });
 
   /* RED WHEN: the two declarations of the wallet's origin are not held to each other. */
@@ -112,19 +153,31 @@ describe('where each page is started', () => {
   it('names every origin it cannot start, at once', () => {
     const plan = pageStartsFor({ APP_ORIGIN: 'https://payroll.example', WALLET_ORIGIN: 'http://localhost' });
     const said = 'refusals' in plan ? plan.refusals.join('\n') : '';
-    expect(said).toMatch(/APP_ORIGIN is "https:\/\/payroll.example"; a page started on this machine is served over http/);
+    expect(said).toMatch(
+      /APP_ORIGIN is "https:\/\/payroll.example"; a page started on this machine is served over http/
+    );
     expect(said).toMatch(/WALLET_ORIGIN is "http:\/\/localhost", which names no port/);
     expect(said).toMatch(/VITE_WALLET_ORIGIN is not set/);
-    expect(pageStartsFor({ APP_ORIGIN: 'http://payroll.example:80', WALLET_ORIGIN: 'http://localhost:5180', VITE_WALLET_ORIGIN: 'http://localhost:5180' }))
-      .toEqual({ refusals: [expect.stringMatching(/listens only on this machine/)] });
+    expect(
+      pageStartsFor({
+        APP_ORIGIN: 'http://payroll.example:80',
+        WALLET_ORIGIN: 'http://localhost:5180',
+        VITE_WALLET_ORIGIN: 'http://localhost:5180'
+      })
+    ).toEqual({ refusals: [expect.stringMatching(/listens only on this machine/)] });
   });
 
   /* RED WHEN: a development subdomain of localhost is refused. */
   it('accepts a subdomain of localhost, still pinned to loopback', () => {
-    const plan = pageStartsFor({
-      APP_ORIGIN: 'http://app.pp.localhost:5173', WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
-      VITE_WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
-    }, 'web', 'http://app.pp.localhost:5173');
+    const plan = pageStartsFor(
+      {
+        APP_ORIGIN: 'http://app.pp.localhost:5173',
+        WALLET_ORIGIN: 'http://identity.pp.localhost:5180',
+        VITE_WALLET_ORIGIN: 'http://identity.pp.localhost:5180'
+      },
+      'web',
+      'http://app.pp.localhost:5173'
+    );
     expect('starts' in plan && plan.starts[1].command).toContain('localhost');
   });
 });
@@ -134,18 +187,20 @@ describe('the application is started only where the wallet answers it', () => {
    * asks a wallet that never answers and waits in silence until its deadline. */
   it('refuses an application origin the wallet is not built to answer, and starts the one it is', () => {
     const elsewhere = pageStartsFor({ ...devSettings(), APP_ORIGIN: 'http://localhost:5174' });
-    expect('refusals' in elsewhere && elsewhere.refusals.join('\n')).toMatch(/built to answer only the page at http:\/\/localhost:5173/);
+    expect('refusals' in elsewhere && elsewhere.refusals.join('\n')).toMatch(
+      /built to answer only the page at http:\/\/localhost:5173/
+    );
     expect('starts' in pageStartsFor(devSettings())).toBe(true);
     expect(pageStartsFor(devSettings(), 'web', null)).toEqual({ refusals: [expect.stringMatching(/no origin/)] });
   });
 
   /* RED WHEN: the wallet's page origin is read from anywhere but its own script in package.json. */
-  it('reads the wallet\'s page origin from the wallet\'s own script', () => {
+  it("reads the wallet's page origin from the wallet's own script", () => {
     expect(theWalletsBuiltPageOrigin()).toBe('http://localhost:5173');
   });
 });
 
-describe('which application is served on the application\'s origin', () => {
+describe("which application is served on the application's origin", () => {
   /*
    * RED WHEN: an unset or empty setting serves anything but the application in
    * `apps/web`.
@@ -162,7 +217,9 @@ describe('which application is served on the application\'s origin', () => {
     expect(applicationPageFrom({ PAYROLL_PAGE: 'web' })).toEqual({ page: 'web' });
     for (const v of ['legacy', 'v2', 'WEB', 'toString', 'constructor', '__proto__']) {
       const r = applicationPageFrom({ PAYROLL_PAGE: v });
-      expect(r, v).toEqual({ refusal: expect.stringMatching(/which names no application. It is one of web, or unset/) });
+      expect(r, v).toEqual({
+        refusal: expect.stringMatching(/which names no application. It is one of web, or unset/)
+      });
     }
   });
 
@@ -171,14 +228,25 @@ describe('which application is served on the application\'s origin', () => {
    * with any configuration but its own, or unpinned; or the default start is
    * not the same start as choosing it.
    */
-  it('starts the application on the application\'s origin, with its own configuration, and the wallet beside it', () => {
+  it("starts the application on the application's origin, with its own configuration, and the wallet beside it", () => {
     const byDefault = pageStartsFor(devSettings());
     const web = pageStartsFor(devSettings(), 'web');
     if (!('starts' in web) || !('starts' in byDefault)) throw new Error('refused');
     expect(byDefault).toEqual(web);
     expect(web.starts[0]).toEqual({
-      label: 'the payroll application', setting: 'APP_ORIGIN', origin: 'http://localhost:5173',
-      command: ['node_modules/.bin/vite', '--config', 'apps/web/vite.config.ts', '--host', 'localhost', '--port', '5173', '--strictPort'],
+      label: 'the payroll application',
+      setting: 'APP_ORIGIN',
+      origin: 'http://localhost:5173',
+      command: [
+        'node_modules/.bin/vite',
+        '--config',
+        'apps/web/vite.config.ts',
+        '--host',
+        'localhost',
+        '--port',
+        '5173',
+        '--strictPort'
+      ]
     });
     expect(web.starts[1]!.setting).toBe('WALLET_ORIGIN');
     expect(existsSync(join(ROOT, 'apps/web/vite.config.ts'))).toBe(true);
@@ -193,7 +261,9 @@ describe('which application is served on the application\'s origin', () => {
     const text = code('scripts/serve-with-wallets.ts');
     expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);/);
     /* RED WHEN: a value naming neither application is let through, and so served as the default. */
-    expect(text).toMatch(/const chosen = applicationPageFrom\(process\.env\);\s*if \('refusal' in chosen\) throw new Error\(chosen\.refusal\);/);
+    expect(text).toMatch(
+      /const chosen = applicationPageFrom\(process\.env\);\s*if \('refusal' in chosen\) throw new Error\(chosen\.refusal\);/
+    );
     expect(text).toMatch(/const plan = pageStartsFor\(posture, chosen\.page\);/);
     expect(text).not.toMatch(/process\.argv/);
     /* And the read-only command reads no choice at all: it serves the default. */
@@ -202,8 +272,10 @@ describe('which application is served on the application\'s origin', () => {
 });
 
 describe('what the server says, held to what the command promised', () => {
-  const WRITES = 'Midnight stagenet via https://i.example, reading and writing (a wallet is wired, so this deployment can open companies and raise rounds)';
-  const READS = 'Midnight stagenet via https://i.example, read-only (no wallet is wired, so nothing can be written to the chain)';
+  const WRITES =
+    'Midnight stagenet via https://i.example, reading and writing (a wallet is wired, so this deployment can open companies and raise rounds)';
+  const READS =
+    'Midnight stagenet via https://i.example, read-only (no wallet is wired, so nothing can be written to the chain)';
 
   /* RED WHEN: the read-only command accepts a server that says it can write, or one that never answered. */
   it('the read-only command refuses a server that can write, and a server that said nothing', () => {
@@ -245,8 +317,11 @@ describe('the read-only command cannot come to hold a wallet', () => {
    */
   it('reaches nothing that hands over, builds or brings up a wallet', () => {
     const files = reach('scripts/serve.ts');
-    expect(files, 'the walk read nothing, so its absence means nothing').toEqual(
-      ['scripts/serve-product.ts', 'scripts/serve-rules.ts', 'scripts/serve.ts']);
+    expect(files, 'the walk read nothing, so its absence means nothing').toEqual([
+      'scripts/serve-product.ts',
+      'scripts/serve-rules.ts',
+      'scripts/serve.ts'
+    ]);
     for (const f of files) {
       const text = code(f);
       expect(text, `${f} names a wallet hand-over`).not.toMatch(/handInFundedParties|handed-in-wallets/);
@@ -272,14 +347,17 @@ describe('both commands start the product the same way', () => {
    * rather than through the shared machinery - which is how the two came to
    * start different products.
    */
-  it.each(['scripts/serve.ts', 'scripts/serve-with-wallets.ts'])('%s uses the shared start and nothing else', (file) => {
-    const text = code(file);
-    expect(text).toMatch(/await startTheServer\(ROOT\)/);
-    expect(text).toMatch(/startThePages\(ROOT, plan\.starts, /);
-    expect(text).toMatch(/pageStartsFor\(/);
-    expect(text, 'it spawns a process of its own').not.toMatch(/\bspawn\(/);
-    expect(text, 'it loads the server by a route of its own').not.toMatch(/import\(pathToFileURL/);
-  });
+  it.each(['scripts/serve.ts', 'scripts/serve-with-wallets.ts'])(
+    '%s uses the shared start and nothing else',
+    (file) => {
+      const text = code(file);
+      expect(text).toMatch(/await startTheServer\(ROOT\)/);
+      expect(text).toMatch(/startThePages\(ROOT, plan\.starts, /);
+      expect(text).toMatch(/pageStartsFor\(/);
+      expect(text, 'it spawns a process of its own').not.toMatch(/\bspawn\(/);
+      expect(text, 'it loads the server by a route of its own').not.toMatch(/import\(pathToFileURL/);
+    }
+  );
 });
 
 describe('the application passes the one list of paths on to the service', () => {

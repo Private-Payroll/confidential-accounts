@@ -13,27 +13,56 @@ import { describe, expect, it } from 'vitest';
 import { newSigningKeypair, type Hex } from '../../../src/core/crypto.js';
 import { entryIdOf, signManifestEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import { GENESIS, signTreeHeader, type TreeHeader } from '../../../src/midnight/record-tree.js';
-import { aTreeCompany, HELD_IN_A_TEST, headsByTheAccount, tagInATest } from '../../../src/testing/record-tree-double.js';
+import {
+  aTreeCompany,
+  HELD_IN_A_TEST,
+  headsByTheAccount,
+  tagInATest
+} from '../../../src/testing/record-tree-double.js';
 import { IDBFactory } from 'fake-indexeddb';
 import { fullCheckHere, treeHeaderHere, type FullCheckDoors } from './records-anchored-here.js';
-import { checkedHeadsInMemory, treeKeptHere, type CheckedHeads, type CheckedHeadsStore, type KeptHeader } from './tree-kept-here.js';
+import {
+  checkedHeadsInMemory,
+  treeKeptHere,
+  type CheckedHeads,
+  type CheckedHeadsStore,
+  type KeptHeader
+} from './tree-kept-here.js';
 import type { TreeService } from './record-entered-here.js';
 
 const COMPANY = 'acct_full_check';
 const A = newSigningKeypair();
 const seats = new Map<Hex, string>([[A.publicKey, 'seat-a']]);
-const person = (id: string, version: number, digest: string): ManifestEntryBody =>
-  ({ store: 'company', kind: 'person', id, version, digest: digest.repeat(32) });
+const person = (id: string, version: number, digest: string): ManifestEntryBody => ({
+  store: 'company',
+  kind: 'person',
+  id,
+  version,
+  digest: digest.repeat(32)
+});
 
 const aCompanyOf = async (n: number) => {
   const c = aTreeCompany(COMPANY);
   for (let i = 0; i < n; i += 1) {
-    await c.anchor([signManifestEntry(COMPANY, person(`p${i % 2}`, Math.floor(i / 2) + 1, (16 + i).toString(16)), A.secret)], A.secret);
+    await c.anchor(
+      [signManifestEntry(COMPANY, person(`p${i % 2}`, Math.floor(i / 2) + 1, (16 + i).toString(16)), A.secret)],
+      A.secret
+    );
   }
   return c;
 };
-const doorsOf = (c: Awaited<ReturnType<typeof aCompanyOf>>, checked: CheckedHeadsStore, tree: TreeService = c.service): FullCheckDoors => ({
-  accountId: COMPANY, tree, onChain: c.onChain, headsOf: headsByTheAccount, seatOf: (k: Hex) => seats.get(k) ?? null, checked, pageSize: 2,
+const doorsOf = (
+  c: Awaited<ReturnType<typeof aCompanyOf>>,
+  checked: CheckedHeadsStore,
+  tree: TreeService = c.service
+): FullCheckDoors => ({
+  accountId: COMPANY,
+  tree,
+  onChain: c.onChain,
+  headsOf: headsByTheAccount,
+  seatOf: (k: Hex) => seats.get(k) ?? null,
+  checked,
+  pageSize: 2
 });
 
 describe('THE FULL CHECK', () => {
@@ -61,14 +90,20 @@ describe('THE FULL CHECK', () => {
         asked.push(seq);
         const p = await c.service.headersAfter(company, seq, limit);
         return { ...p, headers: p.headers.filter((h) => (h as TreeHeader).seq !== 3) };
-      },
+      }
     };
     const cut = await fullCheckHere(doorsOf(c, checked, withholding));
     /* RED WHEN: a header the service withholds is not stopped at as `not-given`. */
     expect(cut.stop).toMatchObject({ stop: 'not-given', seq: 3 });
     expect((await checked.read(COMPANY))!.fromZero!.seq).toBe(2);
     asked.length = 0;
-    const counting: TreeService = { ...c.service, headersAfter: async (company, seq, limit) => { asked.push(seq); return c.service.headersAfter(company, seq, limit); } };
+    const counting: TreeService = {
+      ...c.service,
+      headersAfter: async (company, seq, limit) => {
+        asked.push(seq);
+        return c.service.headersAfter(company, seq, limit);
+      }
+    };
     const again = await fullCheckHere(doorsOf(c, checked, counting));
     expect(again.stop).toBeNull();
     /* RED WHEN: the check starts again from the first header instead of the last head it kept. */
@@ -78,7 +113,15 @@ describe('THE FULL CHECK', () => {
 
   it('a dishonest header the chain holds stops the check there, naming its key, and keeps every head before it', async () => {
     const c = await aCompanyOf(2);
-    const bad = signTreeHeader({ ...structuredClone(c.headers[1]!), seq: 1, dirVersion: 4, changes: c.headers[1]!.changes.map((ch) => ({ ...ch, leaf: { ...ch.leaf, dirVersion: 4 } })) } as any, A.secret);
+    const bad = signTreeHeader(
+      {
+        ...structuredClone(c.headers[1]!),
+        seq: 1,
+        dirVersion: 4,
+        changes: c.headers[1]!.changes.map((ch) => ({ ...ch, leaf: { ...ch.leaf, dirVersion: 4 } }))
+      } as any,
+      A.secret
+    );
     const d = aTreeCompany(COMPANY);
     await d.land(c.headers[0]!);
     await d.land(bad);
@@ -93,9 +136,12 @@ describe('THE FULL CHECK', () => {
     const c = await aCompanyOf(5);
     const checked = checkedHeadsInMemory();
     const started: CheckedHeads = {
-      latest: c.head, fromZero: null, heads: [c.landed[3]!.head, c.landed[4]!.head], base: 3,
+      latest: c.head,
+      fromZero: null,
+      heads: [c.landed[3]!.head, c.landed[4]!.head],
+      base: 3,
       from: { by: 'vouched', seq: 3, head: c.landed[3]!.head, run: 'ee'.repeat(32), at: 1 },
-      before: [{ from: 1, heads: [c.landed[1]!.head, c.landed[2]!.head], tied: { seq: 3, head: c.landed[3]!.head } }],
+      before: [{ from: 1, heads: [c.landed[1]!.head, c.landed[2]!.head], tied: { seq: 3, head: c.landed[3]!.head } }]
     };
     await checked.write(COMPANY, started);
     const withholding: TreeService = {
@@ -103,7 +149,7 @@ describe('THE FULL CHECK', () => {
       headersAfter: async (company, seq, limit) => {
         const p = await c.service.headersAfter(company, seq, limit);
         return { ...p, headers: p.headers.filter((h) => (h as TreeHeader).seq !== 3) };
-      },
+      }
     };
     const cut = await fullCheckHere(doorsOf(c, checked, withholding));
     expect(cut.stop).toMatchObject({ stop: 'not-given', seq: 3 });
@@ -112,7 +158,12 @@ describe('THE FULL CHECK', () => {
     const again = await fullCheckHere(doorsOf(c, checked));
     expect(again.stop).toBeNull();
     /* RED WHEN: a check that reached the head on chain from the first is not held in place of the start, or keeps the heads before a start it no longer has. */
-    const fromTheFirst = { latest: c.head, fromZero: c.head, heads: c.landed.map((l) => l.head), recent: c.landed.map((_, i) => c.checkedAt(i)) };
+    const fromTheFirst = {
+      latest: c.head,
+      fromZero: c.head,
+      heads: c.landed.map((l) => l.head),
+      recent: c.landed.map((_, i) => c.checkedAt(i))
+    };
     expect(await checked.read(COMPANY)).toEqual(fromTheFirst);
     /* RED WHEN: a read that began from the start before the check from the first was held writes the start back over it. */
     await checked.write(COMPANY, started);
@@ -129,7 +180,9 @@ describe('THE FULL CHECK', () => {
 describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
   const head = (n: number) => n.toString(16).padStart(64, '0') as Hex;
   const heads = (n: number): CheckedHeads => ({
-    latest: { ...GENESIS, seq: n - 1, head: head(n) }, fromZero: { ...GENESIS, seq: n - 1, head: head(n) }, heads: Array.from({ length: n }, (_, i) => head(i + 1)),
+    latest: { ...GENESIS, seq: n - 1, head: head(n) },
+    fromZero: { ...GENESIS, seq: n - 1, head: head(n) },
+    heads: Array.from({ length: n }, (_, i) => head(i + 1))
   });
   /** A database whose every write to the heads is undone as it is made: what a browser does when a large write fails. */
   const failingWrites = (f: IDBFactory): IDBFactory => {
@@ -148,7 +201,11 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
                 const st = objectStore(n);
                 if (n !== 'checked-heads') return st;
                 const put = st.put.bind(st);
-                st.put = ((v: unknown, k?: IDBValidKey) => { const r = put(v, k); tx.abort(); return r; }) as never;
+                st.put = ((v: unknown, k?: IDBValidKey) => {
+                  const r = put(v, k);
+                  tx.abort();
+                  return r;
+                }) as never;
                 return st;
               };
             }
@@ -156,7 +213,7 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
           }) as never;
         });
         return req;
-      },
+      }
     });
   };
   it('keeps the heads per company, read back as written by a fresh read of the same database, and nothing for another company', async () => {
@@ -171,7 +228,11 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     const db = new IDBFactory();
     await treeKeptHere(db).unnamed.keep(COMPANY, ['v:n1', 'v:n2'], 'ada:1:1:0:1');
     /* RED WHEN: a note kept is not read back, or is read back for another note or another company. */
-    expect(await treeKeptHere(db).unnamed.lookedIn(COMPANY, ['v:n1', 'v:n2', 'v:n3'])).toEqual(['ada:1:1:0:1', 'ada:1:1:0:1', null]);
+    expect(await treeKeptHere(db).unnamed.lookedIn(COMPANY, ['v:n1', 'v:n2', 'v:n3'])).toEqual([
+      'ada:1:1:0:1',
+      'ada:1:1:0:1',
+      null
+    ]);
     await treeKeptHere(db).unnamed.keep(COMPANY, ['v:n1'], 'ada:2:1:0:1');
     /* RED WHEN: a later look adds a row beside the first rather than overwriting it. */
     expect(await treeKeptHere(db).unnamed.lookedIn(COMPANY, ['v:n1', 'v:n2'])).toEqual(['ada:2:1:0:1', 'ada:1:1:0:1']);
@@ -192,14 +253,20 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
   it('keeps where a device new to the company started, and the heads from it; a check from the first in their place writes every row again', async () => {
     const db = new IDBFactory();
     const started: CheckedHeads = {
-      ...heads(1500), fromZero: null, base: 900, from: { by: 'vouched', seq: 900, head: head(901), run: 'ee'.repeat(32), at: 1_800_000_000_000 },
-      before: [{ from: 10, heads: [head(7010), head(7011)], tied: { seq: 12, head: head(7012) } }],
+      ...heads(1500),
+      fromZero: null,
+      base: 900,
+      from: { by: 'vouched', seq: 900, head: head(901), run: 'ee'.repeat(32), at: 1_800_000_000_000 },
+      before: [{ from: 10, heads: [head(7010), head(7011)], tied: { seq: 12, head: head(7012) } }]
     };
     await treeKeptHere(db).checked.write(COMPANY, started);
     /* RED WHEN: where the device started, the seq its heads start from, or the heads before it it found, are not kept, or not read back. */
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(started);
     /* RED WHEN: heads before the start kept otherwise than whole are believed: a run with a head that is not one, or tied before its own end. */
-    for (const bad of [{ from: 10, heads: ['zz'], tied: { seq: 12, head: head(7012) } }, { from: 10, heads: [head(7010), head(7011)], tied: { seq: 10, head: head(7012) } }]) {
+    for (const bad of [
+      { from: 10, heads: ['zz'], tied: { seq: 12, head: head(7012) } },
+      { from: 10, heads: [head(7010), head(7011)], tied: { seq: 10, head: head(7012) } }
+    ]) {
       await treeKeptHere(db).checked.write(COMPANY, { ...started, before: [bad as never] });
       const { before: _dropped, ...rest } = started;
       expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(rest);
@@ -208,9 +275,16 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     await treeKeptHere(db).checked.write(COMPANY, started);
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(started);
     /* RED WHEN: a write that began before another on this device checked a newer head puts the older latest back. */
-    const older = { ...started, latest: { ...started.latest, seq: started.latest.seq - 1, head: head(9999) }, before: [{ from: 20, heads: [head(7020)], tied: { seq: 21, head: head(7021) } }] };
+    const older = {
+      ...started,
+      latest: { ...started.latest, seq: started.latest.seq - 1, head: head(9999) },
+      before: [{ from: 20, heads: [head(7020)], tied: { seq: 21, head: head(7021) } }]
+    };
     await treeKeptHere(db).checked.write(COMPANY, older);
-    expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual({ ...started, before: [...started.before!, ...older.before] });
+    expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual({
+      ...started,
+      before: [...started.before!, ...older.before]
+    });
     await treeKeptHere(db).checked.write(COMPANY, started);
     const whole = { ...heads(1600), heads: Array.from({ length: 1600 }, (_, i) => head(i + 5000)) };
     await treeKeptHere(db).checked.write(COMPANY, whole);
@@ -234,7 +308,11 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     expect(await treeKeptHere(db).checked.read(COMPANY)).toEqual(heads(2));
   });
   it('a browser with no database keeps nothing and refuses nothing: the check runs from the first again', async () => {
-    const none = { open: () => { throw new Error('blocked'); } } as unknown as IDBFactory;
+    const none = {
+      open: () => {
+        throw new Error('blocked');
+      }
+    } as unknown as IDBFactory;
     await treeKeptHere(none).checked.write(COMPANY, heads(1));
     expect(await treeKeptHere(none).checked.read(COMPANY)).toBeNull();
     expect(await treeKeptHere(none).headers.at(COMPANY, 0)).toEqual([]);
@@ -242,7 +320,11 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
   it('keeps every header it signed and the last one it checked, with their entries and older leaves, read back by batch', async () => {
     const c = await aCompanyOf(3);
     const db = new IDBFactory();
-    const keptOf = (h: TreeHeader): KeptHeader => ({ header: h, entries: h.changes.map((ch) => c.entries.get(ch.leaf.entryId)!), leaves: [] });
+    const keptOf = (h: TreeHeader): KeptHeader => ({
+      header: h,
+      entries: h.changes.map((ch) => c.entries.get(ch.leaf.entryId)!),
+      leaves: []
+    });
     await treeKeptHere(db).headers.signed(COMPANY, keptOf(c.headers[1]!));
     /* A second header this device signed at the same batch - one that lost a race - is kept beside the first. */
     const loser = signTreeHeader({ ...c.headers[1]!, at: '2026-10-11T00:00:00.000Z' }, A.secret);
@@ -250,7 +332,11 @@ describe('WHAT A DEVICE KEEPS OF THE CHECK, IN ITS OWN DATABASE', () => {
     await treeKeptHere(db).headers.checked(COMPANY, keptOf(c.headers[2]!));
     await treeKeptHere(db).headers.checked(COMPANY, keptOf(c.headers[1]!));
     /* RED WHEN: a header kept is not read back by its batch, or the last checked does not replace the one checked before it. */
-    expect((await treeKeptHere(db).headers.at(COMPANY, 1)).map((k) => k.header)).toEqual([c.headers[1], loser, c.headers[1]]);
+    expect((await treeKeptHere(db).headers.at(COMPANY, 1)).map((k) => k.header)).toEqual([
+      c.headers[1],
+      loser,
+      c.headers[1]
+    ]);
     expect(await treeKeptHere(db).headers.at(COMPANY, 2)).toEqual([]);
     expect((await treeKeptHere(db).headers.at(COMPANY, 1))[0]!.entries).toEqual(keptOf(c.headers[1]!).entries);
   });
@@ -266,7 +352,10 @@ describe('THE DIRECTORY CHANGES A DEVICE FILED AGAIN, KEPT IN ITS OWN DATABASE U
     expect((await treeKeptHere(db).changes.all(COMPANY)).map((k) => k.signedAt)).toEqual([3, 5]);
     await treeKeptHere(db).changes.keep(COMPANY, { signedAt: 5, change: retiring('cc'.repeat(32)) });
     /* RED WHEN: a change kept is not read back from the device's database, out of order, or two are kept for one version. */
-    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([{ signedAt: 3, change: retiring('aa'.repeat(32)) }, { signedAt: 5, change: retiring('cc'.repeat(32)) }]);
+    expect(await treeKeptHere(db).changes.all(COMPANY)).toEqual([
+      { signedAt: 3, change: retiring('aa'.repeat(32)) },
+      { signedAt: 5, change: retiring('cc'.repeat(32)) }
+    ]);
     expect(await treeKeptHere(db).changes.all('acct_other')).toEqual([]);
     await treeKeptHere(db).changes.letGo(COMPANY, 3);
     /* RED WHEN: a change let go of is still kept, or letting go of one drops another. */
@@ -278,12 +367,17 @@ describe('THE DIRECTORY CHANGES A DEVICE FILED AGAIN, KEPT IN ITS OWN DATABASE U
     /* The database as a page before this one made it, at its first version, holding one checked head. */
     await new Promise<void>((resolve, reject) => {
       const req = db.open('record-tree-kept', 1);
-      req.onupgradeneeded = () => { for (const st of ['checked-heads', 'checked-latest', 'kept-headers']) req.result.createObjectStore(st); };
+      req.onupgradeneeded = () => {
+        for (const st of ['checked-heads', 'checked-latest', 'kept-headers']) req.result.createObjectStore(st);
+      };
       req.onsuccess = () => {
         const tx = req.result.transaction(['checked-heads', 'checked-latest'], 'readwrite');
         tx.objectStore('checked-heads').put([latest.head], `${COMPANY}|${'0'.repeat(12)}`);
         tx.objectStore('checked-latest').put({ latest, fromZero: latest, count: 1 }, COMPANY);
-        tx.oncomplete = () => { req.result.close(); resolve(); };
+        tx.oncomplete = () => {
+          req.result.close();
+          resolve();
+        };
         tx.onerror = () => reject(tx.error);
       };
       req.onerror = () => reject(req.error);
@@ -302,7 +396,18 @@ describe('THE NEXT HEADER, MADE ON THIS DEVICE FROM PROOFS IT CHECKED', () => {
     const e = signManifestEntry(COMPANY, person('p0', 3, '7f'), A.secret);
     c.entries.set(entryIdOf(e), e);
     /* RED WHEN: the older leaves the service proves with are not used - the rolled-back check cannot walk the record's chain. */
-    const made = (await treeHeaderHere({ accountId: COMPANY, tree: c.service, signingSecret: A.secret, tag: tagInATest(A.secret as Hex), held: HELD_IN_A_TEST, at: new Date('2026-10-10T00:00:00Z') }, c.head, [e]))!;
+    const made = (await treeHeaderHere(
+      {
+        accountId: COMPANY,
+        tree: c.service,
+        signingSecret: A.secret,
+        tag: tagInATest(A.secret as Hex),
+        held: HELD_IN_A_TEST,
+        at: new Date('2026-10-10T00:00:00Z')
+      },
+      c.head,
+      [e]
+    ))!;
     expect(made.header.seq).toBe(3);
     expect(made.header.changes[0]!.prior!.version).toBe(2);
     await c.land(made.header);
@@ -312,10 +417,22 @@ describe('THE NEXT HEADER, MADE ON THIS DEVICE FROM PROOFS IT CHECKED', () => {
   it('refuses to make one from leaves that do not prove into the root it follows, or a root the service does not keep', async () => {
     const c = await aCompanyOf(2);
     const e = signManifestEntry(COMPANY, person('p0', 2, '7f'), A.secret);
-    const lying: TreeService = { ...c.service, proofs: async (company, ask) => ({ ...(await c.service.proofs(company, ask))!, records: [null] }) };
-    const doors = { accountId: COMPANY, tree: lying, signingSecret: A.secret, held: HELD_IN_A_TEST, at: new Date(), tag: tagInATest(A.secret) };
+    const lying: TreeService = {
+      ...c.service,
+      proofs: async (company, ask) => ({ ...(await c.service.proofs(company, ask))!, records: [null] })
+    };
+    const doors = {
+      accountId: COMPANY,
+      tree: lying,
+      signingSecret: A.secret,
+      held: HELD_IN_A_TEST,
+      at: new Date(),
+      tag: tagInATest(A.secret)
+    };
     /* RED WHEN: a header is made on leaves the service swapped - it would anchor a record back to an older version. */
     await expect(treeHeaderHere(doors, c.head, [e])).rejects.toThrow(/do not make the root the anchor holds/u);
-    await expect(treeHeaderHere({ ...doors, tree: { ...c.service, proofs: async () => null } }, c.head, [e])).rejects.toThrow(/keeps no header/u);
+    await expect(
+      treeHeaderHere({ ...doors, tree: { ...c.service, proofs: async () => null } }, c.head, [e])
+    ).rejects.toThrow(/keeps no header/u);
   });
 });

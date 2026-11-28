@@ -21,7 +21,11 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { inFlightInMemory, sealedOnThisDevice, type SealedInFlight } from './in-flight-on-this-device.js';
 import { creatingTransactionOfNote } from './vault-worker-entry.js';
 import {
-  depositFromSource, privateTokenFromTheWallet, type DepositAsk, type DepositSource, type PaidIn,
+  depositFromSource,
+  privateTokenFromTheWallet,
+  type DepositAsk,
+  type DepositSource,
+  type PaidIn
 } from './deposit-source.js';
 /** A test stand-in for what a chain read says: the device's view, the service's answer and the one knob the worker stand-in turns into `started`. */
 type TestView = VaultChainView & ServedVaultChain & { readonly started?: boolean };
@@ -36,8 +40,13 @@ const PARAMS = btoa('midnight:ledger-parameters[v8]:stand-in');
 
 /** A row for a token, named `symbol`: private only where `shielded` is its token, else public only, as the token `cd..`. */
 const asset = (symbol: string, shielded: string | null): Asset => ({
-  code: shielded ?? 'cd'.repeat(32), symbol, name: symbol, decimals: 0,
-  ledger: { shielded, unshielded: shielded === null ? 'cd'.repeat(32) : null } as Asset['ledger'], enabled: true, sortOrder: 1,
+  code: shielded ?? 'cd'.repeat(32),
+  symbol,
+  name: symbol,
+  decimals: 0,
+  ledger: { shielded, unshielded: shielded === null ? 'cd'.repeat(32) : null } as Asset['ledger'],
+  enabled: true,
+  sortOrder: 1
 });
 const PRIVATE = asset('PRV', PRIVATE_TOKEN);
 const PUBLIC_ONLY = asset('PUB', null);
@@ -49,82 +58,198 @@ const setUp = async () => {
   const notes: string[] = [];
   const held = (c: { nonce: string; token: string; value: string }) => `held:${c.nonce}:${c.token}:${c.value}`;
   const view = (): TestView => ({
-    vault: VAULT, onChain: true, committee: null, heldByCommittee: true, started: true, state: 'AAAA', notes: [...notes], everCreated: [],
+    vault: VAULT,
+    onChain: true,
+    committee: null,
+    heldByCommittee: true,
+    started: true,
+    state: 'AAAA',
+    notes: [...notes],
+    everCreated: []
   });
   let lastBuilt: { nonce: string; token: string; value: string } | null = null;
   const service: VaultService = {
     keys: async () => ({ committee: null, why: null, readers: [] }),
-    deploy: async () => { throw new Error('no deploy'); },
-    handover: async () => { throw new Error('no handover'); },
+    deploy: async () => {
+      throw new Error('no deploy');
+    },
+    handover: async () => {
+      throw new Error('no handover');
+    },
     /* Opening the pool asks the service; a deposit reads the vault on this device. */
     chain: async () => view(),
     /* Only a vault's start reads its block through the service. */
-    payoutState: async () => { throw new Error('a deposit never asks the service for its block'); },
-    deposit: async (_v, tx) => { log.push(`sent ${tx}`); notes.push(held(lastBuilt!)); return { txRef: 'r1', transactionHash: null }; },
-    payout: async () => { throw new Error('no payout'); },
-    merge: async () => { throw new Error('no merge'); },
-    payoutPublicly: async () => { throw new Error('no payout'); },
+    payoutState: async () => {
+      throw new Error('a deposit never asks the service for its block');
+    },
+    deposit: async (_v, tx) => {
+      log.push(`sent ${tx}`);
+      notes.push(held(lastBuilt!));
+      return { txRef: 'r1', transactionHash: null };
+    },
+    payout: async () => {
+      throw new Error('no payout');
+    },
+    merge: async () => {
+      throw new Error('no merge');
+    },
+    payoutPublicly: async () => {
+      throw new Error('no payout');
+    }
   };
-  const refuse = async () => { throw new Error('a deposit never asks this'); };
+  const refuse = async () => {
+    throw new Error('a deposit never asks this');
+  };
   const builder: VaultBuilderClient = {
     proofsInProgress: () => [],
     /* The vault as this device's worker reads it at the wallet's indexer: the chain moved by hand above. */
     vaultOnChain: async () => {
       const v = view();
       return {
-        onChain: true, state: v.state!, notes: v.notes, notesFromThisBuild: true, retired: false, everCreated: v.everCreated ?? [],
-        authority: { committee: [], threshold: 1 }, account: ACCOUNT, started: true, circuits: null, accountCircuits: null,
+        onChain: true,
+        state: v.state!,
+        notes: v.notes,
+        notesFromThisBuild: true,
+        retired: false,
+        everCreated: v.everCreated ?? [],
+        authority: { committee: [], threshold: 1 },
+        account: ACCOUNT,
+        started: true,
+        circuits: null,
+        accountCircuits: null
       };
     },
     vaultsOnChain: refuse,
     /* The block, a transaction's events and the vault's history, read here at the wallet's indexer. */
-    chainAtOneBlock: async () => ({ blockHash: 'B1', vaultState: 'V', zswapState: 'Z', parameters: PARAMS, accountState: 'A' }),
-    eventsOf: async () => { throw new Error('no events'); },
+    chainAtOneBlock: async () => ({
+      blockHash: 'B1',
+      vaultState: 'V',
+      zswapState: 'Z',
+      parameters: PARAMS,
+      accountState: 'A'
+    }),
+    eventsOf: async () => {
+      throw new Error('no events');
+    },
     /* The vault's history holds the deposit's output in one transaction, which made it. */
     createdBy: async (i) => ({
       transactionHash: 'e8'.repeat(32),
-      events: [{ transactionHash: 'e8'.repeat(32), details: { tag: 'zswapOutput', commitment: i.commitment, contract: i.vault, mtIndex: '0' } }],
+      events: [
+        {
+          transactionHash: 'e8'.repeat(32),
+          details: { tag: 'zswapOutput', commitment: i.commitment, contract: i.vault, mtIndex: '0' }
+        }
+      ]
     }),
-    deploy: refuse, handover: refuse, notesForPayment: refuse, paymentsFit: refuse, afterPayment: refuse, stepKept: refuse,
+    deploy: refuse,
+    handover: refuse,
+    notesForPayment: refuse,
+    paymentsFit: refuse,
+    afterPayment: refuse,
+    stepKept: refuse,
     /* A deposit reads the account's count of removals at the block it is built on: none here. */
     startStanding: async () => ({ standing: { adopted: true, removals: 0 } }) as never,
-    confirmPayment: refuse, setNonceSecret: refuse, writeSecretCopy: refuse, proposalIdentity: refuse, vouchedRunIdentity: refuse, companyWide: refuse, creatingTransaction: async (i) => creatingTransactionOfNote(i), payout: refuse, mergeNotes: refuse, payoutPublicly: refuse, governedCall: refuse,
+    confirmPayment: refuse,
+    setNonceSecret: refuse,
+    writeSecretCopy: refuse,
+    proposalIdentity: refuse,
+    vouchedRunIdentity: refuse,
+    companyWide: refuse,
+    creatingTransaction: async (i) => creatingTransactionOfNote(i),
+    payout: refuse,
+    mergeNotes: refuse,
+    payoutPublicly: refuse,
+    governedCall: refuse,
     commitments: async (i) => ({ output: `out:${i.coin.nonce}`, held: held(i.coin) }),
-    ownSeat: refuse, spendingPolicyKeys: refuse, spendingPolicyKeysOfEach: refuse, policyBarKey: refuse, clearRun: refuse, periodTotal: refuse, runCharged: refuse, lastRecovery: refuse, anchorHeads: refuse, anchorTag: refuse, seatOpenings: refuse, anchorsOnChain: refuse, roundsOnChain: refuse, paidLeaves: refuse, runsOutrun: refuse, invitedSeats: refuse, seatInvited: refuse, anchor: refuse, recoverAnchor: refuse, accountCallChain: refuse,
+    ownSeat: refuse,
+    spendingPolicyKeys: refuse,
+    spendingPolicyKeysOfEach: refuse,
+    policyBarKey: refuse,
+    clearRun: refuse,
+    periodTotal: refuse,
+    runCharged: refuse,
+    lastRecovery: refuse,
+    anchorHeads: refuse,
+    anchorTag: refuse,
+    seatOpenings: refuse,
+    anchorsOnChain: refuse,
+    roundsOnChain: refuse,
+    paidLeaves: refuse,
+    runsOutrun: refuse,
+    invitedSeats: refuse,
+    seatInvited: refuse,
+    anchor: refuse,
+    recoverAnchor: refuse,
+    accountCallChain: refuse,
     secretIsTheVaults: async () => true,
-    deposit: async (i) => { lastBuilt = i.coin; log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`); return { tx: 'PROVEN' }; },
+    deposit: async (i) => {
+      lastBuilt = i.coin;
+      log.push(`built ${i.coin.token.slice(0, 2)} ${i.coin.value}`);
+      return { tx: 'PROVEN' };
+    },
     /* The built deposit ends an hour on, as the call is built; it and what the wallet hands back call this vault's deposit and create the one coin built. */
     readTransaction: async () => ({
-      identifiers: [], timeToLive: Date.now() + 60 * 60_000, calls: [{ address: VAULT, entryPoint: 'deposit', segments: [0] }],
-      coinsForContracts: [{ contract: VAULT, commitment: `out:${lastBuilt!.nonce}` }], publicTakes: [],
-    }),
+      identifiers: [],
+      timeToLive: Date.now() + 60 * 60_000,
+      calls: [{ address: VAULT, entryPoint: 'deposit', segments: [0] }],
+      coinsForContracts: [{ contract: VAULT, commitment: `out:${lastBuilt!.nonce}` }],
+      publicTakes: []
+    })
   } as VaultBuilderClient;
   const kept = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => kept.get(r) ?? kept.set(r, new MemorySealedPoolStore()).get(r)!;
   const wrapping = recordsKeypairFrom(new Uint8Array(32).fill(9));
   const inFlight = new Map<string, SealedInFlight>();
   const doors = {
-    sleep: async () => {}, waitMs: 3, everyMs: 1, service, records,
+    sleep: async () => {},
+    waitMs: 3,
+    everyMs: 1,
+    service,
+    records,
     me: { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: new Uint8Array(32).fill(9) },
     myRecordsKey: 'ff'.repeat(32) as Hex,
     signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-    company: LABEL, account: ACCOUNT, builder,
-    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
+    company: LABEL,
+    account: ACCOUNT,
+    builder,
+    indexer: async () => ({
+      indexerUri: 'https://indexer.example/api/v3/graphql',
+      indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws'
+    }),
     /* The wallet's read: the account has adopted the vault. */
     onChain: async (v: string) => ({
-      holders: { committee: [], threshold: 1, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+      holders: {
+        committee: [],
+        threshold: 1,
+        seats: [],
+        approvals: 1,
+        vaultThresholds: [],
+        policyBar: null,
+        seatBar: seatBarOf(1, null),
+        adoptedVaults: [v],
+        founding: '4a'.repeat(32),
+        foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }]
+      }
     }),
-    inFlight: sealedOnThisDevice<DepositInFlight>(inFlightInMemory(inFlight), { signerId: 'ada', wrappingSecret: wrapping.secret }, 'deposit') as DepositsInFlight,
+    inFlight: sealedOnThisDevice<DepositInFlight>(
+      inFlightInMemory(inFlight),
+      { signerId: 'ada', wrappingSecret: wrapping.secret },
+      'deposit'
+    ) as DepositsInFlight
   };
   await openCompanyVaultPool(doors, VAULT, async () => {});
   return { log, doors, records };
 };
 
 describe('A DEPOSIT FROM A SOURCE', () => {
-  it('THE PAGE\'S SOURCE: THE VAULT RECEIVES THE ASSET\'S PRIVATE TOKEN, AND THE WALLET IS HANDED THE PROVEN DEPOSIT AND NOTHING ELSE', async () => {
+  it("THE PAGE'S SOURCE: THE VAULT RECEIVES THE ASSET'S PRIVATE TOKEN, AND THE WALLET IS HANDED THE PROVEN DEPOSIT AND NOTHING ELSE", async () => {
     const { log, doors } = await setUp();
     const asked: unknown[] = [];
-    const source = privateTokenFromTheWallet(async (ask) => { asked.push(ask); log.push('wallet'); return { transaction: `${ask.transaction}+coins`, leaves: [] }; }, REGISTRY);
+    const source = privateTokenFromTheWallet(async (ask) => {
+      asked.push(ask);
+      log.push('wallet');
+      return { transaction: `${ask.transaction}+coins`, leaves: [] };
+    }, REGISTRY);
     const done = await depositFromSource(doors, VAULT, source, { code: PRIVATE_TOKEN, value: 40n });
     /* RED WHEN: the vault is given another token than the asset's private one, or another amount. */
     expect(done.note.token).toBe(PRIVATE_TOKEN);
@@ -135,10 +260,19 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
   });
 
-  it('THE PAGE\'S SOURCE PASSES ON ONLY WHAT AN ASK IS, WHATEVER ELSE IT IS HANDED', async () => {
+  it("THE PAGE'S SOURCE PASSES ON ONLY WHAT AN ASK IS, WHATEVER ELSE IT IS HANDED", async () => {
     const asked: unknown[] = [];
-    const source = privateTokenFromTheWallet(async (ask) => { asked.push(ask); return { transaction: 'T', leaves: [] }; }, REGISTRY);
-    await source.payIn({ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN', nonce: '11'.repeat(32) } as DepositAsk);
+    const source = privateTokenFromTheWallet(async (ask) => {
+      asked.push(ask);
+      return { transaction: 'T', leaves: [] };
+    }, REGISTRY);
+    await source.payIn({
+      company: LABEL,
+      account: ACCOUNT,
+      vault: VAULT,
+      transaction: 'PROVEN',
+      nonce: '11'.repeat(32)
+    } as DepositAsk);
     /* RED WHEN: payIn hands the wallet the object it was given, so anything added to an ask reaches the wallet. */
     expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
   });
@@ -146,21 +280,28 @@ describe('A DEPOSIT FROM A SOURCE', () => {
   it('AN ASSET THE SOURCE CANNOT BRING, OR AN AMOUNT OF NOTHING, IS REFUSED BEFORE ANYTHING IS CHOSEN, FILED, BUILT OR ASKED', async () => {
     for (const [why, brought] of [
       ['an asset with no private form', { code: PUBLIC_ONLY.code, value: 40n }],
-      ['an amount of nothing', { code: PRIVATE_TOKEN, value: 0n }],
+      ['an amount of nothing', { code: PRIVATE_TOKEN, value: 0n }]
     ] as const) {
       const { log, doors, records } = await setUp();
-      const source = privateTokenFromTheWallet(async () => { log.push('wallet'); return { transaction: 'T', leaves: [] }; }, REGISTRY);
+      const source = privateTokenFromTheWallet(async () => {
+        log.push('wallet');
+        return { transaction: 'T', leaves: [] };
+      }, REGISTRY);
       /* RED WHEN: the source's refusal or the amount is asked after the vault's step has chosen and filed a coin. */
       const e = await depositFromSource(doors, VAULT, source, brought).catch((x: Error) => x);
       /* RED WHEN: the source's own check is gone, and the asset registry's refusal, worded for a payment, reaches the screen. */
-      expect((e as Error).message, why).toMatch(brought.value === 0n ? /^an amount of nothing is not a deposit/ : /^PUB cannot be put into a vault privately\. Nothing was sent\. Choose a token that can be held privately\.$/);
+      expect((e as Error).message, why).toMatch(
+        brought.value === 0n
+          ? /^an amount of nothing is not a deposit/
+          : /^PUB cannot be put into a vault privately\. Nothing was sent\. Choose a token that can be held privately\.$/
+      );
       expect((e as Error).message, why).not.toMatch(/pa(id|y)(ment| out)/i);
       expect(log, why).toEqual([]);
       expect(await records('deposit-journal').get(VAULT), why).toBeNull();
     }
   });
 
-  it('A SECOND SOURCE PLUGS INTO THE SAME STEP, AND NEITHER THE PAGE\'S SOURCE NOR THE STEP CHANGES FOR IT', async () => {
+  it("A SECOND SOURCE PLUGS INTO THE SAME STEP, AND NEITHER THE PAGE'S SOURCE NOR THE STEP CHANGES FOR IT", async () => {
     /*
      * A source that exists only here: the company brings one asset and the vault receives another token, and what
      * pays it in is not the page's wallet. Nothing in the page's source or the vault's step knows it exists.
@@ -169,7 +310,10 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     const elsewhere: DepositSource = {
       endsIn: 'private-deposit',
       money: ({ value }) => ({ token: OTHER_TOKEN as Hex, value: value * 2n }),
-      payIn: async (ask): Promise<PaidIn> => { asked.push(ask); return { transaction: `${ask.transaction}+from-elsewhere`, leaves: [] }; },
+      payIn: async (ask): Promise<PaidIn> => {
+        asked.push(ask);
+        return { transaction: `${ask.transaction}+from-elsewhere`, leaves: [] };
+      }
     };
     const { log, doors } = await setUp();
     const done = await depositFromSource(doors, VAULT, elsewhere, { code: PRIVATE_TOKEN, value: 21n });
@@ -179,7 +323,10 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     expect(asked).toEqual([{ company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'PROVEN' }]);
     /* And the page's source, beside it, is as it was. */
     const again = await setUp();
-    const page = privateTokenFromTheWallet(async (ask) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }), REGISTRY);
+    const page = privateTokenFromTheWallet(
+      async (ask) => ({ transaction: `${ask.transaction}+coins`, leaves: [] }),
+      REGISTRY
+    );
     const mine = await depositFromSource(again.doors, VAULT, page, { code: PRIVATE_TOKEN, value: 21n });
     expect({ token: mine.note.token, value: mine.note.value }).toEqual({ token: PRIVATE_TOKEN, value: 21n });
   });
@@ -189,11 +336,19 @@ describe('A DEPOSIT FROM A SOURCE', () => {
     let asked = false;
     const unknown = {
       endsIn: 'somewhere-else',
-      money: () => { asked = true; return { token: OTHER_TOKEN as Hex, value: 1n }; },
-      payIn: async () => { log.push('paid'); return { transaction: 'T', leaves: [] }; },
+      money: () => {
+        asked = true;
+        return { token: OTHER_TOKEN as Hex, value: 1n };
+      },
+      payIn: async () => {
+        log.push('paid');
+        return { transaction: 'T', leaves: [] };
+      }
     } as unknown as DepositSource;
     /* RED WHEN: a source is sent down the private step whatever step it says it ends in. */
-    await expect(depositFromSource(doors, VAULT, unknown, { code: PRIVATE_TOKEN, value: 1n })).rejects.toThrow(/cannot make this kind of deposit/);
+    await expect(depositFromSource(doors, VAULT, unknown, { code: PRIVATE_TOKEN, value: 1n })).rejects.toThrow(
+      /cannot make this kind of deposit/
+    );
     expect(asked).toBe(false);
     expect(log).toEqual([]);
     expect(await records('deposit-journal').get(VAULT)).toBeNull();

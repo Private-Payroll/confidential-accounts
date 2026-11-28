@@ -24,7 +24,10 @@ export interface SoonActionProps extends Omit<HTMLAttributes<HTMLSpanElement>, '
 export function SoonAction({ label, soon, icon, variant = 'default', size = 'default', ...marks }: SoonActionProps) {
   return (
     <span className="inline-flex items-center gap-2" data-slot="soon-action" data-soon {...marks}>
-      <Button variant={variant} size={size} disabled>{icon}{label}</Button>
+      <Button variant={variant} size={size} disabled>
+        {icon}
+        {label}
+      </Button>
       <ComingSoon explanation={soon} />
     </span>
   );

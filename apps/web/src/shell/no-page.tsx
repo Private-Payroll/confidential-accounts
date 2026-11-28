@@ -18,7 +18,14 @@ export function NoPage({ home }: { home: PageId }) {
       <EmptyState
         icon={UnavailableIcon}
         title={t('noPage.title')}
-        action={<Button asChild variant="outline"><PageLink to={home}><HugeiconsIcon icon={Home01Icon} strokeWidth={2} data-icon="inline-start" />{t('noPage.home')}</PageLink></Button>}
+        action={
+          <Button asChild variant="outline">
+            <PageLink to={home}>
+              <HugeiconsIcon icon={Home01Icon} strokeWidth={2} data-icon="inline-start" />
+              {t('noPage.home')}
+            </PageLink>
+          </Button>
+        }
       >
         {t('noPage.body')}
       </EmptyState>

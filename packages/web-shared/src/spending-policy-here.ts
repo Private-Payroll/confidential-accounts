@@ -31,8 +31,15 @@ import { epochInForce, type KeysHeld } from '../../../src/core/company-key.js';
 import { assetIdHex, type AssetId } from '../../../src/core/assets.js';
 import { newBlinding, type Hex } from '../../../src/core/crypto.js';
 import {
-  policyOpeningFor, policyTermsFromWire, policyTermsToWire, openSpendingPolicy, sealSpendingPolicy, PolicyNotOpenedHere,
-  SPENDING_POLICY_KIND, type PolicyOpeningOnTheWire, type SpendingPolicySecrets,
+  policyOpeningFor,
+  policyTermsFromWire,
+  policyTermsToWire,
+  openSpendingPolicy,
+  sealSpendingPolicy,
+  PolicyNotOpenedHere,
+  SPENDING_POLICY_KIND,
+  type PolicyOpeningOnTheWire,
+  type SpendingPolicySecrets
 } from '../../../src/midnight/spending-policy-record.js';
 import { verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
@@ -45,14 +52,21 @@ import type { VaultBuilderClient } from './vault-worker-client.js';
 import { kindAsked, namedHere, type DirectoryHere } from './vault-page-doors.js';
 import { openTheRoundHere } from './round-opened-here.js';
 import {
-  believedSigners, believedVersions, blindingHere, commitmentHere, commitmentsWhenWanted, keysHere, policiesInForceHere, policiesOf,
-  type SpendingPoliciesHere, type SpendingPolicyDoors,
+  believedSigners,
+  believedVersions,
+  blindingHere,
+  commitmentHere,
+  commitmentsWhenWanted,
+  keysHere,
+  policiesInForceHere,
+  policiesOf,
+  type SpendingPoliciesHere,
+  type SpendingPolicyDoors
 } from './spending-policy-read-here.js';
 import { governOnDevice, type GovernanceDoors, type GovernedOutcome } from './company-change-on-device.js';
 
 export { PolicyNotOpenedHere };
 export { sealPoliciesToNewSignersHere, type PoliciesResealed } from './policies-resealed-here.js';
-
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 
@@ -64,29 +78,39 @@ const HEX64 = /^[0-9a-f]{64}$/u;
  * answer is taken only when it names every key asked, in the order asked.
  * Never the account state the company's service serves.
  */
-export const chainReadThroughTheWallet = (
-  ask: (roles: readonly string[]) => Promise<{ readonly roles?: readonly AccountRoleEntry[] }>,
-): SpendingPoliciesHere['onChain'] => async (keys) => {
-  const asked = [...new Set(keys.map((k) => String(k).toLowerCase()))];
-  if (asked.length === 0) return new Map();
-  if (!asked.every((k) => HEX64.test(k))) throw new PolicyNotOpenedHere('This device asked the chain about a key that is not thirty-two bytes.');
-  if (asked.length > MOST_ROLES_ASKED) {
-    throw new PolicyNotOpenedHere(`Your wallet is asked about at most ${MOST_ROLES_ASKED} of the account's entries at once, and this asks about ${asked.length}.`);
-  }
-  const read = await ask(asked);
-  const roles = read.roles;
-  if (roles === undefined || roles.length !== asked.length || roles.some((r, i) => r.key !== asked[i])) {
-    throw new PolicyNotOpenedHere('Your wallet did not say what the company\'s account holds under every entry this device asked about.');
-  }
-  return new Map(roles.map((r) => [r.key, r.value]));
-};
+export const chainReadThroughTheWallet =
+  (
+    ask: (roles: readonly string[]) => Promise<{ readonly roles?: readonly AccountRoleEntry[] }>
+  ): SpendingPoliciesHere['onChain'] =>
+  async (keys) => {
+    const asked = [...new Set(keys.map((k) => String(k).toLowerCase()))];
+    if (asked.length === 0) return new Map();
+    if (!asked.every((k) => HEX64.test(k)))
+      throw new PolicyNotOpenedHere('This device asked the chain about a key that is not thirty-two bytes.');
+    if (asked.length > MOST_ROLES_ASKED) {
+      throw new PolicyNotOpenedHere(
+        `Your wallet is asked about at most ${MOST_ROLES_ASKED} of the account's entries at once, and this asks about ${asked.length}.`
+      );
+    }
+    const read = await ask(asked);
+    const roles = read.roles;
+    if (roles === undefined || roles.length !== asked.length || roles.some((r, i) => r.key !== asked[i])) {
+      throw new PolicyNotOpenedHere(
+        "Your wallet did not say what the company's account holds under every entry this device asked about."
+      );
+    }
+    return new Map(roles.map((r) => [r.key, r.value]));
+  };
 
 /** The terms of a policy, as a person sets them: four bands, a limit per period, and the periods. */
 type PolicyTermsOnTheWire = PolicyOpeningOnTheWire['terms'];
 
 const sameTerms = (a: PolicyTermsOnTheWire, b: PolicyTermsOnTheWire): boolean =>
-  a.periodLimit === b.periodLimit && a.periodStart === b.periodStart && a.periodLength === b.periodLength
-  && a.bands.length === b.bands.length && a.bands.every((x, i) => x.ceiling === b.bands[i]!.ceiling && x.approvals === b.bands[i]!.approvals);
+  a.periodLimit === b.periodLimit &&
+  a.periodStart === b.periodStart &&
+  a.periodLength === b.periodLength &&
+  a.bands.length === b.bands.length &&
+  a.bands.every((x, i) => x.ceiling === b.bands[i]!.ceiling && x.approvals === b.bands[i]!.approvals);
 
 /**
  * The most approvals any band of `terms` asks for: what the account raises its
@@ -98,7 +122,8 @@ const sameTerms = (a: PolicyTermsOnTheWire, b: PolicyTermsOnTheWire): boolean =>
 const highestBandOf = (terms: PolicyTermsOnTheWire): number => Math.max(...terms.bands.map((b) => Number(b.approvals)));
 
 /** The terms written the one way a policy record writes them, refused unless the contract could open them. */
-const termsChecked = (terms: PolicyTermsOnTheWire): PolicyTermsOnTheWire => policyTermsToWire(policyTermsFromWire(terms));
+const termsChecked = (terms: PolicyTermsOnTheWire): PolicyTermsOnTheWire =>
+  policyTermsToWire(policyTermsFromWire(terms));
 
 /**
  * **THE OPENING TO RAISE FOR THESE TERMS**: one already filed for this vault
@@ -111,12 +136,19 @@ const termsChecked = (terms: PolicyTermsOnTheWire): PolicyTermsOnTheWire => poli
  * a new blinding would start the vault's period total again.
  */
 async function openingToRaise(
-  doors: SpendingPolicyDoors & { readonly keyEpoch: number }, vault: string, asset: Hex, terms: PolicyTermsOnTheWire,
-  keys: SpendingPolicyKeys, onChain: string | null,
+  doors: SpendingPolicyDoors & { readonly keyEpoch: number },
+  vault: string,
+  asset: Hex,
+  terms: PolicyTermsOnTheWire,
+  keys: SpendingPolicyKeys,
+  onChain: string | null
 ): Promise<PolicyOpeningOnTheWire> {
   const policies = policiesOf(doors.records);
   const [versions, served, signers] = await Promise.all([
-    believedVersions(doors, keys.policyKey), policies.versions(keys.policyKey), believedSigners(doors)]);
+    believedVersions(doors, keys.policyKey),
+    policies.versions(keys.policyKey),
+    believedSigners(doors)
+  ]);
   const sealedTo = [...new Set(signers.map((x) => x.id.toLowerCase()))].sort().join(',');
   const commitmentOf = commitmentsWhenWanted(doors, versions, vault, asset);
   const sameHere: { rec: SealedCompanyRecord; secrets: SpendingPolicySecrets }[] = [];
@@ -127,7 +159,8 @@ async function openingToRaise(
     } catch {
       continue;
     }
-    if (secrets.vault !== vault.toLowerCase() || secrets.asset !== asset || !sameTerms(secrets.opening.terms, terms)) continue;
+    if (secrets.vault !== vault.toLowerCase() || secrets.asset !== asset || !sameTerms(secrets.opening.terms, terms))
+      continue;
     /* Every version of these terms is checked against the chain before any is reused. */
     if (onChain !== null && (await commitmentOf(secrets.opening)).toLowerCase() === onChain.toLowerCase()) {
       throw new PolicyNotOpenedHere('This vault already has exactly this spending policy for this currency.');
@@ -142,10 +175,16 @@ async function openingToRaise(
   const opening: PolicyOpeningOnTheWire = { terms, blinding: newBlinding() };
   /* The next version after every one the store holds, believed or not: a version number is never filed twice. */
   const newest = served.reduce((n, r) => Math.max(n, r.version), 0);
-  await policies.file(sealSpendingPolicy({
-    company: doors.accountId, id: keys.policyKey, version: newest + 1, keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
-    secrets: { vault: vault.toLowerCase(), asset, opening }, signers,
-  }));
+  await policies.file(
+    sealSpendingPolicy({
+      company: doors.accountId,
+      id: keys.policyKey,
+      version: newest + 1,
+      keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
+      secrets: { vault: vault.toLowerCase(), asset, opening },
+      signers
+    })
+  );
   return opening;
 }
 
@@ -179,8 +218,11 @@ export type PolicyGovernanceDoors = GovernanceDoors & {
  * Without `proposed`, only the first is checked, before anything is filed.
  */
 export async function refusePolicyChangeHere(
-  here: SpendingPolicyDoors, vault: string, asset: Hex, keys: SpendingPolicyKeys,
-  proposed?: { readonly commitment: string; readonly leaving?: () => Promise<ReadonlySet<string>> },
+  here: SpendingPolicyDoors,
+  vault: string,
+  asset: Hex,
+  keys: SpendingPolicyKeys,
+  proposed?: { readonly commitment: string; readonly leaving?: () => Promise<ReadonlySet<string>> }
 ): Promise<void> {
   const policies = policiesOf(here.records);
   const onChain = (await policies.onChain([keys.policyKey])).get(keys.policyKey.toLowerCase()) ?? null;
@@ -189,28 +231,49 @@ export async function refusePolicyChangeHere(
   let inForce: PolicyOpeningOnTheWire | null = null;
   if (onChain !== null) {
     try {
-      inForce = (await policyOpeningFor(versions, policies.me, { vault: vault as Hex, asset, commitment: onChain as Hex }, commitmentOf)).secrets.opening;
+      inForce = (
+        await policyOpeningFor(
+          versions,
+          policies.me,
+          { vault: vault as Hex, asset, commitment: onChain as Hex },
+          commitmentOf
+        )
+      ).secrets.opening;
     } catch (e) {
       if (!(e instanceof PolicyNotOpenedHere)) throw e;
-      throw new PolicyNotOpenedHere('This device cannot open the spending policy this vault holds now for this currency, so it '
-        + 'does not change it: a change it cannot compare with the policy in force could start the vault\'s period total again. '
-        + 'A signer who may set spending policies and can read the policy in force re-seals it from their own device; then try '
-        + 'again. Nothing was filed or sent.');
+      throw new PolicyNotOpenedHere(
+        'This device cannot open the spending policy this vault holds now for this currency, so it ' +
+          "does not change it: a change it cannot compare with the policy in force could start the vault's period total again. " +
+          'A signer who may set spending policies and can read the policy in force re-seals it from their own device; then try ' +
+          'again. Nothing was filed or sent.'
+      );
     }
   }
   if (proposed === undefined) return;
-  const found = await policyOpeningFor(versions, policies.me, { vault: vault as Hex, asset, commitment: proposed.commitment as Hex }, commitmentOf);
-  if (inForce !== null && proposed.commitment.toLowerCase() !== String(onChain).toLowerCase()
-    && sameTerms(inForce.terms, found.secrets.opening.terms)) {
-    throw new PolicyNotOpenedHere('This proposal sets exactly the spending policy this vault already has for this currency, '
-      + 'under a new blinding, which would start the vault\'s period total again. Do not approve it; withdraw it.');
+  const found = await policyOpeningFor(
+    versions,
+    policies.me,
+    { vault: vault as Hex, asset, commitment: proposed.commitment as Hex },
+    commitmentOf
+  );
+  if (
+    inForce !== null &&
+    proposed.commitment.toLowerCase() !== String(onChain).toLowerCase() &&
+    sameTerms(inForce.terms, found.secrets.opening.terms)
+  ) {
+    throw new PolicyNotOpenedHere(
+      'This proposal sets exactly the spending policy this vault already has for this currency, ' +
+        "under a new blinding, which would start the vault's period total again. Do not approve it; withdraw it."
+    );
   }
   const filer = verifiedCompanyFiler(versions.find((v) => v.version === found.version)!);
   const leaving = proposed.leaving === undefined ? new Set<string>() : await proposed.leaving();
   if (filer !== null && [...leaving].some((k) => k.toLowerCase() === filer.toLowerCase())) {
-    throw new PolicyNotOpenedHere('The spending policy this proposal sets was filed by a signer whose removal is raised, and '
-      + 'the terms the company keeps after a signer leaves are set by a signer who stays. Do not approve it: a signer who '
-      + 'stays sets the policy from their own device.');
+    throw new PolicyNotOpenedHere(
+      'The spending policy this proposal sets was filed by a signer whose removal is raised, and ' +
+        'the terms the company keeps after a signer leaves are set by a signer who stays. Do not approve it: a signer who ' +
+        'stays sets the policy from their own device.'
+    );
   }
 }
 
@@ -234,16 +297,29 @@ const policyBarFrom = (held: AccountGovernance): number => held.seatBar;
  * away, such a policy is refused instead: leaving its band out could let the
  * change through. A policy that could not be read refuses the count, with why.
  */
-export async function bandsInForceHere(here: SpendingPolicyDoors, o: { readonly strict?: boolean } = {}): Promise<readonly BandInForce[]> {
-  const ids = namedHere(await here.records.directory(kindAsked('company', SPENDING_POLICY_KIND)), 'company', SPENDING_POLICY_KIND);
+export async function bandsInForceHere(
+  here: SpendingPolicyDoors,
+  o: { readonly strict?: boolean } = {}
+): Promise<readonly BandInForce[]> {
+  const ids = namedHere(
+    await here.records.directory(kindAsked('company', SPENDING_POLICY_KIND)),
+    'company',
+    SPENDING_POLICY_KIND
+  );
   const out: BandInForce[] = [];
   for (const policy of await policiesInForceHere(here, ids, { judged: false })) {
     if (policy.state === 'refused') throw policy.why;
-    if (policy.state === 'in-force') out.push({ vault: policy.version.secrets.vault.toLowerCase(), band: highestBandOf(policy.version.secrets.opening.terms) });
+    if (policy.state === 'in-force')
+      out.push({
+        vault: policy.version.secrets.vault.toLowerCase(),
+        band: highestBandOf(policy.version.secrets.opening.terms)
+      });
     else if (policy.state === 'opened-by-none' && o.strict === true) {
-      throw new PolicyNotOpenedHere('This device cannot open a spending policy one of the company\'s vaults holds now, so it cannot '
-        + 'count who approves that vault\'s runs at its bands once this change is carried out. A signer who may set spending '
-        + 'policies and can read it re-seals it from their own device; then try again.');
+      throw new PolicyNotOpenedHere(
+        "This device cannot open a spending policy one of the company's vaults holds now, so it cannot " +
+          "count who approves that vault's runs at its bands once this change is carried out. A signer who may set spending " +
+          'policies and can read it re-seals it from their own device; then try again.'
+      );
     }
   }
   return out;
@@ -265,7 +341,7 @@ export interface PolicySteps {
 const stepsOf = (o: PolicySteps) => ({
   ...(o.approveOnly === undefined ? {} : { approveOnly: o.approveOnly }),
   ...(o.stopBeforeCarry === undefined ? {} : { stopBeforeCarry: o.stopBeforeCarry }),
-  ...(o.carryOnly === undefined ? {} : { carryOnly: o.carryOnly }),
+  ...(o.carryOnly === undefined ? {} : { carryOnly: o.carryOnly })
 });
 
 /**
@@ -276,35 +352,54 @@ const stepsOf = (o: PolicySteps) => ({
  * force, before every send.
  */
 async function policyGoverned(
-  doors: PolicyGovernanceDoors, here: SpendingPolicyDoors, at: { readonly vault: string; readonly asset: Hex; readonly keys: SpendingPolicyKeys },
-  opening: PolicyOpeningOnTheWire, commitment: string, steps: PolicySteps,
+  doors: PolicyGovernanceDoors,
+  here: SpendingPolicyDoors,
+  at: { readonly vault: string; readonly asset: Hex; readonly keys: SpendingPolicyKeys },
+  opening: PolicyOpeningOnTheWire,
+  commitment: string,
+  steps: PolicySteps
 ): Promise<GovernedOutcome> {
   const { vault, asset, keys } = at;
   const blinding = await blindingHere(here);
   return governOnDevice(doors, {
     viewingKey: here.viewingKey,
     change: { kind: 'spending-policy', vault, assetKey: keys.assetKey, commitment },
-    summary: 'Set this vault\'s spending policy for one currency',
+    summary: "Set this vault's spending policy for one currency",
     body: { vault: vault as Hex, assetKey: keys.assetKey as Hex, commitment: commitment as Hex },
     before: async () => {
-      await refusePolicyChangeHere(here, vault, asset, keys, { commitment, ...(doors.leaving === undefined ? {} : { leaving: doors.leaving }) });
+      await refusePolicyChangeHere(here, vault, asset, keys, {
+        commitment,
+        ...(doors.leaving === undefined ? {} : { leaving: doors.leaving })
+      });
       await steps.before?.();
     },
     bar: policyBarFrom,
     highestBand: highestBandOf(opening.terms),
     bandsInForce: () => bandsInForceHere(here),
     carry: (opened) => ({
-      circuit: 'setPolicy', vault, commitment, proposal: opened.chainId, proposalSalt: opened.salt,
-      asset, assetBlinding: blinding, policy: opening,
+      circuit: 'setPolicy',
+      vault,
+      commitment,
+      proposal: opened.chainId,
+      proposalSalt: opened.salt,
+      asset,
+      assetBlinding: blinding,
+      policy: opening
     }),
-    ...stepsOf(steps),
+    ...stepsOf(steps)
   });
 }
 
 /** What this device reads a spending policy from: the company's records, under the company's key in force. */
-const policyDoorsOf = (doors: PolicyGovernanceDoors, viewingKey: KeysHeld, what: string): SpendingPolicyDoors & { keyEpoch: number } => {
+const policyDoorsOf = (
+  doors: PolicyGovernanceDoors,
+  viewingKey: KeysHeld,
+  what: string
+): SpendingPolicyDoors & { keyEpoch: number } => {
   if (doors.records === undefined) {
-    throw new PolicyNotOpenedHere(`This page cannot read the company's records, so it cannot ${what} a spending policy. Reload the page.`);
+    throw new PolicyNotOpenedHere(
+      `This page cannot read the company's records, so it cannot ${what} a spending policy. Reload the page.`
+    );
   }
   return { records: doors.records, accountId: doors.accountId, viewingKey, keyEpoch: doors.filing.keyEpoch };
 };
@@ -321,10 +416,10 @@ const policyDoorsOf = (doors: PolicyGovernanceDoors, viewingKey: KeysHeld, what:
  */
 export async function setSpendingPolicyOnDevice(
   doors: PolicyGovernanceDoors,
-  input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire } & PolicySteps,
+  input: { viewingKey: KeysHeld; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire } & PolicySteps
 ): Promise<GovernedOutcome> {
   const here = policyDoorsOf(doors, input.viewingKey, 'set');
-  if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere('That is not a vault\'s address.');
+  if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere("That is not a vault's address.");
   const vault = input.vault.toLowerCase();
   const asset = assetIdHex(input.asset) as Hex;
   const terms = termsChecked(input.terms);
@@ -359,15 +454,31 @@ export interface PolicyRead extends PolicyProposed {
  * believes. `named` says what was named, for the words of a refusal. Refuses otherwise, with nothing filed or sent.
  */
 async function proposedHere(
-  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] }, named: string,
+  doors: PolicyGovernanceDoors,
+  input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] },
+  named: string
 ): Promise<PolicyRead> {
   const here = policyDoorsOf(doors, input.viewingKey, 'approve');
-  if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere('That is not a vault\'s address.');
+  if (!/^[0-9a-f]{64}$/iu.test(input.vault)) throw new PolicyNotOpenedHere("That is not a vault's address.");
   const vault = input.vault.toLowerCase();
-  const opened = await openTheRoundHere(doors.service, doors.accountId, input.proposal, input.viewingKey, false, doors.records, doors.leaves, false,
-    'set-spending-policy');
+  const opened = await openTheRoundHere(
+    doors.service,
+    doors.accountId,
+    input.proposal,
+    input.viewingKey,
+    false,
+    doors.records,
+    doors.leaves,
+    false,
+    'set-spending-policy'
+  );
   const g = opened.governance as { kind?: string; vault?: string; assetKey?: string; commitment?: string } | undefined;
-  if (g?.kind !== 'spending-policy' || String(g.vault).toLowerCase() !== vault || typeof g.assetKey !== 'string' || typeof g.commitment !== 'string') {
+  if (
+    g?.kind !== 'spending-policy' ||
+    String(g.vault).toLowerCase() !== vault ||
+    typeof g.assetKey !== 'string' ||
+    typeof g.commitment !== 'string'
+  ) {
     throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
   }
   let found: { readonly asset: Hex; readonly policyKey: string } | null = null;
@@ -379,18 +490,33 @@ async function proposedHere(
       break;
     }
   }
-  if (found === null) throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
+  if (found === null)
+    throw new PolicyNotOpenedHere(`This proposal does not set a spending policy on ${named}, so it was not approved.`);
   let opening: PolicyOpeningOnTheWire;
   try {
     const versions = await believedVersions(here, found.policyKey);
-    opening = (await policyOpeningFor(versions, policiesOf(here.records).me,
-      { vault: vault as Hex, asset: found.asset, commitment: g.commitment as Hex }, commitmentsWhenWanted(here, versions, vault, found.asset))).secrets.opening;
+    opening = (
+      await policyOpeningFor(
+        versions,
+        policiesOf(here.records).me,
+        { vault: vault as Hex, asset: found.asset, commitment: g.commitment as Hex },
+        commitmentsWhenWanted(here, versions, vault, found.asset)
+      )
+    ).secrets.opening;
   } catch (e) {
     if (!(e instanceof PolicyNotOpenedHere)) throw e;
-    throw new PolicyNotOpenedHere('None of the company\'s records of this vault\'s spending policy opens the policy this proposal '
-      + 'sets, so this device cannot say what it would approve. The signer who raised it re-seals it from their own device.', { cause: e });
+    throw new PolicyNotOpenedHere(
+      "None of the company's records of this vault's spending policy opens the policy this proposal " +
+        'sets, so this device cannot say what it would approve. The signer who raised it re-seals it from their own device.',
+      { cause: e }
+    );
   }
-  return { chainId: String(opened.chainId).toLowerCase(), commitment: g.commitment.toLowerCase(), opening, asset: found.asset as AssetId };
+  return {
+    chainId: String(opened.chainId).toLowerCase(),
+    commitment: g.commitment.toLowerCase(),
+    opening,
+    asset: found.asset as AssetId
+  };
 }
 
 /**
@@ -403,7 +529,8 @@ async function proposedHere(
  * sent. Reads and files nothing else.
  */
 export function policyReadHere(
-  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] },
+  doors: PolicyGovernanceDoors,
+  input: { viewingKey: KeysHeld; proposal: string; vault: string; among: readonly AssetId[] }
 ): Promise<PolicyRead> {
   return proposedHere(doors, input, 'the vault shown in a currency this device knows');
 }
@@ -417,12 +544,19 @@ export function policyReadHere(
  * Reads and files nothing else.
  */
 export async function policyProposedHere(
-  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; proposal: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire },
+  doors: PolicyGovernanceDoors,
+  input: { viewingKey: KeysHeld; proposal: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire }
 ): Promise<PolicyProposed> {
   const terms = termsChecked(input.terms);
-  const { chainId, commitment, opening } = await proposedHere(doors, { ...input, among: [input.asset] }, 'the vault and currency shown');
+  const { chainId, commitment, opening } = await proposedHere(
+    doors,
+    { ...input, among: [input.asset] },
+    'the vault and currency shown'
+  );
   if (!sameTerms(opening.terms, terms)) {
-    throw new PolicyNotOpenedHere('The spending policy this proposal sets is not the one shown, so it was not approved. Reload the page.');
+    throw new PolicyNotOpenedHere(
+      'The spending policy this proposal sets is not the one shown, so it was not approved. Reload the page.'
+    );
   }
   return { chainId, commitment, opening };
 }
@@ -435,11 +569,19 @@ export async function policyProposedHere(
  */
 export async function approveSpendingPolicyOnDevice(
   doors: PolicyGovernanceDoors,
-  input: { viewingKey: KeysHeld; proposal: string; vault: string; asset: AssetId; terms: PolicyTermsOnTheWire } & PolicySteps & { readonly approveOnly: string },
+  input: {
+    viewingKey: KeysHeld;
+    proposal: string;
+    vault: string;
+    asset: AssetId;
+    terms: PolicyTermsOnTheWire;
+  } & PolicySteps & { readonly approveOnly: string }
 ): Promise<GovernedOutcome> {
   const proposed = await policyProposedHere(doors, input);
   if (proposed.chainId !== input.approveOnly.toLowerCase()) {
-    throw new PolicyNotOpenedHere('The proposal under that name is not the one the chain holds for this change, so it was not approved.');
+    throw new PolicyNotOpenedHere(
+      'The proposal under that name is not the one the chain holds for this change, so it was not approved.'
+    );
   }
   const here = policyDoorsOf(doors, input.viewingKey, 'approve');
   const vault = input.vault.toLowerCase();
@@ -456,14 +598,19 @@ export async function approveSpendingPolicyOnDevice(
  * and raises nothing; `seated` is the seats the chain holds, read by the caller.
  */
 export function setPolicyBarOnDevice(
-  doors: PolicyGovernanceDoors, input: { viewingKey: KeysHeld; newBar: number; seated: number } & PolicySteps,
+  doors: PolicyGovernanceDoors,
+  input: { viewingKey: KeysHeld; newBar: number; seated: number } & PolicySteps
 ): Promise<GovernedOutcome> {
   if (!Number.isInteger(input.newBar) || input.newBar < 1) {
     return Promise.reject(new Error('a change to a spending policy needs at least one approval. Nothing was sent.'));
   }
   if (input.newBar > input.seated) {
-    return Promise.reject(new Error(`a change to a spending policy cannot need more approvals than the ${input.seated} signers the `
-      + 'company has seated. Seat more signers first, or choose a smaller number. Nothing was sent.'));
+    return Promise.reject(
+      new Error(
+        `a change to a spending policy cannot need more approvals than the ${input.seated} signers the ` +
+          'company has seated. Seat more signers first, or choose a smaller number. Nothing was sent.'
+      )
+    );
   }
   return governOnDevice(doors, {
     viewingKey: input.viewingKey,
@@ -472,7 +619,7 @@ export function setPolicyBarOnDevice(
     body: { newPolicyBar: input.newBar },
     bar: policyBarFrom,
     ...(input.before === undefined ? {} : { before: () => input.before!() }),
-    ...stepsOf(input),
+    ...stepsOf(input)
   });
 }
 
@@ -490,24 +637,35 @@ export function setPolicyBarOnDevice(
  * that say what resolves it, when it does not.
  */
 export function removalBoundaryRefusal(
-  here: DirectoryHere, leaver: string, filedUpTo: Readonly<Record<string, number>>,
-  anchoredAtTheHead?: (batch: number) => boolean,
+  here: DirectoryHere,
+  leaver: string,
+  filedUpTo: Readonly<Record<string, number>>,
+  anchoredAtTheHead?: (batch: number) => boolean
 ): string | null {
   const key = leaver.toLowerCase();
   for (const id of namedHere(here, 'company', SPENDING_POLICY_KIND)) {
     const last = filedUpTo[companyRecordKey(SPENDING_POLICY_KIND, id)] ?? 0;
     const seen = [
       ...(here.records.history.get(recordKeyOf({ store: 'company', kind: SPENDING_POLICY_KIND, id })) ?? [])
-        .filter((v) => v.filedBy.toLowerCase() === key && (anchoredAtTheHead?.(v.batch) ?? true)).map((v) => v.version),
+        .filter((v) => v.filedBy.toLowerCase() === key && (anchoredAtTheHead?.(v.batch) ?? true))
+        .map((v) => v.version),
       ...(anchoredAtTheHead !== undefined ? [] : here.records.notYetAnchored)
-        .filter((e) => e.store === 'company' && e.kind === SPENDING_POLICY_KIND && e.id === id && e.filedBy.publicKey.toLowerCase() === key)
-        .map((e) => e.version),
+        .filter(
+          (e) =>
+            e.store === 'company' &&
+            e.kind === SPENDING_POLICY_KIND &&
+            e.id === id &&
+            e.filedBy.publicKey.toLowerCase() === key
+        )
+        .map((e) => e.version)
     ];
     const past = seen.filter((v) => v > last);
     if (past.length > 0) {
-      return `the leaving signer filed version ${Math.max(...past)} of a vault's spending policy, past the last version this `
-        + `removal keeps (${last}), so once they are removed no device would believe it. Withdraw this removal and raise it `
-        + 'again, so it keeps every version they filed';
+      return (
+        `the leaving signer filed version ${Math.max(...past)} of a vault's spending policy, past the last version this ` +
+        `removal keeps (${last}), so once they are removed no device would believe it. Withdraw this removal and raise it ` +
+        'again, so it keeps every version they filed'
+      );
     }
   }
   return null;

@@ -10,7 +10,9 @@ import type { DirectoryHere } from './vault-page-doors.js';
 
 /** The version of the newest retirement no rotation has followed yet (`after`), and the version of the newest rotation (`since`); null when every retirement is followed. */
 export const owedIn = (here: DirectoryHere): { readonly after: number; readonly since: number } | null => {
-  const retiredAt = here.dir.seats.flatMap((x) => (x.retired !== null && x.retiredAt !== undefined ? [x.retiredAt] : []));
+  const retiredAt = here.dir.seats.flatMap((x) =>
+    x.retired !== null && x.retiredAt !== undefined ? [x.retiredAt] : []
+  );
   if (retiredAt.length === 0) return null;
   const after = Math.max(...retiredAt);
   const rotations = here.dir.rotations ?? [];
@@ -21,8 +23,13 @@ export const owedIn = (here: DirectoryHere): { readonly after: number; readonly 
 /** Whether a change of the key was filed by a seat the directory has retired since and the chain no longer holds. */
 export const filedByARemovedSeat = (here: DirectoryHere, r: DirectoryRotation): boolean => {
   const filer = here.dir.seats.find((x) => x.seat === r.by);
-  return filer !== undefined && filer.retired !== null && filer.retiredAt !== undefined && filer.retiredAt > r.version
-    && !here.holders.seats.includes(filer.seat);
+  return (
+    filer !== undefined &&
+    filer.retired !== null &&
+    filer.retiredAt !== undefined &&
+    filer.retiredAt > r.version &&
+    !here.holders.seats.includes(filer.seat)
+  );
 };
 
 /**
@@ -31,7 +38,9 @@ export const filedByARemovedSeat = (here: DirectoryHere, r: DirectoryRotation): 
  * never approve, a proposal sealed under it; the key changes past such a seat only while no proposal needs it.
  */
 const stayersApproveAlone = (here: DirectoryHere): boolean => {
-  const staying = here.holders.seats.filter((s) => here.dir.seats.some((x) => x.seat === s && x.retired === null)).length;
+  const staying = here.holders.seats.filter((s) =>
+    here.dir.seats.some((x) => x.seat === s && x.retired === null)
+  ).length;
   return staying >= Math.max(Number(here.holders.approvals ?? 0), Number(here.holders.seatBar ?? 0));
 };
 
@@ -47,15 +56,17 @@ type RemovalWaited =
  * answers, following the retirement the newest change followed (`after`, 0 when none).
  */
 type KeyChangeOwed =
-  | { readonly after: number; readonly since: number }
-  | { readonly after: number; readonly repairs: number };
+  { readonly after: number; readonly since: number } | { readonly after: number; readonly repairs: number };
 
 /**
  * Whether a seat the chain holds and the directory has no entry for was admitted by the company's roster: such a seat
  * files its own entry first (its wallet's `ownEntryFiled`), so a change made now would leave it out. Waits too when the
  * roster cannot be read to tell. Null when no such seat is held.
  */
-const admittedWaits = async (here: DirectoryHere, doors: Pick<RotationDoors, 'admitted'>): Promise<RemovalWaited | null> => {
+const admittedWaits = async (
+  here: DirectoryHere,
+  doors: Pick<RotationDoors, 'admitted'>
+): Promise<RemovalWaited | null> => {
   const unentered = here.holders.seats.filter((s) => !here.dir.seats.some((x) => x.seat === s));
   if (unentered.length === 0) return null;
   let admitted: ReadonlySet<string> | null = null;
@@ -66,11 +77,18 @@ const admittedWaits = async (here: DirectoryHere, doors: Pick<RotationDoors, 'ad
     admitted = null;
   }
   if (admitted === null) {
-    return { state: 'waits', why: 'the chain holds a seat the company\'s directory has no entry for, and the company\'s roster could not be read to tell whether it was admitted' };
+    return {
+      state: 'waits',
+      why: "the chain holds a seat the company's directory has no entry for, and the company's roster could not be read to tell whether it was admitted"
+    };
   }
   const roster = admitted;
   return unentered.some((s) => roster.has(s.toLowerCase()))
-    ? { state: 'waits', why: 'the chain holds a seat the company\'s directory has no entry for yet; that seat files its entry first' } : null;
+    ? {
+        state: 'waits',
+        why: "the chain holds a seat the company's directory has no entry for yet; that seat files its entry first"
+      }
+    : null;
 };
 
 /**
@@ -90,26 +108,40 @@ const admittedWaits = async (here: DirectoryHere, doors: Pick<RotationDoors, 'ad
  * admitted that has filed no entry yet is waited for before `not-needed` too, so it is not left out of that change.
  */
 export async function removalWaitsHere(
-  here: DirectoryHere, seat: DirectorySeat | undefined,
-  o: { readonly leaf?: string; readonly revoked?: () => Promise<number | null>; readonly admittedFirst?: boolean; readonly repair?: boolean },
-  mayAct: (seat: DirectorySeat) => string | null, doors: Pick<RotationDoors, 'leaving' | 'admitted'>,
+  here: DirectoryHere,
+  seat: DirectorySeat | undefined,
+  o: {
+    readonly leaf?: string;
+    readonly revoked?: () => Promise<number | null>;
+    readonly admittedFirst?: boolean;
+    readonly repair?: boolean;
+  },
+  mayAct: (seat: DirectorySeat) => string | null,
+  doors: Pick<RotationDoors, 'leaving' | 'admitted'>
 ): Promise<RemovalWaited> {
-  if (seat === undefined) return { state: 'not-this-seat', why: 'this device\'s seat has no entry in the company\'s directory' };
+  if (seat === undefined)
+    return { state: 'not-this-seat', why: "this device's seat has no entry in the company's directory" };
   if (seat.retired !== null) return { state: 'not-this-seat', why: 'this seat is retired from the company' };
-  if (typeof o.leaf === 'string' && o.leaf.toLowerCase() === seat.seat) return { state: 'not-this-seat', why: 'this seat is the one leaving' };
-  if (!here.holders.seats.includes(seat.seat)) return { state: 'not-this-seat', why: 'the chain no longer holds this seat' };
+  if (typeof o.leaf === 'string' && o.leaf.toLowerCase() === seat.seat)
+    return { state: 'not-this-seat', why: 'this seat is the one leaving' };
+  if (!here.holders.seats.includes(seat.seat))
+    return { state: 'not-this-seat', why: 'the chain no longer holds this seat' };
   const roleMayNot = mayAct(seat);
   if (roleMayNot !== null) return { state: 'not-this-seat', why: roleMayNot };
   let leaving: ReadonlySet<string>;
   try {
     leaving = await doors.leaving();
   } catch (e) {
-    return { state: 'waits', why: `${(e as Error)?.message ?? String(e)}; the company's key is changed once it can be read` };
+    return {
+      state: 'waits',
+      why: `${(e as Error)?.message ?? String(e)}; the company's key is changed once it can be read`
+    };
   }
-  if (leaving.has(seat.signingKey.toLowerCase())) return { state: 'not-this-seat', why: 'a removal of this seat is approved' };
+  if (leaving.has(seat.signingKey.toLowerCase()))
+    return { state: 'not-this-seat', why: 'a removal of this seat is approved' };
   const rotations = here.dir.rotations ?? [];
   if (rotations.some((r) => !here.records.directory.has(r.version))) {
-    return { state: 'waits', why: 'a change of the company\'s key is filed and not yet anchored' };
+    return { state: 'waits', why: "a change of the company's key is filed and not yet anchored" };
   }
   const owed = owedIn(here);
   const last = rotations[rotations.length - 1];
@@ -118,23 +150,46 @@ export async function removalWaitsHere(
     try {
       revokedAt = await o.revoked();
     } catch (e) {
-      return { state: 'waits', why: `${(e as Error)?.message ?? String(e)}; the company's read grants are read again first` };
+      return {
+        state: 'waits',
+        why: `${(e as Error)?.message ?? String(e)}; the company's read grants are read again first`
+      };
     }
   }
-  const repairs = o.repair === true || (revokedAt !== null && revokedAt >= (last?.epoch ?? 0)) ? last?.epoch ?? 0 : null;
-  if (owed === null && repairs === null) return (o.admittedFirst === true ? await admittedWaits(here, doors) : null) ?? { state: 'not-needed' };
+  const repairs =
+    o.repair === true || (revokedAt !== null && revokedAt >= (last?.epoch ?? 0)) ? (last?.epoch ?? 0) : null;
+  if (owed === null && repairs === null)
+    return (o.admittedFirst === true ? await admittedWaits(here, doors) : null) ?? { state: 'not-needed' };
   if (o.repair === true && owed !== null) {
-    return { state: 'waits', why: 'a signer\'s removal owes the company a change of its key, with a new payout seed, which is made before any repair: the next action of a signer who stays makes it at its start' };
+    return {
+      state: 'waits',
+      why: "a signer's removal owes the company a change of its key, with a new payout seed, which is made before any repair: the next action of a signer who stays makes it at its start"
+    };
   }
-  if (owed !== null && !here.records.directory.has(owed.after)) return { state: 'waits', why: 'the retirement of the leaving seat is filed and not yet anchored' };
-  const stillHeld = owed === null ? [] : here.dir.seats.filter((x) => x.retired !== null && (x.retiredAt ?? 0) > owed.since && here.holders.seats.includes(x.seat));
-  if (stillHeld.some((x) => !here.records.directory.has(x.retiredAt ?? 0)) || (stillHeld.length > 0 && !stayersApproveAlone(here))) {
-    return { state: 'waits', why: 'the chain still holds a retired seat, so the removal is not carried out on the chain yet' };
+  if (owed !== null && !here.records.directory.has(owed.after))
+    return { state: 'waits', why: 'the retirement of the leaving seat is filed and not yet anchored' };
+  const stillHeld =
+    owed === null
+      ? []
+      : here.dir.seats.filter(
+          (x) => x.retired !== null && (x.retiredAt ?? 0) > owed.since && here.holders.seats.includes(x.seat)
+        );
+  if (
+    stillHeld.some((x) => !here.records.directory.has(x.retiredAt ?? 0)) ||
+    (stillHeld.length > 0 && !stayersApproveAlone(here))
+  ) {
+    return {
+      state: 'waits',
+      why: 'the chain still holds a retired seat, so the removal is not carried out on the chain yet'
+    };
   }
   const admittedWait = await admittedWaits(here, doors);
   if (admittedWait !== null) return admittedWait;
   if (here.dir.seats.some((x) => x.retired === null && !here.holders.seats.includes(x.seat))) {
-    return { state: 'waits', why: 'the chain no longer holds a seat the directory has not retired; its retirement is filed and anchored first' };
+    return {
+      state: 'waits',
+      why: 'the chain no longer holds a seat the directory has not retired; its retirement is filed and anchored first'
+    };
   }
   return { state: 'ready', seat, owed: owed ?? { after: last?.after ?? 0, repairs: repairs ?? last?.epoch ?? 0 } };
 }

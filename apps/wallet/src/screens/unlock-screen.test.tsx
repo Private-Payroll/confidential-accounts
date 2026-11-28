@@ -22,7 +22,12 @@ import { parseAsk } from 'midnight-identity/profile/request';
 import type { KeyringRequest, UnlockRequest } from 'midnight-identity/profile/request';
 import type { ChannelWindow } from 'midnight-identity/profile/channel';
 import {
-  HELD_ADDRESS_SLOTS, keyringKeyFor, listHolds, readRelease, releaseFor, unlockKeyFor,
+  HELD_ADDRESS_SLOTS,
+  keyringKeyFor,
+  listHolds,
+  readRelease,
+  releaseFor,
+  unlockKeyFor
 } from 'midnight-identity/profile/unlock';
 import { NETWORK } from 'midnight-identity/network';
 import { ownedAddressFor } from '../accounts/owned-address.js';
@@ -48,7 +53,7 @@ vi.mock('../keyring/read-for-the-page.js', async (importOriginal) => {
       const here = real.keysReadForThePage(...args);
       if (plant.seat === null || here === null) return here;
       return { ...here, read: { ...here.read, seats: { ...here.read.seats, acc_P: plant.seat as never } } };
-    },
+    }
   };
 });
 
@@ -87,12 +92,19 @@ const accountOf = (company: unknown): AccountAddress | undefined =>
   company === CO_A ? ACCOUNT_A : company === CO_B ? ACCOUNT_B : undefined;
 /* The chain, as this wallet reads it: each account carries its own company's label. */
 const chain: LabelReader = async (account) =>
-  account === ACCOUNT_A ? { of: 'carries', label: CO_A }
-    : account === ACCOUNT_B ? { of: 'carries', label: CO_B } : { of: 'no-account' };
+  account === ACCOUNT_A
+    ? { of: 'carries', label: CO_A }
+    : account === ACCOUNT_B
+      ? { of: 'carries', label: CO_B }
+      : { of: 'no-account' };
 
 let port: WatchedPort;
-beforeEach(() => { port = watchedStore(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = watchedStore();
+});
+afterEach(() => {
+  cleanup();
+});
 
 /** An unlock on the wire — no `wants`, no `origin`, one `company`. */
 const unlock = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -105,7 +117,7 @@ const unlock = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   account: accountOf('company' in over ? over['company'] : CO_A),
   nonce: 'n1',
   expiresAt: NOW + 600_000,
-  ...over,
+  ...over
 });
 
 /** What `open` hands back: the messages, and a way to AWAIT the next one. */
@@ -124,11 +136,24 @@ const open = (data: unknown = unlock(), origin = ORIGIN): Opened => {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
   render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} readLabel={chain} embedder={origin} />);
+    <Approve
+      identity={identity}
+      secret={SECRET}
+      port={port}
+      view={view}
+      now={() => NOW}
+      readLabel={chain}
+      embedder={origin}
+    />
+  );
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }
@@ -144,15 +169,14 @@ const someone = async (): Promise<string[]> => {
 
 /** What the key for a COMPANY actually is. Pinned INDEPENDENTLY — against
  * `@scure/bip32` rather than against this module — in `profile/unlock.test.ts`. */
-const keyFor = (company: string, origin = ORIGIN): string => PolyfillBuffer
-  .from(unlockKeyFor(
-    identity, parseAsk(unlock({ company }), origin, NOW) as UnlockRequest))
-  .toString('hex');
+const keyFor = (company: string, origin = ORIGIN): string =>
+  PolyfillBuffer.from(unlockKeyFor(identity, parseAsk(unlock({ company }), origin, NOW) as UnlockRequest)).toString(
+    'hex'
+  );
 
 const hex = (bytes: Uint8Array): string => PolyfillBuffer.from(bytes).toString('hex');
 
-const releaseFrom = (sent: { message: unknown }[]): UnlockRelease =>
-  sent[sent.length - 1]!.message as UnlockRelease;
+const releaseFrom = (sent: { message: unknown }[]): UnlockRelease => sent[sent.length - 1]!.message as UnlockRelease;
 
 /**
  * **THIS FILE NO LONGER NAMES A BUDGET, BECAUSE IT NO LONGER WAITS.** The flake,
@@ -247,8 +271,8 @@ const remembered = async (pressed: { written: () => Promise<void> }): Promise<vo
   }
   if (releasesOf(opened.profile).length === 0) {
     throw new Error(
-      'the write landed and it carried no release. That is the defect, not a wait that '
-      + 'needed longer.');
+      'the write landed and it carried no release. That is the defect, not a wait that ' + 'needed longer.'
+    );
   }
 };
 
@@ -365,143 +389,134 @@ describe('§4 — THE SCREEN IS WRITTEN IN WHAT WAS OBSERVED, NOT IN WHAT WAS CL
     expect(sizeOf('[data-headline]')).toBeGreaterThan(claim);
   });
 
-  it('THE COMPANY IS SHOWN WHOLE, and beside the origin rather than instead of it',
-    async () => {
-      /* A selector narrower than the thing it selects can be ground, and an
-       * address SHOWN narrower than it is, is the same mistake at the person. */
-      await someone();
-      open();
-      await saying('Who is asking');
-      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
-      expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
-      expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(ORIGIN);
-      expect(document.body.textContent)
-        .toContain('This wallet cannot check that the company belongs to the page asking');
-    });
+  it('THE COMPANY IS SHOWN WHOLE, and beside the origin rather than instead of it', async () => {
+    /* A selector narrower than the thing it selects can be ground, and an
+     * address SHOWN narrower than it is, is the same mistake at the person. */
+    await someone();
+    open();
+    await saying('Who is asking');
+    expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
+    expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
+    expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(ORIGIN);
+    expect(document.body.textContent).toContain('This wallet cannot check that the company belongs to the page asking');
+  });
 
-  it('THE COMPANY IS ALSO SHOWN AS SOMETHING A PERSON COULD READ DOWN A PHONE',
-    async () => {
-      /*
-       * **THE FINDING.** The screen told somebody *"if you do not recognise the
-       * company, do not give the key"* and then showed them
-       * `dbe119a3…65c8`. **The one instruction on the page a person must follow
-       * was the one no person can.** The fingerprint is the same address in a
-       * form that can be put in an invitation, read down a phone, and compared.
-       */
-      await someone();
-      open();
-      await saying('Who is asking');
-      const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
-      /* RED WHEN: the fingerprint is of anything but the label and the account together. */
-      expect(shown).toBe(companyFingerprint(CO_A, ACCOUNT_A));
-      expect(shown).toBe('R4MM-514E-E550-1PKT-X0W3');
-      /* The label and the account are still on the screen: the fingerprint
-       * stands for them and does not replace the facts. */
-      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
-      expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
-      /* **AND IT IS BIGGER THAN THE THINGS IT STANDS FOR**, because it is what a
-       * person is actually being asked to compare. */
-      expect(sizeOf('[data-company-fingerprint]'))
-        .toBeGreaterThan(sizeOf('[data-company-label]'));
-      /* Compared with one source, the person who invited you, and never "the company". */
-      expect(document.querySelector('[data-compare-with]')?.textContent).toContain(
-        'Check every character, not only the ends, against the fingerprint the person who invited you to this company gave you themselves',
-      );
-      expect(document.body.textContent).not.toMatch(/ask the company for its fingerprint/i);
-    });
+  it('THE COMPANY IS ALSO SHOWN AS SOMETHING A PERSON COULD READ DOWN A PHONE', async () => {
+    /*
+     * **THE FINDING.** The screen told somebody *"if you do not recognise the
+     * company, do not give the key"* and then showed them
+     * `dbe119a3…65c8`. **The one instruction on the page a person must follow
+     * was the one no person can.** The fingerprint is the same address in a
+     * form that can be put in an invitation, read down a phone, and compared.
+     */
+    await someone();
+    open();
+    await saying('Who is asking');
+    const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
+    /* RED WHEN: the fingerprint is of anything but the label and the account together. */
+    expect(shown).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+    expect(shown).toBe('R4MM-514E-E550-1PKT-X0W3');
+    /* The label and the account are still on the screen: the fingerprint
+     * stands for them and does not replace the facts. */
+    expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
+    expect(document.querySelector('[data-company-account]')?.textContent).toBe(ACCOUNT_A);
+    /* **AND IT IS BIGGER THAN THE THINGS IT STANDS FOR**, because it is what a
+     * person is actually being asked to compare. */
+    expect(sizeOf('[data-company-fingerprint]')).toBeGreaterThan(sizeOf('[data-company-label]'));
+    /* Compared with one source, the person who invited you, and never "the company". */
+    expect(document.querySelector('[data-compare-with]')?.textContent).toContain(
+      'Check every character, not only the ends, against the fingerprint the person who invited you to this company gave you themselves'
+    );
+    expect(document.body.textContent).not.toMatch(/ask the company for its fingerprint/i);
+  });
 
-  it('A DIFFERENT COMPANY SHOWS A DIFFERENT FINGERPRINT, AND ONE THAT IS NOT NEARBY',
-    async () => {
-      /* The reason it is worth showing: it must not be true that two companies
-       * a person could confuse render two fingerprints a person could confuse. */
-      await someone();
-      open(unlock({ company: CO_B }));
-      await saying('Who is asking');
-      const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
-      expect(shown).toBe(companyFingerprint(CO_B, ACCOUNT_B));
-      expect(shown).not.toBe(companyFingerprint(CO_A, ACCOUNT_A));
-    });
+  it('A DIFFERENT COMPANY SHOWS A DIFFERENT FINGERPRINT, AND ONE THAT IS NOT NEARBY', async () => {
+    /* The reason it is worth showing: it must not be true that two companies
+     * a person could confuse render two fingerprints a person could confuse. */
+    await someone();
+    open(unlock({ company: CO_B }));
+    await saying('Who is asking');
+    const shown = document.querySelector('[data-company-fingerprint]')?.textContent ?? '';
+    expect(shown).toBe(companyFingerprint(CO_B, ACCOUNT_B));
+    expect(shown).not.toBe(companyFingerprint(CO_A, ACCOUNT_A));
+  });
 
-  it('A LABEL ON AN ACCOUNT THAT DOES NOT CARRY IT GIVES NOTHING, AND SHOWS NO FINGERPRINT',
-    async () => {
-      /*
-       * **THE WAY ONE COMPANY WEARS ANOTHER'S FACE.** A page names company A's
-       * label and an account that carries somebody else's. The wallet has read
-       * the account itself and says so, and the button stays shut.
-       * RED WHEN: the unlock screen gives a key before the account is found to carry the label.
-       */
-      await someone();
-      const channel = open(unlock({ company: CO_A, account: ACCOUNT_B }));
-      await saying('Who is asking');
-      await settled(5);
-      expect(document.querySelector('[data-company-check="another-company"]')).not.toBeNull();
-      expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
-      const give = document.querySelector<HTMLButtonElement>('[data-unlock]')!;
-      expect(give.disabled).toBe(true);
-      fireEvent.click(give);
-      await settled(5);
-      expect(channel.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/unlock-release/v1')).toEqual([]);
-    });
+  it('A LABEL ON AN ACCOUNT THAT DOES NOT CARRY IT GIVES NOTHING, AND SHOWS NO FINGERPRINT', async () => {
+    /*
+     * **THE WAY ONE COMPANY WEARS ANOTHER'S FACE.** A page names company A's
+     * label and an account that carries somebody else's. The wallet has read
+     * the account itself and says so, and the button stays shut.
+     * RED WHEN: the unlock screen gives a key before the account is found to carry the label.
+     */
+    await someone();
+    const channel = open(unlock({ company: CO_A, account: ACCOUNT_B }));
+    await saying('Who is asking');
+    await settled(5);
+    expect(document.querySelector('[data-company-check="another-company"]')).not.toBeNull();
+    expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
+    const give = document.querySelector<HTMLButtonElement>('[data-unlock]')!;
+    expect(give.disabled).toBe(true);
+    fireEvent.click(give);
+    await settled(5);
+    expect(
+      channel.sent.filter((m) => (m.message as { schema?: string }).schema === 'midnight-identity/unlock-release/v1')
+    ).toEqual([]);
+  });
 
-  it('AN UNLOCK THAT NAMES NO ACCOUNT GIVES NOTHING: there is nothing to check the label against',
-    async () => {
-      /* RED WHEN: a page can skip the check by leaving the account out. */
-      await someone();
-      const { account: _gone, ...noAccount } = unlock();
-      open(noAccount);
-      await saying('Who is asking');
-      await settled(5);
-      expect(document.querySelector('[data-company-check="no-account-yet"]')).not.toBeNull();
-      expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
-      expect(document.querySelector<HTMLButtonElement>('[data-unlock]')!.disabled).toBe(true);
-    });
+  it('AN UNLOCK THAT NAMES NO ACCOUNT GIVES NOTHING: there is nothing to check the label against', async () => {
+    /* RED WHEN: a page can skip the check by leaving the account out. */
+    await someone();
+    const { account: _gone, ...noAccount } = unlock();
+    open(noAccount);
+    await saying('Who is asking');
+    await settled(5);
+    expect(document.querySelector('[data-company-check="no-account-yet"]')).not.toBeNull();
+    expect(document.querySelector('[data-company-fingerprint]')).toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[data-unlock]')!.disabled).toBe(true);
+  });
 
-  it('THE FINGERPRINT IS ON THE WARNING AND IN THE SENTENCE AFTERWARDS TOO',
-    async () => {
-      /* The finding names all three places the raw address was shown. The sentence
-       * afterwards is the one that wrapped sixty-four characters through the
-       * middle of itself. */
-      await someone();
-      const first = open();
-      const pressed = await press(first);
-      await saying('They have the key');
-      await remembered(pressed);
-      /* THE SENTENCE AFTERWARDS: the fingerprint is IN the sentence and the
-       * sixty-four characters are on a line of their own beneath it. */
-      expect(document.querySelector('[data-given-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
-      const sentence = document.querySelector('.lede')?.textContent ?? '';
-      expect(sentence).toContain(companyFingerprint(CO_A, ACCOUNT_A));
-      expect(sentence).not.toContain(ACCOUNT_A);
-      cleanup();
+  it('THE FINGERPRINT IS ON THE WARNING AND IN THE SENTENCE AFTERWARDS TOO', async () => {
+    /* The finding names all three places the raw address was shown. The sentence
+     * afterwards is the one that wrapped sixty-four characters through the
+     * middle of itself. */
+    await someone();
+    const first = open();
+    const pressed = await press(first);
+    await saying('They have the key');
+    await remembered(pressed);
+    /* THE SENTENCE AFTERWARDS: the fingerprint is IN the sentence and the
+     * sixty-four characters are on a line of their own beneath it. */
+    expect(document.querySelector('[data-given-fingerprint]')?.textContent).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+    const sentence = document.querySelector('.lede')?.textContent ?? '';
+    expect(sentence).toContain(companyFingerprint(CO_A, ACCOUNT_A));
+    expect(sentence).not.toContain(ACCOUNT_A);
+    cleanup();
 
-      /* THE WARNING. */
-      open(unlock({ nonce: 'n2' }), OTHER);
-      await saying('Who is asking');
-      expect(document.querySelector('[data-warning-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
-    });
+    /* THE WARNING. */
+    open(unlock({ nonce: 'n2' }), OTHER);
+    await saying('Who is asking');
+    expect(document.querySelector('[data-warning-fingerprint]')?.textContent).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+  });
 
-  it('THE FINGERPRINT IS NEVER AN INPUT TO THE KEY, WHATEVER THE SCREEN SHOWS',
-    async () => {
-      /*
-       * **A HUNDRED-BIT SELECTOR FOR A TWO-HUNDRED-AND-FIFTY-SIX-BIT THING IS
-       * THE REJECTED DESIGN IN A NEW HAT**, and it would read perfectly.
-       * The key that crosses is still the pure function of the seed and the
-       * WHOLE address, checked here against the same value pinned elsewhere.
-       */
-      await someone();
-      const channel = open();
-      const { sent } = channel;
-      await press(channel);
-      await saying('They have the key');
-      const release = releaseFrom(sent);
-      expect(hex(fromBase64Url(release.key))).toBe(keyFor(CO_A));
-      /* And the fingerprint is on no wire: it is a rendering, and the other
-       * side computes its own from the address it already has. */
-      expect(JSON.stringify(release)).not.toContain(companyFingerprint(CO_A, ACCOUNT_A));
-      expect(release.company).toBe(CO_A);
-    });
+  it('THE FINGERPRINT IS NEVER AN INPUT TO THE KEY, WHATEVER THE SCREEN SHOWS', async () => {
+    /*
+     * **A HUNDRED-BIT SELECTOR FOR A TWO-HUNDRED-AND-FIFTY-SIX-BIT THING IS
+     * THE REJECTED DESIGN IN A NEW HAT**, and it would read perfectly.
+     * The key that crosses is still the pure function of the seed and the
+     * WHOLE address, checked here against the same value pinned elsewhere.
+     */
+    await someone();
+    const channel = open();
+    const { sent } = channel;
+    await press(channel);
+    await saying('They have the key');
+    const release = releaseFrom(sent);
+    expect(hex(fromBase64Url(release.key))).toBe(keyFor(CO_A));
+    /* And the fingerprint is on no wire: it is a rendering, and the other
+     * side computes its own from the address it already has. */
+    expect(JSON.stringify(release)).not.toContain(companyFingerprint(CO_A, ACCOUNT_A));
+    expect(release.company).toBe(CO_A);
+  });
 
   it('an unlock naming no company never reaches the button', async () => {
     await someone();
@@ -518,8 +533,9 @@ describe('§2 — THE SCREEN SAYS WHAT THEY WILL BE ABLE TO DO, NOT THAT A KEY M
     await someone();
     open();
     await saying('Who is asking');
-    expect(document.querySelector('[data-unlock-question]')?.textContent)
-      .toContain(`Do you want ${ORIGIN} to be able to open the records this company keeps`);
+    expect(document.querySelector('[data-unlock-question]')?.textContent).toContain(
+      `Do you want ${ORIGIN} to be able to open the records this company keeps`
+    );
     expect(document.querySelectorAll('[data-row]')).toHaveLength(0);
     expect(screen.getByText(giveTo())).toBeTruthy();
   });
@@ -529,38 +545,37 @@ describe('§2 — THE SCREEN SAYS WHAT THEY WILL BE ABLE TO DO, NOT THAT A KEY M
     open();
     await saying('Who is asking');
     /* RED WHEN the line is missing or changed by a word: the answer carries more than the key, unsaid. */
-    expect(document.querySelector('[data-unlock-held-addresses]')?.textContent?.replace(/\s+/g, ' ').trim())
-      .toBe('It also lets this page check whether a payslip was paid to one of your wallets. '
-        + 'It does not tell the page any of your addresses.');
+    expect(document.querySelector('[data-unlock-held-addresses]')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'It also lets this page check whether a payslip was paid to one of your wallets. ' +
+        'It does not tell the page any of your addresses.'
+    );
   });
 
-  it('says the three things a person needs: what it is, how long, and that it stays given',
-    async () => {
-      await someone();
-      open();
-      await saying('Who is asking');
-      const words = document.body.textContent ?? '';
-      /* WHAT: the ability to read, not a fact about them. */
-      expect(words).toContain('This is not a fact about you. It is the ability to read.');
-      /* FOR HOW LONG: the honest answer rather than "until you say stop". */
-      expect(words).toContain('nothing stops them keeping their own copy');
-      /* AND IT DOES NOT COME BACK. §6 binds hardest here. */
-      expect(words).toContain('nothing can take back a key');
-      /* NEVER THE MECHANISM: not "release a key". */
-      for (const jargon of ['release', 'derive', 'hkdf', 'seed', 'secret key']) {
-        expect(words.toLowerCase(), jargon).not.toContain(jargon);
-      }
-    });
+  it('says the three things a person needs: what it is, how long, and that it stays given', async () => {
+    await someone();
+    open();
+    await saying('Who is asking');
+    const words = document.body.textContent ?? '';
+    /* WHAT: the ability to read, not a fact about them. */
+    expect(words).toContain('This is not a fact about you. It is the ability to read.');
+    /* FOR HOW LONG: the honest answer rather than "until you say stop". */
+    expect(words).toContain('nothing stops them keeping their own copy');
+    /* AND IT DOES NOT COME BACK. §6 binds hardest here. */
+    expect(words).toContain('nothing can take back a key');
+    /* NEVER THE MECHANISM: not "release a key". */
+    for (const jargon of ['release', 'derive', 'hkdf', 'seed', 'secret key']) {
+      expect(words.toLowerCase(), jargon).not.toContain(jargon);
+    }
+  });
 
-  it('THE ORIGIN IS SHOWN AS THE BROWSER’S, beside the name they chose for themselves',
-    async () => {
-      await someone();
-      open();
-      await saying('Who is asking');
-      expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
-      expect(document.querySelector('[data-requester-origin]')?.textContent).toBe(ORIGIN);
-      expect(document.body.textContent).toContain('Your browser told this wallet that');
-    });
+  it('THE ORIGIN IS SHOWN AS THE BROWSER’S, beside the name they chose for themselves', async () => {
+    await someone();
+    open();
+    await saying('Who is asking');
+    expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
+    expect(document.querySelector('[data-requester-origin]')?.textContent).toBe(ORIGIN);
+    expect(document.body.textContent).toContain('Your browser told this wallet that');
+  });
 
   it('OFFERS NO WALLET PICKER, and says the key belongs to the company', async () => {
     /*
@@ -598,81 +613,78 @@ describe('§3 — THE WALLET REMEMBERS WHICH HOST ASKED FOR WHICH COMPANY, AND W
     expect(document.querySelector('[data-approve]')).not.toBeNull();
   });
 
-  it('AND SAYS SO, BEFORE THE BUTTON, WHEN THE SAME COMPANY ARRIVES FROM A NEW HOST',
-    async () => {
-      await someone();
-      /* Given once, at A. */
-      const first = open();
-      const pressed = await press(first);
-      await saying('They have the key');
-      await remembered(pressed);
-      cleanup();
+  it('AND SAYS SO, BEFORE THE BUTTON, WHEN THE SAME COMPANY ARRIVES FROM A NEW HOST', async () => {
+    await someone();
+    /* Given once, at A. */
+    const first = open();
+    const pressed = await press(first);
+    await saying('They have the key');
+    await remembered(pressed);
+    cleanup();
 
-      /* Asked again, for the same company, from B. */
-      open(unlock({ nonce: 'n2' }), OTHER);
-      await saying('Who is asking');
-      /*
-       * **AND THEN LET THE PROFILE ARRIVE.** `findByText` resolves when the
-       * REQUEST does, which is earlier than the sealed profile — and the
-       * warning is computed from the profile, so without this the query below
-       * can read a screen that has not been told anything yet. **It was watched
-       * failing at 61ms** in one run of this file while five others were green,
-       * which is the second-cause shape again: fast, not a timeout, and nothing
-       * to do with the wait budget. No assertion here changed.
-       */
-      await settle();
-      const warning = document.querySelector('[data-seen-elsewhere]')?.textContent ?? '';
-      expect(warning).toContain(ORIGIN);
-      expect(warning).toContain(OTHER);
-      /* **IT WARNS AND NEVER REFUSES.** A company legitimately moves host —
-       * that is the point of the whole round. The person decides. */
-      expect(screen.getByText(giveTo(OTHER))).toBeTruthy();
-      /* And the warning stands above the button a person is about to press. */
-      const order = document.body.textContent ?? '';
-      expect(order.indexOf('given this company’s key to a different page'))
-        .toBeLessThan(order.indexOf(giveTo(OTHER)));
-    });
+    /* Asked again, for the same company, from B. */
+    open(unlock({ nonce: 'n2' }), OTHER);
+    await saying('Who is asking');
+    /*
+     * **AND THEN LET THE PROFILE ARRIVE.** `findByText` resolves when the
+     * REQUEST does, which is earlier than the sealed profile — and the
+     * warning is computed from the profile, so without this the query below
+     * can read a screen that has not been told anything yet. **It was watched
+     * failing at 61ms** in one run of this file while five others were green,
+     * which is the second-cause shape again: fast, not a timeout, and nothing
+     * to do with the wait budget. No assertion here changed.
+     */
+    await settle();
+    const warning = document.querySelector('[data-seen-elsewhere]')?.textContent ?? '';
+    expect(warning).toContain(ORIGIN);
+    expect(warning).toContain(OTHER);
+    /* **IT WARNS AND NEVER REFUSES.** A company legitimately moves host —
+     * that is the point of the whole round. The person decides. */
+    expect(screen.getByText(giveTo(OTHER))).toBeTruthy();
+    /* And the warning stands above the button a person is about to press. */
+    const order = document.body.textContent ?? '';
+    expect(order.indexOf('given this company’s key to a different page')).toBeLessThan(order.indexOf(giveTo(OTHER)));
+  });
 
-  it('A KNOWN COMPANY FROM A NEW HOST IS WARNED AND NEVER REFUSED — SAID DIRECTLY',
-    async () => {
-      /*
-       * **§4. THE RULE WAS PINNED ONLY BY ACCIDENT AND THAT IS THE FINDING.**
-       * Nothing asserted the button was still PRESSABLE. The rule survived
-       * because the test above this one drives a second host all the way
-       * through and hangs when the button is disabled — **failing after 8,094ms
-       * of waiting.**
-       *
-       * **A REGRESSION CAUGHT BY A TIMEOUT LOOKS EXACTLY LIKE A FLAKE**, which is
-       * the one disguise a real failure must never be allowed to wear: a person
-       * who has learned that a slow red means "run it again" would run it
-       * again, and the second run would be red for a reason nobody could name.
-       *
-       * So this asserts it in one place, immediately, and fails in
-       * milliseconds: the warning is there, the button is there, it is not
-       * disabled, and the screen is not the refusal screen.
-       */
-      await someone();
-      const first = open();
-      const pressed = await press(first);
-      await saying('They have the key');
-      await remembered(pressed);
-      cleanup();
+  it('A KNOWN COMPANY FROM A NEW HOST IS WARNED AND NEVER REFUSED — SAID DIRECTLY', async () => {
+    /*
+     * **§4. THE RULE WAS PINNED ONLY BY ACCIDENT AND THAT IS THE FINDING.**
+     * Nothing asserted the button was still PRESSABLE. The rule survived
+     * because the test above this one drives a second host all the way
+     * through and hangs when the button is disabled — **failing after 8,094ms
+     * of waiting.**
+     *
+     * **A REGRESSION CAUGHT BY A TIMEOUT LOOKS EXACTLY LIKE A FLAKE**, which is
+     * the one disguise a real failure must never be allowed to wear: a person
+     * who has learned that a slow red means "run it again" would run it
+     * again, and the second run would be red for a reason nobody could name.
+     *
+     * So this asserts it in one place, immediately, and fails in
+     * milliseconds: the warning is there, the button is there, it is not
+     * disabled, and the screen is not the refusal screen.
+     */
+    await someone();
+    const first = open();
+    const pressed = await press(first);
+    await saying('They have the key');
+    await remembered(pressed);
+    cleanup();
 
-      open(unlock({ nonce: 'n2' }), OTHER);
-      await saying('Who is asking');
-      await settle();
+    open(unlock({ nonce: 'n2' }), OTHER);
+    await saying('Who is asking');
+    await settle();
 
-      /* WARNED. */
-      expect(document.querySelector('[data-seen-elsewhere]')).not.toBeNull();
-      /* AND NOT REFUSED — every way this screen has of refusing. */
-      const button = document.querySelector('[data-approve]');
-      expect(button).not.toBeNull();
-      expect((button as HTMLButtonElement).disabled).toBe(false);
-      expect(button!.getAttribute('aria-disabled')).toBeNull();
-      expect(button!.textContent).toBe(giveTo(OTHER));
-      expect(screen.queryByText('This request was refused before you saw it')).toBeNull();
-      expect(document.querySelector('[data-decline]')).not.toBeNull();
-    });
+    /* WARNED. */
+    expect(document.querySelector('[data-seen-elsewhere]')).not.toBeNull();
+    /* AND NOT REFUSED — every way this screen has of refusing. */
+    const button = document.querySelector('[data-approve]');
+    expect(button).not.toBeNull();
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button!.getAttribute('aria-disabled')).toBeNull();
+    expect(button!.textContent).toBe(giveTo(OTHER));
+    expect(screen.queryByText('This request was refused before you saw it')).toBeNull();
+    expect(document.querySelector('[data-decline]')).not.toBeNull();
+  });
 
   it('a DIFFERENT company from the same host is ordinary and says nothing', async () => {
     await someone();
@@ -687,35 +699,34 @@ describe('§3 — THE WALLET REMEMBERS WHICH HOST ASKED FOR WHICH COMPANY, AND W
     expect(document.querySelector('[data-seen-elsewhere]')).toBeNull();
   });
 
-  it('THE REMEMBERED LIST IS NEVER AN INPUT: the second host gets the SAME key',
-    async () => {
-      /*
-       * **AT THE SCREEN, AND IT IS THE QUIETEST DANGER.** If a
-       * remembered pair ever reached the derivation, a recovered wallet — or a
-       * second device, or one whose history was cleared — would stop opening a
-       * company's records with nothing broken and nothing to fix. The defect by a
-       * different door.
-       *
-       * So: give the key once at A, ask again from B, and compare the bytes
-       * against the pure function computed with no history at all.
-       */
-      await someone();
-      const first = open();
-      const pressed = await press(first);
-      const atA = releaseFrom(first.sent);
-      await saying('They have the key');
-      await remembered(pressed);
-      cleanup();
+  it('THE REMEMBERED LIST IS NEVER AN INPUT: the second host gets the SAME key', async () => {
+    /*
+     * **AT THE SCREEN, AND IT IS THE QUIETEST DANGER.** If a
+     * remembered pair ever reached the derivation, a recovered wallet — or a
+     * second device, or one whose history was cleared — would stop opening a
+     * company's records with nothing broken and nothing to fix. The defect by a
+     * different door.
+     *
+     * So: give the key once at A, ask again from B, and compare the bytes
+     * against the pure function computed with no history at all.
+     */
+    await someone();
+    const first = open();
+    const pressed = await press(first);
+    const atA = releaseFrom(first.sent);
+    await saying('They have the key');
+    await remembered(pressed);
+    cleanup();
 
-      const second = open(unlock({ nonce: 'n2' }), OTHER);
-      await press(second, OTHER);
-      const atB = releaseFrom(second.sent);
+    const second = open(unlock({ nonce: 'n2' }), OTHER);
+    await press(second, OTHER);
+    const atB = releaseFrom(second.sent);
 
-      expect(hex(fromBase64Url(atB.key))).toBe(hex(fromBase64Url(atA.key)));
-      expect(hex(fromBase64Url(atB.key))).toBe(keyFor(CO_A));
-      expect(atB.origin).toBe(OTHER);
-      expect(atB.company).toBe(CO_A);
-    });
+    expect(hex(fromBase64Url(atB.key))).toBe(hex(fromBase64Url(atA.key)));
+    expect(hex(fromBase64Url(atB.key))).toBe(keyFor(CO_A));
+    expect(atB.origin).toBe(OTHER);
+    expect(atB.company).toBe(CO_A);
+  });
 });
 
 describe('§1 — NO SILENT UNLOCK, EVER', () => {
@@ -731,25 +742,25 @@ describe('§1 — NO SILENT UNLOCK, EVER', () => {
     expect(sent[0]!.message).toMatchObject({ schema: 'midnight-identity/wallet-ready/v1' });
   });
 
-  it('AND A REMEMBERED GRANT DOES NOT SKIP THE PRESS — there is nothing to pre-tick',
-    async () => {
-      /* A site that could obtain a key without a person present is a site that
-       * can read a company whenever it likes. */
-      const ids = await someone();
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('unreachable');
-      await save(port, identity, grantTo(
-        opened.profile,
-        { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
-        0, ids, NOW));
+  it('AND A REMEMBERED GRANT DOES NOT SKIP THE PRESS — there is nothing to pre-tick', async () => {
+    /* A site that could obtain a key without a person present is a site that
+     * can read a company whenever it likes. */
+    const ids = await someone();
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('unreachable');
+    await save(
+      port,
+      identity,
+      grantTo(opened.profile, { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, 0, ids, NOW)
+    );
 
-      const { sent } = open();
-      await saying('Who is asking');
-      await settle();
-      expect(sent).toHaveLength(1);
-      expect(document.querySelectorAll('input')).toHaveLength(0);
-      expect(document.querySelector('[data-approve]')).not.toBeNull();
-    });
+    const { sent } = open();
+    await saying('Who is asking');
+    await settle();
+    expect(sent).toHaveLength(1);
+    expect(document.querySelectorAll('input')).toHaveLength(0);
+    expect(document.querySelector('[data-approve]')).not.toBeNull();
+  });
 
   it('declining says only that it was declined, at the observed origin', async () => {
     await someone();
@@ -758,7 +769,8 @@ describe('§1 — NO SILENT UNLOCK, EVER', () => {
     fireEvent.click(screen.getByText('Do not give a key'));
     const answer = sent[sent.length - 1]!;
     expect(answer.message).toEqual({
-      schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined',
+      schema: 'midnight-identity/disclosure-refused/v1',
+      reason: 'declined'
     });
     expect(answer.target).toBe(ORIGIN);
     expect(JSON.stringify(answer.message)).not.toContain(keyFor(CO_A));
@@ -766,54 +778,54 @@ describe('§1 — NO SILENT UNLOCK, EVER', () => {
 });
 
 describe('WHAT CROSSES BACK, AND WHICH KEY IT IS', () => {
-  it('the key for the NAMED company, to the observed origin, and nowhere else',
-    async () => {
-      await someone();
-      const sent = await press(open());
-      const answer = sent[sent.length - 1]!;
-      expect(answer.target).toBe(ORIGIN);
-      const read = readRelease(answer.message, {
-        atOrigin: ORIGIN, expectingNonce: 'n1', forCompany: CO_A, forAccount: ACCOUNT_A,
-      });
-      expect(read.ok).toBe(true);
-      expect(read.ok && hex(read.key)).toBe(keyFor(CO_A));
-      /*
-       * And where this wallet reads the chain, so the page can read its
-       * company's contract there itself. RED WHEN the release leaves it out or
-       * names an indexer this wallet does not read.
-       */
-      expect(read.ok && read.indexer).toEqual({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
-      /*
-       * And which receiving addresses this wallet holds, as digests under the
-       * page's nonce, for every account it offers, from the one press. RED WHEN
-       * the press sends no list, or a list that does not hold the wallet's own
-       * main and last subwallet addresses.
-       */
-      const held = read.ok ? read.held : null;
-      expect(held).toHaveLength(HELD_ADDRESS_SLOTS);
-      const scope = { nonce: 'n1', origin: ORIGIN, company: CO_A };
-      expect(listHolds(held!, scope, ownedAddressFor(identity, 0, {}, NETWORK).address.bech32)).toBe(true);
-      expect(listHolds(held!, scope, ownedAddressFor(identity, 11, {}, NETWORK).address.bech32)).toBe(true);
-      /* RED WHEN an address, rather than its digest, crosses back. */
-      expect(JSON.stringify(answer.message)).not.toContain('shield-addr');
+  it('the key for the NAMED company, to the observed origin, and nowhere else', async () => {
+    await someone();
+    const sent = await press(open());
+    const answer = sent[sent.length - 1]!;
+    expect(answer.target).toBe(ORIGIN);
+    const read = readRelease(answer.message, {
+      atOrigin: ORIGIN,
+      expectingNonce: 'n1',
+      forCompany: CO_A,
+      forAccount: ACCOUNT_A
     });
+    expect(read.ok).toBe(true);
+    expect(read.ok && hex(read.key)).toBe(keyFor(CO_A));
+    /*
+     * And where this wallet reads the chain, so the page can read its
+     * company's contract there itself. RED WHEN the release leaves it out or
+     * names an indexer this wallet does not read.
+     */
+    expect(read.ok && read.indexer).toEqual({ indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL });
+    /*
+     * And which receiving addresses this wallet holds, as digests under the
+     * page's nonce, for every account it offers, from the one press. RED WHEN
+     * the press sends no list, or a list that does not hold the wallet's own
+     * main and last subwallet addresses.
+     */
+    const held = read.ok ? read.held : null;
+    expect(held).toHaveLength(HELD_ADDRESS_SLOTS);
+    const scope = { nonce: 'n1', origin: ORIGIN, company: CO_A };
+    expect(listHolds(held!, scope, ownedAddressFor(identity, 0, {}, NETWORK).address.bech32)).toBe(true);
+    expect(listHolds(held!, scope, ownedAddressFor(identity, 11, {}, NETWORK).address.bech32)).toBe(true);
+    /* RED WHEN an address, rather than its digest, crosses back. */
+    expect(JSON.stringify(answer.message)).not.toContain('shield-addr');
+  });
 
-  it('A REQUEST CALLING ITSELF SOMEBODY ELSE STILL GETS THE KEY FOR WHAT IT NAMED',
-    async () => {
-      /* The body says Payroll B in the one field it is allowed to have; the
-       * event came from A; the key is the one for the COMPANY it asked about,
-       * and the answer goes to where the browser said the page came from. */
-      await someone();
-      const channel = open(
-        unlock({ requester: { name: 'Payroll A', rdns: 'example.payroll-b' } }), ORIGIN);
-      const { sent } = channel;
-      await press(channel);
-      const released = releaseFrom(sent);
-      expect(hex(fromBase64Url(released.key))).toBe(keyFor(CO_A));
-      expect(hex(fromBase64Url(released.key))).not.toBe(keyFor(CO_B));
-      expect(released.origin).toBe(ORIGIN);
-      expect(released.company).toBe(CO_A);
-    });
+  it('A REQUEST CALLING ITSELF SOMEBODY ELSE STILL GETS THE KEY FOR WHAT IT NAMED', async () => {
+    /* The body says Payroll B in the one field it is allowed to have; the
+     * event came from A; the key is the one for the COMPANY it asked about,
+     * and the answer goes to where the browser said the page came from. */
+    await someone();
+    const channel = open(unlock({ requester: { name: 'Payroll A', rdns: 'example.payroll-b' } }), ORIGIN);
+    const { sent } = channel;
+    await press(channel);
+    const released = releaseFrom(sent);
+    expect(hex(fromBase64Url(released.key))).toBe(keyFor(CO_A));
+    expect(hex(fromBase64Url(released.key))).not.toBe(keyFor(CO_B));
+    expect(released.origin).toBe(ORIGIN);
+    expect(released.company).toBe(CO_A);
+  });
 
   it('and a second company from the same page gets a different key', async () => {
     await someone();
@@ -826,32 +838,31 @@ describe('WHAT CROSSES BACK, AND WHICH KEY IT IS', () => {
 });
 
 describe('§3 — WHAT IS RECORDED, AND WHAT MUST NOT BE', () => {
-  it('records that a key was given, to which origin, for which company, and when',
-    async () => {
-      await someone();
-      const pressed = await press(open());
-      await saying('They have the key');
-      /*
-       * **THE WRITE IS AWAITED AND THEN THE RECORD IS READ ONCE.**
-       * This used to re-open the whole sealed profile every fifty milliseconds
-       * against a deadline, with the assertions INSIDE the poll — so a record
-       * that was written wrong was retried until the budget ran out and then
-       * reported as *"waiting"*, which names neither the field that was wrong
-       * nor the value it held. `written()` returns when the write has arrived
-       * and stopped; everything below is then an ordinary assertion that says
-       * what it found.
-       */
-      await pressed.written();
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
-      const releases = releasesOf(opened.profile);
-      expect(releases).toHaveLength(1);
-      expect(releases[0]!.recipient.origin).toBe(ORIGIN);
-      expect(releases[0]!.company).toBe(CO_A);
-      expect(releases[0]!.at).toBe(NOW);
-      expect(releases[0]!.nonce).toBe('n1');
-      expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
-    });
+  it('records that a key was given, to which origin, for which company, and when', async () => {
+    await someone();
+    const pressed = await press(open());
+    await saying('They have the key');
+    /*
+     * **THE WRITE IS AWAITED AND THEN THE RECORD IS READ ONCE.**
+     * This used to re-open the whole sealed profile every fifty milliseconds
+     * against a deadline, with the assertions INSIDE the poll — so a record
+     * that was written wrong was retried until the budget ran out and then
+     * reported as *"waiting"*, which names neither the field that was wrong
+     * nor the value it held. `written()` returns when the write has arrived
+     * and stopped; everything below is then an ordinary assertion that says
+     * what it found.
+     */
+    await pressed.written();
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
+    const releases = releasesOf(opened.profile);
+    expect(releases).toHaveLength(1);
+    expect(releases[0]!.recipient.origin).toBe(ORIGIN);
+    expect(releases[0]!.company).toBe(CO_A);
+    expect(releases[0]!.at).toBe(NOW);
+    expect(releases[0]!.nonce).toBe('n1');
+    expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
+  });
 
   it('AND IT IS NOT WRITTEN AS A DISCLOSURE THAT SENT NOTHING', async () => {
     /* The finding, one kind further along: a release is a different event and
@@ -859,10 +870,11 @@ describe('§3 — WHAT IS RECORDED, AND WHAT MUST NOT BE', () => {
     const ids = await someone();
     const opened = await load(port, identity);
     if (opened.of !== 'profile') throw new Error('unreachable');
-    await save(port, identity, grantTo(
-      opened.profile,
-      { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
-      0, ids, NOW));
+    await save(
+      port,
+      identity,
+      grantTo(opened.profile, { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, 0, ids, NOW)
+    );
 
     const pressed = await press(open());
     await saying('They have the key');
@@ -901,7 +913,7 @@ describe('§3 — WHAT IS RECORDED, AND WHAT MUST NOT BE', () => {
       ['the screen before the press', before],
       ['the screen after the press', document.body.outerHTML],
       ['the window location', window.location.href],
-      ['the raw store', port.all()],
+      ['the raw store', port.all()]
     ] as const) {
       expect(text.includes(key), `the key is in ${where}`).toBe(false);
       expect(text.includes(key.slice(0, 8)), `part of the key is in ${where}`).toBe(false);
@@ -977,7 +989,7 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     person: PERSON,
     nonce: 'k1',
     expiresAt: NOW + 600_000,
-    ...over,
+    ...over
   });
 
   const keyringKeyOf = (ask: Record<string, unknown>, origin = ORIGIN): string =>
@@ -999,7 +1011,9 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     if (name === undefined) throw new Error('the button carries no rendered props to call');
     const props = (element as unknown as Record<string, { onClick?: () => void }>)[name]!;
     if (typeof props.onClick !== 'function') throw new Error('the button has no click handler');
-    act(() => { props.onClick!(); });
+    act(() => {
+      props.onClick!();
+    });
   };
 
   const everythingInLocalStorage = (): string => {
@@ -1011,176 +1025,171 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     return all.join('\n');
   };
 
-  it('names the page the browser saw, the address it says you signed in with, which of your wallets that is, and what the keys can do',
-    async () => {
-      await someone();
-      const address = mine();
-      /* Served from B and calling itself Payroll A: the wallet's own words say B. */
-      open(keyring({ signedInAs: address }), OTHER);
-      await saying('Who is asking');
-      await settle();
+  it('names the page the browser saw, the address it says you signed in with, which of your wallets that is, and what the keys can do', async () => {
+    await someone();
+    const address = mine();
+    /* Served from B and calling itself Payroll A: the wallet's own words say B. */
+    open(keyring({ signedInAs: address }), OTHER);
+    await saying('Who is asking');
+    await settle();
 
-      const headline = document.querySelector('h1[data-headline]')?.textContent ?? '';
-      expect(headline).toBe(`Let ${OTHER} read your companies with the keys saved under the account name it gives`);
-      /* Nothing on the screen places the keys at the page that is asking. */
-      expect(document.body.textContent).not.toContain('saved for you there');
-      expect(headline).not.toContain('Payroll A');
-      expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(OTHER);
+    const headline = document.querySelector('h1[data-headline]')?.textContent ?? '';
+    expect(headline).toBe(`Let ${OTHER} read your companies with the keys saved under the account name it gives`);
+    /* Nothing on the screen places the keys at the page that is asking. */
+    expect(document.body.textContent).not.toContain('saved for you there');
+    expect(headline).not.toContain('Payroll A');
+    expect(document.querySelector('[data-observed-origin]')?.textContent).toBe(OTHER);
 
-      expect(document.querySelector('[data-signed-in-as]')?.textContent).toBe(address);
-      /* The account name the key is made from is shown, and said to be unchecked. */
-      expect(document.querySelector('[data-keyring-person]')?.textContent).toBe(PERSON);
-      expect(document.querySelector('[data-keyring-person-unchecked]')?.textContent ?? '')
-        .toContain('cannot check that it is yours');
-      expect(document.querySelector('[data-signed-in-holder]')?.textContent)
-        .toBe('That is Subwallet 1, in this wallet.');
-      expect(document.querySelector('[data-signed-in-unknown]')).toBeNull();
-      expect(document.querySelector('[data-not-signed-in-here]')).toBeNull();
+    expect(document.querySelector('[data-signed-in-as]')?.textContent).toBe(address);
+    /* The account name the key is made from is shown, and said to be unchecked. */
+    expect(document.querySelector('[data-keyring-person]')?.textContent).toBe(PERSON);
+    expect(document.querySelector('[data-keyring-person-unchecked]')?.textContent ?? '').toContain(
+      'cannot check that it is yours'
+    );
+    expect(document.querySelector('[data-signed-in-holder]')?.textContent).toBe('That is Subwallet 1, in this wallet.');
+    expect(document.querySelector('[data-signed-in-unknown]')).toBeNull();
+    expect(document.querySelector('[data-not-signed-in-here]')).toBeNull();
 
-      const power = document.querySelector('[data-keyring-power]')?.textContent ?? '';
-      /* RED WHEN: the window says the page can approve payments with what it is given, or hides that it reads every company. */
-      expect(power).toContain('The keys that approve payments, and the key your saved keys open with, stay in this');
-      expect(power).toContain('every company you belong to on that site');
+    const power = document.querySelector('[data-keyring-power]')?.textContent ?? '';
+    /* RED WHEN: the window says the page can approve payments with what it is given, or hides that it reads every company. */
+    expect(power).toContain('The keys that approve payments, and the key your saved keys open with, stay in this');
+    expect(power).toContain('every company you belong to on that site');
 
-      expect(giveButton().textContent).toBe(`Let ${OTHER} read them`);
-      expect(giveButton().disabled).toBe(false);
-    });
+    expect(giveButton().textContent).toBe(`Let ${OTHER} read them`);
+    expect(giveButton().disabled).toBe(false);
+  });
 
-  it('GIVE: one answer crosses, to the page the browser saw, carrying the key for this person and no company key - and nothing about it is stored',
-    async () => {
-      await someone();
-      const address = mine();
-      const ask = keyring({ signedInAs: address });
-      const channel = open(ask);
-      await press(channel);
-      await settle();
+  it('GIVE: one answer crosses, to the page the browser saw, carrying the key for this person and no company key - and nothing about it is stored', async () => {
+    await someone();
+    const address = mine();
+    const ask = keyring({ signedInAs: address });
+    const channel = open(ask);
+    await press(channel);
+    await settle();
 
-      /* The ready ping, then exactly one answer. */
-      const answers = channel.sent.slice(1);
-      expect(answers).toHaveLength(1);
-      expect(answers[0]!.target).toBe(ORIGIN);
-      const release = answers[0]!.message as KeyringRelease;
-      expect(release.schema).toBe('midnight-identity/keyring-release/v1');
-      expect(release.origin).toBe(ORIGIN);
-      /* RED WHEN: the answer carries the key the saved keys open with. */
-      expect('key' in release).toBe(false);
-      expect(release.companyKey).toBeNull();
-      expect(release.signedInAs).toBe(address);
-      expect(document.querySelector('[data-keyring-given]')).not.toBeNull();
-      /* And afterwards nothing places the keys at the page that asked, either. */
-      expect(document.body.textContent).not.toContain('saved for you there');
+    /* The ready ping, then exactly one answer. */
+    const answers = channel.sent.slice(1);
+    expect(answers).toHaveLength(1);
+    expect(answers[0]!.target).toBe(ORIGIN);
+    const release = answers[0]!.message as KeyringRelease;
+    expect(release.schema).toBe('midnight-identity/keyring-release/v1');
+    expect(release.origin).toBe(ORIGIN);
+    /* RED WHEN: the answer carries the key the saved keys open with. */
+    expect('key' in release).toBe(false);
+    expect(release.companyKey).toBeNull();
+    expect(release.signedInAs).toBe(address);
+    expect(document.querySelector('[data-keyring-given]')).not.toBeNull();
+    /* And afterwards nothing places the keys at the page that asked, either. */
+    expect(document.body.textContent).not.toContain('saved for you there');
 
-      const key = keyringKeyOf(ask);
-      const raw = hex(fromBase64Url(key));
-      for (const [where, text] of [
-        ['localStorage', everythingInLocalStorage()],
-        ['the wallet store', port.all()],
-        ['the screen', document.body.outerHTML],
-        ['the answer', JSON.stringify(release)],
-      ] as const) {
-        expect(text.includes(key), `the key is in ${where}`).toBe(false);
-        expect(text.includes(raw), `the key's bytes are in ${where}`).toBe(false);
-      }
-    });
+    const key = keyringKeyOf(ask);
+    const raw = hex(fromBase64Url(key));
+    for (const [where, text] of [
+      ['localStorage', everythingInLocalStorage()],
+      ['the wallet store', port.all()],
+      ['the screen', document.body.outerHTML],
+      ['the answer', JSON.stringify(release)]
+    ] as const) {
+      expect(text.includes(key), `the key is in ${where}`).toBe(false);
+      expect(text.includes(raw), `the key's bytes are in ${where}`).toBe(false);
+    }
+  });
 
-  it('NOT THIS WALLET\'S ADDRESS: the danger is shown, Give is disabled, and no key leaves even when its handler runs',
-    async () => {
-      await someone();
-      const channel = open(keyring({ signedInAs: NOT_HELD }));
-      await saying('Who is asking');
-      await settle();
+  it("NOT THIS WALLET'S ADDRESS: the danger is shown, Give is disabled, and no key leaves even when its handler runs", async () => {
+    await someone();
+    const channel = open(keyring({ signedInAs: NOT_HELD }));
+    await saying('Who is asking');
+    await settle();
 
-      const danger = document.querySelector('[data-not-signed-in-here]')?.textContent ?? '';
-      expect(danger).toContain(ORIGIN);
-      expect(danger).toContain('no account in this wallet has');
-      expect(document.querySelector('[data-signed-in-holder]')).toBeNull();
-      expect(giveButton().disabled).toBe(true);
+    const danger = document.querySelector('[data-not-signed-in-here]')?.textContent ?? '';
+    expect(danger).toContain(ORIGIN);
+    expect(danger).toContain('no account in this wallet has');
+    expect(document.querySelector('[data-signed-in-holder]')).toBeNull();
+    expect(giveButton().disabled).toBe(true);
 
-      fireEvent.click(giveButton());
-      invokeHandlerAnyway(giveButton());
-      await settle();
+    fireEvent.click(giveButton());
+    invokeHandlerAnyway(giveButton());
+    await settle();
 
-      /* Only the ready ping has crossed, and no message carries a key. */
-      expect(channel.sent).toHaveLength(1);
-      expect(channel.sent.some((m) => (m.message as { key?: unknown } | null)?.key !== undefined))
-        .toBe(false);
-      const problem = document.querySelector('[data-keyring-problem]')?.textContent ?? '';
-      expect(problem).toContain('none of this wallet\'s accounts has');
-      expect(problem).toContain('Nothing has been given.');
-    });
+    /* Only the ready ping has crossed, and no message carries a key. */
+    expect(channel.sent).toHaveLength(1);
+    expect(channel.sent.some((m) => (m.message as { key?: unknown } | null)?.key !== undefined)).toBe(false);
+    const problem = document.querySelector('[data-keyring-problem]')?.textContent ?? '';
+    expect(problem).toContain("none of this wallet's accounts has");
+    expect(problem).toContain('Nothing has been given.');
+  });
 
-  it('NO ADDRESS NAMED: the screen says the page does not say, and Give is offered and answers with no address',
-    async () => {
-      await someone();
-      const ask = keyring();
-      const channel = open(ask);
-      await saying('Who is asking');
-      await settle();
+  it('NO ADDRESS NAMED: the screen says the page does not say, and Give is offered and answers with no address', async () => {
+    await someone();
+    const ask = keyring();
+    const channel = open(ask);
+    await saying('Who is asking');
+    await settle();
 
-      expect(document.querySelector('[data-signed-in-unknown]')).not.toBeNull();
-      expect(document.querySelector('[data-signed-in-as]')).toBeNull();
-      expect(document.querySelector('[data-not-this-wallet]')).toBeNull();
-      expect(giveButton().disabled).toBe(false);
+    expect(document.querySelector('[data-signed-in-unknown]')).not.toBeNull();
+    expect(document.querySelector('[data-signed-in-as]')).toBeNull();
+    expect(document.querySelector('[data-not-this-wallet]')).toBeNull();
+    expect(giveButton().disabled).toBe(false);
 
-      await press(channel);
-      const release = channel.sent[1]!.message as KeyringRelease;
-      expect(release.signedInAs).toBeNull();
-      expect('key' in release).toBe(false);
-    });
+    await press(channel);
+    const release = channel.sent[1]!.message as KeyringRelease;
+    expect(release.signedInAs).toBeNull();
+    expect('key' in release).toBe(false);
+  });
 
-  it('NO ADDRESS NAMED, AND ANOTHER WALLET HERE ANSWERED THAT PAGE\'S SIGN-IN: the reason is shown and Give is disabled',
-    async () => {
-      await someone();
-      rememberSignIn(port, ORIGIN, 'another-wallet-held-here');
-      const channel = open(keyring());
-      await saying('Who is asking');
-      await settle();
+  it("NO ADDRESS NAMED, AND ANOTHER WALLET HERE ANSWERED THAT PAGE'S SIGN-IN: the reason is shown and Give is disabled", async () => {
+    await someone();
+    rememberSignIn(port, ORIGIN, 'another-wallet-held-here');
+    const channel = open(keyring());
+    await saying('Who is asking');
+    await settle();
 
-      expect(document.querySelector('[data-not-this-wallet]')?.textContent)
-        .toContain('answered by another of the wallets held here');
-      expect(giveButton().disabled).toBe(true);
-      fireEvent.click(giveButton());
-      /* And the release itself refuses, behind the disabled button. */
-      invokeHandlerAnyway(giveButton());
-      await settle();
-      expect(channel.sent).toHaveLength(1);
-      expect(document.querySelector('[data-keyring-problem]')?.textContent ?? '')
-        .toContain('Nothing has been given.');
-    });
+    expect(document.querySelector('[data-not-this-wallet]')?.textContent).toContain(
+      'answered by another of the wallets held here'
+    );
+    expect(giveButton().disabled).toBe(true);
+    fireEvent.click(giveButton());
+    /* And the release itself refuses, behind the disabled button. */
+    invokeHandlerAnyway(giveButton());
+    await settle();
+    expect(channel.sent).toHaveLength(1);
+    expect(document.querySelector('[data-keyring-problem]')?.textContent ?? '').toContain('Nothing has been given.');
+  });
 
-  it('WITH A COMPANY: the company is shown, the answer carries the same company key an ordinary unlock gives, and the wallet remembers where it went',
-    async () => {
-      await someone();
-      const channel = open(keyring({ signedInAs: mine(), company: CO_A, account: ACCOUNT_A }));
-      await saying('Who is asking');
-      await settle();
-      expect(document.querySelector('[data-company-fingerprint]')?.textContent)
-        .toBe(companyFingerprint(CO_A, ACCOUNT_A));
-      expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
+  it('WITH A COMPANY: the company is shown, the answer carries the same company key an ordinary unlock gives, and the wallet remembers where it went', async () => {
+    await someone();
+    const channel = open(keyring({ signedInAs: mine(), company: CO_A, account: ACCOUNT_A }));
+    await saying('Who is asking');
+    await settle();
+    expect(document.querySelector('[data-company-fingerprint]')?.textContent).toBe(companyFingerprint(CO_A, ACCOUNT_A));
+    expect(document.querySelector('[data-company-label]')?.textContent).toBe(CO_A);
 
-      const pressed = await press(channel);
-      const release = channel.sent[1]!.message as KeyringRelease;
-      expect(release.company).toBe(CO_A);
-      const ordinary = releaseFor(
-        identity, parseAsk(unlock({ company: CO_A, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
-      expect(release.companyKey).toBe(ordinary.key);
-      expect('key' in release).toBe(false);
+    const pressed = await press(channel);
+    const release = channel.sent[1]!.message as KeyringRelease;
+    expect(release.company).toBe(CO_A);
+    const ordinary = releaseFor(
+      identity,
+      parseAsk(unlock({ company: CO_A, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest,
+      NOW
+    );
+    expect(release.companyKey).toBe(ordinary.key);
+    expect('key' in release).toBe(false);
 
-      await remembered(pressed);
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
-      const releases = releasesOf(opened.profile);
-      expect(releases).toHaveLength(1);
-      expect(releases[0]!.company).toBe(CO_A);
-      expect(releases[0]!.recipient.origin).toBe(ORIGIN);
-      expect(releases[0]!.nonce).toBe('k1');
-      expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
-    });
+    await remembered(pressed);
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the sealed profile did not open');
+    const releases = releasesOf(opened.profile);
+    expect(releases).toHaveLength(1);
+    expect(releases[0]!.company).toBe(CO_A);
+    expect(releases[0]!.recipient.origin).toBe(ORIGIN);
+    expect(releases[0]!.nonce).toBe('k1');
+    expect(originsFor(opened.profile, CO_A, ACCOUNT_A)).toEqual([ORIGIN]);
+  });
 
   /* What a page starts a company with: its name and founding signer, and no saved keys yet. */
   const FOUNDING = {
     founding: { name: 'Acme', signer: { name: 'Priya', role: 'admin' } },
-    keyring: { sealed: null, version: 0 },
+    keyring: { sealed: null, version: 0 }
   };
 
   it('STARTING A COMPANY: the wallet draws the label itself, and answers with it and its keys', async () => {
@@ -1202,12 +1211,17 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     expect(release.company).toMatch(/^co_[0-9a-f]{64}$/u);
     expect(release.account).toBeNull();
     const ordinary = releaseFor(
-      identity, parseAsk(unlock({ company: release.company, account: undefined, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest, NOW);
+      identity,
+      parseAsk(unlock({ company: release.company, account: undefined, nonce: 'k1' }), ORIGIN, NOW) as UnlockRequest,
+      NOW
+    );
     expect(release.companyKey).toBe(ordinary.key);
     /* RED WHEN: the founding seat's keys reach the page, or the answer carries no founding and no saved keys sealed again. */
     expect('seat' in release).toBe(false);
     expect((release.founded as { account: { id: string } }).account.id).toMatch(/^acc_/u);
-    expect(release.sealed).toEqual(expect.objectContaining({ iv: expect.any(String), tag: expect.any(String), body: expect.any(String) }));
+    expect(release.sealed).toEqual(
+      expect.objectContaining({ iv: expect.any(String), tag: expect.any(String), body: expect.any(String) })
+    );
     expect(release.ifVersion).toBe(0);
   });
 
@@ -1219,7 +1233,10 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     await settle();
     const answeredAtEachWrite: number[] = [];
     const write = port.setItem;
-    port.setItem = (k, v) => { answeredAtEachWrite.push(channel.sent.length); write(k, v); };
+    port.setItem = (k, v) => {
+      answeredAtEachWrite.push(channel.sent.length);
+      write(k, v);
+    };
     const pressed = await press(channel);
     await pressed.written();
     const release = channel.sent[1]!.message as KeyringRelease;
@@ -1237,7 +1254,9 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
     await saying('Who is asking');
     await settle();
     const before = channel.sent.length;
-    port.setItem = () => { throw new Error('the storage is full'); };
+    port.setItem = () => {
+      throw new Error('the storage is full');
+    };
     fireEvent.click(giveButton());
     let said: HTMLElement | null = null;
     for (let i = 0; i < 200 && said === null; i += 1) {
@@ -1250,7 +1269,13 @@ describe('THE KEYS SAVED FOR YOU AT A SITE - given only by the wallet that signe
 
   it('A KEYRING ANSWER BUILT WITH A SEAT IN IT IS NOT GIVEN, and the screen says nothing was handed over', async () => {
     /* RED WHEN: the window hands the page an answer holding a secret of the saved keys it opened. */
-    const SEAT = { signerId: 'sig_P', signingSecret: '5a'.repeat(32), wrappingSecret: '6b'.repeat(32), blinding: '7c'.repeat(32), scope: '44'.repeat(32) };
+    const SEAT = {
+      signerId: 'sig_P',
+      signingSecret: '5a'.repeat(32),
+      wrappingSecret: '6b'.repeat(32),
+      blinding: '7c'.repeat(32),
+      scope: '44'.repeat(32)
+    };
     await someone();
     /* Another person, so the mark this device raises for these saved keys is not one a later test meets. */
     const ask = keyring({ signedInAs: mine(), person: 'usr_Planted000001' });

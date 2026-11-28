@@ -26,16 +26,22 @@ const kr = vi.hoisted(() => ({
   keptCommitted: true as boolean | null,
   keptAsked: [] as unknown[],
   labelAsked: [] as (string | null)[],
-  label: null as string | null,
+  label: null as string | null
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.who,
-  canOpenCompanies: () => kr.open}));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async (path: string) => { kr.asked.push(path); return kr.sealed; },
+  canOpenCompanies: () => kr.open
 }));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('./service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async (path: string) => {
+      kr.asked.push(path);
+      return kr.sealed;
+    }
+  })
+);
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   companyCreationStanding: async (id: string) => {
@@ -49,14 +55,18 @@ vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
     if (kr.holdersFail) throw new Error('the wallet did not answer');
     return kr.payments && kr.committed !== null;
   },
-  companyBeingCreatedLabel: (id: string) => { kr.labelAsked.push(id); return kr.label; },
+  companyBeingCreatedLabel: (id: string) => {
+    kr.labelAsked.push(id);
+    return kr.label;
+  },
   keptCreationShowsItsKeyCommitted: async (id: string, origin: string) => {
     kr.keptAsked.push({ id, origin });
     if (kr.holdersFail) throw new Error('the wallet did not answer');
     return kr.keptCommitted;
   },
   companyBeingCreated: (id: string) => kr.being === id,
-  companyAwaitingItsSecondPress: (id: string) => (kr.being === id && kr.second ? { accountId: id, account: 'ab'.repeat(32) } : null),
+  companyAwaitingItsSecondPress: (id: string) =>
+    kr.being === id && kr.second ? { accountId: id, account: 'ab'.repeat(32) } : null
 }));
 
 async function load() {
@@ -67,12 +77,30 @@ async function load() {
 
 beforeEach(() => {
   Object.assign(kr, {
-    who: { id: 'u1' }, standing: 'finished', standingFails: false, standingError: null, standingNever: false, sealed: { companyLabel: 'label-c1', contractAddress: 'ab'.repeat(32) },
-    committed: 'cd'.repeat(32), payments: true, holdersFail: false, being: null, second: false, asked: [], holders: [], standings: [],
-    open: true, keptCommitted: true, keptAsked: [], label: null, labelAsked: [],
+    who: { id: 'u1' },
+    standing: 'finished',
+    standingFails: false,
+    standingError: null,
+    standingNever: false,
+    sealed: { companyLabel: 'label-c1', contractAddress: 'ab'.repeat(32) },
+    committed: 'cd'.repeat(32),
+    payments: true,
+    holdersFail: false,
+    being: null,
+    second: false,
+    asked: [],
+    holders: [],
+    standings: [],
+    open: true,
+    keptCommitted: true,
+    keptAsked: [],
+    label: null,
+    labelAsked: []
   });
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('a company is confirmed finished only by the wallet', () => {
   /*
@@ -81,15 +109,24 @@ describe('a company is confirmed finished only by the wallet', () => {
    * or the wallet is asked about another company, another account, or without
    * asking for the pay-record key's entry.
    */
-  it('confirms a finished company when the wallet shows its pay-record key committed, asking about that company\'s own account', async () => {
+  it("confirms a finished company when the wallet shows its pay-record key committed, asking about that company's own account", async () => {
     const { creationOf } = await load();
     const c = await creationOf('c-1');
-    expect(c).toEqual({ company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null });
+    expect(c).toEqual({
+      company: 'c-1',
+      standing: 'finished',
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: true,
+      mark: null
+    });
     expect(kr.asked).toEqual(['/api/accounts/c-1']);
-    expect(kr.holders).toEqual([{
-      origin: 'http://wallet.localhost:5180',
-      ask: { company: 'label-c1', account: 'ab'.repeat(32) },
-    }]);
+    expect(kr.holders).toEqual([
+      {
+        origin: 'http://wallet.localhost:5180',
+        ask: { company: 'label-c1', account: 'ab'.repeat(32) }
+      }
+    ]);
   });
 
   /* RED WHEN: a company whose pay-record key the wallet does not show committed is taken as finished because the service says so. */
@@ -100,7 +137,7 @@ describe('a company is confirmed finished only by the wallet', () => {
   });
 
   /* RED WHEN: an answer from the wallet that carries no payment facts is taken as the key being committed. */
-  it('does not confirm a company when the wallet\'s answer holds no payment facts', async () => {
+  it("does not confirm a company when the wallet's answer holds no payment facts", async () => {
     const { creationOf } = await load();
     kr.payments = false;
     expect((await creationOf('c-1')).confirmedFinished).toBe(false);
@@ -124,7 +161,14 @@ describe('a company is confirmed finished only by the wallet', () => {
   it('leaves a company unconfirmed and unmarked when the wallet cannot be asked, and asks again next time', async () => {
     const { creationOf } = await load();
     kr.holdersFail = true;
-    expect(await creationOf('c-1')).toEqual({ company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(await creationOf('c-1')).toEqual({
+      company: 'c-1',
+      standing: 'finished',
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
     kr.holdersFail = false;
     expect((await creationOf('c-1')).confirmedFinished).toBe(true);
     expect(kr.holders).toHaveLength(2);
@@ -139,7 +183,7 @@ describe('a company is confirmed finished only by the wallet', () => {
   });
 });
 
-describe('a company this tab keeps is confirmed by what this tab kept, never by the service\'s pair', () => {
+describe("a company this tab keeps is confirmed by what this tab kept, never by the service's pair", () => {
   /*
    * RED WHEN: a company this tab keeps is confirmed finished on the label and account the service names, so a service that names another,
    * finished account closes the step; or the service's pair is even read for it.
@@ -183,7 +227,7 @@ describe('a company this tab keeps is confirmed by what this tab kept, never by 
 
 describe('the label the wallet drew', () => {
   /* RED WHEN: the label shown after the first press is read from anywhere but the keyring's kept creation, or for another company than the one asked about. */
-  it('is the keyring\'s own, asked for the company shown', async () => {
+  it("is the keyring's own, asked for the company shown", async () => {
     const { keptCreationLabel } = await load();
     kr.label = 'co_drawn';
     expect(keptCreationLabel('c-1')).toBe('co_drawn');
@@ -223,8 +267,12 @@ describe('what each standing means', () => {
     expect(Object.keys(CREATION_STANDINGS).sort()).toEqual([...COMPANY_CREATION_STATES].sort());
     expect(CREATION_STANDINGS.finished.stage).toBe(STAGE.shown);
     expect(CREATION_STANDINGS['pay-key-owed'].stage).toBe(STAGE.key);
-    expect(Object.entries(CREATION_STANDINGS).filter(([, v]) => v.needsTheKeys).map(([k]) => k).sort())
-      .toEqual(['deploy-expired', 'finish-expired', 'finished', 'not-created', 'pay-key-owed']);
+    expect(
+      Object.entries(CREATION_STANDINGS)
+        .filter(([, v]) => v.needsTheKeys)
+        .map(([k]) => k)
+        .sort()
+    ).toEqual(['deploy-expired', 'finish-expired', 'finished', 'not-created', 'pay-key-owed']);
   });
 });
 
@@ -259,11 +307,19 @@ describe('which companies are marked not finished', () => {
     kr.standingFails = true;
     kr.being = 'c-1';
     kr.second = true;
-    expect(await creationOf('c-1')).toEqual({ company: 'c-1', standing: null, awaitingSecondPress: true, kept: true, confirmedFinished: false, mark: null, failure: 'failed' });
+    expect(await creationOf('c-1')).toEqual({
+      company: 'c-1',
+      standing: null,
+      awaitingSecondPress: true,
+      kept: true,
+      confirmedFinished: false,
+      mark: null,
+      failure: 'failed'
+    });
   });
 });
 
-describe('why a company\'s creation could not be read', () => {
+describe("why a company's creation could not be read", () => {
   /* RED WHEN: a service that refuses the read as signed out is told apart from one that failed by nothing, so a signed-out person is shown a read that merely failed, or no failure at all. */
   it('says signed out when the service refuses the read as signed out, and failed for any other error', async () => {
     const { creationOf, creationChanged } = await load();
@@ -304,7 +360,9 @@ describe('why a company\'s creation could not be read', () => {
       expect(await waiting).toMatchObject({ standing: null, failure: 'failed' });
       kr.standingNever = false;
       expect((await creationOf('c-1')).failure).toBeUndefined();
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -324,11 +382,25 @@ describe('what this tab keeps of a creation', () => {
   /* RED WHEN: no company shown is answered with some kept creation, though each is kept for its own company and several can be kept at once. */
   it('answers for no creation when no company is shown, however many this tab keeps, and for each kept one by its own company', async () => {
     const { creationOf } = await load();
-    expect(await creationOf(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(await creationOf(null)).toEqual({
+      company: null,
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
     expect(kr.standings).toEqual([]);
     kr.being = 'c-new';
     kr.standing = 'not-created';
-    expect(await creationOf(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(await creationOf(null)).toEqual({
+      company: null,
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
     expect(kr.standings).toEqual([]);
     expect(await creationOf('c-new')).toMatchObject({ company: 'c-new', kept: true, mark: 'not-finished' });
     expect(await creationOf('c-other')).toMatchObject({ company: 'c-other', kept: false });
@@ -413,12 +485,33 @@ describe('what this tab keeps, known at once', () => {
    */
   it('says at once, without asking the service, whether a company is kept and waits for its second press', async () => {
     const { creationHere } = await load();
-    expect(creationHere('c-1')).toEqual({ company: 'c-1', standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
-    expect(creationHere(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(creationHere('c-1')).toEqual({
+      company: 'c-1',
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
+    expect(creationHere(null)).toEqual({
+      company: null,
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
     kr.being = 'c-new';
     kr.second = true;
     /* RED WHEN: no company shown reads as whichever creation is kept. */
-    expect(creationHere(null)).toEqual({ company: null, standing: null, awaitingSecondPress: false, kept: false, confirmedFinished: false, mark: null });
+    expect(creationHere(null)).toEqual({
+      company: null,
+      standing: null,
+      awaitingSecondPress: false,
+      kept: false,
+      confirmedFinished: false,
+      mark: null
+    });
     expect(creationHere('c-new')).toMatchObject({ kept: true, awaitingSecondPress: true });
     expect(creationHere('c-1')).toMatchObject({ kept: false, awaitingSecondPress: false });
     expect(kr.standings).toEqual([]);

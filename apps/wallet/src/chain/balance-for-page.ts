@@ -68,11 +68,14 @@ export interface PublicOfferLike {
 }
 
 export interface UnboundTransactionLike {
-  intents?: Map<number, {
-    actions?: readonly unknown[];
-    guaranteedUnshieldedOffer?: PublicOfferLike;
-    fallibleUnshieldedOffer?: PublicOfferLike;
-  }>;
+  intents?: Map<
+    number,
+    {
+      actions?: readonly unknown[];
+      guaranteedUnshieldedOffer?: PublicOfferLike;
+      fallibleUnshieldedOffer?: PublicOfferLike;
+    }
+  >;
   guaranteedOffer?: ShieldedOfferLike;
   fallibleOffer?: Map<number, ShieldedOfferLike>;
   imbalances(segment: number): Map<{ tag: string; raw?: string }, bigint>;
@@ -110,9 +113,20 @@ export interface WalletPartForBalancing {
  * and `dust`, `estimateTransactionFee` and `submitTransaction` are what a call
  * sent straight to the chain works out and pays its own fee with, and is sent with.
  */
-export type FacadeForBalancing = Pick<WalletFacade,
-  | 'shielded' | 'unshielded' | 'dust' | 'state' | 'adoptTransaction' | 'balanceUnboundTransaction' | 'signRecipe' | 'finalizeRecipe'
-  | 'estimateTransactionFee' | 'submitTransaction' | 'revert'>;
+export type FacadeForBalancing = Pick<
+  WalletFacade,
+  | 'shielded'
+  | 'unshielded'
+  | 'dust'
+  | 'state'
+  | 'adoptTransaction'
+  | 'balanceUnboundTransaction'
+  | 'signRecipe'
+  | 'finalizeRecipe'
+  | 'estimateTransactionFee'
+  | 'submitTransaction'
+  | 'revert'
+>;
 
 export interface BalanceDoors {
   readonly ledger: () => Promise<LedgerForBalancing>;
@@ -128,7 +142,9 @@ export interface BalanceDoors {
   readonly ownPublicAddress?: () => string;
   readonly now?: () => number;
   /** Each proof starting and ending, as it happens. Returns the way to stop watching. */
-  readonly watchProofs?: (watch: (event: { readonly op: 'prove' | 'check'; readonly at: 'start' | 'end' }) => void) => () => void;
+  readonly watchProofs?: (
+    watch: (event: { readonly op: 'prove' | 'check'; readonly at: 'start' | 'end' }) => void
+  ) => () => void;
   /** Stops the wallet's parts these doors started. Safe to call when nothing was started. */
   readonly stop?: () => Promise<void>;
 }
@@ -197,17 +213,17 @@ export class NotHandedOver extends BalanceRefused {
 export const CHAIN_SILENCE_GIVE_UP_MS = 120_000;
 
 export const CHAIN_WOULD_NOT_ANSWER =
-  'this wallet could not reach the network to find your coins, so it paid nothing. Check your connection '
-  + 'and try again; if your connection is working, the network may be unavailable, so try again later. '
-  + 'Nothing has been paid.';
+  'this wallet could not reach the network to find your coins, so it paid nothing. Check your connection ' +
+  'and try again; if your connection is working, the network may be unavailable, so try again later. ' +
+  'Nothing has been paid.';
 
 const CHAIN_STOPPED =
-  'this wallet stopped reading the network before it had found your coins, so it paid nothing. Check your '
-  + 'connection and try again. Nothing has been paid.';
+  'this wallet stopped reading the network before it had found your coins, so it paid nothing. Check your ' +
+  'connection and try again. Nothing has been paid.';
 
 export const CHAIN_WENT_QUIET =
-  'this wallet stopped hearing from the network part of the way through finding your coins, so it paid '
-  + 'nothing. Check your connection and try again. Nothing has been paid.';
+  'this wallet stopped hearing from the network part of the way through finding your coins, so it paid ' +
+  'nothing. Check your connection and try again. Nothing has been paid.';
 
 export interface WaitingForTheChain {
   /** Called once, when the wallet has to wait for the chain before it can pay. */
@@ -234,7 +250,9 @@ export interface WaitingForTheChain {
 
 const realTimers = {
   set: (run: () => void, ms: number): unknown => setTimeout(run, ms),
-  clear: (handle: unknown): void => { clearTimeout(handle as ReturnType<typeof setTimeout>); },
+  clear: (handle: unknown): void => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
 };
 
 /**
@@ -256,14 +274,17 @@ const realTimers = {
  */
 export function untilItHasReadTheChain(
   parts: readonly (WalletPartForBalancing | undefined)[],
-  watch: WaitingForTheChain = {},
+  watch: WaitingForTheChain = {}
 ): Promise<void> {
   const timers = watch.timers ?? realTimers;
   return new Promise<void>((resolve, reject) => {
     if (parts.length === 0 || parts.some((p) => p === undefined)) {
-      reject(new ChainUnread(
-        'this wallet could not tell whether it is up to date with the network, so it paid nothing. Try again, '
-        + 'and if it happens again this wallet cannot pay this deposit. Nothing has been paid.'));
+      reject(
+        new ChainUnread(
+          'this wallet could not tell whether it is up to date with the network, so it paid nothing. Try again, ' +
+            'and if it happens again this wallet cannot pay this deposit. Nothing has been paid.'
+        )
+      );
       return;
     }
     const seen: (ReadingProgress | null)[] = parts.map(() => null);
@@ -280,19 +301,27 @@ export function untilItHasReadTheChain(
       if (silence !== null) timers.clear(silence);
       silence = null;
       for (const s of subscriptions) s.unsubscribe();
-      if (failure) reject(failure); else resolve();
+      if (failure) reject(failure);
+      else resolve();
     };
     /* **ARMED AGAIN ON EVERY REPORT THAT MOVED, AND ONLY ON ONE.** Never cleared while the read is incomplete. */
     const armSilence = (): void => {
       if (silence !== null) timers.clear(silence);
       silence = timers.set(
         () => finish(new ChainUnread(everConnected ? CHAIN_WENT_QUIET : CHAIN_WOULD_NOT_ANSWER)),
-        watch.giveUpMs ?? CHAIN_SILENCE_GIVE_UP_MS);
+        watch.giveUpMs ?? CHAIN_SILENCE_GIVE_UP_MS
+      );
     };
     const look = (): void => {
       if (over) return;
-      if (seen.every((p) => p !== null && p.isConnected && p.isStrictlyComplete())) { finish(); return; }
-      if (!told) { told = true; watch.onReading?.(); }
+      if (seen.every((p) => p !== null && p.isConnected && p.isStrictlyComplete())) {
+        finish();
+        return;
+      }
+      if (!told) {
+        told = true;
+        watch.onReading?.();
+      }
     };
     const heard = (i: number, progress: ReadingProgress): void => {
       seen[i] = progress;
@@ -308,7 +337,10 @@ export function untilItHasReadTheChain(
       const at = `${String(progress.isConnected)}|${String(progress.appliedIndex ?? progress.appliedId)}|${String(progress.highestIndex ?? progress.highestTransactionId)}`;
       const moved = at !== where[i];
       where[i] = at;
-      if (!moved) { look(); return; }
+      if (!moved) {
+        look();
+        return;
+      }
       armSilence();
       watch.onRead?.();
       look();
@@ -317,11 +349,14 @@ export function untilItHasReadTheChain(
     parts.forEach((part, i) => {
       if (over) return;
       const subscription = part!.state.subscribe({
-        next: (state) => { heard(i, state.progress); },
+        next: (state) => {
+          heard(i, state.progress);
+        },
         error: () => finish(new ChainUnread(CHAIN_STOPPED)),
-        complete: () => finish(new ChainUnread(CHAIN_STOPPED)),
+        complete: () => finish(new ChainUnread(CHAIN_STOPPED))
       });
-      if (over) subscription.unsubscribe(); else subscriptions.push(subscription);
+      if (over) subscription.unsubscribe();
+      else subscriptions.push(subscription);
     });
     look();
   });
@@ -337,7 +372,8 @@ export function untilItHasReadTheChain(
 const FIBER_FAILURE_CAUSE = Symbol.for('effect/Runtime/FiberFailure/Cause');
 const NOT_ENOUGH = 'Wallet.InsufficientFunds';
 const namesNotEnough = (name: unknown): boolean =>
-  typeof name === 'string' && (name === NOT_ENOUGH || name.endsWith(` ${NOT_ENOUGH}`) || name === 'InsufficientFundsError');
+  typeof name === 'string' &&
+  (name === NOT_ENOUGH || name.endsWith(` ${NOT_ENOUGH}`) || name === 'InsufficientFundsError');
 
 /** True when the SDK said the wallet does not hold enough, however the error reached here: wrapped, in a cause, or among the errors an AggregateError holds. */
 const saysNotEnough = (e: unknown): boolean => {
@@ -345,7 +381,14 @@ const saysNotEnough = (e: unknown): boolean => {
   for (let looked = 0; next.length > 0 && looked < 12; looked += 1) {
     const at = next.shift();
     if (at === null || typeof at !== 'object') continue;
-    const o = at as { _tag?: unknown; name?: unknown; cause?: unknown; error?: unknown; errors?: unknown; [FIBER_FAILURE_CAUSE]?: unknown };
+    const o = at as {
+      _tag?: unknown;
+      name?: unknown;
+      cause?: unknown;
+      error?: unknown;
+      errors?: unknown;
+      [FIBER_FAILURE_CAUSE]?: unknown;
+    };
     if (o._tag === NOT_ENOUGH || namesNotEnough(o.name)) return true;
     next.push(o[FIBER_FAILURE_CAUSE], o.error, o.cause, ...(Array.isArray(o.errors) ? o.errors : []));
   }
@@ -383,28 +426,33 @@ const sameAddress = (a: unknown, b: string): boolean =>
 
 /** The one coin a private deposit creates in the vault and the one token it owes; refuses anything else. */
 function readThePrivateDeposit(
-  tx: UnboundTransactionLike, offers: readonly ShieldedOfferLike[], vault: string,
+  tx: UnboundTransactionLike,
+  offers: readonly ShieldedOfferLike[],
+  vault: string
 ): { leaves: LeavesTheWallet[] } {
   let coins = 0;
   for (const offer of offers) {
     if ((offer.inputs?.length ?? 0) > 0 || (offer.transients?.length ?? 0) > 0) {
       throw new BalanceRefused(
-        'what the page sent already spends coins of its own, and a deposit the page builds spends '
-        + 'none. Nothing has been paid.');
+        'what the page sent already spends coins of its own, and a deposit the page builds spends ' +
+          'none. Nothing has been paid.'
+      );
     }
     for (const output of offer.outputs ?? []) {
       if (!sameAddress(output?.contractAddress, vault)) {
         throw new BalanceRefused(
-          'what the page sent creates a coin for someone other than the vault it names, and this '
-          + 'wallet would be paying for it. Nothing has been paid.');
+          'what the page sent creates a coin for someone other than the vault it names, and this ' +
+            'wallet would be paying for it. Nothing has been paid.'
+        );
       }
       coins += 1;
     }
   }
   if (coins !== 1) {
     throw new BalanceRefused(
-      `what the page sent creates ${coins} coins in the vault, and a deposit creates exactly one. `
-      + 'Nothing has been paid.');
+      `what the page sent creates ${coins} coins in the vault, and a deposit creates exactly one. ` +
+        'Nothing has been paid.'
+    );
   }
   const owed = new Map<string, LeavesTheWallet>();
   for (const segment of [0, ...(tx.intents?.keys() ?? [])]) {
@@ -413,8 +461,9 @@ function readThePrivateDeposit(
       if (token.tag === 'dust') continue;
       if (token.tag !== 'shielded') {
         throw new BalanceRefused(
-          'what the page sent needs public money from this wallet, and a deposit into a vault needs '
-          + 'none. Nothing has been paid.');
+          'what the page sent needs public money from this wallet, and a deposit into a vault needs ' +
+            'none. Nothing has been paid.'
+        );
       }
       const key = `${token.tag}:${String(token.raw)}`;
       const before = owed.get(key);
@@ -425,13 +474,14 @@ function readThePrivateDeposit(
   const leaves = [...owed.values()];
   if (leaves.length === 0) {
     throw new BalanceRefused(
-      'what the page sent needs nothing from this wallet, so there is nothing to approve. '
-      + 'Nothing has been paid.');
+      'what the page sent needs nothing from this wallet, so there is nothing to approve. ' + 'Nothing has been paid.'
+    );
   }
   if (leaves.length !== 1) {
     throw new BalanceRefused(
-      'what the page sent needs more than one kind of token, and a deposit of one coin needs one. '
-      + 'Nothing has been paid.');
+      'what the page sent needs more than one kind of token, and a deposit of one coin needs one. ' +
+        'Nothing has been paid.'
+    );
   }
   return { leaves };
 }
@@ -441,20 +491,28 @@ function readThePrivateDeposit(
  * refuses by throwing `BalanceRefused` with the reason a person can read.
  */
 export function readWhatThePageAsks(
-  ledger: LedgerForBalancing, transaction: string, vault: string,
+  ledger: LedgerForBalancing,
+  transaction: string,
+  vault: string
 ): { tx: UnboundTransactionLike; leaves: LeavesTheWallet[]; pays: PageAskPays } {
   let tx: UnboundTransactionLike;
   try {
-    tx = ledger.Transaction.deserialize('signature', 'proof', 'pre-binding', bytesFromBase64(transaction)) as UnboundTransactionLike;
+    tx = ledger.Transaction.deserialize(
+      'signature',
+      'proof',
+      'pre-binding',
+      bytesFromBase64(transaction)
+    ) as UnboundTransactionLike;
   } catch {
     throw new BalanceRefused(
-      'what the page sent is not a proven transaction this wallet can read, so there is nothing '
-      + 'to pay for. Nothing has been paid.');
+      'what the page sent is not a proven transaction this wallet can read, so there is nothing ' +
+        'to pay for. Nothing has been paid.'
+    );
   }
   if (!(tx.intents instanceof Map) || tx.intents.size === 0) {
     throw new BalanceRefused(
-      'what the page sent calls nothing, so there is nothing for this wallet to pay into. '
-      + 'Nothing has been paid.');
+      'what the page sent calls nothing, so there is nothing for this wallet to pay into. ' + 'Nothing has been paid.'
+    );
   }
   let calls = 0;
   for (const intent of tx.intents.values()) {
@@ -462,13 +520,15 @@ export function readWhatThePageAsks(
       const call = action as { address?: unknown; entryPoint?: unknown };
       if (call.entryPoint === undefined || call.address === undefined) {
         throw new BalanceRefused(
-          'what the page sent does something other than call a contract - it deploys one or '
-          + 'changes one\'s rules - and this wallet only pays into a call. Nothing has been paid.');
+          'what the page sent does something other than call a contract - it deploys one or ' +
+            "changes one's rules - and this wallet only pays into a call. Nothing has been paid."
+        );
       }
       if (!sameAddress(call.address, vault)) {
         throw new BalanceRefused(
-          'what the page sent calls a contract other than the vault it names, so what you would '
-          + 'be approving is not what the page says. Nothing has been paid.');
+          'what the page sent calls a contract other than the vault it names, so what you would ' +
+            'be approving is not what the page says. Nothing has been paid.'
+        );
       }
       calls += 1;
     }
@@ -488,22 +548,24 @@ export function readWhatThePageAsks(
     for (const offer of [intent.guaranteedUnshieldedOffer, intent.fallibleUnshieldedOffer]) {
       if (offer && ((offer.inputs?.length ?? 0) > 0 || (offer.outputs?.length ?? 0) > 0)) {
         throw new BalanceRefused(
-          'what the page sent moves public money, and a deposit into a vault moves none. '
-          + 'Nothing has been paid.');
+          'what the page sent moves public money, and a deposit into a vault moves none. ' + 'Nothing has been paid.'
+        );
       }
     }
   }
-  const offers = [tx.guaranteedOffer, ...(tx.fallibleOffer?.values() ?? [])]
-    .filter((o): o is ShieldedOfferLike => o !== undefined && o !== null);
+  const offers = [tx.guaranteedOffer, ...(tx.fallibleOffer?.values() ?? [])].filter(
+    (o): o is ShieldedOfferLike => o !== undefined && o !== null
+  );
   /* A call to the vault's public deposit that creates no coin is read as a public deposit, and only that. */
-  if (offers.length === 0 && everyCallIsThePublicDeposit(tx)) return { tx, ...readThePublicDeposit(tx), pays: 'public' };
+  if (offers.length === 0 && everyCallIsThePublicDeposit(tx))
+    return { tx, ...readThePublicDeposit(tx), pays: 'public' };
   return { tx, ...readThePrivateDeposit(tx, offers, vault), pays: 'private' };
 }
 
 /** Why a balance ask that pays a private deposit is refused: this wallet makes a private deposit whole, asked by intent. */
 export const A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT =
-  'what the page sent is a private deposit it built itself, and this wallet pays a private deposit only when it builds it, '
-  + 'proves it and signs its records itself, asked for as one action. The page asks for that action instead. Nothing has been paid.';
+  'what the page sent is a private deposit it built itself, and this wallet pays a private deposit only when it builds it, ' +
+  'proves it and signs its records itself, asked for as one action. The page asks for that action instead. Nothing has been paid.';
 
 /**
  * What a page's balance ask pays for, read as `readWhatThePageAsks` reads it, refused when it is a private deposit:
@@ -511,7 +573,9 @@ export const A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT =
  * built, whose coin it chose and whose records it would sign. A public deposit is read and paid as before.
  */
 export function readWhatThePageAsksToBalance(
-  ledger: LedgerForBalancing, transaction: string, vault: string,
+  ledger: LedgerForBalancing,
+  transaction: string,
+  vault: string
 ): ReturnType<typeof readWhatThePageAsks> {
   const read = readWhatThePageAsks(ledger, transaction, vault);
   if (read.pays === 'private') throw new BalanceRefused(A_PRIVATE_DEPOSIT_IS_ASKED_BY_INTENT);
@@ -520,9 +584,17 @@ export function readWhatThePageAsksToBalance(
 
 const carriesDustActions = (tx: UnboundTransactionLike): boolean => {
   for (const intent of tx.intents?.values() ?? []) {
-    const d = (intent as { dustActions?: { spends?: readonly unknown[]; registrations?: readonly unknown[] } | null }).dustActions;
-    if (d !== undefined && d !== null && ((d.spends?.length ?? 0) > 0 || (d.registrations?.length ?? 0) > 0
-      || !Array.isArray(d.spends) || !Array.isArray(d.registrations))) return true;
+    const d = (intent as { dustActions?: { spends?: readonly unknown[]; registrations?: readonly unknown[] } | null })
+      .dustActions;
+    if (
+      d !== undefined &&
+      d !== null &&
+      ((d.spends?.length ?? 0) > 0 ||
+        (d.registrations?.length ?? 0) > 0 ||
+        !Array.isArray(d.spends) ||
+        !Array.isArray(d.registrations))
+    )
+      return true;
   }
   return false;
 };
@@ -554,19 +626,25 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
    */
   if (carriesDustActions(tx)) {
     throw new BalanceRefused(
-      'what the page sent also spends or registers DUST, and a deposit into a vault does neither: the company '
-      + 'pays the network fee after this wallet is done. Nothing has been paid.');
+      'what the page sent also spends or registers DUST, and a deposit into a vault does neither: the company ' +
+        'pays the network fee after this wallet is done. Nothing has been paid.'
+    );
   }
   const actions = [...(tx.intents?.values() ?? [])].flatMap((i) => [...(i.actions ?? [])]);
   if (actions.length !== 1) {
     throw new BalanceRefused(
-      'what the page sent calls the vault\'s public deposit more than once, and a deposit is one call. '
-      + 'Nothing has been paid.');
+      "what the page sent calls the vault's public deposit more than once, and a deposit is one call. " +
+        'Nothing has been paid.'
+    );
   }
-  const call = actions[0] as { guaranteedTranscript?: { effects?: unknown } | null; fallibleTranscript?: { effects?: unknown } | null };
+  const call = actions[0] as {
+    guaranteedTranscript?: { effects?: unknown } | null;
+    fallibleTranscript?: { effects?: unknown } | null;
+  };
   const unreadable = new BalanceRefused(
-    'this wallet could not read what the page\'s public deposit asks for, so it will not pay for it. '
-    + 'Nothing has been paid.');
+    "this wallet could not read what the page's public deposit asks for, so it will not pay for it. " +
+      'Nothing has been paid.'
+  );
   const asks = new Map<string, bigint>();
   let transcripts = 0;
   for (const transcript of [call.guaranteedTranscript, call.fallibleTranscript]) {
@@ -578,14 +656,22 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
       if (!Array.isArray(e[k])) throw unreadable;
       if ((e[k] as unknown[]).length !== 0) {
         throw new BalanceRefused(
-          'what the page sent asks for more than public money going into the vault. Nothing has been paid.');
+          'what the page sent asks for more than public money going into the vault. Nothing has been paid.'
+        );
       }
     }
-    for (const k of ['shieldedMints', 'unshieldedMints', 'unshieldedOutputs', 'claimedUnshieldedSpends', 'unshieldedInputs']) {
+    for (const k of [
+      'shieldedMints',
+      'unshieldedMints',
+      'unshieldedOutputs',
+      'claimedUnshieldedSpends',
+      'unshieldedInputs'
+    ]) {
       if (!(e[k] instanceof Map)) throw unreadable;
       if (k !== 'unshieldedInputs' && (e[k] as Map<unknown, unknown>).size !== 0) {
         throw new BalanceRefused(
-          'what the page sent asks for more than public money going into the vault. Nothing has been paid.');
+          'what the page sent asks for more than public money going into the vault. Nothing has been paid.'
+        );
       }
     }
     for (const [type, value] of e.unshieldedInputs as Map<{ tag?: unknown; raw?: unknown } | null, unknown>) {
@@ -597,11 +683,14 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
   if (transcripts === 0) throw unreadable;
   if (asks.size !== 1) {
     throw new BalanceRefused(
-      'what the page sent asks for more than one public token, and a public deposit is one. Nothing has been paid.');
+      'what the page sent asks for more than one public token, and a public deposit is one. Nothing has been paid.'
+    );
   }
   const [token, amount] = [...asks.entries()][0]!;
   if (!(amount > 0n)) {
-    throw new BalanceRefused('what the page sent asks for nothing, so there is nothing to approve. Nothing has been paid.');
+    throw new BalanceRefused(
+      'what the page sent asks for nothing, so there is nothing to approve. Nothing has been paid.'
+    );
   }
   /* What the transaction owes must be exactly what the vault asks for: this token, this amount, nothing private. */
   const owed = new Map<string, bigint>();
@@ -610,8 +699,9 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
       if (imbalance >= 0n || t.tag === 'dust') continue;
       if (t.tag !== 'unshielded') {
         throw new BalanceRefused(
-          'what the page sent needs private money from this wallet as well, and a public deposit needs none. '
-          + 'Nothing has been paid.');
+          'what the page sent needs private money from this wallet as well, and a public deposit needs none. ' +
+            'Nothing has been paid.'
+        );
       }
       const k = String(t.raw).toLowerCase();
       owed.set(k, (owed.get(k) ?? 0n) - imbalance);
@@ -619,8 +709,9 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
   }
   if (owed.size !== 1 || owed.get(token) !== amount) {
     throw new BalanceRefused(
-      'what the page sent owes something other than what it puts into the vault, and this wallet pays only '
-      + 'for what the vault receives. Nothing has been paid.');
+      'what the page sent owes something other than what it puts into the vault, and this wallet pays only ' +
+        'for what the vault receives. Nothing has been paid.'
+    );
   }
   return { leaves: [{ token, amount: amount.toString(), kind: 'unshielded' }] };
 }
@@ -632,18 +723,26 @@ function readThePublicDeposit(tx: UnboundTransactionLike): { leaves: LeavesTheWa
  * wallet's own address; nothing else may have been added.
  */
 export function whyThePublicBalancingIsNotWhatWasApproved(
-  recipe: unknown, approved: LeavesTheWallet, own: string,
+  recipe: unknown,
+  approved: LeavesTheWallet,
+  own: string
 ): string | null {
   const r = recipe as { baseTransaction?: unknown; balancingTransaction?: unknown } | null;
-  const base = r === null || typeof r !== 'object' ? null : carriedBy(r.baseTransaction) as UnboundTransactionLike | null | undefined;
+  const base =
+    r === null || typeof r !== 'object'
+      ? null
+      : (carriedBy(r.baseTransaction) as UnboundTransactionLike | null | undefined);
   if (base === null || base === undefined || typeof base !== 'object') {
     return 'this wallet could not read what it was about to add';
   }
   if (r!.balancingTransaction !== undefined && r!.balancingTransaction !== null) {
     return 'this wallet was about to add more to it than this deposit';
   }
-  if (carriesDustActions(base) || (base.guaranteedOffer ?? null) !== null
-    || (base.fallibleOffer !== undefined && base.fallibleOffer !== null && base.fallibleOffer.size > 0)) {
+  if (
+    carriesDustActions(base) ||
+    (base.guaranteedOffer ?? null) !== null ||
+    (base.fallibleOffer !== undefined && base.fallibleOffer !== null && base.fallibleOffer.size > 0)
+  ) {
     return 'this wallet was about to add more to it than this deposit';
   }
   const net = new Map<string, bigint>();
@@ -657,7 +756,8 @@ export function whyThePublicBalancingIsNotWhatWasApproved(
       }
       for (const output of (offer.outputs ?? []) as { type?: unknown; value?: unknown; owner?: unknown }[]) {
         if (typeof output?.value !== 'bigint') return 'this wallet could not read what it was about to add';
-        if (bare(output.owner) !== bare(own)) return 'this wallet was about to pay public money to someone other than itself';
+        if (bare(output.owner) !== bare(own))
+          return 'this wallet was about to pay public money to someone other than itself';
         net.set(bare(output.type), (net.get(bare(output.type)) ?? 0n) - output.value);
       }
     }
@@ -679,19 +779,24 @@ export function whyThePublicBalancingIsNotWhatWasApproved(
  * Answers the finished transaction, as base64.
  */
 export async function payForThePage(
-  doors: BalanceDoors, tx: UnboundTransactionLike,
+  doors: BalanceDoors,
+  tx: UnboundTransactionLike,
   /** What step 1 read, when it read a public deposit. Absent, only private money is paid. */
   approved?: { readonly pays: PageAskPays; readonly leaves: readonly LeavesTheWallet[] },
-  watch: WaitingForTheChain = {},
+  watch: WaitingForTheChain = {}
 ): Promise<string> {
   const publicly = approved?.pays === 'public';
   let own = '';
   if (publicly) {
     if (approved.leaves.length !== 1 || approved.leaves[0]?.kind !== 'unshielded') {
-      throw new BalanceRefused('what you approved is not one public amount, so this wallet pays nothing. Nothing has been paid.');
+      throw new BalanceRefused(
+        'what you approved is not one public amount, so this wallet pays nothing. Nothing has been paid.'
+      );
     }
     if (doors.ownPublicAddress === undefined) {
-      throw new BalanceRefused('this wallet could not read its own public address, so it pays nothing publicly. Nothing has been paid.');
+      throw new BalanceRefused(
+        'this wallet could not read its own public address, so it pays nothing publicly. Nothing has been paid.'
+      );
     }
     own = doors.ownPublicAddress();
   }
@@ -703,14 +808,14 @@ export async function payForThePage(
     throw new BalanceRefused('you chose not to pay, so this wallet added nothing. Nothing has been paid.');
   }
   /* Read again once the facade is on this wallet's ledger, when the read just finished was made before it. */
-  if (!await readOnThisWalletsLedger(facade, () => untilItHasReadTheChain(paying, watch))) {
+  if (!(await readOnThisWalletsLedger(facade, () => untilItHasReadTheChain(paying, watch)))) {
     throw new BalanceRefused(`${NOT_ON_THIS_WALLETS_LEDGER} Nothing has been paid.`);
   }
   watch.onBalancing?.();
   const now = doors.now ?? Date.now;
   const recipe = await facade.balanceUnboundTransaction(facade.adoptTransaction(tx.serialize(), 'Unbound'), {
     ttl: new Date(now() + PAGE_TTL_MS),
-    tokenKindsToBalance: publicly ? [...PUBLIC_DEPOSIT_TOKEN_KINDS] : [...PAGE_TOKEN_KINDS],
+    tokenKindsToBalance: publicly ? [...PUBLIC_DEPOSIT_TOKEN_KINDS] : [...PAGE_TOKEN_KINDS]
   });
   /* From this line coins are booked, and every way out below lets them go. */
   try {
@@ -722,12 +827,17 @@ export async function payForThePage(
     const finished = base64FromBytes((await facade.finalizeRecipe(signed)).serialize());
     if (watch.handOver !== undefined && !watch.handOver(finished)) {
       throw new NotHandedOver(
-        'This payment was not handed to the page, because the request had already ended there. '
-        + 'Nothing has been paid.');
+        'This payment was not handed to the page, because the request had already ended there. ' +
+          'Nothing has been paid.'
+      );
     }
     return finished;
   } catch (e) {
-    try { await facade.revert(recipe); } catch { /* the original failure is the one to report */ }
+    try {
+      await facade.revert(recipe);
+    } catch {
+      /* the original failure is the one to report */
+    }
     throw e;
   }
 }

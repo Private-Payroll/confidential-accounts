@@ -16,7 +16,16 @@
  * refused".
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, TEST_AMOUNT, TEST_TOKEN_BYTES } from './simulator.js';
+import {
+  AccountSimulator,
+  privateStateFor,
+  change,
+  type Change,
+  payoutTreeOf,
+  rootOfTestLeaves,
+  TEST_AMOUNT,
+  TEST_TOKEN_BYTES
+} from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { partKeyOf, wrapBaseOf } from './part-keys.js';
 import { payoutLeafOf, sumTreeOfLeaves, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
@@ -30,7 +39,11 @@ import { buildRun, type PaymentFacts } from '../../src/midnight/payout-tree.js';
 import { payeeFor, payFor } from '../../src/testing/payees.js';
 import { TEST_TOKEN, registryWithTestPrivateForms } from '../../src/testing/assets.js';
 import { ledgerTokenOf } from '../../src/core/assets.js';
-import { refuseWhatThisDeviceDidNotMake, type AccountLedgerView, type RunMadeHere } from '../../packages/web-shared/src/what-this-device-made.js';
+import {
+  refuseWhatThisDeviceDidNotMake,
+  type AccountLedgerView,
+  type RunMadeHere
+} from '../../packages/web-shared/src/what-this-device-made.js';
 import { paymentEntriesOf } from '../../packages/web-shared/src/payment-entries.js';
 import { paymentsInAccountState } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 
@@ -55,11 +68,12 @@ const nonceOf = (r: PayRecord) => payRecordNonceOf(KEY, r);
 /** One payment's leaf input: the vault's own details under a blinding, with the person-month nonce. */
 const payment = (
   r: PayRecord,
-  p: { recipient?: number; amount?: bigint; blinding?: number; form?: 'shielded' | 'unshielded' } = {},
+  p: { recipient?: number; amount?: bigint; blinding?: number; form?: 'shielded' | 'unshielded' } = {}
 ): PayoutLeafInput => ({
-  details: toHex(vaultDetails[p.form ?? 'shielded'](
-    bytes(p.recipient ?? 0x21), TOKEN, p.amount ?? 5_000n, bytes(p.blinding ?? 0x31))),
-  nonce: nonceOf(r),
+  details: toHex(
+    vaultDetails[p.form ?? 'shielded'](bytes(p.recipient ?? 0x21), TOKEN, p.amount ?? 5_000n, bytes(p.blinding ?? 0x31))
+  ),
+  nonce: nonceOf(r)
 });
 
 /** Raises and approves a run of `payments` for `vault`, and hands back what a payer needs. */
@@ -69,37 +83,59 @@ const approvedRun = async (sim: AccountSimulator, vault: Uint8Array, payments: P
   const leaves = payments.map(payoutLeafOf);
   const root = rootOfTestLeaves(leaves);
   const payload = pureCircuits.runPayload(fromHex(root), BigInt(leaves.length), OPENS, CLOSES, 0n);
-  await sim.as(carrying(sim, A, c)).proposeRun({ root: fromHex(root), payees: BigInt(leaves.length), from: OPENS, until: CLOSES, vault });
+  await sim
+    .as(carrying(sim, A, c))
+    .proposeRun({ root: fromHex(root), payees: BigInt(leaves.length), from: OPENS, until: CLOSES, vault });
   const id = sim.proposalId(payload, c.salt, vault);
   await sim.as(carrying(sim, B, c)).approve(id);
   return { id, c, leaves, root };
 };
 
 /** Pays payee `i` of a run whose tree may be one `buildPayoutTree` would refuse. */
-const pay = (sim: AccountSimulator, vault: Uint8Array, run: Awaited<ReturnType<typeof approvedRun>>,
-  payments: PayoutLeafInput[], i: number) => {
+const pay = (
+  sim: AccountSimulator,
+  vault: Uint8Array,
+  run: Awaited<ReturnType<typeof approvedRun>>,
+  payments: PayoutLeafInput[],
+  i: number
+) => {
   /* The path is built over the raw leaves, so a run `buildPayoutTree` would refuse can still be driven at the account. */
   const path = pathFor(run.leaves, i);
   return sim.as(carrying(sim, A, run.c)).recordPaymentFromVault({
-    proposal: run.id, vault, root: fromHex(run.root), payees: BigInt(run.leaves.length),
-    from: OPENS, until: CLOSES, salt: run.c.salt,
-    details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce),
-    amount: TEST_AMOUNT, asset: TEST_TOKEN_BYTES, path,
+    proposal: run.id,
+    vault,
+    root: fromHex(run.root),
+    payees: BigInt(run.leaves.length),
+    from: OPENS,
+    until: CLOSES,
+    salt: run.c.salt,
+    details: fromHex(payments[i]!.details),
+    nonce: fromHex(payments[i]!.nonce),
+    amount: TEST_AMOUNT,
+    asset: TEST_TOKEN_BYTES,
+    path
   });
 };
 
 /* A path over raw leaves, from the product's own sum tree, for runs `buildPayoutTree` refuses. */
 const pathFor = (leaves: Hex[], i: number) =>
-  sumTreeOfLeaves(leaves, leaves.map(() => TEST_AMOUNT), toHex(TEST_TOKEN_BYTES)).pathFor(i);
+  sumTreeOfLeaves(
+    leaves,
+    leaves.map(() => TEST_AMOUNT),
+    toHex(TEST_TOKEN_BYTES)
+  ).pathFor(i);
 
 const paidOnce = (sim: AccountSimulator, r: PayRecord) =>
   sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(nonceOf(r))));
 
 describe('the chain records who was paid for which month', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await AccountSimulator.liveAccount([A, B], 2n); sim.at(NOW); });
+  beforeEach(async () => {
+    sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(NOW);
+  });
 
-  it('B\' BOTH: a payment records its leaf AND its person and month - two values, never one', async () => {
+  it("B' BOTH: a payment records its leaf AND its person and month - two values, never one", async () => {
     const payments = [payment(SEPTEMBER)];
     const run = await approvedRun(sim, PAYROLL, payments, 11);
     const before = sim.ledger.movements.size();
@@ -122,8 +158,9 @@ describe('the chain records who was paid for which month', () => {
     expect(run2.leaves[0]).not.toBe(run1.leaves[0]);
     const before = sim.ledger.movements.size();
     /* RED WHEN recordPaymentFromVault stops refusing a recorded nonce: the leaf is new, so nothing else refuses it. */
-    await expect(pay(sim, PAYROLL, run2, raise, 0))
-      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
+    await expect(pay(sim, PAYROLL, run2, raise, 0)).rejects.toThrow(
+      /this payee has already been paid this payment; to pay them again, make a new payment/
+    );
     expect(sim.ledger.movements.size()).toBe(before);
   });
 
@@ -134,8 +171,9 @@ describe('the chain records who was paid for which month', () => {
 
     const moved = [payment(SEPTEMBER, { recipient: 0x22, blinding: 0x33 })];
     const run2 = await approvedRun(sim, TREASURY, moved, 13);
-    await expect(pay(sim, TREASURY, run2, moved, 0))
-      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
+    await expect(pay(sim, TREASURY, run2, moved, 0)).rejects.toThrow(
+      /this payee has already been paid this payment; to pay them again, make a new payment/
+    );
   });
 
   it('...in the OTHER FORM, public rather than private, is refused', async () => {
@@ -146,16 +184,18 @@ describe('the chain records who was paid for which month', () => {
     const publicly = [payment(SEPTEMBER, { form: 'unshielded', blinding: 0x34 })];
     const run2 = await approvedRun(sim, PAYROLL, publicly, 14);
     expect(run2.leaves[0]).not.toBe(run1.leaves[0]);
-    await expect(pay(sim, PAYROLL, run2, publicly, 0))
-      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
+    await expect(pay(sim, PAYROLL, run2, publicly, 0)).rejects.toThrow(
+      /this payee has already been paid this payment; to pay them again, make a new payment/
+    );
   });
 
   it('...twice on ONE run, when the tree was built past the client that refuses it', async () => {
     const twice = [payment(SEPTEMBER, { amount: 5_000n }), payment(SEPTEMBER, { amount: 5_001n, blinding: 0x35 })];
     const run = await approvedRun(sim, PAYROLL, twice, 15);
     await pay(sim, PAYROLL, run, twice, 0);
-    await expect(pay(sim, PAYROLL, run, twice, 1))
-      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
+    await expect(pay(sim, PAYROLL, run, twice, 1)).rejects.toThrow(
+      /this payee has already been paid this payment; to pay them again, make a new payment/
+    );
   });
 
   it('an identical payment is still refused as the payment already made, before the month is asked', async () => {
@@ -179,15 +219,18 @@ describe('the chain records who was paid for which month', () => {
 
     const again = [payment(extra, { amount: 750n, blinding: 0x37 })];
     const run3 = await approvedRun(sim, PAYROLL, again, 17);
-    await expect(pay(sim, PAYROLL, run3, again, 0))
-      .rejects.toThrow(/this payee has already been paid this payment; to pay them again, make a new payment/);
+    await expect(pay(sim, PAYROLL, run3, again, 0)).rejects.toThrow(
+      /this payee has already been paid this payment; to pay them again, make a new payment/
+    );
   });
 
   it('another month, another person and another kind are other records, and are paid', async () => {
     const first = [payment(SEPTEMBER)];
     await pay(sim, PAYROLL, await approvedRun(sim, PAYROLL, first, 11), first, 0);
     for (const [i, r] of [
-      { ...SEPTEMBER, month: '2026-10' }, { ...SEPTEMBER, person: 'emp_bo' }, { ...SEPTEMBER, kind: 'bonus' },
+      { ...SEPTEMBER, month: '2026-10' },
+      { ...SEPTEMBER, person: 'emp_bo' },
+      { ...SEPTEMBER, kind: 'bonus' }
     ].entries()) {
       const p = [payment(r, { blinding: 0x40 + i })];
       await pay(sim, PAYROLL, await approvedRun(sim, PAYROLL, p, 20 + i), p, 0);
@@ -198,7 +241,10 @@ describe('the chain records who was paid for which month', () => {
 
 describe('the pay-record key, sealed to each signer on chain', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await AccountSimulator.liveAccount([A, B], 2n); sim.at(NOW); });
+  beforeEach(async () => {
+    sim = await AccountSimulator.liveAccount([A, B], 2n);
+    sim.at(NOW);
+  });
 
   const commitment = fromHex(payKeyCommitmentOf(KEY));
   const wrapFor = (pub: Hex) => sealPayKeyTo(KEY, pub).map(fromHex);
@@ -216,12 +262,14 @@ describe('the pay-record key, sealed to each signer on chain', () => {
   };
 
   it('NEVER FIRST-COME: the first copy without an approved round is refused, and writes nothing', async () => {
-    await expect(sim.as(A).sealPayKey(wrapFor(aKeys.publicKey), commitment))
-      .rejects.toThrow(/no open proposal with that id/);
+    await expect(sim.as(A).sealPayKey(wrapFor(aKeys.publicKey), commitment)).rejects.toThrow(
+      /no open proposal with that id/
+    );
     /* RED WHEN the commitment can be written without a round: one signer could commit to a key only they hold. */
     const half = await approvedCommitment(commitment, 52, [A]);
-    await expect(sim.as(carrying(sim, A, half.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, half.id))
-      .rejects.toThrow(/not enough approvals yet/);
+    await expect(
+      sim.as(carrying(sim, A, half.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, half.id)
+    ).rejects.toThrow(/not enough approvals yet/);
     expect(sim.payKeyCommitment()).toBeUndefined();
     expect(sim.sealedPayKeyOf(A)).toBeUndefined();
   });
@@ -229,19 +277,21 @@ describe('the pay-record key, sealed to each signer on chain', () => {
   it('refuses an approved round for ANOTHER commitment', async () => {
     const other = await approvedCommitment(fromHex(payKeyCommitmentOf('77'.repeat(32))));
     /* RED WHEN the circuit stops checking the proposal names this commitment. */
-    await expect(sim.as(carrying(sim, A, other.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, other.id))
-      .rejects.toThrow(/not for this pay-record key/);
+    await expect(
+      sim.as(carrying(sim, A, other.c)).sealPayKey(wrapFor(aKeys.publicKey), commitment, other.id)
+    ).rejects.toThrow(/not for this pay-record key/);
     expect(sim.payKeyCommitment()).toBeUndefined();
   });
 
   it('refuses a zero commitment even under an approved round', async () => {
     const zero = new Uint8Array(32);
     const round = await approvedCommitment(zero);
-    await expect(sim.as(carrying(sim, A, round.c)).sealPayKey(wrapFor(aKeys.publicKey), zero, round.id))
-      .rejects.toThrow(/not a usable pay-record key/);
+    await expect(
+      sim.as(carrying(sim, A, round.c)).sealPayKey(wrapFor(aKeys.publicKey), zero, round.id)
+    ).rejects.toThrow(/not a usable pay-record key/);
   });
 
-  it('THE FIRST COPY writes the commitment under the approved round, closes it, and seals the caller\'s own copy', async () => {
+  it("THE FIRST COPY writes the commitment under the approved round, closes it, and seals the caller's own copy", async () => {
     const round = await approvedCommitment(commitment);
     const wrapA = wrapFor(aKeys.publicKey);
     const size = sim.signerRolesSize();
@@ -257,7 +307,7 @@ describe('the pay-record key, sealed to each signer on chain', () => {
     expect(openSealedPayKey(sim.sealedPayKeyOf(A)!.map(toHex), aKeys.secret, toHex(sim.payKeyCommitment()!))).toBe(KEY);
   });
 
-  it('EACH SIGNER WRITES ONLY THEIR OWN COPY: B seals under B\'s entries and A\'s stay A\'s', async () => {
+  it("EACH SIGNER WRITES ONLY THEIR OWN COPY: B seals under B's entries and A's stay A's", async () => {
     const round = await approvedCommitment(commitment);
     const wrapA = wrapFor(aKeys.publicKey);
     await sim.as(carrying(sim, A, round.c)).sealPayKey(wrapA, commitment, round.id);
@@ -273,7 +323,10 @@ describe('the pay-record key, sealed to each signer on chain', () => {
   it('EVERY PART SITS WHERE THE EXPORTED KEY SAYS, FOR EACH SIGNER', async () => {
     const self = () => fromHex(String(sim.address));
     const round = await approvedCommitment(commitment);
-    const wraps = new Map([[A, wrapFor(aKeys.publicKey)], [B, wrapFor(bKeys.publicKey)]]);
+    const wraps = new Map([
+      [A, wrapFor(aKeys.publicKey)],
+      [B, wrapFor(bKeys.publicKey)]
+    ]);
     const size = sim.signerRolesSize();
     await sim.as(carrying(sim, A, round.c)).sealPayKey(wraps.get(A)!, commitment, round.id);
     await sim.as(B).sealPayKey(wraps.get(B)!, commitment);
@@ -296,28 +349,35 @@ describe('the pay-record key, sealed to each signer on chain', () => {
     const wrapA = sim.sealedPayKeyOf(A)!.map(toHex);
 
     /* RED WHEN a signer can overwrite their own copy: a copy that stops opening is a key lost. */
-    await expect(sim.as(A).sealPayKey(wrapFor(bKeys.publicKey), commitment))
-      .rejects.toThrow(/already sealed the pay-record key to yourself/);
+    await expect(sim.as(A).sealPayKey(wrapFor(bKeys.publicKey), commitment)).rejects.toThrow(
+      /already sealed the pay-record key to yourself/
+    );
     expect(sim.sealedPayKeyOf(A)!.map(toHex)).toEqual(wrapA);
 
     /* RED WHEN a later copy stops being checked against the commitment on chain. */
-    await expect(sim.as(B).sealPayKey(wrapFor(bKeys.publicKey), fromHex(payKeyCommitmentOf('77'.repeat(32)))))
-      .rejects.toThrow(/not the pay-record key this company confirmed/);
+    await expect(
+      sim.as(B).sealPayKey(wrapFor(bKeys.publicKey), fromHex(payKeyCommitmentOf('77'.repeat(32))))
+    ).rejects.toThrow(/not the pay-record key this company confirmed/);
     expect(sim.sealedPayKeyOf(B)).toBeUndefined();
 
     /* RED WHEN somebody not seated can seal a copy: their device offers a path for its own leaf beside a
      * signer's siblings, so the witness answers and the circuit refuses. */
-    await expect(sim.as(sim.dishonest(C, { ...sim.pathFor(A), leaf: sim.leafOf(C) })).sealPayKey(wrapFor(bKeys.publicKey), commitment))
-      .rejects.toThrow(/(?<!you are )not a signer on this account/);
+    await expect(
+      sim
+        .as(sim.dishonest(C, { ...sim.pathFor(A), leaf: sim.leafOf(C) }))
+        .sealPayKey(wrapFor(bKeys.publicKey), commitment)
+    ).rejects.toThrow(/(?<!you are )not a signer on this account/);
     expect(sim.sealedPayKeyOf(C)).toBeUndefined();
   });
 
   it('a device refuses a copy that opens to a key the account did not commit to', () => {
     const wrongKey = sealPayKeyTo('77'.repeat(32), aKeys.publicKey);
-    expect(() => openSealedPayKey(wrongKey, aKeys.secret, payKeyCommitmentOf(KEY)))
-      .toThrow(/does not open to the key this company confirmed/);
-    expect(() => openSealedPayKey(wrongKey.slice(0, 3), aKeys.secret, payKeyCommitmentOf(KEY)))
-      .toThrow(/four 32-byte entries/);
+    expect(() => openSealedPayKey(wrongKey, aKeys.secret, payKeyCommitmentOf(KEY))).toThrow(
+      /does not open to the key this company confirmed/
+    );
+    expect(() => openSealedPayKey(wrongKey.slice(0, 3), aKeys.secret, payKeyCommitmentOf(KEY))).toThrow(
+      /four 32-byte entries/
+    );
   });
 });
 
@@ -326,12 +386,14 @@ describe('what the client refuses before anybody signs, and what the approving d
     const twice = [payment(SEPTEMBER, { amount: 5_000n }), payment(SEPTEMBER, { amount: 5_001n, blinding: 0x35 })];
     expect(payoutLeafOf(twice[0]!)).not.toBe(payoutLeafOf(twice[1]!));
     /* RED WHEN the tree builder compares only leaves: the run is approved and the second payee is refused on chain. */
-    expect(() => payoutTreeOf(twice)).toThrow(/payees 1 and 2 on this run are the same person, paid for the same month/);
+    expect(() => payoutTreeOf(twice)).toThrow(
+      /payees 1 and 2 on this run are the same person, paid for the same month/
+    );
     /* Its control: the same two at different occurrences build. */
     expect(() => payoutTreeOf([twice[0]!, payment({ ...SEPTEMBER, occurrence: 1 }, { blinding: 0x35 })])).not.toThrow();
   });
 
-  it('THE DEVICE\'S CHECK: from one read of the account and the key, who is already recorded as paid for the month', async () => {
+  it("THE DEVICE'S CHECK: from one read of the account and the key, who is already recorded as paid for the month", async () => {
     const sim = await AccountSimulator.liveAccount([A, B], 2n);
     sim.at(NOW);
     const first = [payment(SEPTEMBER)];
@@ -344,7 +406,7 @@ describe('what the client refuses before anybody signs, and what the approving d
     const [ada, bo, adaAgain] = alreadyPaidOf(has, KEY, [
       { person: 'emp_ada', month: '2026-09', kind: 'salary', occurrence: 2 },
       { person: 'emp_bo', month: '2026-09', kind: 'salary', occurrence: 0 },
-      { person: 'emp_ada', month: '2026-09', kind: 'salary', occurrence: 1 },
+      { person: 'emp_ada', month: '2026-09', kind: 'salary', occurrence: 1 }
     ]);
     /* RED WHEN the check reads another key, month or kind than the payments were derived under. */
     expect(ada!.paid).toEqual([0, 1]);
@@ -355,10 +417,12 @@ describe('what the client refuses before anybody signs, and what the approving d
 
     /* The words never say more than the chain can: recorded on chain as paid. */
     expect(alreadyPaidSentence(ada!, 'Ada')).toBe(
-      'Ada: salary for September 2026 is recorded on chain as paid (the regular payment and extra 1).');
+      'Ada: salary for September 2026 is recorded on chain as paid (the regular payment and extra 1).'
+    );
     expect(alreadyPaidSentence(adaAgain!, 'Ada')).toBe(
-      'Ada: salary for September 2026 is recorded on chain as paid (the regular payment and extra 1). '
-      + 'This run pays extra 1 again. The chain will refuse that one payment.');
+      'Ada: salary for September 2026 is recorded on chain as paid (the regular payment and extra 1). ' +
+        'This run pays extra 1 again. The chain will refuse that one payment.'
+    );
     expect(alreadyPaidSentence(bo!, 'Bo')).toBeNull();
     /* An occurrence at or past how many it asks about is still asked about. RED WHEN the scan stops
        at the default count and never reaches the occurrence this run pays. */
@@ -366,8 +430,9 @@ describe('what the client refuses before anybody signs, and what the approving d
     expect(late!.paid).toEqual([0, 1]);
     expect(late!.refused).toBe(true);
     /* A different key sees nothing: the check is only as good as the key it is given. */
-    expect(alreadyPaidOf(has, '77'.repeat(32), [{ person: 'emp_ada', month: '2026-09', kind: 'salary' }])[0]!.paid)
-      .toEqual([]);
+    expect(
+      alreadyPaidOf(has, '77'.repeat(32), [{ person: 'emp_ada', month: '2026-09', kind: 'salary' }])[0]!.paid
+    ).toEqual([]);
   });
 
   it('ON THE CHAIN: ONCE A PAYEE OF ONE RUN IS PAID, AN APPROVING DEVICE REFUSES A SECOND RUN PAYING THEM FOR THAT MONTH', async () => {
@@ -380,13 +445,20 @@ describe('what the client refuses before anybody signs, and what the approving d
     await sim.as(carrying(sim, A, committed)).propose(keyPayload);
     const keyRound = sim.proposalId(keyPayload, committed.salt);
     for (const who of [B]) await sim.as(carrying(sim, who, committed)).approve(keyRound);
-    await sim.as(carrying(sim, A, committed)).sealPayKey(sealPayKeyTo(payKey, newWrappingKeypair().publicKey).map(fromHex), fromHex(payKeyCommitmentOf(payKey)), keyRound);
+    await sim
+      .as(carrying(sim, A, committed))
+      .sealPayKey(
+        sealPayKeyTo(payKey, newWrappingKeypair().publicKey).map(fromHex),
+        fromHex(payKeyCommitmentOf(payKey)),
+        keyRound
+      );
     await sim.adoptVault(PAYROLL, [A, B]);
 
     /* Two people paid for September, the way an approving device makes each run again. */
     const facts: PaymentFacts[] = [0, 1].map((i) => ({
       payee: payeeFor(`c${i + 1}`.repeat(32), 'undeployed'),
-      token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()), amount: BigInt(200 + i),
+      token: ledgerTokenOf(TEST_TOKEN, 'shielded', registryWithTestPrivateForms()),
+      amount: BigInt(200 + i)
     }));
     const pay = payFor(facts, { key: payKey, people: ['emp_ada', 'emp_bo'], month: '2026-09' });
     const seeds = [{ epoch: 0, seed: '6f'.repeat(32) as Hex }];
@@ -394,28 +466,76 @@ describe('what the client refuses before anybody signs, and what the approving d
       const identity = { accountId: 'acc_1', runId, epoch: 0 };
       const run = buildRun(seeds, identity, facts, vaultDetails, pay, TEST_TOKEN);
       /* Raised as every device raises a run of its own: over no leg and the fresh half made from what its proposal seals beside the salt. */
-      const vouched = { head: '1a'.repeat(32) as Hex, r: toHex(Uint8Array.from({ length: 32 }, (_, j) => (salt * 7 + j) & 0xff)) as Hex, checkedHere: true };
+      const vouched = {
+        head: '1a'.repeat(32) as Hex,
+        r: toHex(Uint8Array.from({ length: 32 }, (_, j) => (salt * 7 + j) & 0xff)) as Hex,
+        checkedHere: true
+      };
       const fresh = vouchedFreshOf(vouched.head, vouched.r);
       const made: RunMadeHere = {
-        kind: 'payroll', seeds, payKey, identity, facts, records: pay.records, asset: TEST_TOKEN,
-        opensAt: String(OPENS), closesAt: String(CLOSES), required: '0',
+        kind: 'payroll',
+        seeds,
+        payKey,
+        identity,
+        facts,
+        records: pay.records,
+        asset: TEST_TOKEN,
+        opensAt: String(OPENS),
+        closesAt: String(CLOSES),
+        required: '0'
       };
       const c = { ...change(0n, salt), salt: pureCircuits.retrySaltOf(new Uint8Array(32), fromHex(fresh)) };
-      return { run, made, c, vouched, payload: pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, OPENS, CLOSES, 0n) };
+      return {
+        run,
+        made,
+        c,
+        vouched,
+        payload: pureCircuits.runPayload(fromHex(run.tree.root), run.tree.payees, OPENS, CLOSES, 0n)
+      };
     };
     const raised = async (r: ReturnType<typeof runOf>) => {
-      await sim.as(carrying(sim, A, r.c)).proposeRun({ root: fromHex(r.run.tree.root), payees: r.run.tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL });
+      await sim.as(carrying(sim, A, r.c)).proposeRun({
+        root: fromHex(r.run.tree.root),
+        payees: r.run.tree.payees,
+        from: OPENS,
+        until: CLOSES,
+        vault: PAYROLL
+      });
       return sim.proposalId(r.payload, r.c.salt, PAYROLL);
     };
     /* What the approving person's own wallet reads off the account's state: the wallet's own parser, over the chain's bytes. */
     const walletRead = (made: RunMadeHere): RunMadeHere => {
       const asked = paymentEntriesOf(made, pureCircuits.paidOnceOf);
       const read = paymentsInAccountState((sim.contractStateForCall as { serialize(): Uint8Array }).serialize(), asked);
-      return { ...made, wallet: { payKeyCommitment: read.payKeyCommitment, asked, held: [...read.held], openRounds: [...read.openRounds], entries: read.entries } };
+      return {
+        ...made,
+        wallet: {
+          payKeyCommitment: read.payKeyCommitment,
+          asked,
+          held: [...read.held],
+          openRounds: [...read.openRounds],
+          entries: read.entries
+        }
+      };
     };
-    const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () => refuseWhatThisDeviceDidNotMake({
-      runPayload: pureCircuits.runPayload, vaultDetails, payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf, retrySaltOf: pureCircuits.retrySaltOf,
-    }, { chainId: toHex(id), digest: toHex(r.payload), salt: toHex(r.c.salt), vouched: r.vouched, made: walletRead(r.made) }, sim.ledger as unknown as AccountLedgerView, 'approve');
+    const check = (r: ReturnType<typeof runOf>, id: Uint8Array) => () =>
+      refuseWhatThisDeviceDidNotMake(
+        {
+          runPayload: pureCircuits.runPayload,
+          vaultDetails,
+          payKeyCommitmentOf: pureCircuits.payKeyCommitmentOf,
+          retrySaltOf: pureCircuits.retrySaltOf
+        },
+        {
+          chainId: toHex(id),
+          digest: toHex(r.payload),
+          salt: toHex(r.c.salt),
+          vouched: r.vouched,
+          made: walletRead(r.made)
+        },
+        sim.ledger as unknown as AccountLedgerView,
+        'approve'
+      );
 
     const first = runOf('run_sep:leg', 62);
     const firstId = await raised(first);
@@ -430,11 +550,22 @@ describe('what the client refuses before anybody signs, and what the approving d
 
     /* The first run pays Ada on the chain. */
     await sim.as(carrying(sim, A, first.c)).recordPaymentFromVault({
-      proposal: firstId, vault: PAYROLL, root: fromHex(first.run.tree.root), payees: first.run.tree.payees, from: OPENS, until: CLOSES,
-      salt: first.c.salt, details: fromHex(first.run.payments[0]!.details), nonce: fromHex(first.run.payments[0]!.nonce),
-      amount: facts[0]!.amount, asset: fromHex(first.run.tree.asset), path: first.run.tree.pathFor(0),
+      proposal: firstId,
+      vault: PAYROLL,
+      root: fromHex(first.run.tree.root),
+      payees: first.run.tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      salt: first.c.salt,
+      details: fromHex(first.run.payments[0]!.details),
+      nonce: fromHex(first.run.payments[0]!.nonce),
+      amount: facts[0]!.amount,
+      asset: fromHex(first.run.tree.asset),
+      path: first.run.tree.pathFor(0)
     });
-    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payRecordNonceOf(payKey, pay.records[0]!))))).toBe(true);
+    expect(
+      sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payRecordNonceOf(payKey, pay.records[0]!))))
+    ).toBe(true);
     /* RED WHEN: the wallet's read of the account counts other than every entry its record of payments holds - here the two Ada's payment left - or misses a round it holds open. */
     const read = walletRead(second.made).wallet!;
     expect(read.entries).toBe(Number(sim.ledger.movements.size()));

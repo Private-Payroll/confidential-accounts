@@ -15,13 +15,21 @@
 import { describe, it, expect } from 'vitest';
 import { SimulatedCommitments } from '../../../src/core/ledger.js';
 import { ownLeafReading, storedSignerLeaf } from '../../../src/core/signer-leaf.js';
-import { newSigningKeypair, newWrappingKeypair, newBlinding, signingPublicKeyOf, unwrapKey, wrapKey, type Hex } from '../../../src/core/crypto.js';
+import {
+  newSigningKeypair,
+  newWrappingKeypair,
+  newBlinding,
+  signingPublicKeyOf,
+  unwrapKey,
+  wrapKey,
+  type Hex
+} from '../../../src/core/crypto.js';
 import { acceptSeatOnThisDevice, newSeatKeys, seatKeysFrom, type NewSeatKeys, type SeatDoors } from './accept-seat.js';
 import { seatBlinding, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
 
 /** The item at a place in a list; an item that is not there fails the test here rather than being read through. */
-const itemAt = <T,>(xs: readonly T[], i: number): T => {
+const itemAt = <T>(xs: readonly T[], i: number): T => {
   const x = xs[i];
   if (x === undefined) throw new Error(`expected an item at place ${i}, and the list holds ${xs.length}`);
   return x;
@@ -39,7 +47,7 @@ const KEYS: NewSeatKeys = {
   wrappingSecret: '33'.repeat(32),
   wrappingPublicKey: 'bb'.repeat(32),
   salt: '55'.repeat(32),
-  blinding: seatBlinding(WALLET, '55'.repeat(32)),
+  blinding: seatBlinding(WALLET, '55'.repeat(32))
 };
 
 /** Every door, recording the order it was called in. */
@@ -49,11 +57,24 @@ const doorsThat = (over: Partial<SeatDoors> = {}) => {
   const published: Array<Record<string, unknown>> = [];
   const promoted: Array<[Hex, string]> = [];
   const doors: SeatDoors = {
-    newKeys: () => { order.push('newKeys'); return KEYS; },
-    seal: async (s) => { order.push('seal'); sealed.push(s); },
-    publish: async (p) => { order.push('publish'); published.push(p); return { id: 'sgn_new' }; },
-    promote: async (pk, id) => { order.push('promote'); promoted.push([pk, id]); },
-    ...over,
+    newKeys: () => {
+      order.push('newKeys');
+      return KEYS;
+    },
+    seal: async (s) => {
+      order.push('seal');
+      sealed.push(s);
+    },
+    publish: async (p) => {
+      order.push('publish');
+      published.push(p);
+      return { id: 'sgn_new' };
+    },
+    promote: async (pk, id) => {
+      order.push('promote');
+      promoted.push([pk, id]);
+    },
+    ...over
   };
   return { doors, order, sealed, published, promoted };
 };
@@ -71,9 +92,14 @@ describe('A leaf cannot reach a roster before its key material is durable', () =
   it('PUBLISHES NOTHING when the seal refuses', async () => {
     /* A refused write leaves the key list as it was and rethrows, and at this
      * moment no leaf exists anywhere. */
-    const d = doorsThat({ seal: async () => { throw new Error('bundle version conflict'); } });
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET))
-      .rejects.toThrow(/version conflict/);
+    const d = doorsThat({
+      seal: async () => {
+        throw new Error('bundle version conflict');
+      }
+    });
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET)).rejects.toThrow(
+      /version conflict/
+    );
     expect(d.published).toHaveLength(0);
     expect(d.promoted).toHaveLength(0);
   });
@@ -83,9 +109,14 @@ describe('A leaf cannot reach a roster before its key material is durable', () =
      * seal has already happened, and the material for the published leaf is
      * durable. `finishPendingSeat` is the
      * door, and it is named in the refusal path rather than implied. */
-    const d = doorsThat({ promote: async () => { throw new Error('bundle version conflict'); } });
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET))
-      .rejects.toThrow(/version conflict/);
+    const d = doorsThat({
+      promote: async () => {
+        throw new Error('bundle version conflict');
+      }
+    });
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET)).rejects.toThrow(
+      /version conflict/
+    );
     expect(d.sealed).toHaveLength(1);
     expect(d.published).toHaveLength(1);
     expect(itemAt(d.sealed, 0).blinding).toBe(KEYS.blinding);
@@ -100,7 +131,10 @@ describe('A leaf cannot reach a roster before its key material is durable', () =
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     const stored = itemAt(d.published, 0).leafCommitment as Hex;
     const reading = ownLeafReading(
-      { id: 'sgn_new', leafCommitment: stored }, itemAt(d.sealed, 0), SimulatedCommitments);
+      { id: 'sgn_new', leafCommitment: stored },
+      itemAt(d.sealed, 0),
+      SimulatedCommitments
+    );
     expect(reading.verdict).toBe('agrees');
   });
 });
@@ -111,9 +145,10 @@ describe('The leaf this path publishes', () => {
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     expect(itemAt(d.published, 0).leafCommitment).toBe(
       storedSignerLeaf(
-        { signingSecret: KEYS.signingSecret, blinding: KEYS.blinding,
-          scope: SimulatedCommitments.allVaults() },
-        SimulatedCommitments));
+        { signingSecret: KEYS.signingSecret, blinding: KEYS.blinding, scope: SimulatedCommitments.allVaults() },
+        SimulatedCommitments
+      )
+    );
   });
 
   it('is not a leaf over the raw ed25519 public key, which its own device could never prove', async () => {
@@ -129,28 +164,35 @@ describe('The leaf this path publishes', () => {
     const blinding = newBlinding();
     const d = doorsThat({
       newKeys: () => ({
-        signingSecret: sk.secret, signingPublicKey: sk.publicKey,
-        wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey, blinding, salt: newBlinding(),
-      }),
+        signingSecret: sk.secret,
+        signingPublicKey: sk.publicKey,
+        wrappingSecret: wk.secret,
+        wrappingPublicKey: wk.publicKey,
+        blinding,
+        salt: newBlinding()
+      })
     });
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
 
-    const theOldWay = SimulatedCommitments.signerLeaf(
-      sk.publicKey, blinding, SimulatedCommitments.allVaults());
+    const theOldWay = SimulatedCommitments.signerLeaf(sk.publicKey, blinding, SimulatedCommitments.allVaults());
     expect(itemAt(d.published, 0).leafCommitment).not.toBe(theOldWay);
     /* And a seat whose leaf is over the raw ed25519 public key is one this device would refuse. */
-    expect(ownLeafReading(
-      { id: 'sgn_new', leafCommitment: theOldWay }, itemAt(d.sealed, 0), SimulatedCommitments).verdict)
-      .toBe('disagrees');
+    expect(
+      ownLeafReading({ id: 'sgn_new', leafCommitment: theOldWay }, itemAt(d.sealed, 0), SimulatedCommitments).verdict
+    ).toBe('disagrees');
   });
 
-  it('sends the two public halves, the leaf and the leaf\'s opening, AND NOTHING ELSE', async () => {
+  it("sends the two public halves, the leaf and the leaf's opening, AND NOTHING ELSE", async () => {
     /* A payload with another field is a secret leaving the device, and `toMatchObject` would not see one. */
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET);
     /* RED WHEN: the seat request carries anything beyond the public halves, the leaf and its opening. */
-    expect(Object.keys(itemAt(d.published, 0)).sort())
-      .toEqual(['leafCommitment', 'opening', 'signingPublicKey', 'wrappingPublicKey']);
+    expect(Object.keys(itemAt(d.published, 0)).sort()).toEqual([
+      'leafCommitment',
+      'opening',
+      'signingPublicKey',
+      'wrappingPublicKey'
+    ]);
     /* RED WHEN: the opening sent is not the one kept with the seat's secrets, so approvers check another leaf's. */
     expect(itemAt(d.published, 0).opening).toEqual(itemAt(d.sealed, 0).opening);
     /* RED WHEN: a seat's secret leaves this device in the seat request. */
@@ -173,15 +215,22 @@ describe('The leaf this path publishes', () => {
 describe('an invitation carried in a link is for one company', () => {
   it('REFUSES an invitation made for another company, before any key is made or anything is sent', async () => {
     const d = doorsThat();
-    const other = { accountId: 'acc_elsewhere', nonce: '01'.repeat(32), secret: '02'.repeat(32), person: 'sue', invitationId: '03'.repeat(32) };
+    const other = {
+      accountId: 'acc_elsewhere',
+      nonce: '01'.repeat(32),
+      secret: '02'.repeat(32),
+      person: 'sue',
+      invitationId: '03'.repeat(32)
+    };
     /* RED WHEN: keys are made and published for a company the link does not name - the proof is then refused everywhere, after the fact. */
-    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET, other))
-      .rejects.toThrow(/for a different company/u);
+    await expect(acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET, other)).rejects.toThrow(
+      /for a different company/u
+    );
     expect(d.order).toEqual([]);
   });
 });
 
-describe('a seat\'s leaf commits to the wallet key of the person taking it', () => {
+describe("a seat's leaf commits to the wallet key of the person taking it", () => {
   const leafOf = (o: { publicKey: string; blinding: string; scope: string }) =>
     SimulatedCommitments.signerLeaf(o.publicKey as Hex, o.blinding as Hex, o.scope as Hex);
 
@@ -209,13 +258,17 @@ describe('a seat\'s leaf commits to the wallet key of the person taking it', () 
   });
 });
 
-describe('THE FOUNDING SEAT\'S KEYS ARE THE ONES THE WALLET GAVE', () => {
+describe("THE FOUNDING SEAT'S KEYS ARE THE ONES THE WALLET GAVE", () => {
   const GIVEN = { signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), salt: '33'.repeat(32) };
 
   it('are the secrets and salt as given, with their own public keys and the blinding of that salt under the wallet key', () => {
     const keys = seatKeysFrom(WALLET, GIVEN);
     /* RED WHEN: the seat is made from any secret or salt but the ones the wallet gave, so the words could not make it again. */
-    expect([keys.signingSecret, keys.wrappingSecret, keys.salt]).toEqual([GIVEN.signingSecret, GIVEN.wrappingSecret, GIVEN.salt]);
+    expect([keys.signingSecret, keys.wrappingSecret, keys.salt]).toEqual([
+      GIVEN.signingSecret,
+      GIVEN.wrappingSecret,
+      GIVEN.salt
+    ]);
     /* RED WHEN: the seat's signing key is not the given secret's, so its signatures and its leaf belong to another key. */
     expect(keys.signingPublicKey).toBe(signingPublicKeyOf(GIVEN.signingSecret));
     /* RED WHEN: the seat's wrapping key is not the given secret's, so what is wrapped to the seat cannot be opened by it. */
@@ -228,14 +281,16 @@ describe('THE FOUNDING SEAT\'S KEYS ARE THE ONES THE WALLET GAVE', () => {
     /* RED WHEN: a short, long or unreadable secret or salt makes a seat. */
     for (const bad of ['11'.repeat(31), '11'.repeat(33), 'zz'.repeat(32), '']) {
       for (const part of ['signingSecret', 'wrappingSecret', 'salt'] as const) {
-        expect(() => seatKeysFrom(WALLET, { ...GIVEN, [part]: bad })).toThrow(/cannot be used, so nothing was created/u);
+        expect(() => seatKeysFrom(WALLET, { ...GIVEN, [part]: bad })).toThrow(
+          /cannot be used, so nothing was created/u
+        );
       }
     }
   });
 });
 
 describe('a seat taken on an invitation is made with the rights its role gives', () => {
-  it('an approver\'s leaf commits to an approver\'s rights, kept with the seat; a code\'s seat, made before any role, to every vault', async () => {
+  it("an approver's leaf commits to an approver's rights, kept with the seat; a code's seat, made before any role, to every vault", async () => {
     const { rightsOfRole, rightsScopeOf } = await import('../../../src/core/seat-rights.js');
     const d = doorsThat();
     await acceptSeatOnThisDevice(ACCOUNT, SimulatedCommitments, d.doors, WALLET, undefined, { role: 'approver' });

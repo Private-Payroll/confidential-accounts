@@ -20,7 +20,18 @@ import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
 import { isCompanyLabel, type CompanyLabel } from 'midnight-identity/profile/company-label';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { canonical, fromHex, seal, signingPublicKeyOf, toHex, unseal, unwrapKey, utf8, type Hex, type Sealed } from '../../../src/core/crypto.js';
+import {
+  canonical,
+  fromHex,
+  seal,
+  signingPublicKeyOf,
+  toHex,
+  unseal,
+  unwrapKey,
+  utf8,
+  type Hex,
+  type Sealed
+} from '../../../src/core/crypto.js';
 import { inboxPublicKey } from '../../../src/core/sealed-records.js';
 import type { SeatOpening } from '../../../src/core/seat-opening.js';
 import type { RightsRecord } from '../../../src/core/seat-rights.js';
@@ -308,7 +319,9 @@ export function counterOf(k: Keyring): number {
   const counter = (k as { readonly counter?: unknown }).counter;
   if (counter === undefined) return 0;
   if (typeof counter !== 'number' || !Number.isSafeInteger(counter) || counter < 0) {
-    throw new KeyringDidNotOpen('these saved keys say how many times they were written in a way that is not a count, so they are not read.');
+    throw new KeyringDidNotOpen(
+      'these saved keys say how many times they were written in a way that is not a count, so they are not read.'
+    );
   }
   return counter;
 }
@@ -360,7 +373,9 @@ export function sealedDigestOf(sealed: Sealed): Hex {
  */
 export function withNewSeat(k: Keyring, accountId: string, keys: AccountKeys): Keyring {
   if (Object.prototype.hasOwnProperty.call(k.accounts, accountId)) {
-    throw new Error('these saved keys already hold a seat on this company, so a new one is not written over it. Nothing was changed.');
+    throw new Error(
+      'these saved keys already hold a seat on this company, so a new one is not written over it. Nothing was changed.'
+    );
   }
   return { ...k, accounts: { ...k.accounts, [accountId]: keys } };
 }
@@ -377,7 +392,9 @@ export function withSeatSetAside(k: Keyring, accountId: string): Keyring {
   const kept: FormerSeat = { ...was, accountId };
   const already = k.formerSeats?.[key];
   if (already !== undefined && canonical(already) !== canonical(kept)) {
-    throw new Error('these saved keys already set aside another seat under this key, so it is not written over. Nothing was changed.');
+    throw new Error(
+      'these saved keys already set aside another seat under this key, so it is not written over. Nothing was changed.'
+    );
   }
   const { [accountId]: _setAside, ...accounts } = k.accounts;
   return { ...k, accounts, formerSeats: { ...(k.formerSeats ?? {}), [key]: kept } };
@@ -392,8 +409,16 @@ export function withPendingSeat(k: Keyring, seat: PendingSeat): Keyring {
   const key = seat.signingPublicKey.toLowerCase();
   const was = k.pendingSeats?.[key];
   if (was !== undefined) {
-    if (was.accountId === seat.accountId && was.signingSecret === seat.signingSecret && was.blinding === seat.blinding && was.scope === seat.scope) return k;
-    throw new Error('these saved keys already keep another seat under this key, so it is not written over. Nothing was changed.');
+    if (
+      was.accountId === seat.accountId &&
+      was.signingSecret === seat.signingSecret &&
+      was.blinding === seat.blinding &&
+      was.scope === seat.scope
+    )
+      return k;
+    throw new Error(
+      'these saved keys already keep another seat under this key, so it is not written over. Nothing was changed.'
+    );
   }
   return { ...k, pendingSeats: { ...(k.pendingSeats ?? {}), [key]: seat } };
 }
@@ -412,9 +437,14 @@ export function withPayeeJoinKept(k: Keyring, invitation: string, kept: PayeeJoi
   const was = k.payeeJoinsKept?.[invitation];
   if (was !== undefined) {
     if (was.company === kept.company && was.address === kept.address) return k;
-    throw new Error('these saved keys already keep another join under this invitation, so it is not written over. Nothing was changed.');
+    throw new Error(
+      'these saved keys already keep another join under this invitation, so it is not written over. Nothing was changed.'
+    );
   }
-  return { ...k, payeeJoinsKept: { ...(k.payeeJoinsKept ?? {}), [invitation]: { company: kept.company, address: kept.address } } };
+  return {
+    ...k,
+    payeeJoinsKept: { ...(k.payeeJoinsKept ?? {}), [invitation]: { company: kept.company, address: kept.address } }
+  };
 }
 
 /**
@@ -423,7 +453,10 @@ export function withPayeeJoinKept(k: Keyring, invitation: string, kept: PayeeJoi
  * never names something no screen can open.
  */
 export function withPaidBy(k: Keyring, company: CompanyLabel): Keyring {
-  if (!isCompanyLabel(company)) throw new Error('that is not a company\'s label, so it is not listed as a company that pays you. Nothing was changed.');
+  if (!isCompanyLabel(company))
+    throw new Error(
+      "that is not a company's label, so it is not listed as a company that pays you. Nothing was changed."
+    );
   const listed = k.paidBy ?? [];
   if (listed.includes(company)) return k;
   return { ...k, paidBy: [...listed, company] };
@@ -436,17 +469,23 @@ export function withPaidBy(k: Keyring, company: CompanyLabel): Keyring {
  * holds no seat on, since a re-issue gives no seat of its own.
  */
 export function withReissuedInvitationKept(
-  k: Keyring, accountId: string, reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation },
+  k: Keyring,
+  accountId: string,
+  reissued: { readonly inviter: Inviter; readonly invited: SignedSeatInvitation }
 ): Keyring {
   const seat = k.accounts[accountId];
   if (seat === undefined) {
-    throw new Error('these saved keys hold no seat on this company, so a re-issued invitation for one is not kept. Nothing was changed.');
+    throw new Error(
+      'these saved keys hold no seat on this company, so a re-issued invitation for one is not kept. Nothing was changed.'
+    );
   }
   const owed = k.directoryEntriesOwed?.[accountId];
   return {
     ...k,
     accounts: { ...k.accounts, [accountId]: { ...seat, invitedBy: reissued.inviter, invited: reissued.invited } },
-    ...(owed === undefined ? {} : { directoryEntriesOwed: { ...k.directoryEntriesOwed, [accountId]: { ...owed, invited: reissued.invited } } }),
+    ...(owed === undefined
+      ? {}
+      : { directoryEntriesOwed: { ...k.directoryEntriesOwed, [accountId]: { ...owed, invited: reissued.invited } } })
   };
 }
 
@@ -500,50 +539,84 @@ const SEALED: Shape = { iv: V, tag: V, body: V };
 const WRAPPED: Shape = { iv: V, tag: V, body: V, ephemeral: V };
 const SCHNORR: Shape = { tag: V, value: V };
 const COMPANY_RECORD: Shape = {
-  company: V, kind: V, id: V, version: V, keyEpoch: V, sealed: SEALED,
+  company: V,
+  kind: V,
+  id: V,
+  version: V,
+  keyEpoch: V,
+  sealed: SEALED,
   wrapped: [{ signerId: V, wrapped: WRAPPED }],
   facts: { status: V },
-  filedBy: { publicKey: V, signature: V },
+  filedBy: { publicKey: V, signature: V }
 };
 const CREATION: Shape = {
-  accountId: V, person: V, label: V, foundingKey: SCHNORR,
+  accountId: V,
+  person: V,
+  label: V,
+  foundingKey: SCHNORR,
   request: {
-    name: V, signers: [{ name: V, role: V }], threshold: V, companyLabel: V, foundingKey: SCHNORR,
+    name: V,
+    signers: [{ name: V, role: V }],
+    threshold: V,
+    companyLabel: V,
+    foundingKey: SCHNORR,
     founding: {
       seat: { signerId: V, signingPublicKey: V, wrappingPublicKey: V, leaf: V },
       account: {
-        id: V, createdAt: V, keyEpoch: V, signerCount: V, memberUserIds: [V],
+        id: V,
+        createdAt: V,
+        keyEpoch: V,
+        signerCount: V,
+        memberUserIds: [V],
         pendingSigners: [{ id: V, userId: V, createdAt: V, sealed: WRAPPED }],
         wrappedKeys: [{ iv: V, tag: V, body: V, signerId: V, ephemeral: V }],
-        inboxPublicKey: V, sealedRoster: SEALED, sealedPolicy: SEALED, contractAddress: V, addressSource: V, companyLabel: V,
-        wiring: V,
+        inboxPublicKey: V,
+        sealedRoster: SEALED,
+        sealedPolicy: SEALED,
+        contractAddress: V,
+        addressSource: V,
+        companyLabel: V,
+        wiring: V
       },
       roster: COMPANY_RECORD,
-      state: COMPANY_RECORD,
-    },
+      state: COMPANY_RECORD
+    }
   },
   made: V,
   deploy: { account: V, tx: V, insert: [{ circuit: V, key: V }], builtAt: V },
   signed: { tx: V, signature: SCHNORR, builtAt: V },
-  recorded: V, mustBeBuiltAgain: V, setAside: V,
+  recorded: V,
+  mustBeBuiltAgain: V,
+  setAside: V
 };
 const OWED: Shape = {
-  person: V, company: V,
+  person: V,
+  company: V,
   signed: { committeeKey: SCHNORR, entry: { account: V, signingKey: V, wrappingKey: V, seat: V, signature: V } },
   invited: {
     terms: {
-      company: V, invitation: V, person: V, name: V, role: V, leaf: V,
-      replaces: { invitation: V, signedBy: V, signature: V },
+      company: V,
+      invitation: V,
+      person: V,
+      name: V,
+      role: V,
+      leaf: V,
+      replaces: { invitation: V, signedBy: V, signature: V }
     },
-    signedBy: V, signature: V,
-  },
+    signedBy: V,
+    signature: V
+  }
 };
 
 /** `value` copied as `shape` allows, or undefined where it allows nothing. Null is kept wherever it stands. */
 function shown(value: unknown, shape: Shape): unknown {
   if (value === null) return null;
-  if (shape === V) return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : undefined;
-  if (Array.isArray(shape)) return Array.isArray(value) ? value.map((x) => shown(x, shape[0] as Shape)).filter((x) => x !== undefined) : undefined;
+  if (shape === V)
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : undefined;
+  if (Array.isArray(shape))
+    return Array.isArray(value)
+      ? value.map((x) => shown(x, shape[0] as Shape)).filter((x) => x !== undefined)
+      : undefined;
   if (typeof value !== 'object' || Array.isArray(value)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [field, inner] of Object.entries(shape as Readonly<Record<string, Shape>>)) {
@@ -568,7 +641,10 @@ export function metadataOf(k: Keyring): KeyringMetadata {
     creations,
     paidBy: [...(k.paidBy ?? [])].filter((x): x is string => typeof x === 'string'),
     directoryEntriesOwed: owed,
-    pendingSeats: Object.values(k.pendingSeats ?? {}).map((s) => ({ accountId: s.accountId, signingPublicKey: s.signingPublicKey })),
+    pendingSeats: Object.values(k.pendingSeats ?? {}).map((s) => ({
+      accountId: s.accountId,
+      signingPublicKey: s.signingPublicKey
+    }))
   };
 }
 
@@ -577,14 +653,21 @@ export function metadataOf(k: Keyring): KeyringMetadata {
  * the wallet built it with, so a field the list does not name never reaches the page's memory, whoever answered.
  */
 export function metadataFrom(value: unknown): KeyringMetadata {
-  const v = (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
-  const counter = typeof v['counter'] === 'number' && Number.isSafeInteger(v['counter']) && (v['counter'] as number) >= 0 ? v['counter'] as number : 0;
+  const v = (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as Record<
+    string,
+    unknown
+  >;
+  const counter =
+    typeof v['counter'] === 'number' && Number.isSafeInteger(v['counter']) && (v['counter'] as number) >= 0
+      ? (v['counter'] as number)
+      : 0;
   const creations: Record<string, SavedCreation> = {};
   const c = v['creations'];
   if (typeof c === 'object' && c !== null && !Array.isArray(c)) {
     for (const [id, one] of Object.entries(c)) {
       const shownOne = shown(one, CREATION);
-      if (typeof shownOne === 'object' && shownOne !== null && (shownOne as { accountId?: unknown }).accountId === id) creations[id] = shownOne as SavedCreation;
+      if (typeof shownOne === 'object' && shownOne !== null && (shownOne as { accountId?: unknown }).accountId === id)
+        creations[id] = shownOne as SavedCreation;
     }
   }
   const owed: Record<string, OwedEntryShown> = {};
@@ -595,10 +678,13 @@ export function metadataFrom(value: unknown): KeyringMetadata {
       if (typeof shownOne === 'object' && shownOne !== null) owed[id] = shownOne as OwedEntryShown;
     }
   }
-  const paidBy = Array.isArray(v['paidBy']) ? (v['paidBy'] as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  const paidBy = Array.isArray(v['paidBy'])
+    ? (v['paidBy'] as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
   const pendingSeats = Array.isArray(v['pendingSeats'])
-    ? (v['pendingSeats'] as unknown[]).map((p) => shown(p, { accountId: V, signingPublicKey: V }) as { accountId: string; signingPublicKey: Hex })
-      .filter((p) => typeof p?.accountId === 'string' && typeof p?.signingPublicKey === 'string')
+    ? (v['pendingSeats'] as unknown[])
+        .map((p) => shown(p, { accountId: V, signingPublicKey: V }) as { accountId: string; signingPublicKey: Hex })
+        .filter((p) => typeof p?.accountId === 'string' && typeof p?.signingPublicKey === 'string')
     : [];
   return { counter, creations, paidBy, directoryEntriesOwed: owed, pendingSeats };
 }
@@ -623,7 +709,7 @@ export function seatsOf(k: Keyring): Record<string, SeatPublicHalves> {
       signerId: seat.signerId,
       signingPublicKey: signingPublicKeyOf(seat.signingSecret).toLowerCase(),
       wrappingPublicKey: toHex(x25519.getPublicKey(fromHex(seat.wrappingSecret))).toLowerCase(),
-      scope,
+      scope
     });
   }
   return out;
@@ -633,7 +719,13 @@ export function seatsOf(k: Keyring): Record<string, SeatPublicHalves> {
 export interface ServedKeys {
   readonly accountId: string;
   readonly inboxPublicKey: string;
-  readonly wrappedKeys: ReadonlyArray<{ readonly signerId: string; readonly iv: string; readonly tag: string; readonly body: string; readonly ephemeral: string }>;
+  readonly wrappedKeys: ReadonlyArray<{
+    readonly signerId: string;
+    readonly iv: string;
+    readonly tag: string;
+    readonly body: string;
+    readonly ephemeral: string;
+  }>;
 }
 
 /**
@@ -651,7 +743,11 @@ export function servedKeysOpenedFrom(k: Keyring, served: readonly ServedKeys[]):
     const wrapped = s.wrappedKeys.find((w) => w.signerId === seat.signerId);
     if (wrapped === undefined) continue;
     let key: string;
-    try { key = unwrapKey(wrapped, seat.wrappingSecret).toLowerCase(); } catch { continue; }
+    try {
+      key = unwrapKey(wrapped, seat.wrappingSecret).toLowerCase();
+    } catch {
+      continue;
+    }
     if (!HEX64.test(key)) continue;
     if (inboxPublicKey(key, s.accountId).toLowerCase() !== s.inboxPublicKey.toLowerCase()) continue;
     out[s.accountId] = key;
@@ -686,6 +782,17 @@ export function tidiedWith(k: Keyring, tidy: readonly CreationTidy[]): Keyring {
 }
 
 /* What is kept of a company being created is kept in its own file. */
-export { creationsInOneRecord, creationIn, withCreation, withoutCreation, type SavedCreation } from './keyring-creations.js';
-export { roleChangeKeyOf, withRoleChangeDone, withRoleChangeKept, type RoleChangeKept } from './keyring-role-changes.js';
+export {
+  creationsInOneRecord,
+  creationIn,
+  withCreation,
+  withoutCreation,
+  type SavedCreation
+} from './keyring-creations.js';
+export {
+  roleChangeKeyOf,
+  withRoleChangeDone,
+  withRoleChangeKept,
+  type RoleChangeKept
+} from './keyring-role-changes.js';
 export { pinIn, withPin, type KeptPin, type PinFrom } from './keyring-pins.js';

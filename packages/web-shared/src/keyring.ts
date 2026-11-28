@@ -26,12 +26,14 @@ import { notePreparing } from './read-bound.js';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { toHex, type Hex, type Sealed } from '../../../src/core/crypto.js';
-import {
-  askWalletToSignIn, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog,
-} from './wallet-sign-in.js';
+import { askWalletToSignIn, US_TO_A_WALLET, WalletClosed, type Openable, type WalletDialog } from './wallet-sign-in.js';
 import { actInTheWallet, type ActOutcome } from './wallet-act.js';
 import {
-  AnotherPersonError, AuthError, CouldNotCheckError, ServiceRefused, theSignInIsHeldBy,
+  AnotherPersonError,
+  AuthError,
+  CouldNotCheckError,
+  ServiceRefused,
+  theSignInIsHeldBy
 } from './service-transport.js';
 import { walletCallsOnPage } from './asks-on-page.js';
 import { ServiceNotReached } from './hand-over.js';
@@ -57,14 +59,22 @@ import { seatToPromote } from './seat-repair.js';
 import type { SealedAccount } from '../../../src/core/types.js';
 import { onlyCompanyLabels, rememberedCompanies } from './my-payslips.js';
 import {
-  metadataFrom, type Keyring, type OwedDirectoryEntry, type PendingSeat, type SeatPublicHalves,
+  metadataFrom,
+  type Keyring,
+  type OwedDirectoryEntry,
+  type PendingSeat,
+  type SeatPublicHalves
 } from './keyring-blob.js';
 /* The keyring's format is defined once, beside this file, and read by the person's wallet too. */
 export type { AccountKeys, Keyring, PendingSeat, SavedAccountKeys, SavedCreation } from './keyring-blob.js';
 export { creationsInOneRecord } from './keyring-blob.js';
 export type { SeatPublicHalves } from './keyring-blob.js';
 
-export interface Me { id: string; email: string | null; name: string }
+export interface Me {
+  id: string;
+  email: string | null;
+  name: string;
+}
 
 /**
  * **WHETHER THIS TAB HAS A LIVE SESSION.** Not the sign-in: that is a cookie
@@ -80,7 +90,12 @@ let sessionLive = false;
  * the wallet had not read the saved keys for: then it holds the action's own company and nothing else, and every other
  * company still needs the wallet to read them.
  */
-let read: { seats: Record<string, SeatPublicHalves>; viewing: Record<string, Hex>; holder: string; partial?: true } | null = null;
+let read: {
+  seats: Record<string, SeatPublicHalves>;
+  viewing: Record<string, Hex>;
+  holder: string;
+  partial?: true;
+} | null = null;
 /**
  * **THE PARTS OF THE SAVED KEYS THAT OPEN NOTHING, AS THE WALLET LAST SAID THEM** (`metadataFrom`): the creations and
  * what is owed. Held as a keyring with no seats in it, so the reads below keep their shape; it never holds a seat.
@@ -203,7 +218,9 @@ const releaseWatchers = new Set<(accountId: string) => void>();
  */
 export function watchCompanyKeyReleased(watch: (accountId: string) => void): () => void {
   releaseWatchers.add(watch);
-  return () => { releaseWatchers.delete(watch); };
+  return () => {
+    releaseWatchers.delete(watch);
+  };
 }
 /**
  * **THE PUBLIC KEY THIS PERSON SITS ON `accountId`'s VAULT COMMITTEE WITH**, from
@@ -225,23 +242,26 @@ export const isSignedIn = () => sessionLive && me !== null;
  * keys the wallet opened, never a key the saved keys open with. A read an action left for its own company alone opens
  * that company (`accountId`) and no other.
  */
-export const canOpenCompanies = (accountId?: string): boolean => read !== null
-  && (read.partial !== true || (accountId !== undefined && Object.prototype.hasOwnProperty.call(read.viewing, accountId)));
+export const canOpenCompanies = (accountId?: string): boolean =>
+  read !== null &&
+  (read.partial !== true || (accountId !== undefined && Object.prototype.hasOwnProperty.call(read.viewing, accountId)));
 
 /** The saved keys the service holds now are older than what the wallet last read for this tab, or are gone. */
-const WENT_BACK = 'what is saved for you here is older than what this tab already read, or is gone, '
-  + 'so it has not been taken in place of what this tab holds. Something has changed on the '
-  + 'server that this page cannot explain. Do not close or reload this tab or sign out until it is understood.';
+const WENT_BACK =
+  'what is saved for you here is older than what this tab already read, or is gone, ' +
+  'so it has not been taken in place of what this tab holds. Something has changed on the ' +
+  'server that this page cannot explain. Do not close or reload this tab or sign out until it is understood.';
 
 /** A second answer, in a tab the wallet already read the saved keys for, from a wallet that is not the same one. */
-const NOT_THE_SAME_WALLET = 'the wallet that answered is not the one that read your saved keys for this tab, so nothing it '
-  + 'gave has been used. Answer with the wallet you signed in with.';
+const NOT_THE_SAME_WALLET =
+  'the wallet that answered is not the one that read your saved keys for this tab, so nothing it ' +
+  'gave has been used. Answer with the wallet you signed in with.';
 /**
  * **THIS SIGNER'S SEAT FOR A COMPANY, AS THE WALLET READ IT: ITS PUBLIC HALVES AND SCOPE, AND NOTHING ELSE**, or null
  * when the saved keys the wallet read for this tab hold no seat for it. Nothing here signs, opens or proves.
  */
 export const seatHeldHere = (accountId: string): SeatPublicHalves | null =>
-  (read !== null && Object.prototype.hasOwnProperty.call(read.seats, accountId) ? read.seats[accountId]! : null);
+  read !== null && Object.prototype.hasOwnProperty.call(read.seats, accountId) ? read.seats[accountId]! : null;
 
 /**
  * **THE PUBLIC HALF OF THIS SIGNER'S SEAT FOR A COMPANY, AND NOTHING ELSE**: its signing public key, by which a read finds
@@ -305,10 +325,11 @@ export class SavedKeysWentBack extends Error {}
  * against a company.
  */
 export async function signInWithWallet(
-  walletOrigin: string, inviteToken?: string,
+  walletOrigin: string,
+  inviteToken?: string,
   /* The window, injected so the whole conversation can be driven in a test
    * with no browser — the shape `openKeysWithWallet` has too. */
-  view: Openable = walletInThisPage(window),
+  view: Openable = walletInThisPage(window)
 ): Promise<Me> {
   /*
    * **OPENED HERE, IN THE CLICK, BEFORE ONE BYTE HAS BEEN AWAITED.**
@@ -317,16 +338,21 @@ export async function signInWithWallet(
    */
   const dialog = openTheWallet(view, walletOrigin);
   try {
-    const challenge = await personOnPage.challenge() as { nonce: string; expiresAt: string; handle: string };
-    const response = await askWalletToSignIn(view, walletOrigin, {
-      nonce: challenge.nonce,
-      /* The wallet refuses an ask that has already expired, so the deadline is
-       * the challenge's own rather than a second number that could disagree. */
-      expiresAt: Date.parse(challenge.expiresAt),
-      name: US_TO_A_WALLET.name,
-      rdns: US_TO_A_WALLET.rdns,
-      purpose: 'So this company knows it is you. Nothing else is asked for.',
-    }, dialog);
+    const challenge = (await personOnPage.challenge()) as { nonce: string; expiresAt: string; handle: string };
+    const response = await askWalletToSignIn(
+      view,
+      walletOrigin,
+      {
+        nonce: challenge.nonce,
+        /* The wallet refuses an ask that has already expired, so the deadline is
+         * the challenge's own rather than a second number that could disagree. */
+        expiresAt: Date.parse(challenge.expiresAt),
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns,
+        purpose: 'So this company knows it is you. Nothing else is asked for.'
+      },
+      dialog
+    );
     return await finishWalletSignIn(challenge, response, inviteToken);
   } catch (e) {
     putAway(dialog);
@@ -341,11 +367,13 @@ export async function signInWithWallet(
 async function finishWalletSignIn(
   challenge: { handle: string; nonce: string },
   response: unknown,
-  inviteToken?: string,
+  inviteToken?: string
 ): Promise<Me> {
   const r = await personOnPage.signIn({
-    handle: challenge.handle, nonce: challenge.nonce, response,
-    ...(inviteToken ? { inviteToken } : {}),
+    handle: challenge.handle,
+    nonce: challenge.nonce,
+    response,
+    ...(inviteToken ? { inviteToken } : {})
   });
   return takeTheSignIn(r);
 }
@@ -366,7 +394,12 @@ async function finishWalletSignIn(
  */
 export function signedInByAnotherScreen(answer: unknown): Me {
   const a = (answer ?? {}) as { user?: { id?: unknown; name?: unknown }; address?: unknown };
-  if (typeof a.user?.id !== 'string' || typeof a.user.name !== 'string' || typeof a.address !== 'string' || a.address === '') {
+  if (
+    typeof a.user?.id !== 'string' ||
+    typeof a.user.name !== 'string' ||
+    typeof a.address !== 'string' ||
+    a.address === ''
+  ) {
     throw new Error('the sign-in answer handed over names no person or no address, so this tab did not take it.');
   }
   return takeTheSignIn(a as { user: Me; address: string });
@@ -427,14 +460,22 @@ export interface SignInCarried {
  */
 export async function resumeSession(
   carried: SignInCarried | null = null,
-  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => { setTimeout(done, ms); }),
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((done) => {
+      setTimeout(done, ms);
+    })
 ): Promise<Me | null> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const r = await personOnPage.me() as { user: unknown };
+      const r = (await personOnPage.me()) as { user: unknown };
       sessionLive = true;
       me = r.user as Me;
-      if (carried !== null && carried.personId === me.id && typeof carried.address === 'string' && carried.address !== '') {
+      if (
+        carried !== null &&
+        carried.personId === me.id &&
+        typeof carried.address === 'string' &&
+        carried.address !== ''
+      ) {
         walletAddress = carried.address;
       }
       return me;
@@ -486,7 +527,7 @@ export async function openKeysWithWallet(
   /* The dialog a longer journey already opened in its own click. */
   already?: WalletDialog,
   /* The record id of the company the person opened, whose vault balances are opened with the saved keys. */
-  opening?: string,
+  opening?: string
 ): Promise<void> {
   if (!sessionLive) throw new Error('not signed in');
 
@@ -500,20 +541,34 @@ export async function openKeysWithWallet(
   const at = { step: OPEN_STEP.naming as OpenStep };
   try {
     /* A company the service will not name is opened as none: the saved keys still open, and the stop is written. */
-    const named = opening === undefined ? null : await companyNamedFor(opening).catch((e: unknown) => {
-      notePreparing(`${what}: the service did not name the company (${kindOf(e)}), so only the saved keys are opened`);
-      return null;
-    });
+    const named =
+      opening === undefined
+        ? null
+        : await companyNamedFor(opening).catch((e: unknown) => {
+            notePreparing(
+              `${what}: the service did not name the company (${kindOf(e)}), so only the saved keys are opened`
+            );
+            return null;
+          });
     const company = named === null || named.account === null ? null : named;
-    await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, company, undefined, company !== null, (step) => { at.step = step; });
+    await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, company, undefined, company !== null, (step) => {
+      at.step = step;
+    });
   } catch (e) {
     /* Before the ask, or an ask that was never put together: the wallet was asked nothing. */
-    const before = at.step !== OPEN_STEP.answered
-      && (at.step !== OPEN_STEP.asking || !(e instanceof WalletClosed || e instanceof UnlockRefused));
-    notePreparing(`${what}: stopped while ${at.step} (${kindOf(e)})${before ? ', before anything was asked of the wallet' : ''}`);
+    const before =
+      at.step !== OPEN_STEP.answered &&
+      (at.step !== OPEN_STEP.asking || !(e instanceof WalletClosed || e instanceof UnlockRefused));
+    notePreparing(
+      `${what}: stopped while ${at.step} (${kindOf(e)})${before ? ', before anything was asked of the wallet' : ''}`
+    );
     /* A dialog a longer journey opened is that journey's to put away. */
     if (!already) {
-      try { if (before) dialog.notAsking?.(NOT_ASKED_AT[at.step]); } finally { putAway(dialog); }
+      try {
+        if (before) dialog.notAsking?.(NOT_ASKED_AT[at.step]);
+      } finally {
+        putAway(dialog);
+      }
     }
     throw e;
   } finally {
@@ -529,7 +584,7 @@ const OPEN_STEP = {
   savedKeysOlder: 'checking your saved keys',
   companies: 'reading the companies you belong to',
   asking: 'asking the wallet',
-  answered: 'taking in what the wallet gave',
+  answered: 'taking in what the wallet gave'
 } as const;
 type OpenStep = (typeof OPEN_STEP)[keyof typeof OPEN_STEP];
 
@@ -541,18 +596,21 @@ const NOT_ASKED_AT: Readonly<Record<OpenStep, NotAskedWhy>> = {
   [OPEN_STEP.savedKeysOlder]: 'saved-keys-older',
   [OPEN_STEP.companies]: 'ask-not-built',
   [OPEN_STEP.asking]: 'ask-not-built',
-  [OPEN_STEP.answered]: 'ask-not-built',
+  [OPEN_STEP.answered]: 'ask-not-built'
 };
 
 /** An error's kind, for the console report: its class, and for a wallet window that ended, how. Never its message. */
 const kindOf = (e: unknown): string => {
   if (e instanceof WalletClosed) return `WalletClosed ${e.refusal.of}`;
-  if (e instanceof Error) return e.constructor.name !== '' && e.constructor.name !== 'Error' ? e.constructor.name : e.name;
+  if (e instanceof Error)
+    return e.constructor.name !== '' && e.constructor.name !== 'Error' ? e.constructor.name : e.name;
   return typeof e;
 };
 
 export async function openKeysOnceOpen(
-  walletOrigin: string, view: Openable, atOrigin: string,
+  walletOrigin: string,
+  view: Openable,
+  atOrigin: string,
   dialog: WalletDialog,
   /**
    * The company whose keys are wanted too: its label and the account that
@@ -565,9 +623,10 @@ export async function openKeysOnceOpen(
   /** Whether the company is the one the person opened, named beside opening the saved keys: its key may be withheld. */
   companyIfOnChain = false,
   /** Told each step as it starts, so a caller can say which one a stop came at. */
-  step?: (at: OpenStep) => void,
+  step?: (at: OpenStep) => void
 ): Promise<{
-  drawn: CompanyLabel | null; committeeKey: { tag: string; value: string } | null;
+  drawn: CompanyLabel | null;
+  committeeKey: { tag: string; value: string } | null;
   founding: { founded: Readonly<Record<string, unknown>>; sealed: SealedKeyring; ifVersion: number } | null;
   /** With `'new'`: what the wallet read from the saved keys it sealed with the new seat, taken in only once they are kept. */
   read: KeysRead | null;
@@ -592,24 +651,30 @@ export async function openKeysOnceOpen(
   const tidy = [...tidyOwed].map(([record, what]) => ({ record, what }));
   const keys = founding !== undefined ? undefined : { keyring: handedIn, served: await servedForTheWallet(), tidy };
   step?.(OPEN_STEP.asking);
-  const released = await askWalletForKeys(view, walletOrigin, {
-    person: who.id,
-    signedInAs,
-    company: company === 'new' ? 'new' : company?.label ?? null,
-    account: company === 'new' || company === null ? null : company.account,
-    atOrigin,
-    name: US_TO_A_WALLET.name,
-    rdns: US_TO_A_WALLET.rdns,
-    ...(company === 'new' && founding !== undefined ? { founding } : {}),
-    ...(keys === undefined ? {} : { keys }),
-    ...(companyIfOnChain ? { companyIfOnChain: true } : {}),
-  }, dialog);
+  const released = await askWalletForKeys(
+    view,
+    walletOrigin,
+    {
+      person: who.id,
+      signedInAs,
+      company: company === 'new' ? 'new' : (company?.label ?? null),
+      account: company === 'new' || company === null ? null : company.account,
+      atOrigin,
+      name: US_TO_A_WALLET.name,
+      rdns: US_TO_A_WALLET.rdns,
+      ...(company === 'new' && founding !== undefined ? { founding } : {}),
+      ...(keys === undefined ? {} : { keys }),
+      ...(companyIfOnChain ? { companyIfOnChain: true } : {})
+    },
+    dialog
+  );
   step?.(OPEN_STEP.answered);
   /* A sign-out, or another person's sign-in, while the wallet was open: this
    * tab is no longer the one that asked, and nothing it was given is used. */
   if (me !== who) throw new AuthError('not signed in');
   const got = released.read;
-  if (got === null) throw new SavedKeysDidNotOpen('your wallet did not say what your saved keys hold, so nothing from it was used.');
+  if (got === null)
+    throw new SavedKeysDidNotOpen('your wallet did not say what your saved keys hold, so nothing from it was used.');
   /*
    * **A TAB THE WALLET ALREADY READ FOR MUST HEAR FROM THE SAME WALLET.** A different one is refused before anything it
    * gave beside it is used: its public name for this person is not the one this tab holds.
@@ -636,11 +701,18 @@ export async function openKeysOnceOpen(
      * keys in the same answer, so it is their wallet. A payslip key can only ever be derived from it, for THIS company.
      * A company key given beside no saved keys at all has nothing to be checked against, so it is not kept. */
     releasedCompanyKey = {
-      accountId: company.accountId, key: toHex(released.companyKey), label: company.label,
-      account: company.account, committeeKey: released.committeeKey,
+      accountId: company.accountId,
+      key: toHex(released.companyKey),
+      label: company.label,
+      account: company.account,
+      committeeKey: released.committeeKey
     };
     for (const watch of [...releaseWatchers]) {
-      try { watch(company.accountId); } catch { /* a watcher's own failure stays the watcher's */ }
+      try {
+        watch(company.accountId);
+      } catch {
+        /* a watcher's own failure stays the watcher's */
+      }
     }
   }
   /*
@@ -662,17 +734,25 @@ export function takeTheRead(got: KeysRead, some: boolean, version: number): void
   const seats: Record<string, SeatPublicHalves> = {};
   for (const [id, s] of Object.entries(got.seats)) {
     seats[id] = Object.freeze({
-      signerId: s.signerId, signingPublicKey: s.signingPublicKey as Hex, wrappingPublicKey: s.wrappingPublicKey as Hex, scope: s.scope as Hex,
+      signerId: s.signerId,
+      signingPublicKey: s.signingPublicKey as Hex,
+      wrappingPublicKey: s.wrappingPublicKey as Hex,
+      scope: s.scope as Hex
     });
   }
   read = {
     seats,
-    viewing: { ...(read !== null && read.holder === got.holder ? read.viewing : {}), ...(got.viewing as Record<string, Hex>) },
-    holder: got.holder,
+    viewing: {
+      ...(read !== null && read.holder === got.holder ? read.viewing : {}),
+      ...(got.viewing as Record<string, Hex>)
+    },
+    holder: got.holder
   };
   keyring = {
-    accounts: {}, creations: { ...metadata.creations },
-    directoryEntriesOwed: { ...metadata.directoryEntriesOwed } as Keyring['directoryEntriesOwed'], paidBy: [...metadata.paidBy],
+    accounts: {},
+    creations: { ...metadata.creations },
+    directoryEntriesOwed: { ...metadata.directoryEntriesOwed } as Keyring['directoryEntriesOwed'],
+    paidBy: [...metadata.paidBy]
   };
   savedKeys = some ? 'some' : 'none';
   bundleVersion = version;
@@ -693,8 +773,10 @@ export function takeWhatTheActionLeft(outcome: ActOutcome, accountId: string | n
   if (read === null || read.partial === true) {
     const metadata = metadataFrom(left.metadata);
     keyring = {
-      accounts: {}, creations: { ...metadata.creations },
-      directoryEntriesOwed: { ...metadata.directoryEntriesOwed } as Keyring['directoryEntriesOwed'], paidBy: [...metadata.paidBy],
+      accounts: {},
+      creations: { ...metadata.creations },
+      directoryEntriesOwed: { ...metadata.directoryEntriesOwed } as Keyring['directoryEntriesOwed'],
+      paidBy: [...metadata.paidBy]
     };
     if (accountId === null) return;
     const seat = Object.prototype.hasOwnProperty.call(left.seats, accountId) ? left.seats[accountId]! : null;
@@ -704,12 +786,15 @@ export function takeWhatTheActionLeft(outcome: ActOutcome, accountId: string | n
       seats: {
         ...(read?.seats ?? {}),
         [accountId]: Object.freeze({
-          signerId: seat.signerId, signingPublicKey: seat.signingPublicKey as Hex, wrappingPublicKey: seat.wrappingPublicKey as Hex, scope: seat.scope as Hex,
-        }),
+          signerId: seat.signerId,
+          signingPublicKey: seat.signingPublicKey as Hex,
+          wrappingPublicKey: seat.wrappingPublicKey as Hex,
+          scope: seat.scope as Hex
+        })
       },
       viewing: { ...(read?.viewing ?? {}), [accountId]: key },
       holder: left.holder,
-      partial: true,
+      partial: true
     };
     return;
   }
@@ -729,7 +814,9 @@ export async function servedForTheAction(accountId: string): Promise<ServedHande
 
 async function servedForTheWallet(): Promise<ServedHandedIn[]> {
   let listed: unknown;
-  try { listed = await personOnPage.companies(); } catch (e) {
+  try {
+    listed = await personOnPage.companies();
+  } catch (e) {
     notePreparing(`reading the companies you belong to failed (${kindOf(e)}), so none is handed to the wallet`);
     return [];
   }
@@ -738,9 +825,12 @@ async function servedForTheWallet(): Promise<ServedHandedIn[]> {
   for (const a of listed.slice(0, MOST_SERVED)) {
     if (typeof a?.id !== 'string' || typeof a?.inboxPublicKey !== 'string' || !Array.isArray(a?.wrappedKeys)) continue;
     out.push({
-      accountId: a.id, inboxPublicKey: String(a.inboxPublicKey).toLowerCase(),
-      wrappedKeys: (a.wrappedKeys as any[]).slice(0, MOST_SERVED).filter((w) => typeof w?.signerId === 'string')
-        .map((w) => ({ signerId: w.signerId, iv: w.iv, tag: w.tag, body: w.body, ephemeral: w.ephemeral })),
+      accountId: a.id,
+      inboxPublicKey: String(a.inboxPublicKey).toLowerCase(),
+      wrappedKeys: (a.wrappedKeys as any[])
+        .slice(0, MOST_SERVED)
+        .filter((w) => typeof w?.signerId === 'string')
+        .map((w) => ({ signerId: w.signerId, iv: w.iv, tag: w.tag, body: w.body, ephemeral: w.ephemeral }))
     });
   }
   return out;
@@ -753,13 +843,17 @@ async function servedForTheWallet(): Promise<ServedHandedIn[]> {
  * could tell the service about which company it is that the service should
  * believe. Refused by name when the answer is not a label and an address.
  */
-export async function companyNamedFor(accountId: string): Promise<{ accountId: string; label: CompanyLabel; account: AccountAddress | null }> {
-  const answer = await personOnPage.companyNamed(accountId) as { company?: unknown; account?: unknown } | null;
+export async function companyNamedFor(
+  accountId: string
+): Promise<{ accountId: string; label: CompanyLabel; account: AccountAddress | null }> {
+  const answer = (await personOnPage.companyNamed(accountId)) as { company?: unknown; account?: unknown } | null;
   const label = readCompanyLabel(answer?.company);
   const account = answer?.account === null || answer?.account === undefined ? null : readAccountAddress(answer.account);
   if (label === null || (answer?.account !== null && answer?.account !== undefined && account === null)) {
-    throw new Error('the service did not name this company in a way your wallet can check - its label, and the '
-      + 'account that carries it - so your wallet was not asked.');
+    throw new Error(
+      'the service did not name this company in a way your wallet can check - its label, and the ' +
+        'account that carries it - so your wallet was not asked.'
+    );
   }
   return { accountId, label, account };
 }
@@ -773,11 +867,13 @@ export async function companyNamedFor(accountId: string): Promise<{ accountId: s
  * that already holds them asks nothing.
  */
 export async function companyKeysForVaults(
-  accountId: string, walletOrigin: string,
+  accountId: string,
+  walletOrigin: string,
   view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
+  atOrigin: string = window.location.origin
 ): Promise<{
-  companyKey: Hex; committeeKey: { tag: string; value: string };
+  companyKey: Hex;
+  committeeKey: { tag: string; value: string };
   /** The company's label, which the keys are derived from. */
   company: CompanyLabel;
   /**
@@ -808,7 +904,7 @@ export async function companyKeysForVaults(
     committeeKey = committeeKeyReleasedFor(accountId);
   }
   if (companyKey === null || committeeKey === null) {
-    throw new Error('your wallet did not give this company\'s keys, so nothing about its vaults can be done here.');
+    throw new Error("your wallet did not give this company's keys, so nothing about its vaults can be done here.");
   }
   return { companyKey, committeeKey, company: company.label, account: company.account };
 }
@@ -826,14 +922,17 @@ export async function walletKeyForAnInvitation(
   company: { readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress },
   walletOrigin: string,
   view: Openable = walletInThisPage(window),
-  atOrigin: string = window.location.origin,
+  atOrigin: string = window.location.origin
 ): Promise<{ tag: 'schnorr'; value: string }> {
   if (!sessionLive) throw new Error('not signed in');
   const dialog = openTheWallet(view, walletOrigin);
   try {
     const { committeeKey } = await openKeysOnceOpen(walletOrigin, view, atOrigin, dialog, { ...company });
     const key = schnorrKeyOf(committeeKey);
-    if (key === null) throw new Error('your wallet gave no key for this company, so no seat was made. Update your wallet and try again.');
+    if (key === null)
+      throw new Error(
+        'your wallet gave no key for this company, so no seat was made. Update your wallet and try again.'
+      );
     return key;
   } catch (e) {
     putAway(dialog);
@@ -851,8 +950,15 @@ export async function walletKeyForAnInvitation(
  * Use `signOut()` for the button.
  */
 export function forgetLocally() {
-  sessionLive = false; read = null; keyring = { accounts: {} }; me = null; walletAddress = null;
-  releasedCompanyKey = null; savedKeys = null; keyCheckedAgainstSignIn = false; tidyOwed.clear();
+  sessionLive = false;
+  read = null;
+  keyring = { accounts: {} };
+  me = null;
+  walletAddress = null;
+  releasedCompanyKey = null;
+  savedKeys = null;
+  keyCheckedAgainstSignIn = false;
+  tidyOwed.clear();
   forgetTheWalletsIndexer();
   readsAreStale({ company: null, why: STALE.signInEnded, signedIn: false });
 }
@@ -860,7 +966,10 @@ export function forgetLocally() {
 theSignInIsHeldBy({
   person: () => me,
   isLive: () => sessionLive,
-  lost: (why) => { forgetLocally(); forgotBecause = why; },
+  lost: (why) => {
+    forgetLocally();
+    forgotBecause = why;
+  }
 });
 
 /**
@@ -909,8 +1018,11 @@ export async function signOut(): Promise<{ ended: boolean; anotherPerson: boolea
 /** The signed-in devices. Never includes a token — see SessionStore.list. */
 export async function listSessions() {
   return ((await personOnPage.sessions()) as { sessions: unknown }).sessions as Array<{
-    id: string; issuedAt: string; expiresAt: string;
-    userAgent: string | null; current: boolean;
+    id: string;
+    issuedAt: string;
+    expiresAt: string;
+    userAgent: string | null;
+    current: boolean;
   }>;
 }
 
@@ -944,37 +1056,49 @@ export function companiesThatPayYou(storage?: Pick<Storage, 'getItem'> | null): 
  * wrote them from this tab before the seat secrets left it. None has a production caller: each
  * refuses at once, reading and writing nothing.
  */
-const THIS_TAB_WRITES_NO_SAVED_KEYS = 'this page no longer writes your saved keys: only your wallet changes them, in an '
-  + 'action it runs. Nothing was written.';
-const writesNoSavedKeys = async (): Promise<never> => { throw new Error(THIS_TAB_WRITES_NO_SAVED_KEYS); };
+const THIS_TAB_WRITES_NO_SAVED_KEYS =
+  'this page no longer writes your saved keys: only your wallet changes them, in an ' +
+  'action it runs. Nothing was written.';
+const writesNoSavedKeys = async (): Promise<never> => {
+  throw new Error(THIS_TAB_WRITES_NO_SAVED_KEYS);
+};
 
 /** Moved the companies this browser held for this person into their saved keys. Refuses: see `writesNoSavedKeys`. */
 export async function bringCompaniesThatPayYouAcross(
-  _storage?: (Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>) | null,
+  _storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null
 ): Promise<void> {
   if (me === null || read === null) return;
   await writesNoSavedKeys();
 }
 
 /** Sealed a joiner's seat into the saved keys. Refuses: see `writesNoSavedKeys`. */
-export async function sealPendingSeat(_seat: PendingSeat): Promise<void> { await writesNoSavedKeys(); }
+export async function sealPendingSeat(_seat: PendingSeat): Promise<void> {
+  await writesNoSavedKeys();
+}
 
 /** Kept a signed directory entry owed in the saved keys. Refuses: see `writesNoSavedKeys`. */
-export async function oweDirectoryEntry(_accountId: string, _owed: Omit<OwedDirectoryEntry, 'opening' | 'invited'>): Promise<void> {
+export async function oweDirectoryEntry(
+  _accountId: string,
+  _owed: Omit<OwedDirectoryEntry, 'opening' | 'invited'>
+): Promise<void> {
   await writesNoSavedKeys();
 }
 
 /** The doors over this person's owed directory entry for `accountId`, as the wallet read it: letting it go refuses here. */
 export const directoryEntryOwed = (accountId: string) => ({
   read: (): OwedDirectoryEntry | null => keyring.directoryEntriesOwed?.[accountId] ?? null,
-  settle: async (): Promise<void> => { await writesNoSavedKeys(); },
+  settle: async (): Promise<void> => {
+    await writesNoSavedKeys();
+  }
 });
 
 /** The seats sealed and not promoted, for one account: none, since a seat's secrets are not on this page. */
 export const pendingSeatsFor = (_accountId: string): PendingSeat[] => [];
 
 /** Promoted a pending seat into the saved keys. Refuses: see `writesNoSavedKeys`. */
-export async function promotePendingSeat(_signingPublicKey: Hex, _signerId: string): Promise<void> { await writesNoSavedKeys(); }
+export async function promotePendingSeat(_signingPublicKey: Hex, _signerId: string): Promise<void> {
+  await writesNoSavedKeys();
+}
 
 /** Finished a seat published and not finished: there is none on this page, so it finishes nothing. */
 export async function finishPendingSeat(accountId: string, sealed: SealedAccount): Promise<boolean> {
@@ -987,10 +1111,10 @@ export async function finishPendingSeat(accountId: string, sealed: SealedAccount
  * newest copy there is; the wallet opens them and refuses a copy older than one it has already opened.
  */
 export async function savedKeysForTheWallet(): Promise<{ readonly sealed: Sealed | null; readonly version: number }> {
-  const r = await personOnPage.savedKeys() as { keyBundle?: unknown; version?: unknown } | null;
+  const r = (await personOnPage.savedKeys()) as { keyBundle?: unknown; version?: unknown } | null;
   return {
-    sealed: r?.keyBundle ? r.keyBundle as Sealed : null,
-    version: typeof r?.version === 'number' ? r.version : 0,
+    sealed: r?.keyBundle ? (r.keyBundle as Sealed) : null,
+    version: typeof r?.version === 'number' ? r.version : 0
   };
 }
 
@@ -1002,12 +1126,12 @@ export async function savedKeysForTheWallet(): Promise<{ readonly sealed: Sealed
 export async function keepWhatTheWalletSealed(sealed: Sealed, ifVersion: number): Promise<number | null> {
   let r: Record<string, unknown> | null;
   try {
-    r = await personOnPage.keepSavedKeys({ keyBundle: sealed, ifVersion }) as Record<string, unknown> | null;
+    r = (await personOnPage.keepSavedKeys({ keyBundle: sealed, ifVersion })) as Record<string, unknown> | null;
   } catch (e) {
     if (e instanceof ServiceRefused) return null;
     throw e;
   }
-  const version = typeof r?.['version'] === 'number' ? r['version'] as number : ifVersion + 1;
+  const version = typeof r?.['version'] === 'number' ? (r['version'] as number) : ifVersion + 1;
   if (version > bundleVersion) bundleVersion = version;
   return version;
 }
@@ -1042,7 +1166,7 @@ export async function actOnACompanyInTheWallet(
   intent: { readonly name: string } & Readonly<Record<string, string>>,
   walletOrigin: string,
   opts: { readonly onStep?: (at: StepAt) => void } = {},
-  view: Openable = walletInThisPage(window),
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
   if (!sessionLive || me === null) throw new Error('not signed in');
   const person = me.id;
@@ -1052,25 +1176,33 @@ export async function actOnACompanyInTheWallet(
     const handedIn = await savedKeysForTheWallet();
     const own = typeof intent['record'] === 'string' ? intent['record'] : null;
     const served = own === null ? [] : await servedForTheAction(own);
-    const ended = await actInTheWallet(view, walletOrigin, {
-      intent,
-      relay: async () => false,
-      call: async (request) => {
-        if (me === null || me.id !== person) throw new Error('the person signed in changed, so nothing more is sent for this action.');
-        return send(request);
-      },
-      savedKeys: {
-        person, keyring: handedIn as unknown as KeyringHandedIn, served,
-        keep: async (sealed, ifVersion) => {
-          if (me === null || me.id !== person) return null;
-          return keepWhatTheWalletSealed(sealed as unknown as Sealed, ifVersion);
+    const ended = await actInTheWallet(
+      view,
+      walletOrigin,
+      {
+        intent,
+        relay: async () => false,
+        call: async (request) => {
+          if (me === null || me.id !== person)
+            throw new Error('the person signed in changed, so nothing more is sent for this action.');
+          return send(request);
         },
+        savedKeys: {
+          person,
+          keyring: handedIn as unknown as KeyringHandedIn,
+          served,
+          keep: async (sealed, ifVersion) => {
+            if (me === null || me.id !== person) return null;
+            return keepWhatTheWalletSealed(sealed as unknown as Sealed, ifVersion);
+          }
+        },
+        ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }),
+        minutes: 30,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
       },
-      ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }),
-      minutes: 30,
-      name: US_TO_A_WALLET.name,
-      rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+      dialog
+    );
     takeWhatTheActionLeft(ended, own);
     return ended;
   } catch (e) {
@@ -1079,7 +1211,8 @@ export async function actOnACompanyInTheWallet(
   } finally {
     doneWaiting();
     /* Whatever the action wrote, this page read the company before it: what it read is stale, and whoever holds it is told. */
-    if (typeof intent['record'] === 'string') readsAreStale({ company: intent['record'], why: STALE.actedInTheWallet, signedIn: true });
+    if (typeof intent['record'] === 'string')
+      readsAreStale({ company: intent['record'], why: STALE.actedInTheWallet, signedIn: true });
   }
 }
 
@@ -1092,15 +1225,29 @@ export async function actOnACompanyInTheWallet(
  */
 export function privateDepositInTheWallet(
   ask: {
-    readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress;
-    readonly vault: string; readonly token: string; readonly units: bigint;
+    readonly record: string;
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
+    readonly vault: string;
+    readonly token: string;
+    readonly units: bigint;
   },
   walletOrigin: string,
   opts: { readonly onStep?: (at: StepAt) => void } = {},
-  view: Openable = walletInThisPage(window),
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
-  return actOnACompanyInTheWallet({
-    name: 'private-deposit', record: ask.record, company: ask.company, account: ask.account,
-    vault: ask.vault, token: ask.token, amount: ask.units.toString(),
-  }, walletOrigin, opts, view);
+  return actOnACompanyInTheWallet(
+    {
+      name: 'private-deposit',
+      record: ask.record,
+      company: ask.company,
+      account: ask.account,
+      vault: ask.vault,
+      token: ask.token,
+      amount: ask.units.toString()
+    },
+    walletOrigin,
+    opts,
+    view
+  );
 }

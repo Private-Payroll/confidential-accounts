@@ -12,47 +12,68 @@ import { ENGLISH } from '../english.test-support.js';
  * company's records stood in for: the number it starts at, the numbers it can reach, what is asked of the wallet, and the words that
  * follow each way the wallet answers.
  */
-vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+vi.hoisted(() => {
+  vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
+});
 const kr = vi.hoisted(() => ({
-  acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, steps: [] as { step: number; steps: number }[],
-  hold: null as Promise<void> | null, company: null as unknown, reads: 0, user: { id: 'u1' } as { id: string } | null,
-  told: null as unknown, held: { of: 'unreadable' } as unknown,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  steps: [] as { step: number; steps: number }[],
+  hold: null as Promise<void> | null,
+  company: null as unknown,
+  reads: 0,
+  user: { id: 'u1' } as { id: string } | null,
+  told: null as unknown,
+  held: { of: 'unreadable' } as unknown
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
+  actOnACompanyInTheWallet: async (
+    intent: Record<string, string>,
+    _origin: string,
+    opts?: { onStep?: (at: { step: number; steps: number }) => void }
+  ) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
-  },
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) })
+  })
+);
 vi.mock('../adapters/proposal-acts.js', async (real) => {
   const actual = await real<typeof import('../adapters/proposal-acts.js')>();
-  return { ...actual, changeThreshold: (...ask: Parameters<typeof actual.changeThreshold>) => (kr.told === null ? actual.changeThreshold(...ask) : Promise.resolve(kr.told)) };
+  return {
+    ...actual,
+    changeThreshold: (...ask: Parameters<typeof actual.changeThreshold>) =>
+      kr.told === null ? actual.changeThreshold(...ask) : Promise.resolve(kr.told)
+  };
 });
 vi.mock('../adapters/policy-acts.js', async (real) => ({
   ...(await real<typeof import('../adapters/policy-acts.js')>()),
-  readHolders: async () => kr.held,
+  readHolders: async () => kr.held
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readCompany: async () => { kr.reads += 1; return kr.company; },
+  readCompany: async () => {
+    kr.reads += 1;
+    return kr.company;
+  }
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
-  companyNamesFor: async () => new Map(),
+  companyNamesFor: async () => new Map()
 }));
 
 const { ChangeThreshold } = await import('./change-threshold.js');
@@ -61,45 +82,111 @@ const { PanelProvider, RightPanel, usePanel } = await import('../shell/right-pan
 const { CompanyRecordsProvider } = await import('../records/company-records.js');
 const { WithRecords } = await import('../records/parts.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 /** A word with its {count} (or other values) filled in, for the plural form it is in. */
 const words = (key: string, values: Record<string, string | number> = {}): string => {
   const count = values['count'];
-  const form = count === undefined ? EN[key] : EN[`${key}_${count === 1 ? 'one' : 'other'}`] ?? EN[key];
+  const form = count === undefined ? EN[key] : (EN[`${key}_${count === 1 ? 'one' : 'other'}`] ?? EN[key]);
   return Object.entries(values).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), form ?? key);
 };
 
 const read = (value: unknown) => ({ of: 'read', value });
 const records = (over: Record<string, unknown> = {}) => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [], approvalsNeeded: read(2), proposals: read([]),
+  of: 'open',
+  id: 'c-1',
+  name: 'Northwind',
+  signers: [],
+  approvalsNeeded: read(2),
+  proposals: read([]),
   approvalsForSigners: read({ count: 2, raisedAboveTheAccount: false, vaultsAtThatNumber: [], seated: 4 }),
-  ...over,
+  ...over
 });
 const VAULT = 'ab'.repeat(32);
-const withVaults = (approvals: number | undefined, over: Record<string, unknown> = {}) => records({
-  vaults: read([{ vault: VAULT, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true, ...(approvals === undefined ? {} : { approvals }) }]), ...over,
-});
+const withVaults = (approvals: number | undefined, over: Record<string, unknown> = {}) =>
+  records({
+    vaults: read([
+      {
+        vault: VAULT,
+        createdAt: '2026-09-01T00:00:00.000Z',
+        standing: 'held-by-committee',
+        adopted: true,
+        ...(approvals === undefined ? {} : { approvals })
+      }
+    ]),
+    ...over
+  });
 const session = () => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true },
-  chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.company, signs: true },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {})
 });
-const inPage = (node: React.ReactNode) => render(
-  <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={session()}><PanelProvider><CompanyRecordsProvider>{node}<RightPanel /></CompanyRecordsProvider></PanelProvider></SessionProvider>
-  </KitProvider>,
-);
-const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); }); };
+const inPage = (node: React.ReactNode) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <SessionProvider session={session()}>
+        <PanelProvider>
+          <CompanyRecordsProvider>
+            {node}
+            <RightPanel />
+          </CompanyRecordsProvider>
+        </PanelProvider>
+      </SessionProvider>
+    </KitProvider>
+  );
+const settle = async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+};
 const q = (s: string): HTMLElement | null => document.body.querySelector(s);
-const press = async (selector: string) => { fireEvent.click(q(selector)!); await settle(); };
-const draw = async (node: React.ReactNode = <ChangeThreshold />) => { inPage(node); await settle(); };
-const stopped = (refused?: string) => ({ of: 'stopped', step: 3, steps: 4, relayed: 0, unconfirmed: 0, why: refused === undefined ? 'relay-refused' : 'check-failed', ...(refused === undefined ? {} : { refused }) });
+const press = async (selector: string) => {
+  fireEvent.click(q(selector)!);
+  await settle();
+};
+const draw = async (node: React.ReactNode = <ChangeThreshold />) => {
+  inPage(node);
+  await settle();
+};
+const stopped = (refused?: string) => ({
+  of: 'stopped',
+  step: 3,
+  steps: 4,
+  relayed: 0,
+  unconfirmed: 0,
+  why: refused === undefined ? 'relay-refused' : 'check-failed',
+  ...(refused === undefined ? {} : { refused })
+});
 
 beforeEach(() => {
-  kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.user = { id: 'u1' }; kr.company = records(); kr.told = null; kr.held = { of: 'unreadable' };
+  kr.acts = [];
+  kr.steps = [];
+  kr.hold = null;
+  kr.reads = 0;
+  kr.user = { id: 'u1' };
+  kr.company = records();
+  kr.told = null;
+  kr.held = { of: 'unreadable' };
   kr.ended = { of: 'done', steps: 5, relayed: 2, outcome: { state: 'carried-out', approvals: 2, needed: 2 } };
 });
 afterEach(cleanup);
@@ -151,11 +238,15 @@ describe('what is asked of the wallet, and what comes back', () => {
   it('asks the wallet for the number chosen, says it is working, and reads the records again once it is done', async () => {
     kr.steps = [{ step: 2, steps: 5 }];
     let release = (): void => {};
-    kr.hold = new Promise<void>((r) => { release = r; });
+    kr.hold = new Promise<void>((r) => {
+      release = r;
+    });
     await draw();
     await press('[data-action=threshold-more]');
     await press('[data-action=raise-threshold]');
-    expect(kr.acts).toEqual([{ name: 'change-threshold', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), threshold: '3' }]);
+    expect(kr.acts).toEqual([
+      { name: 'change-threshold', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), threshold: '3' }
+    ]);
     expect(q('[data-working]')!.textContent).toBe(words('signers.working.step', { step: 2, steps: 5 }));
     expect((q('[data-action=raise-threshold]') as HTMLButtonElement).disabled).toBe(true);
     release();
@@ -167,7 +258,12 @@ describe('what is asked of the wallet, and what comes back', () => {
 
   /* RED WHEN: a change that is raised and still waits for the other signers is told as carried out, or the person is not told where the others approve it. */
   it('says a change that waits for the other signers is raised, and where they approve it', async () => {
-    kr.ended = { of: 'done', steps: 3, relayed: 1, outcome: { state: 'waiting-for-approvals', approvals: 1, needed: 2 } };
+    kr.ended = {
+      of: 'done',
+      steps: 3,
+      relayed: 1,
+      outcome: { state: 'waiting-for-approvals', approvals: 1, needed: 2 }
+    };
     await draw();
     await press('[data-action=threshold-more]');
     await press('[data-action=raise-threshold]');
@@ -178,7 +274,7 @@ describe('what is asked of the wallet, and what comes back', () => {
   });
 
   /* RED WHEN: the wallet's refusal of the number, after it checked every vault, is told as any other stop, so it says nothing of what to change; or it does not say nothing was sent. */
-  it('tells the wallet\'s refusal of the number with what resolves it, and that nothing was sent', async () => {
+  it("tells the wallet's refusal of the number with what resolves it, and that nothing was sent", async () => {
     kr.ended = stopped('act.change-threshold.why.refused');
     await draw();
     await press('[data-action=threshold-more]');
@@ -208,12 +304,16 @@ describe('what is asked of the wallet, and what comes back', () => {
     await draw();
     await press('[data-action=threshold-more]');
     for (const [problem, key, most] of [
-      [P.notWhole, 'changeThreshold.problem.not-whole', undefined], [P.tooHigh, 'changeThreshold.problem.too-high', 4],
-      [P.same, 'changeThreshold.problem.same', undefined], [P.unread, 'changeThreshold.problem.unread', undefined],
+      [P.notWhole, 'changeThreshold.problem.not-whole', undefined],
+      [P.tooHigh, 'changeThreshold.problem.too-high', 4],
+      [P.same, 'changeThreshold.problem.same', undefined],
+      [P.unread, 'changeThreshold.problem.unread', undefined]
     ] as const) {
       kr.told = { of: 'problem', problem, ...(most === undefined ? {} : { most }) };
       await press('[data-action=raise-threshold]');
-      expect(q(`[data-problem=${problem}]`)!.textContent, problem).toBe(words(key, most === undefined ? {} : { count: most }));
+      expect(q(`[data-problem=${problem}]`)!.textContent, problem).toBe(
+        words(key, most === undefined ? {} : { count: most })
+      );
     }
     expect(kr.acts).toEqual([]);
     expect(EN['changeThreshold.problem.not-whole']).toMatch(/whole number of at least one/);
@@ -241,7 +341,7 @@ describe('why the change needs the approvals it does', () => {
   });
 });
 
-describe('one vault\'s approvals', () => {
+describe("one vault's approvals", () => {
   const vaultOf = () => <ChangeThreshold vault={VAULT} />;
 
   /* RED WHEN: a vault's control starts at the company's number instead of the vault's own, steps past the signers seated, or leaves the press on before another number is chosen. */
@@ -261,13 +361,24 @@ describe('one vault\'s approvals', () => {
   });
 
   /* RED WHEN: the wallet is not told which vault, is told the company's number as the vault's, or the vault's change is told in the company's words (and the vault is not named in the done sentence). */
-  it('asks the wallet for the vault and the number chosen, and says it in the vault\'s words', async () => {
+  it("asks the wallet for the vault and the number chosen, and says it in the vault's words", async () => {
     kr.company = withVaults(2);
     await draw(vaultOf());
     await press('[data-action=threshold-more]');
     await press('[data-action=raise-threshold]');
-    expect(kr.acts).toEqual([{ name: 'change-threshold', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), threshold: '3', vault: VAULT }]);
-    expect(q('[data-acted]')!.textContent).toContain(words('changeThreshold.vault.done.carried', { count: 3, vault: words('vaults.tile.name', { number: 1 }) }));
+    expect(kr.acts).toEqual([
+      {
+        name: 'change-threshold',
+        record: 'c-1',
+        company: 'label-1',
+        account: 'c0'.repeat(32),
+        threshold: '3',
+        vault: VAULT
+      }
+    ]);
+    expect(q('[data-acted]')!.textContent).toContain(
+      words('changeThreshold.vault.done.carried', { count: 3, vault: words('vaults.tile.name', { number: 1 }) })
+    );
     expect(q('[data-acted]')!.textContent).not.toContain(words('changeThreshold.done.carried', { count: 3 }));
   });
 
@@ -276,15 +387,21 @@ describe('one vault\'s approvals', () => {
     kr.company = withVaults(3);
     await draw(vaultOf());
     const said = q('[data-needed-because]')!.textContent!;
-    expect(said).toBe(words('changeThreshold.vault.because', { count: 3, vault: words('vaults.tile.name', { number: 1 }) }));
+    expect(said).toBe(
+      words('changeThreshold.vault.because', { count: 3, vault: words('vaults.tile.name', { number: 1 }) })
+    );
     expect(said).toMatch(/Vault 1/);
     expect(said).toMatch(/Your wallet checks the rest/);
     expect(q('[data-checks-every-vault]')).toBeNull();
   });
 
   /* RED WHEN: a vault whose number was not read, or that is not among the company's, can be stepped or has the company's number put in its place; or the sentence on why is shown for it. */
-  it('cannot be stepped where the vault\'s number is unread, and does not borrow the company\'s', async () => {
-    for (const company of [withVaults(undefined), records({ vaults: read([]) }), records({ vaults: { of: 'unreadable' } })]) {
+  it("cannot be stepped where the vault's number is unread, and does not borrow the company's", async () => {
+    for (const company of [
+      withVaults(undefined),
+      records({ vaults: read([]) }),
+      records({ vaults: { of: 'unreadable' } })
+    ]) {
       kr.company = company;
       await draw(vaultOf());
       expect((q('[data-action=threshold-more]') as HTMLButtonElement).disabled).toBe(true);
@@ -297,17 +414,22 @@ describe('one vault\'s approvals', () => {
   });
 
   /* RED WHEN: a number equal to the one the vault has now reaches the wallet window, or is told with the company's words. */
-  it('tells a number equal to the vault\'s own in the vault\'s words, before any wallet window', async () => {
+  it("tells a number equal to the vault's own in the vault's words, before any wallet window", async () => {
     kr.company = withVaults(2);
     const { changeThreshold } = await import('../adapters/proposal-acts.js');
     kr.told = null;
-    expect(await changeThreshold('u1', aViewOf('c-1'), 2, { now: 2, seated: 4 }, undefined, VAULT)).toEqual({ of: 'problem', problem: 'same' });
+    expect(await changeThreshold('u1', aViewOf('c-1'), 2, { now: 2, seated: 4 }, undefined, VAULT)).toEqual({
+      of: 'problem',
+      problem: 'same'
+    });
     expect(kr.acts).toEqual([]);
     kr.told = { of: 'problem', problem: 'same' };
     await draw(vaultOf());
     await press('[data-action=threshold-more]');
     await press('[data-action=raise-threshold]');
-    expect(q('[data-problem=same]')!.textContent).toBe(words('changeThreshold.vault.problem.same', { vault: words('vaults.tile.name', { number: 1 }) }));
+    expect(q('[data-problem=same]')!.textContent).toBe(
+      words('changeThreshold.vault.problem.same', { vault: words('vaults.tile.name', { number: 1 }) })
+    );
   });
 
   /* RED WHEN: the result of a raise from a vault's page is lost when the company's records are read again (it is shown under the page's records, which stand empty while they read), so the person is never told it was carried out or where the others approve it. */
@@ -315,29 +437,47 @@ describe('one vault\'s approvals', () => {
     kr.company = withVaults(2);
     const Opener = () => {
       const { open } = usePanel();
-      return <button data-action="open-it" onClick={() => open({ title: 'Change approvals', body: <ChangeThreshold vault={VAULT} /> })}>open</button>;
+      return (
+        <button
+          data-action="open-it"
+          onClick={() => open({ title: 'Change approvals', body: <ChangeThreshold vault={VAULT} /> })}
+        >
+          open
+        </button>
+      );
     };
     await draw(<WithRecords>{() => <Opener />}</WithRecords>);
     await press('[data-action=open-it]');
     await press('[data-panel] [data-action=threshold-more]');
     await press('[data-panel] [data-action=raise-threshold]');
     expect(kr.reads).toBe(2);
-    expect(document.body.querySelector('[data-panel] [data-acted]')!.textContent).toContain(words('changeThreshold.vault.done.carried', { count: 3, vault: words('vaults.tile.name', { number: 1 }) }));
+    expect(document.body.querySelector('[data-panel] [data-acted]')!.textContent).toContain(
+      words('changeThreshold.vault.done.carried', { count: 3, vault: words('vaults.tile.name', { number: 1 }) })
+    );
   });
 });
 
-
 describe('what the chosen number costs and which bar sets it', () => {
-  const HELD = { approvals: 2, policyBar: null, seatBar: 2, vaultThresholds: [] as { vault: string; threshold: number }[], seated: 4 };
-  const holders = (over: Record<string, unknown> = {}) => { kr.held = read({ ...HELD, ...over }); };
+  const HELD = {
+    approvals: 2,
+    policyBar: null,
+    seatBar: 2,
+    vaultThresholds: [] as { vault: string; threshold: number }[],
+    seated: 4
+  };
+  const holders = (over: Record<string, unknown> = {}) => {
+    kr.held = read({ ...HELD, ...over });
+  };
   const text = (selector: string): string => q(selector)?.textContent ?? '';
 
   /* RED WHEN: the company's number is changed without saying that the account sets how many approvals the change needs, or a number that asks for every signer is not warned about, or is refused. */
-  it('says the account sets what changing the company\'s number needs, and warns when the number asks for every signer seated', async () => {
+  it("says the account sets what changing the company's number needs, and warns when the number asks for every signer seated", async () => {
     holders();
     await draw();
     await press('[data-action=threshold-more]');
-    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`);
+    expect(text('[data-review-needs]')).toBe(
+      `${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`
+    );
     expect(q('[data-warning=every-signer]')).toBeNull();
     await press('[data-action=threshold-more]');
     await press('[data-action=threshold-more]');
@@ -354,20 +494,27 @@ describe('what the chosen number costs and which bar sets it', () => {
   });
 
   /* RED WHEN: a vault's number is changed without naming the vault or the policy that sets the approvals it needs, or without saying when it raises the policy bar or asks for every signer. */
-  it('names the account, the vault or the policy bar that sets what a vault\'s change needs, and the bar it raises', async () => {
+  it("names the account, the vault or the policy bar that sets what a vault's change needs, and the bar it raises", async () => {
     kr.company = withVaults(3);
     holders({ policyBar: 3, seatBar: 3, vaultThresholds: [{ vault: VAULT, threshold: 3 }] });
     await draw(<ChangeThreshold vault={VAULT} />);
     await press('[data-action=threshold-fewer]');
-    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 3 })} ${words('changeThreshold.review.because.vault', { vault: 'Vault 1' })}`);
-    cleanup(); kr.company = withVaults(2);
+    expect(text('[data-review-needs]')).toBe(
+      `${words('changeThreshold.review.needs', { count: 3 })} ${words('changeThreshold.review.because.vault', { vault: 'Vault 1' })}`
+    );
+    cleanup();
+    kr.company = withVaults(2);
     holders({ vaultThresholds: [{ vault: VAULT, threshold: 2 }] });
     await draw(<ChangeThreshold vault={VAULT} />);
     await press('[data-action=threshold-more]');
-    expect(text('[data-review-needs]')).toBe(`${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`);
+    expect(text('[data-review-needs]')).toBe(
+      `${words('changeThreshold.review.needs', { count: 2 })} ${words('changeThreshold.review.because.account')}`
+    );
     expect(text('[data-warning=bar-raised]')).toBe(words('changeThreshold.warn.bar-raised', { bar: 3 }));
     await press('[data-action=threshold-more]');
-    expect(text('[data-warning=every-signer]')).toBe(words('changeThreshold.vault.warn.every-signer', { seated: 4, vault: 'Vault 1' }));
+    expect(text('[data-warning=every-signer]')).toBe(
+      words('changeThreshold.vault.warn.every-signer', { seated: 4, vault: 'Vault 1' })
+    );
   });
 
   /* RED WHEN: the figures the chain holds could not be read and the screen still says what the change needs or warns of a bar it did not read. */

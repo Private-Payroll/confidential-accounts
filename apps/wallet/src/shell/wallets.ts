@@ -1,7 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import type { Secret } from 'midnight-identity';
 import {
-  loadSubwallets, saveLastUsedWallet, saveSubwalletName, saveWalletName, walletNameOf,
+  loadSubwallets,
+  saveLastUsedWallet,
+  saveSubwalletName,
+  saveWalletName,
+  walletNameOf
 } from '../accounts/storage.js';
 import { MAIN_ACCOUNT, isWalletAccount } from '../accounts/subwallets.js';
 
@@ -67,7 +71,9 @@ const listeners = new Set<() => void>();
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange);
-  return () => { listeners.delete(onChange); };
+  return () => {
+    listeners.delete(onChange);
+  };
 }
 
 /** Iterated over a COPY: a listener that unsubscribes while being notified —
@@ -89,12 +95,13 @@ function changed(): void {
  * bytes — cheaper than the address derivation every caller does with the result.
  */
 export function useWallets(secret: Secret): Wallets {
-  const raw = useSyncExternalStore(
-    subscribe,
-    () => JSON.stringify({ ...loadSubwallets(secret), wallet: walletNameOf(secret) }),
+  const raw = useSyncExternalStore(subscribe, () =>
+    JSON.stringify({ ...loadSubwallets(secret), wallet: walletNameOf(secret) })
   );
   const stored = JSON.parse(raw) as {
-    names: Record<string, string>; lastUsed: number; wallet: string | null;
+    names: Record<string, string>;
+    lastUsed: number;
+    wallet: string | null;
   };
   return {
     names: stored.names,
@@ -102,7 +109,7 @@ export function useWallets(secret: Secret): Wallets {
     /* A record can only store accounts the validators allow, but the fixed set
      * is this interface's own convention — anything outside it opens the main
      * wallet rather than a slot no screen offers. */
-    account: isWalletAccount(stored.lastUsed) ? stored.lastUsed : MAIN_ACCOUNT,
+    account: isWalletAccount(stored.lastUsed) ? stored.lastUsed : MAIN_ACCOUNT
   };
 }
 
@@ -120,8 +127,10 @@ export function useWallets(secret: Secret): Wallets {
  */
 export function switchWallet(secret: Secret, next: number): void {
   if (!isWalletAccount(next)) {
-    throw new Error(`account ${next} is not a wallet this interface offers`
-      + (next === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${next} is not a wallet this interface offers` +
+        (next === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
   saveLastUsedWallet(secret, next);
   changed();

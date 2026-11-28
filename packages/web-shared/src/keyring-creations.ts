@@ -52,13 +52,16 @@ export interface SavedCreation {
   readonly made: boolean;
   /** The account's deploy, built here, and the keys its second step adds. */
   readonly deploy: {
-    readonly account: AccountAddress; readonly tx: string; readonly insert: ReadonlyArray<{ circuit: string; key: string }>;
+    readonly account: AccountAddress;
+    readonly tx: string;
+    readonly insert: ReadonlyArray<{ circuit: string; key: string }>;
     /** When it was built (epoch ms, taken before it was built): its time to live runs from there. Absent on one kept before this was kept. */
     readonly builtAt?: number;
   } | null;
   /** The second step, signed by the founding signer's wallet, and that signature. */
   readonly signed: {
-    readonly tx: string; readonly signature: { readonly tag: string; readonly value: string };
+    readonly tx: string;
+    readonly signature: { readonly tag: string; readonly value: string };
     /** When it was built, as for the deploy. */
     readonly builtAt?: number;
   } | null;
@@ -73,7 +76,8 @@ export interface SavedCreation {
   readonly setAside?: true;
 }
 
-const howFarOn = (c: SavedCreation): number => (c.recorded ? 4 : 0) + (c.signed !== null ? 2 : 0) + (c.deploy !== null ? 1 : 0);
+const howFarOn = (c: SavedCreation): number =>
+  (c.recorded ? 4 : 0) + (c.signed !== null ? 2 : 0) + (c.deploy !== null ? 1 : 0);
 
 /**
  * Saved keys written before every creation was kept in `creations` hold the ones set aside in `creationsSetAside`.

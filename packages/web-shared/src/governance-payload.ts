@@ -29,7 +29,7 @@ export const digitsOf = (name: string, value: string): bigint => {
 /** A threshold, as the digits it travels as, refused unless it is a whole number of at least one. */
 export const thresholdOf = (value: string): bigint => {
   const t = digitsOf('threshold', value);
-  if (t < 1n) throw new Error('a company\'s threshold is at least one, and this one is not. Nothing was built.');
+  if (t < 1n) throw new Error("a company's threshold is at least one, and this one is not. Nothing was built.");
   return t;
 };
 
@@ -51,14 +51,18 @@ const MOST_A_THRESHOLD_CAN_BE = 2n ** 64n - 1n;
 export const invitationThresholdOf = (value: string | undefined): bigint => {
   if (value === undefined) return 0n;
   const t = digitsOf('threshold', value);
-  if (t > MOST_A_THRESHOLD_CAN_BE) throw new Error('the threshold this invitation sets is larger than the account can store, so nothing was built.');
+  if (t > MOST_A_THRESHOLD_CAN_BE)
+    throw new Error('the threshold this invitation sets is larger than the account can store, so nothing was built.');
   return t;
 };
 
 /** The approvals a change to a spending policy needs, refused unless it is a whole number of at least one. */
 export const policyBarOf = (value: string): bigint => {
   const t = digitsOf('number of approvals a policy change needs', value);
-  if (t < 1n) throw new Error('a change to a spending policy needs at least one approval, and this number is not. Nothing was built.');
+  if (t < 1n)
+    throw new Error(
+      'a change to a spending policy needs at least one approval, and this number is not. Nothing was built.'
+    );
   return t;
 };
 
@@ -66,17 +70,23 @@ export const policyBarOf = (value: string): bigint => {
  * The contract's own payload for taking `leaf` off the account and setting the threshold to `threshold` (0 keeps the one in
  * force), refused by name where this device was not given the function.
  */
-export const removalPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, leaf: string, threshold: bigint): Uint8Array => {
+export const removalPayloadOf = (
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  leaf: string,
+  threshold: bigint
+): Uint8Array => {
   if (typeof deps.accountPure.removeAndSetThresholdPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for removing a signer, so nothing was built. Reload the page to use the current build.');
+    throw new Error(
+      "this device was not given the account's function for removing a signer, so nothing was built. Reload the page to use the current build."
+    );
   }
-  return deps.accountPure.removeAndSetThresholdPayload(bytesOf('signer\'s leaf', leaf), threshold);
+  return deps.accountPure.removeAndSetThresholdPayload(bytesOf("signer's leaf", leaf), threshold);
 };
 
 /** The contract's own payload for adopting `vault`, refused by name where this device was not given the function. */
 export const adoptionPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string): Uint8Array => {
   if (typeof deps.accountPure.adoptVaultPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for adopting a vault, so nothing was built.');
+    throw new Error("this device was not given the account's function for adopting a vault, so nothing was built.");
   }
   return deps.accountPure.adoptVaultPayload(bytesOf('vault', vault));
 };
@@ -84,15 +94,23 @@ export const adoptionPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, v
 /** The contract's own payload for retiring `vault`, refused by name where this device was not given the function. */
 const retirementPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string): Uint8Array => {
   if (typeof deps.accountPure.retireVaultPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for retiring a vault, so nothing was built. Reload the page to use the current build.');
+    throw new Error(
+      "this device was not given the account's function for retiring a vault, so nothing was built. Reload the page to use the current build."
+    );
   }
   return deps.accountPure.retireVaultPayload(bytesOf('vault', vault));
 };
 
 /** The contract's own payload for one vault's approvals needed, refused by name where this device was not given the function. */
-export const vaultThresholdPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string, threshold: string): Uint8Array => {
+export const vaultThresholdPayloadOf = (
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  vault: string,
+  threshold: string
+): Uint8Array => {
   if (typeof deps.accountPure.setVaultThresholdPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for a vault\'s approvals needed, so nothing was built.');
+    throw new Error(
+      "this device was not given the account's function for a vault's approvals needed, so nothing was built."
+    );
   }
   return deps.accountPure.setVaultThresholdPayload(bytesOf('vault', vault), thresholdOf(threshold));
 };
@@ -100,39 +118,59 @@ export const vaultThresholdPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPur
 /** The contract's own payload for committing to the pay-record key, refused by name where this device was not given the function. */
 export const payKeyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, commitment: string): Uint8Array => {
   if (typeof deps.accountPure.payKeyPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for its pay-record key, so nothing was built.');
+    throw new Error("this device was not given the account's function for its pay-record key, so nothing was built.");
   }
-  return deps.accountPure.payKeyPayload(bytesOf('pay-record key\'s commitment', commitment));
+  return deps.accountPure.payKeyPayload(bytesOf("pay-record key's commitment", commitment));
 };
 
 /** The contract's own payload for a vault's spending policy, refused by name where this device was not given the function. */
-export const spendingPolicyPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, vault: string, assetKey: string, commitment: string): Uint8Array => {
+export const spendingPolicyPayloadOf = (
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  vault: string,
+  assetKey: string,
+  commitment: string
+): Uint8Array => {
   if (typeof deps.accountPure.setPolicyPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for a spending policy, so nothing was built.');
+    throw new Error("this device was not given the account's function for a spending policy, so nothing was built.");
   }
-  return deps.accountPure.setPolicyPayload(bytesOf('vault', vault), bytesOf('currency\'s key', assetKey), bytesOf('policy\'s commitment', commitment));
+  return deps.accountPure.setPolicyPayload(
+    bytesOf('vault', vault),
+    bytesOf("currency's key", assetKey),
+    bytesOf("policy's commitment", commitment)
+  );
 };
 
 /** The contract's own payload for the approvals a policy change needs, refused by name where this device was not given the function. */
 export const policyBarPayloadOf = (deps: Pick<GovernedCallDeps, 'accountPure'>, bar: string): Uint8Array => {
   if (typeof deps.accountPure.setPolicyBarPayload !== 'function') {
-    throw new Error('this device was not given the account\'s function for the approvals a policy change needs, so nothing was built.');
+    throw new Error(
+      "this device was not given the account's function for the approvals a policy change needs, so nothing was built."
+    );
   }
   return deps.accountPure.setPolicyBarPayload(policyBarOf(bar));
 };
 
 /** The currency's blinded key, made by the contract's own function from the currency and the account's blinding. */
-export const assetKeyMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, asset: string, blinding: string): string => {
+export const assetKeyMadeHere = (
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  asset: string,
+  blinding: string
+): string => {
   if (typeof deps.accountPure.assetKeyOf !== 'function') {
-    throw new Error('this device was not given the account\'s function for a currency\'s key, so nothing was built.');
+    throw new Error("this device was not given the account's function for a currency's key, so nothing was built.");
   }
-  return hexOf(deps.accountPure.assetKeyOf(bytesOf('currency', asset), bytesOf('account\'s asset blinding', blinding)));
+  return hexOf(deps.accountPure.assetKeyOf(bytesOf('currency', asset), bytesOf("account's asset blinding", blinding)));
 };
 
 /** The commitment a policy's opening makes, by the contract's own function. */
-export const policyCommitmentMadeHere = (deps: Pick<GovernedCallDeps, 'accountPure'>, policy: PolicyOpeningOnTheWire): string => {
+export const policyCommitmentMadeHere = (
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  policy: PolicyOpeningOnTheWire
+): string => {
   if (typeof deps.accountPure.policyCommitmentOf !== 'function') {
-    throw new Error('this device was not given the account\'s function for a policy\'s commitment, so nothing was built.');
+    throw new Error(
+      "this device was not given the account's function for a policy's commitment, so nothing was built."
+    );
   }
   return hexOf(deps.accountPure.policyCommitmentOf(policyOpeningFromWire(policy)));
 };
@@ -141,11 +179,16 @@ export const policyCommitmentMadeHere = (deps: Pick<GovernedCallDeps, 'accountPu
 export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>, g: RoundChangeOnTheWire): Uint8Array {
   /* The super admins' changes are their own kind, signed by their wallets on each contract: never a proposal the account holds or counts. */
   if ((g as { readonly kind: string }).kind === 'super-admins') {
-    throw new Error('a change of the super admins is never raised, approved or counted on the company\'s account as a signers\' proposal, so nothing was built.');
+    throw new Error(
+      "a change of the super admins is never raised, approved or counted on the company's account as a signers' proposal, so nothing was built."
+    );
   }
   if (g.kind === 'add-signer') {
     return deps.accountPure.signerInvitePayload(
-      bytesOf('invited address', g.address), bytesOf('seat\'s rights', g.scope), invitationThresholdOf(g.threshold));
+      bytesOf('invited address', g.address),
+      bytesOf("seat's rights", g.scope),
+      invitationThresholdOf(g.threshold)
+    );
   }
   if (g.kind === 'remove-signer') return removalPayloadOf(deps, g.leaf, removalThresholdOf(g.threshold ?? '0'));
   if (g.kind === 'threshold') return deps.accountPure.setThresholdPayload(thresholdOf(g.threshold));
@@ -157,12 +200,18 @@ export function governancePayloadOf(deps: Pick<GovernedCallDeps, 'accountPure'>,
   if (g.kind === 'policy-bar') return policyBarPayloadOf(deps, g.bar);
   if (g.kind === 'recover-anchor') {
     if (typeof deps.accountPure.recoverAnchorPayload !== 'function') {
-      throw new Error('this device was not given the account\'s function for a recovery of its record anchor. Reload the page to use the current build.');
+      throw new Error(
+        "this device was not given the account's function for a recovery of its record anchor. Reload the page to use the current build."
+      );
     }
     return deps.accountPure.recoverAnchorPayload(
-      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()), digitsOf('recovery\'s last time', g.latest),
-      bytesOf('latest recovery\'s head', String(g.lastRecovery).toLowerCase()));
+      bytesOf('head it resumes from', String(g.resumesFrom).toLowerCase()),
+      digitsOf("recovery's last time", g.latest),
+      bytesOf("latest recovery's head", String(g.lastRecovery).toLowerCase())
+    );
   }
-  throw new Error('this proposal is neither a seat nor a threshold, nor a vault adopted or retired, nor the pay-record key, nor a '
-    + 'spending policy, so nothing was built.');
+  throw new Error(
+    'this proposal is neither a seat nor a threshold, nor a vault adopted or retired, nor the pay-record key, nor a ' +
+      'spending policy, so nothing was built.'
+  );
 }

@@ -6,6 +6,10 @@
 import { describe } from 'vitest';
 import { asMoneyGrowsCounted } from './actions-set-up-first.test-support.js';
 
-describe('WITHDRAWING, RAISING AND ADMITTING A SIGNER EACH READ THE SAME HOWEVER MANY RUNS, PAID RUNS, ONE-OFF PAYMENTS AND SPENDING POLICIES THE COMPANY HOLDS', { timeout: 160_000 }, () => {
-  asMoneyGrowsCounted(import.meta.url);
-});
+describe(
+  'WITHDRAWING, RAISING AND ADMITTING A SIGNER EACH READ THE SAME HOWEVER MANY RUNS, PAID RUNS, ONE-OFF PAYMENTS AND SPENDING POLICIES THE COMPANY HOLDS',
+  { timeout: 160_000 },
+  () => {
+    asMoneyGrowsCounted(import.meta.url);
+  }
+);

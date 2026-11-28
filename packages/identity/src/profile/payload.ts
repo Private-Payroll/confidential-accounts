@@ -117,7 +117,10 @@ class Writer {
   done(): Uint8Array {
     const out = new Uint8Array(this.length);
     let at = 0;
-    for (const part of this.parts) { out.set(part, at); at += part.length; }
+    for (const part of this.parts) {
+      out.set(part, at);
+      at += part.length;
+    }
     return out;
   }
 }
@@ -261,15 +264,15 @@ const readAssertion = (r: Reader): Assertion | null => {
     const issuedAt = r.num();
     const expiresAt = r.maybeNum();
     const reachable = r.str();
-    if (issuer === null || signature === null || issuedAt === null
-      || expiresAt === undefined || reachable === null) return null;
+    if (issuer === null || signature === null || issuedAt === null || expiresAt === undefined || reachable === null)
+      return null;
     return {
       by: 'issuer',
       issuer,
       signature,
       issuedAt,
       expiresAt,
-      reachableAt: reachable === '-' ? null : reachable,
+      reachableAt: reachable === '-' ? null : reachable
     };
   }
   return null;
@@ -327,7 +330,7 @@ export function readPreimage(bytes: Uint8Array): DisclosurePayload | null {
     address,
     at,
     disclosed: Object.freeze(disclosed),
-    declined: Object.freeze(declined),
+    declined: Object.freeze(declined)
   });
 }
 
@@ -340,11 +343,7 @@ export function readPreimage(bytes: Uint8Array): DisclosurePayload | null {
 export function preimage(payload: DisclosurePayload): Uint8Array {
   const w = new Writer();
   w.raw(utf8.encode(DISCLOSURE_DOMAIN));
-  w.str(payload.schema)
-    .str(payload.origin)
-    .str(payload.nonce)
-    .str(payload.address)
-    .num(payload.at);
+  w.str(payload.schema).str(payload.origin).str(payload.nonce).str(payload.address).num(payload.at);
   w.u32(payload.disclosed.length);
   for (const sent of payload.disclosed) {
     w.str(sent.id).str(sent.about);

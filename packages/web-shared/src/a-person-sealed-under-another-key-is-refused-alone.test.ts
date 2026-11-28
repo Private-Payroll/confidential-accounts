@@ -10,7 +10,12 @@ import { setStatusHere } from './people-on-device.js';
 import { newSigningKeypair, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { openRecord, purposeKey, sealRecord, type PurposeKeys } from '../../../src/core/sealed-records.js';
 import { openPerson, sealPerson } from '../../../src/core/person-record.js';
-import { fromCompanyWire, signCompanyFiling, toCompanyWire, type CompanyWireVersion } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  signCompanyFiling,
+  toCompanyWire,
+  type CompanyWireVersion
+} from '../../../src/midnight/sealed-record-wire.js';
 import type { RosterEmployee } from '../../../src/core/types.js';
 import { serviceCallOf, type RecordWrite } from './records-source.js';
 import { viewOver } from '../../../src/testing/writes-over-a-send.js';
@@ -20,7 +25,7 @@ import { readRoutesOver } from '../../../src/testing/service-routes-in-memory.js
 vi.mock('./vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('./vault-page-doors.js')>()),
   judgeIn: () => () => null,
-  namedHere: () => [],
+  namedHere: () => []
 }));
 vi.mock('./may-file-here.js', () => ({ mayFileHere: async () => null }));
 
@@ -28,11 +33,27 @@ const CO = 'c1';
 const KEY = '44'.repeat(32) as Hex;
 const KEYS = { epoch: 0, newest: 0, key: KEY, keyAt: () => KEY, sealing: () => ({ key: KEY, epoch: 0 }) };
 const SEAT = newSigningKeypair().secret;
-const someone = (id: string, name: string): RosterEmployee => ({
-  id, accountId: CO, name, email: null, title: 'Designer', asset: 'NIGHT', baseAmount: 1n, startDate: '2026-02-01',
-  status: 'pending', invitedAddress: null, address: null, wrappingPublicKey: null, handedOverBy: null, payeeCode: null,
-  admittedBy: null, admittedAt: null, madeBy: signingPublicKeyOf(SEAT), madeAt: '2026-09-01T00:00:00Z',
-}) as never;
+const someone = (id: string, name: string): RosterEmployee =>
+  ({
+    id,
+    accountId: CO,
+    name,
+    email: null,
+    title: 'Designer',
+    asset: 'NIGHT',
+    baseAmount: 1n,
+    startDate: '2026-02-01',
+    status: 'pending',
+    invitedAddress: null,
+    address: null,
+    wrappingPublicKey: null,
+    handedOverBy: null,
+    payeeCode: null,
+    admittedBy: null,
+    admittedAt: null,
+    madeBy: signingPublicKeyOf(SEAT),
+    madeAt: '2026-09-01T00:00:00Z'
+  }) as never;
 
 const ana = someone('emp_00000000000000000001', 'Ana');
 const bo = someone('emp_00000000000000000002', 'Bo');
@@ -40,26 +61,46 @@ const cy = someone('emp_00000000000000000003', 'Cy');
 const { id: _b, accountId: _bc, status: _bs, ...boSecrets } = bo;
 const { id: _c, accountId: _cc, status: _cs, ...cySecrets } = cy;
 const anaFiled = toCompanyWire(signCompanyFiling(sealPerson(ana, 1, 0, KEY), SEAT));
-const boUnderThePayrollKey = signCompanyFiling({ ...sealPerson(bo, 1, 0, KEY), sealed: sealRecord('payroll', CO, boSecrets, KEY) }, SEAT);
-const cyUnderTheVendorsKey = toCompanyWire(signCompanyFiling({ ...sealPerson(cy, 1, 0, KEY), sealed: sealRecord('vendors', CO, cySecrets, KEY) }, SEAT));
+const boUnderThePayrollKey = signCompanyFiling(
+  { ...sealPerson(bo, 1, 0, KEY), sealed: sealRecord('payroll', CO, boSecrets, KEY) },
+  SEAT
+);
+const cyUnderTheVendorsKey = toCompanyWire(
+  signCompanyFiling({ ...sealPerson(cy, 1, 0, KEY), sealed: sealRecord('vendors', CO, cySecrets, KEY) }, SEAT)
+);
 
 const posted: CompanyWireVersion[] = [];
 /* The service as this test answers it: the people listed, and a status filed kept as posted. */
 const serviceOf = (people: readonly unknown[]) => async (path: string, init?: { body?: string }) => {
-  if (path.endsWith('/people')) return { status: 200, body: { people: people.map((filed) => ({ filed, handedOver: false })) } };
-  if (path.endsWith('/status')) { posted.push(JSON.parse(init!.body!).person); return { status: 201, body: {} }; }
+  if (path.endsWith('/people'))
+    return { status: 200, body: { people: people.map((filed) => ({ filed, handedOver: false })) } };
+  if (path.endsWith('/status')) {
+    posted.push(JSON.parse(init!.body!).person);
+    return { status: 201, body: {} };
+  }
   return { status: 404, body: {} };
 };
 const device = (people: readonly unknown[]) => {
-  const held = viewOver(readRoutesOver(serviceCallOf(serviceOf(people)), { directory: 'empty', newest: 'none-entered' }), CO);
+  const held = viewOver(
+    readRoutesOver(serviceCallOf(serviceOf(people)), { directory: 'empty', newest: 'none-entered' }),
+    CO
+  );
   return {
-    company: { id: CO, label: 'acme', viewingKey: KEYS, keyEpoch: 0 }, network: 'stagenet', claimRefusal: async () => null,
-    signingSecret: SEAT, signedInAs: 'usr_1', directory: async () => ({}), entered: { enter: async () => undefined },
-    view: held.current(), writes: async (_company: string, w: RecordWrite) => (await held.current().write([w]))[0],
+    company: { id: CO, label: 'acme', viewingKey: KEYS, keyEpoch: 0 },
+    network: 'stagenet',
+    claimRefusal: async () => null,
+    signingSecret: SEAT,
+    signedInAs: 'usr_1',
+    directory: async () => ({}),
+    entered: { enter: async () => undefined },
+    view: held.current(),
+    writes: async (_company: string, w: RecordWrite) => (await held.current().write([w]))[0]
   } as never;
 };
 
-const only = (purpose: 'roster' | 'payroll'): PurposeKeys => ({ keyFor: (p, c) => (p === purpose ? purposeKey(KEY, c, p) : null) });
+const only = (purpose: 'roster' | 'payroll'): PurposeKeys => ({
+  keyFor: (p, c) => (p === purpose ? purposeKey(KEY, c, p) : null)
+});
 
 describe('a person sealed under the payroll key before people had their own', () => {
   /* RED WHEN: a person sealed under the payroll key before is never believed, so the company's payroll stops for good. */
@@ -72,7 +113,11 @@ describe('a person sealed under the payroll key before people had their own', ()
     await setStatusHere(device([]), here, 'leaver');
     /* RED WHEN: a person read through the payroll key is filed again under it, so their record never moves to the people key. */
     const refiled = fromCompanyWire(posted[0]!, { company: CO, kind: 'person', id: bo.id }).sealed;
-    expect(openRecord<{ name: string }>('people', CO, refiled.sealed, { keyFor: (p, c) => (p === 'people' ? purposeKey(KEY, c, p) : null) }).name).toBe('Bo');
+    expect(
+      openRecord<{ name: string }>('people', CO, refiled.sealed, {
+        keyFor: (p, c) => (p === 'people' ? purposeKey(KEY, c, p) : null)
+      }).name
+    ).toBe('Bo');
     expect(() => openRecord('payroll', CO, refiled.sealed, KEY)).toThrow(/will not open/u);
   });
 

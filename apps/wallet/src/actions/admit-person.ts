@@ -5,15 +5,46 @@ import { tidyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { assets as theAssets, type AssetRegistry } from '../../../../src/core/assets.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { InvitationRefused } from '../../../../packages/web-shared/src/invitation-on-device.js';
-import { AdmissionNotRead, admitHere, PersonNotChanged, readPeopleHere, type PeopleDevice, type PersonHere } from '../../../../packages/web-shared/src/people-on-device.js';
-import { admitVendorHere, readVendorsHere, VendorNotChanged, type VendorHere } from '../../../../packages/web-shared/src/vendors-on-device.js';
+import {
+  AdmissionNotRead,
+  admitHere,
+  PersonNotChanged,
+  readPeopleHere,
+  type PeopleDevice,
+  type PersonHere
+} from '../../../../packages/web-shared/src/people-on-device.js';
+import {
+  admitVendorHere,
+  readVendorsHere,
+  VendorNotChanged,
+  type VendorHere
+} from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { signedClaimRefusal } from '../../../../packages/web-shared/src/signed-claim-refusal.js';
-import { FiledNotEntered, type Filed, type RecordsEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
+import {
+  FiledNotEntered,
+  type Filed,
+  type RecordsEntered
+} from '../../../../packages/web-shared/src/record-entered-here.js';
 import { readAfterEntering, recordEnteredHere } from '../../../../packages/web-shared/src/carried-entries-entered.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
-import { companyReachFor, enteredFor, keptReach, listsOfTheStep, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  companyReachFor,
+  enteredFor,
+  keptReach,
+  listsOfTheStep,
+  writesOfTheStep,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 
@@ -39,7 +70,8 @@ export interface AdmitPersonReach {
 export const ADMIT_PERSON_STATE = { admitted: 'admitted', alreadyAdmitted: 'already-admitted' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.admit-person.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.admit-person.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const KINDS = ['employee', 'vendor'] as const;
@@ -51,12 +83,25 @@ const KINDS = ['employee', 'vendor'] as const;
  * run here with the ledger the wallet loads (`signedClaimRefusal`). Refuses when the page said nobody is signed in.
  */
 export async function peopleDeviceFor(
-  ctx: StepContext, r: CompanyReach, network: NetworkName, registry: AssetRegistry, refuse: (key: string) => never,
-  entered: RecordsEntered = enteredFor(r),
+  ctx: StepContext,
+  r: CompanyReach,
+  network: NetworkName,
+  registry: AssetRegistry,
+  refuse: (key: string) => never,
+  entered: RecordsEntered = enteredFor(r)
 ): Promise<PeopleDevice> {
   const signedInAs = ctx.person ?? refuse('no-person');
   return {
-    company: withCompanyKeys({ id: r.accountId, name: (await r.roster()).name, label: r.label, account: r.account, keyEpoch: r.companyKeys.epoch }, r.companyKeys),
+    company: withCompanyKeys(
+      {
+        id: r.accountId,
+        name: (await r.roster()).name,
+        label: r.label,
+        account: r.account,
+        keyEpoch: r.companyKeys.epoch
+      },
+      r.companyKeys
+    ),
     signingSecret: r.seat.signingSecret,
     signedInAs,
     view: listsOfTheStep(r),
@@ -65,7 +110,7 @@ export async function peopleDeviceFor(
     network,
     claimRefusal: signedClaimRefusal,
     registry,
-    entered,
+    entered
   };
 }
 
@@ -94,7 +139,11 @@ export function enteredUntilTaken(base: RecordsEntered) {
     return why;
   };
   return {
-    entered: { enter: async (filed: readonly Filed[]) => { if ((await sent(filed)) !== null) waiting.push(filed); } } as RecordsEntered,
+    entered: {
+      enter: async (filed: readonly Filed[]) => {
+        if ((await sent(filed)) !== null) waiting.push(filed);
+      }
+    } as RecordsEntered,
     waiting: (): boolean => waiting.length > 0,
     settled: async (): Promise<string | null> => {
       while (waiting.length > 0) {
@@ -103,12 +152,15 @@ export function enteredUntilTaken(base: RecordsEntered) {
         waiting.shift();
       }
       return null;
-    },
+    }
   };
 }
 
 /** What an act holds back until its filings are entered: the entries still waiting, and the state it then tells. */
-export interface HeldUntilEntered { readonly entries: ReturnType<typeof enteredUntilTaken>; readonly state: string }
+export interface HeldUntilEntered {
+  readonly entries: ReturnType<typeof enteredUntilTaken>;
+  readonly state: string;
+}
 
 /**
  * The upkeep's last step, then the act's own filings entered: the anchor runs first, since it sends this seat's kept
@@ -116,7 +168,10 @@ export interface HeldUntilEntered { readonly entries: ReturnType<typeof enteredU
  * words `refused` gives, saying whether the anchor was made; a refusal of the upkeep itself is told after the state.
  */
 export async function upkeepThenEntered(
-  ctx: StepContext, last: ActionStep, held: HeldUntilEntered | null, refused: (anchored: boolean, says: string) => Words,
+  ctx: StepContext,
+  last: ActionStep,
+  held: HeldUntilEntered | null,
+  refused: (anchored: boolean, says: string) => Words
 ): Promise<void> {
   let failed: unknown = null;
   try {
@@ -134,8 +189,13 @@ export async function upkeepThenEntered(
 
 /** The employee or vendor the page named, as this device believes them; refuses one it does not, or cannot find. */
 export async function personNamedHere(
-  d: PeopleDevice, kind: 'employee' | 'vendor', id: string, refuse: (key: string) => never,
-): Promise<{ readonly kind: 'employee'; readonly here: PersonHere } | { readonly kind: 'vendor'; readonly here: VendorHere }> {
+  d: PeopleDevice,
+  kind: 'employee' | 'vendor',
+  id: string,
+  refuse: (key: string) => never
+): Promise<
+  { readonly kind: 'employee'; readonly here: PersonHere } | { readonly kind: 'vendor'; readonly here: VendorHere }
+> {
   if (kind === 'employee') {
     const read = await readPeopleHere(d);
     if (read.notBelieved.includes(id)) return refuse('not-believed');
@@ -152,7 +212,9 @@ export async function personNamedHere(
 export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
   const network = reach.network ?? (NETWORK as NetworkName);
   const registry = reach.assets ?? theAssets;
-  const refuse = (key: string): never => { throw new StepRefused(why(key)); };
+  const refuse = (key: string): never => {
+    throw new StepRefused(why(key));
+  };
   return Object.freeze({
     headline: 'act.admit-person.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => {
@@ -166,26 +228,31 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
         { key: 'act.admit-person.shown.checks', from: 'action' },
         { key: 'act.admit-person.shown.admit', from: 'action' },
         ...upkeepShown(),
-        { key: 'act.admit-person.shown.nothing-else', from: 'action' },
+        { key: 'act.admit-person.shown.nothing-else', from: 'action' }
       ];
     },
     checks: [
       { key: 'act.admit-person.check.seat' },
       { key: 'act.admit-person.check.record' },
       { key: 'act.admit-person.check.handed-over' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       const f = intent.fields;
-      if (!KINDS.includes(f['kind'] as never) || (f['person'] ?? '') === '' || (f['personName'] ?? '') === '') return why('not-a-person');
+      if (!KINDS.includes(f['kind'] as never) || (f['person'] ?? '') === '' || (f['personName'] ?? '') === '')
+        return why('not-a-person');
       if (f['fingerprint'] !== undefined && tidyFingerprint(f['fingerprint']) === null) return why('not-a-fingerprint');
       return null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.admit-person.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       let held: HeldUntilEntered | null = null;
@@ -201,12 +268,22 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
           const d = await peopleDeviceFor(ctx, r, network, registry, refuse, entries.entered);
           try {
             /* A version of the record whose entry was lost is entered with the entry its filer signed, then read again. */
-            const found = await readAfterEntering(() => personNamedHere(d, kind, f['person']!, refuse),
+            const found = await readAfterEntering(
+              () => personNamedHere(d, kind, f['person']!, refuse),
               (e) => e instanceof StepRefused && e.words.key === why('not-believed').key,
-              () => recordEnteredHere({ accountId: r.accountId, view: r.stepView.current() }, kind === 'employee' ? 'person' : 'vendor', f['person']!));
+              () =>
+                recordEnteredHere(
+                  { accountId: r.accountId, view: r.stepView.current() },
+                  kind === 'employee' ? 'person' : 'vendor',
+                  f['person']!
+                )
+            );
             const rec = found.kind === 'employee' ? found.here.person : found.here.vendor;
             if (rec.name !== f['personName']) refuse('not-as-shown');
-            const done = found.kind === 'employee' ? found.here.person.status === 'active' : (found.here.vendor.payeeCode ?? null) !== null;
+            const done =
+              found.kind === 'employee'
+                ? found.here.person.status === 'active'
+                : (found.here.vendor.payeeCode ?? null) !== null;
             if (done) {
               ctx.tell({ state: ADMIT_PERSON_STATE.alreadyAdmitted });
               return;
@@ -220,7 +297,8 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof FiledNotEntered) throw new StepRefused(why('filed-not-entered', { says: said(e) }));
-            if (e instanceof PersonNotChanged || e instanceof VendorNotChanged) throw new StepRefused(why('not-admitted', { says: said(e) }));
+            if (e instanceof PersonNotChanged || e instanceof VendorNotChanged)
+              throw new StepRefused(why('not-admitted', { says: said(e) }));
             /* A read the admission rests on that failed filed nothing: said as that read, never as a filing refused. */
             if (e instanceof AdmissionNotRead) throw new StepRefused(why('not-admitted', { says: said(e) }));
             if (e instanceof InvitationRefused) throw new StepRefused(why('not-filed', { says: said(e) }));
@@ -232,14 +310,16 @@ export function admitPersonAction(reach: AdmitPersonReach): ActionDefinition {
             return;
           }
           ctx.tell({ state: ADMIT_PERSON_STATE.admitted });
-        },
+        }
       };
       const last: ActionStep = {
         ...upkeep.last,
-        run: (ctx) => upkeepThenEntered(ctx, upkeep.last, held, (anchored, says) => (anchored
-          ? why('filed-not-entered', { says }) : why('filed-not-entered-nor-anchored', { says }))),
+        run: (ctx) =>
+          upkeepThenEntered(ctx, upkeep.last, held, (anchored, says) =>
+            anchored ? why('filed-not-entered', { says }) : why('filed-not-entered-nor-anchored', { says })
+          )
       };
       return [upkeep.first, seat, admit, last];
-    },
+    }
   } satisfies ActionDefinition);
 }

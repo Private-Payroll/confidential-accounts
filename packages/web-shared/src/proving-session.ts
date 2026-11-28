@@ -142,7 +142,9 @@ export class ProvingSession {
   constructor(options: ProvingSessionOptions) {
     this.now = options.now ?? (() => Date.now());
     this.onChange = options.onChange;
-    this.readyPromise = new Promise<void>((resolve) => { this.readyResolve = resolve; });
+    this.readyPromise = new Promise<void>((resolve) => {
+      this.readyResolve = resolve;
+    });
 
     /*
      * **THE NOTICE LISTENER IS INSTALLED BEFORE THE CLIENT, AND THE ORDER IS
@@ -246,7 +248,12 @@ export class ProvingSession {
     await this.client.drain();
   }
 
-  async enqueue(args: { accountId: string; kind: Job['kind']; signerId: string; payload?: Record<string, unknown> }): Promise<Job> {
+  async enqueue(args: {
+    accountId: string;
+    kind: Job['kind'];
+    signerId: string;
+    payload?: Record<string, unknown>;
+  }): Promise<Job> {
     await this.ready();
     const job = await this.client.enqueue(args);
     this.saw(job);
@@ -292,8 +299,7 @@ export interface ProvingWorkerConfig {
 }
 
 /** The `name` a worker is started under, and the shape it reads back. */
-export const workerNameFor = (config: ProvingWorkerConfig): string =>
-  JSON.stringify({ v: 1, ...config });
+export const workerNameFor = (config: ProvingWorkerConfig): string => JSON.stringify({ v: 1, ...config });
 
 export const configFromWorkerName = (name: string): ProvingWorkerConfig => {
   let parsed: any;
@@ -302,13 +308,13 @@ export const configFromWorkerName = (name: string): ProvingWorkerConfig => {
   } catch {
     throw new Error(
       'the proving worker was started without the settings it needs. It cannot fetch ' +
-        'proving material until it is told where the application serves it from.',
+        'proving material until it is told where the application serves it from.'
     );
   }
   if (typeof parsed?.artefactBase !== 'string' || parsed.artefactBase === '') {
     throw new Error(
       'the proving worker was not told where the application serves its proving material, ' +
-        'so it has nothing to prove with.',
+        'so it has nothing to prove with.'
     );
   }
   return { artefactBase: parsed.artefactBase, dbName: typeof parsed.dbName === 'string' ? parsed.dbName : undefined };

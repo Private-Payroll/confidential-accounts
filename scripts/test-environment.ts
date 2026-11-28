@@ -36,7 +36,7 @@ export function testEnvironmentFor(network: NetworkName, logger: unknown): Envir
       `"${network}", reached at the endpoints its record names:\n` +
       `      node    ${shownAddress(vars.MN_TEST_NODE!)}\n` +
       `      indexer ${shownAddress(vars.MN_TEST_INDEXER!)}` +
-      (vars.MN_TEST_FAUCET ? `\n      faucet  ${shownAddress(vars.MN_TEST_FAUCET)}` : ''),
+      (vars.MN_TEST_FAUCET ? `\n      faucet  ${shownAddress(vars.MN_TEST_FAUCET)}` : '')
   };
 }
 
@@ -49,7 +49,12 @@ export function healthCheckFailure(e: any): string {
   const url = e?.config?.url;
   if (typeof url !== 'string') return message;
   let where = url.split('?')[0]!;
-  try { const u = new URL(url); where = `${u.host}${u.pathname}`; } catch { /* the bare form above */ }
+  try {
+    const u = new URL(url);
+    where = `${u.host}${u.pathname}`;
+  } catch {
+    /* the bare form above */
+  }
   return `${message}, from ${where}`;
 }
 
@@ -77,7 +82,7 @@ export async function startEnvironment(
   env: any,
   container: unknown,
   note: (s: string) => void,
-  attempts = 4,
+  attempts = 4
 ): Promise<any> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -87,7 +92,7 @@ export async function startEnvironment(
       if (attempt === attempts || !looksTransient(why)) throw new Error(why, { cause: e });
       note(`  the environment health check failed (${why}) — attempt ${attempt} of ${attempts}, retrying`);
       note('  its timeout is one second and is written into the testkit, so it cannot be raised here');
-      await new Promise(r => setTimeout(r, 3000 * attempt));
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
     }
   }
   throw new Error('unreachable');

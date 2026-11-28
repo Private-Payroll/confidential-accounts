@@ -10,14 +10,21 @@ import { READ_AT_ONCE } from './records-source.js';
  * Asks `ask` for `items` in parts of at most `size`, all parts at once, and gives back every answer in the order of
  * `items`. An answer that does not hold one entry for each item of its part is refused.
  */
-export async function inParts<T, R>(items: readonly T[], ask: (part: readonly T[]) => Promise<readonly R[]>, size = READ_AT_ONCE): Promise<R[]> {
+export async function inParts<T, R>(
+  items: readonly T[],
+  ask: (part: readonly T[]) => Promise<readonly R[]>,
+  size = READ_AT_ONCE
+): Promise<R[]> {
   const parts: T[][] = [];
   for (let i = 0; i < items.length; i += size) parts.push(items.slice(i, i + size));
-  const answers = await Promise.all(parts.map(async (part) => {
-    const answer = await ask(part);
-    if (answer.length !== part.length) throw new Error(`an answer held ${answer.length} entries for the ${part.length} asked`);
-    return answer;
-  }));
+  const answers = await Promise.all(
+    parts.map(async (part) => {
+      const answer = await ask(part);
+      if (answer.length !== part.length)
+        throw new Error(`an answer held ${answer.length} entries for the ${part.length} asked`);
+      return answer;
+    })
+  );
   return answers.flat();
 }
 
@@ -31,7 +38,10 @@ export class JoinedAsks<T, R> {
   private readonly kept = new Map<string, Promise<R>>();
   private waiting: { readonly key: string; readonly item: T; readonly settle: (r: Promise<R>) => void }[] = [];
 
-  constructor(private readonly keyOf: (item: T) => string, private readonly ask: (part: readonly T[]) => Promise<readonly R[]>) {}
+  constructor(
+    private readonly keyOf: (item: T) => string,
+    private readonly ask: (part: readonly T[]) => Promise<readonly R[]>
+  ) {}
 
   get(item: T): Promise<R> {
     const key = this.keyOf(item);
@@ -46,7 +56,9 @@ export class JoinedAsks<T, R> {
   }
 
   /** Asks for many at once; their answers, in the order asked. */
-  many(items: readonly T[]): Promise<R[]> { return Promise.all(items.map((i) => this.get(i))); }
+  many(items: readonly T[]): Promise<R[]> {
+    return Promise.all(items.map((i) => this.get(i)));
+  }
 
   /** Forgets the answers of the items named, so the next ask of each goes out again. */
   drop(match: (key: string) => boolean): void {
@@ -56,8 +68,13 @@ export class JoinedAsks<T, R> {
   private flush(): void {
     const now = this.waiting;
     this.waiting = [];
-    const all = inParts(now.map((w) => w.item), this.ask);
+    const all = inParts(
+      now.map((w) => w.item),
+      this.ask
+    );
     now.forEach((w, i) => w.settle(all.then((answers) => answers[i]!)));
-    all.catch(() => { for (const w of now) if (this.kept.get(w.key) !== undefined) this.kept.delete(w.key); });
+    all.catch(() => {
+      for (const w of now) if (this.kept.get(w.key) !== undefined) this.kept.delete(w.key);
+    });
   }
 }

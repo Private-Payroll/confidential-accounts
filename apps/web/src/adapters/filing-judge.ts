@@ -2,7 +2,14 @@ import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/com
 import type { WalletIndexer } from 'midnight-identity/profile/unlock';
 import type { Hex } from '../../../../src/core/crypto.js';
 import type { Account, SealedAccount } from '../../../../src/core/types.js';
-import { companyKeyReleasedFor, companyKeysForVaults, seatHeldHere, viewingKeyFor, watchCompanyKeyReleased, type OpenedAccount } from 'vaults-web-shared/keyring.js';
+import {
+  companyKeyReleasedFor,
+  companyKeysForVaults,
+  seatHeldHere,
+  viewingKeyFor,
+  watchCompanyKeyReleased,
+  type OpenedAccount
+} from 'vaults-web-shared/keyring.js';
 import type { CompanyKeyHere } from 'vaults-web-shared/company-key-here.js';
 import type { CompanyKeys } from '../../../../src/core/company-key.js';
 import { signersCheckNoted, type RosterReads } from 'vaults-web-shared/roster-here.js';
@@ -12,7 +19,15 @@ import { treeKeptHere } from 'vaults-web-shared/tree-kept-here.js';
 import { companyJudges, openAccountWith, seatsAdmittedWith } from 'vaults-web-shared/company-judges.js';
 import type { JudgeView } from 'vaults-web-shared/company-view-judges.js';
 import {
-  accountOnPage, indexerOnPage, onTheChain, openOnPage, vaultOnPage, vaultRoundOnPage, whereOnTheChainIn, type OnTheChain, type PageDoors,
+  accountOnPage,
+  indexerOnPage,
+  onTheChain,
+  openOnPage,
+  vaultOnPage,
+  vaultRoundOnPage,
+  whereOnTheChainIn,
+  type OnTheChain,
+  type PageDoors
 } from 'vaults-web-shared/company-view-on-page.js';
 import type { VaultOnChainOnTheWire } from 'vaults-web-shared/vault-worker-client.js';
 import { watchReadsStale } from 'vaults-web-shared/company-reads-stale.js';
@@ -39,7 +54,11 @@ export { ACT_REFUSAL, refusalOf } from './refusals.js';
 export type PageView = JudgeView;
 
 /* Why this page ends a view, as the view says it to whoever reads through it afterwards. */
-export const ENDED = { keyReleased: 'the wallet released the company\'s key', readDone: 'its read is done', movedOn: 'the page moved on' } as const;
+export const ENDED = {
+  keyReleased: "the wallet released the company's key",
+  readDone: 'its read is done',
+  movedOn: 'the page moved on'
+} as const;
 
 type Judges = ReturnType<typeof companyJudges>;
 const judgesFor = new WeakMap<PageView, Judges>();
@@ -63,14 +82,16 @@ const pageDoors: PageDoors = {
     const opened = judgesOf(view).openedInOrder(await sealedIn(view));
     if (opened === null) throw new Fault(FAULT.directoryWithNoKeysHere);
     return (await opened.directory())();
-  },
+  }
 };
 
 /** The view itself for its own company; a judge asked about any other company is a mistake in this code, and reads nothing. */
-export const onlyItsOwn = <V extends { readonly company: string }>(view: V) => (companyId: string): V => {
-  if (companyId !== view.company) throw new Fault(FAULT.judgeAskedAnotherCompany);
-  return view;
-};
+export const onlyItsOwn =
+  <V extends { readonly company: string }>(view: V) =>
+  (companyId: string): V => {
+    if (companyId !== view.company) throw new Fault(FAULT.judgeAskedAnotherCompany);
+    return view;
+  };
 
 /** The judges of one view: every one of them reads the company through it, and through it alone. */
 function judgesOf(view: PageView): Judges {
@@ -89,7 +110,9 @@ function judgesOf(view: PageView): Judges {
     treeKept: () => treeKeptHere(),
     openAccount: (...a) => openAccountWith(roster, ...a),
     seatsAdmittedFor: (...a) => seatsAdmittedWith(roster, ...a),
-    noAccount: () => { throw new Fault(FAULT.companyKeysWithNoAccount); },
+    noAccount: () => {
+      throw new Fault(FAULT.companyKeysWithNoAccount);
+    }
   });
   judgesFor.set(view, judges);
   return judges;
@@ -108,7 +131,11 @@ export const openViewOf = (companyId: string, where?: OnTheChain): PageView => o
  * read made again after an action in the wallet ended the screen's view. `listedAs`, a row of the person's companies
  * the opener already has, names where the company is on the chain, so the view reads no account to find it.
  */
-export const readThroughAViewOf = async <T>(companyId: string, read: (view: PageView) => Promise<T>, listedAs?: unknown): Promise<T> => {
+export const readThroughAViewOf = async <T>(
+  companyId: string,
+  read: (view: PageView) => Promise<T>,
+  listedAs?: unknown
+): Promise<T> => {
   const view = openViewOf(companyId, whereOnTheChainIn(listedAs) ?? undefined);
   try {
     return await read(view);
@@ -124,14 +151,20 @@ export const readThroughAViewOf = async <T>(companyId: string, read: (view: Page
  */
 export const watchViewEndsFor = (companyId: string, ends: (why: string, again: boolean) => void): (() => void) => {
   const stops = [
-    watchCompanyKeyReleased((accountId) => { if (accountId === companyId) ends(ENDED.keyReleased, true); }),
-    watchReadsStale((stale) => { if (stale.company === null || stale.company === companyId) ends(stale.why, stale.signedIn); }),
+    watchCompanyKeyReleased((accountId) => {
+      if (accountId === companyId) ends(ENDED.keyReleased, true);
+    }),
+    watchReadsStale((stale) => {
+      if (stale.company === null || stale.company === companyId) ends(stale.why, stale.signedIn);
+    })
   ];
-  return () => { for (const stop of stops) stop(); };
+  return () => {
+    for (const stop of stops) stop();
+  };
 };
 
 /** The company's account as the service keeps it, read once for the view; it does not wait for the wallet. */
-export const sealedIn = async (view: PageView): Promise<SealedAccount> => await accountOnPage(view) as SealedAccount;
+export const sealedIn = async (view: PageView): Promise<SealedAccount> => (await accountOnPage(view)) as SealedAccount;
 
 /**
  * The company as the wallet is asked to name it: its record, its label and its account on the chain, as the page's
@@ -156,34 +189,55 @@ export const walletIndexerIn = (view: PageView): Promise<WalletIndexer | null> =
  * A vault on the chain at the wallet's indexer, read through the view with every vault the account adopted, once for
  * every tile of the opening; `round` is 0, or one `vaultReadAgainIn` handed out (`vaultOnPage`).
  */
-export const vaultOnChainIn = (view: PageView, vault: string, indexer: WalletIndexer, round = 0): Promise<VaultOnChainOnTheWire> =>
-  vaultOnPage(view, vault, indexer, round);
+export const vaultOnChainIn = (
+  view: PageView,
+  vault: string,
+  indexer: WalletIndexer,
+  round = 0
+): Promise<VaultOnChainOnTheWire> => vaultOnPage(view, vault, indexer, round);
 
 /** A new round of reading the vaults again on this opening, for one press to read again (`vaultRoundOnPage`). */
 export const vaultReadAgainIn = (view: PageView): number => vaultRoundOnPage(view);
 
 /** What a roster is read with on this page. */
-export const rosterReadsIn = (view: PageView, where: OnTheChain): RosterReads => judgesOf(view).rosterReadsFor(view.company, where.company, where.account);
+export const rosterReadsIn = (view: PageView, where: OnTheChain): RosterReads =>
+  judgesOf(view).rosterReadsFor(view.company, where.company, where.account);
 /** The company as this page believes it, its signers read from its roster record only; a refusal is written to the console report, then thrown, and a company with no account yet is said once as that. */
-export const openedHere = (view: PageView, sealed: SealedAccount): Promise<OpenedAccount | null> => signersCheckNoted(() => judgesOf(view).openedHere(sealed), sealed.id);
+export const openedHere = (view: PageView, sealed: SealedAccount): Promise<OpenedAccount | null> =>
+  signersCheckNoted(() => judgesOf(view).openedHere(sealed), sealed.id);
 /** The company opened as a page load reads it: the wallet is never asked (`openedQuietlyHere`). */
-export const openedQuietly = (view: PageView, sealed: SealedAccount): Promise<OpenedAccount | null> => signersCheckNoted(() => judgesOf(view).openedQuietlyHere(sealed), sealed.id);
+export const openedQuietly = (view: PageView, sealed: SealedAccount): Promise<OpenedAccount | null> =>
+  signersCheckNoted(() => judgesOf(view).openedQuietlyHere(sealed), sealed.id);
 
 /** Whether a filing's signer is one the company's directory believes, as this page reads it. */
 export const filingJudgeFor = (
-  view: PageView, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
+  view: PageView,
+  company: CompanyLabel,
+  account: AccountAddress,
+  viewingKey: CompanyKeys,
+  roster: () => Promise<Pick<Account, 'signers'>>
 ): FreshJudge => judgesOf(view).filingJudgeFor(view.company, company, account, viewingKey, roster);
 /** The company's directory as this page believes it, read through the view at each call. */
 export const directoryHereFor = (
-  view: PageView, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
+  view: PageView,
+  company: CompanyLabel,
+  account: AccountAddress,
+  viewingKey: CompanyKeys,
+  roster: () => Promise<Pick<Account, 'signers'>>
 ): DirectoryRead => judgesOf(view).directoryHereFor(view.company, company, account, viewingKey, roster);
 /** The company's directory with every record it names read beside it, which gives a stop in the records as a state and does not refuse the read. */
 export const directoryWithItsRecordsFor = (
-  view: PageView, company: CompanyLabel, account: AccountAddress, viewingKey: CompanyKeys, roster: () => Promise<Pick<Account, 'signers'>>,
+  view: PageView,
+  company: CompanyLabel,
+  account: AccountAddress,
+  viewingKey: CompanyKeys,
+  roster: () => Promise<Pick<Account, 'signers'>>
 ): DirectoryRead => judgesOf(view).directoryWithItsRecordsFor(view.company, company, account, viewingKey, roster);
 /** The company's key of each epoch this page can use, every one found in the directory's filings and believed there. */
 export const companyKeysFor = (
-  view: PageView, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },
+  view: PageView,
+  sealed: SealedAccount,
+  keys: { readonly signingPublicKey: Hex }
 ): Promise<CompanyKeyHere> => judgesOf(view).companyKeysFor(view.company, sealed, keys);
 
 /** What the shared judges are told to keep the wallet out of the read. */
@@ -191,5 +245,7 @@ const QUIETLY = 'not-opened';
 
 /** The company's keys as a page load reads them: the wallet is never asked, and a copy it has not released on this visit is named in `notOpened`. */
 export const companyKeysQuietlyFor = (
-  view: PageView, sealed: SealedAccount, keys: { readonly signingPublicKey: Hex },
+  view: PageView,
+  sealed: SealedAccount,
+  keys: { readonly signingPublicKey: Hex }
 ): Promise<CompanyKeyHere> => judgesOf(view).companyKeysFor(view.company, sealed, keys, QUIETLY);

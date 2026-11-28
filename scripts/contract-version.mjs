@@ -59,7 +59,10 @@ export const filesOf = (root, rel) => (rel.endsWith('.compact') ? contractSource
  */
 export function partHash(root, rel) {
   const [main, ...more] = filesOf(root, rel);
-  const code = [codeOf(readFileSync(join(root, main), 'utf8')), ...more.map((f) => `${f} ${codeOf(readFileSync(join(root, f), 'utf8'))}`)];
+  const code = [
+    codeOf(readFileSync(join(root, main), 'utf8')),
+    ...more.map((f) => `${f} ${codeOf(readFileSync(join(root, f), 'utf8'))}`)
+  ];
   return short(code.join(' '));
 }
 
@@ -76,9 +79,19 @@ export function parts(root = ROOT) {
   return p;
 }
 
-export const version = (p) => short(JSON.stringify(Object.keys(p).sort().map((k) => [k, p[k]])));
+export const version = (p) =>
+  short(
+    JSON.stringify(
+      Object.keys(p)
+        .sort()
+        .map((k) => [k, p[k]])
+    )
+  );
 
-const changed = (old, now) => Object.keys(now).sort().filter((k) => old[k] !== now[k]);
+const changed = (old, now) =>
+  Object.keys(now)
+    .sort()
+    .filter((k) => old[k] !== now[k]);
 
 /**
  * 0 when the compiled folder `dir` (or its keys, with `.keys-version`) was built from this code, by
@@ -89,7 +102,9 @@ export function current(root, dir, rec = '.version') {
   if (!existsSync(f)) return 2;
   const old = { zkir: DEFAULT_ZKIR, ...(JSON.parse(readFileSync(f, 'utf8')).parts ?? {}) };
   const mine = new Set(FOR_DIR[dir.replace(/\/$/, '')] ?? []);
-  const need = changed(old, parts(root)).filter((k) => COMPILED.has(k) && (k === 'compiler' || k === 'zkir' || mine.has(k)));
+  const need = changed(old, parts(root)).filter(
+    (k) => COMPILED.has(k) && (k === 'compiler' || k === 'zkir' || mine.has(k))
+  );
   return need.length ? 1 : 0;
 }
 
@@ -119,17 +134,28 @@ function main(args) {
   if (flag === '--current') return current(root, arg, rec);
   if (flag === '--since') {
     const f = join(root, arg);
-    if (!existsSync(f)) { console.log(`  no recorded version at ${arg}`); return 2; }
+    if (!existsSync(f)) {
+      console.log(`  no recorded version at ${arg}`);
+      return 2;
+    }
     const rec0 = JSON.parse(readFileSync(f, 'utf8'));
     const ch = changed({ zkir: DEFAULT_ZKIR, ...(rec0.parts ?? {}) }, p);
-    if (ch.length === 0) { console.log(`  contract version ${v}: unchanged`); return 0; }
+    if (ch.length === 0) {
+      console.log(`  contract version ${v}: unchanged`);
+      return 0;
+    }
     const comp = ch.filter((k) => COMPILED.has(k));
     console.log(`  CONTRACT VERSION CHANGED: ${rec0.version} -> ${v} (code changed in: ${ch.join(', ')})`);
-    console.log(comp.length ? '  the compiled contracts and their keys must be rebuilt'
-      : '  the witnesses changed: no compile or key build is needed');
+    console.log(
+      comp.length
+        ? '  the compiled contracts and their keys must be rebuilt'
+        : '  the witnesses changed: no compile or key build is needed'
+    );
     return comp.length ? 3 : 4;
   }
-  console.log('usage: node scripts/contract-version.mjs [--record <dir> | --current <dir> [record] | --since <file> | --record-shipped <file>]');
+  console.log(
+    'usage: node scripts/contract-version.mjs [--record <dir> | --current <dir> [record] | --since <file> | --record-shipped <file>]'
+  );
   return 2;
 }
 

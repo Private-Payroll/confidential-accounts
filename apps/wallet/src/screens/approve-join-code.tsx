@@ -43,12 +43,25 @@ const fingerprintOf = (identity: Identity, request: JoinCodeRequest, ownReaderKe
   if (parts.kind === 'signer') return seatKeyFingerprint(parts);
   const committeeKey = committeeKeyFor(identity, request.company);
   if (parts.kind === 'payee') return payeeCodeFingerprint({ committeeKey, parts });
-  return ownReaderKey === null ? '' : readerCodeFingerprint({ committeeKey, person: request.person, parts: { readerKey: ownReaderKey } });
+  return ownReaderKey === null
+    ? ''
+    : readerCodeFingerprint({ committeeKey, person: request.person, parts: { readerKey: ownReaderKey } });
 };
 
 export function ApproveJoinCode({
-  request, identity, channel, consent, whoIsAsking, onDecline, receives, ownPayslipKey, ownReaderKey = null, fingerprintClass, now = Date.now,
-  readLabel = liveLabelReader, answerAtOnce = false,
+  request,
+  identity,
+  channel,
+  consent,
+  whoIsAsking,
+  onDecline,
+  receives,
+  ownPayslipKey,
+  ownReaderKey = null,
+  fingerprintClass,
+  now = Date.now,
+  readLabel = liveLabelReader,
+  answerAtOnce = false
 }: {
   readonly request: JoinCodeRequest;
   readonly identity: Identity;
@@ -91,7 +104,11 @@ export function ApproveJoinCode({
       setStage({ of: 'refused', says: e instanceof JoinCodeRefused ? e.message : 'No code has been made.' });
     }
   }, [consent, stage, channel, onChain, now, identity, request, receives, ownPayslipKey, ownReaderKey]);
-  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && notOurs === null && onChain, sign);
+  useAnswerAtOnce(
+    answerAtOnce,
+    consent.ok && stage.of === 'ready' && channel !== null && notOurs === null && onChain,
+    sign
+  );
 
   const fingerprintBox = <FingerprintBox fingerprint={fingerprint} fingerprintClass={fingerprintClass} />;
 
@@ -103,7 +120,9 @@ export function ApproveJoinCode({
           {`On ${new Date(stage.at).toLocaleString()} this wallet signed your code, and the page that asked now has it. Give it to the person adding you, and read them this fingerprint.`}
         </p>
         {fingerprintBox}
-        <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; Your wallet</a></p>
+        <p style={{ marginTop: '1.5rem' }}>
+          <a href={hrefOf('home')}>&larr; Your wallet</a>
+        </p>
       </>
     );
   }
@@ -113,21 +132,37 @@ export function ApproveJoinCode({
       <h1 data-headline>{`Make a code to join a company, for ${request.requester.origin}`}</h1>
       {stage.of === 'refused' && (
         <StatusAlert tone="danger" title="This wallet will not make this code">
-          <p className="m-0" data-join-code-refused>{stage.says}</p>
+          <p className="m-0" data-join-code-refused>
+            {stage.says}
+          </p>
         </StatusAlert>
       )}
       <WhatTheCodeSigns request={request} fingerprintBox={fingerprintBox} notOurs={notOurs} />
       <Section
-        list={false} box={false} aria-label="The company, as the page names it" title="The company, as the page names it"
+        list={false}
+        box={false}
+        aria-label="The company, as the page names it"
+        title="The company, as the page names it"
         description="Compare this fingerprint with the one the person adding you sees for the company."
       >
-        <CompanyOnChain label={request.company} account={request.account} check={check} fingerprintClass={fingerprintClass} doing="signed"
-          compareWith="the person adding you sees for the company, read out to you by a call, a message or in person, and not through this page" />
+        <CompanyOnChain
+          label={request.company}
+          account={request.account}
+          check={check}
+          fingerprintClass={fingerprintClass}
+          doing="signed"
+          compareWith="the person adding you sees for the company, read out to you by a call, a message or in person, and not through this page"
+        />
       </Section>
       {whoIsAsking}
       <div className="flex flex-wrap gap-2">
         <Button
-          size="lg" type="button" variant="default" onClick={sign} data-approve data-make-join-code
+          size="lg"
+          type="button"
+          variant="default"
+          onClick={sign}
+          data-approve
+          data-make-join-code
           disabled={!consent.ok || stage.of !== 'ready' || channel === null || notOurs !== null || !onChain}
         >
           Make my code
@@ -141,49 +176,74 @@ export function ApproveJoinCode({
 }
 
 /** The fingerprint the person reads out, with its copy button. */
-function FingerprintBox({ fingerprint, fingerprintClass }: { readonly fingerprint: string; readonly fingerprintClass: string }): ReactNode {
+function FingerprintBox({
+  fingerprint,
+  fingerprintClass
+}: {
+  readonly fingerprint: string;
+  readonly fingerprintClass: string;
+}): ReactNode {
   return (
     <div className="mt-1 rounded-md border border-border p-3" data-join-code-fingerprint-box>
       <p className="m-0 text-sm text-muted-foreground">The fingerprint to read to the person adding you</p>
-      <p className={`m-0 font-mono ${fingerprintClass} text-foreground`} data-join-code-fingerprint>{fingerprint}</p>
+      <p className={`m-0 font-mono ${fingerprintClass} text-foreground`} data-join-code-fingerprint>
+        {fingerprint}
+      </p>
       <CopyButton kit text={fingerprint} label="Copy the fingerprint" copied="Copied the fingerprint" />
     </div>
   );
 }
 
 /** What the press signs: the parts the code carries, the company and the person as the page names them, and why it is refused when it is. */
-function WhatTheCodeSigns({ request, fingerprintBox, notOurs }: {
-  readonly request: JoinCodeRequest; readonly fingerprintBox: ReactNode; readonly notOurs: string | null;
+function WhatTheCodeSigns({
+  request,
+  fingerprintBox,
+  notOurs
+}: {
+  readonly request: JoinCodeRequest;
+  readonly fingerprintBox: ReactNode;
+  readonly notOurs: string | null;
 }): ReactNode {
   const parts = request.parts;
   return (
-  <Section
-    list={false} box={false} aria-label="What this wallet signs" title="What this wallet signs"
-    description="One code, with the key this wallet holds for this company."
-  >
-    <p className="m-0 text-sm text-foreground" data-join-code-signs>
-      {parts.kind === 'signer'
-        ? 'That the keys for a seat on this company, as the page names them, are yours. The code carries their public halves and your wallet\'s key for this company, and the page adds what your seat\'s entry on the network is made from (its salt and blinding), so whoever holds the code can see that seat is this wallet\'s. The keys\' secrets stay on the device that made them.'
-        : parts.kind === 'payee'
-          ? 'That you are paid at this address, and that your payslips are sealed to the key this wallet gives for this company. Only these are in the code.'
-          : 'That the records this company lets you read are to be sealed to the key this wallet works out for this company. Only its public half is in the code; the key itself is never kept and never leaves this wallet.'}
-    </p>
-    <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
-    <p className="m-0 font-mono break-all text-sm" data-join-code-company>{request.company}</p>
-    <p className="m-0 text-sm text-muted-foreground">You, as the page signed you in</p>
-    <p className="m-0 font-mono break-all text-sm" data-join-code-person>{request.person}</p>
-    {parts.kind === 'payee' && (
-      <>
-        <p className="m-0 text-sm text-muted-foreground">Where you are paid</p>
-        <p className="m-0 font-mono break-all text-sm" data-join-code-address>{parts.address}</p>
-      </>
-    )}
-    {fingerprintBox}
-    {notOurs !== null && (
-      <StatusAlert tone="danger" role={null} title="This is not yours to sign">
-        <p className="m-0" data-join-code-not-yours>{notOurs}</p>
-      </StatusAlert>
-    )}
-  </Section>
+    <Section
+      list={false}
+      box={false}
+      aria-label="What this wallet signs"
+      title="What this wallet signs"
+      description="One code, with the key this wallet holds for this company."
+    >
+      <p className="m-0 text-sm text-foreground" data-join-code-signs>
+        {parts.kind === 'signer'
+          ? "That the keys for a seat on this company, as the page names them, are yours. The code carries their public halves and your wallet's key for this company, and the page adds what your seat's entry on the network is made from (its salt and blinding), so whoever holds the code can see that seat is this wallet's. The keys' secrets stay on the device that made them."
+          : parts.kind === 'payee'
+            ? 'That you are paid at this address, and that your payslips are sealed to the key this wallet gives for this company. Only these are in the code.'
+            : 'That the records this company lets you read are to be sealed to the key this wallet works out for this company. Only its public half is in the code; the key itself is never kept and never leaves this wallet.'}
+      </p>
+      <p className="m-0 text-sm text-muted-foreground">The company, as the page names it</p>
+      <p className="m-0 font-mono break-all text-sm" data-join-code-company>
+        {request.company}
+      </p>
+      <p className="m-0 text-sm text-muted-foreground">You, as the page signed you in</p>
+      <p className="m-0 font-mono break-all text-sm" data-join-code-person>
+        {request.person}
+      </p>
+      {parts.kind === 'payee' && (
+        <>
+          <p className="m-0 text-sm text-muted-foreground">Where you are paid</p>
+          <p className="m-0 font-mono break-all text-sm" data-join-code-address>
+            {parts.address}
+          </p>
+        </>
+      )}
+      {fingerprintBox}
+      {notOurs !== null && (
+        <StatusAlert tone="danger" role={null} title="This is not yours to sign">
+          <p className="m-0" data-join-code-not-yours>
+            {notOurs}
+          </p>
+        </StatusAlert>
+      )}
+    </Section>
   );
 }

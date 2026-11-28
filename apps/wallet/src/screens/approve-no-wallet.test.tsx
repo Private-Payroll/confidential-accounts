@@ -21,13 +21,15 @@ import { IDBFactory } from 'fake-indexeddb';
  */
 
 /* The page this wallet is built to answer: a window opened by any other page is answered nothing. */
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { Buffer as PolyfillBuffer } from 'buffer/';
@@ -57,7 +59,7 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 /** What the page that opened this window would receive. */
@@ -69,8 +71,10 @@ const withAnOpener = (): void => {
   Object.defineProperty(window, 'opener', {
     configurable: true,
     value: {
-      postMessage: (message: unknown, target: string) => { posted.push({ message, target }); },
-    },
+      postMessage: (message: unknown, target: string) => {
+        posted.push({ message, target });
+      }
+    }
   });
 };
 
@@ -83,7 +87,11 @@ beforeEach(() => {
 });
 
 const mount = (): void => {
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
 };
 
 describe('§1 — a window opened for a request, with no wallet in it', () => {
@@ -127,23 +135,22 @@ describe('§1 — a window opened for a request, with no wallet in it', () => {
     expect(posted.every((p) => Object.keys(p.message as object).length === 1)).toBe(true);
   });
 
-  it('AND A BROWSER THAT HAS A WALLET STILL GETS ITS OWN SCREEN, LISTENING TOO',
-    async () => {
-      /*
-       * The wrapper is not a replacement for the entry screens: `entryFor` is
-       * still the one decision about which screen a phase means. **What every
-       * phase gains is the ping** — a locked wallet is the ordinary case for a
-       * second ask, and it was inside the same twenty seconds.
-       */
-      savePasskey(passkeyFixture('cred-1'), ORIGINAL_SLOT);
-      await saveSecret(newSecret());
-      mount();
-      await waitFor(() => {
-        if (!screen.queryByText('Welcome back.')) throw new Error('waiting');
-      });
-      expect(screen.queryByText('You have no wallet yet.')).toBeNull();
-      expect(posted.map((p) => p.message)).toContainEqual({ schema: READY_PING });
+  it('AND A BROWSER THAT HAS A WALLET STILL GETS ITS OWN SCREEN, LISTENING TOO', async () => {
+    /*
+     * The wrapper is not a replacement for the entry screens: `entryFor` is
+     * still the one decision about which screen a phase means. **What every
+     * phase gains is the ping** — a locked wallet is the ordinary case for a
+     * second ask, and it was inside the same twenty seconds.
+     */
+    savePasskey(passkeyFixture('cred-1'), ORIGINAL_SLOT);
+    await saveSecret(newSecret());
+    mount();
+    await waitFor(() => {
+      if (!screen.queryByText('Welcome back.')) throw new Error('waiting');
     });
+    expect(screen.queryByText('You have no wallet yet.')).toBeNull();
+    expect(posted.map((p) => p.message)).toContainEqual({ schema: READY_PING });
+  });
 
   it('NAMES THE PAGE THAT ASKED BY THE ORIGIN THE BROWSER OBSERVED', async () => {
     /*
@@ -153,22 +160,25 @@ describe('§1 — a window opened for a request, with no wallet in it', () => {
      * against — so the claim is not rendered at all and the fact is.
      */
     const handlers: ((event: MessageEvent) => void)[] = [];
-    const opener = { postMessage: () => { /* not read here */ } };
+    const opener = {
+      postMessage: () => {
+        /* not read here */
+      }
+    };
     const view: ChannelWindow = {
       opener: opener as ChannelWindow['opener'],
-      addEventListener: (_t, h) => { handlers.push(h); },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     };
     render(
       <SessionProvider>
-        <ApproveEntry
-          phase={{ name: 'welcome' }}
-          entry={null}
-          view={view}
-          now={() => NOW}
-          embedder={ASKER}
-        />
-      </SessionProvider>);
+        <ApproveEntry phase={{ name: 'welcome' }} entry={null} view={view} now={() => NOW} embedder={ASKER} />
+      </SessionProvider>
+    );
     for (const h of handlers) {
       h({
         source: opener,
@@ -179,8 +189,8 @@ describe('§1 — a window opened for a request, with no wallet in it', () => {
           requester: { name: 'Something Else Entirely', rdns: 'example.payroll' },
           purpose: 'So we know it is you.',
           nonce: 'n1',
-          expiresAt: NOW + 60_000,
-        },
+          expiresAt: NOW + 60_000
+        }
       } as unknown as MessageEvent);
     }
     await waitFor(() => {

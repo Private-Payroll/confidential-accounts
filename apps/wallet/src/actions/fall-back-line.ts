@@ -4,10 +4,15 @@
  */
 /** Which fallbacks one window used, as the one plain line its end shows. */
 export const FELL_BACK: Readonly<Record<string, string>> = Object.freeze({
-  chain: 'act.fell-back.chain', 'own-dust': 'act.fell-back.own-dust', 'chain,own-dust': 'act.fell-back.chain-own-dust',
-  unread: 'act.fell-back.unread', 'unread,own-dust': 'act.fell-back.unread-own-dust',
-  unreached: 'act.fell-back.unreached', 'unreached,own-dust': 'act.fell-back.unreached-own-dust',
-  'chain,unreached': 'act.fell-back.chain-unreached', 'chain,unreached,own-dust': 'act.fell-back.chain-unreached-own-dust',
+  chain: 'act.fell-back.chain',
+  'own-dust': 'act.fell-back.own-dust',
+  'chain,own-dust': 'act.fell-back.chain-own-dust',
+  unread: 'act.fell-back.unread',
+  'unread,own-dust': 'act.fell-back.unread-own-dust',
+  unreached: 'act.fell-back.unreached',
+  'unreached,own-dust': 'act.fell-back.unreached-own-dust',
+  'chain,unreached': 'act.fell-back.chain-unreached',
+  'chain,unreached,own-dust': 'act.fell-back.chain-unreached-own-dust'
 });
 /* The order the reasons are named in, so each mix of them is one key of `FELL_BACK`. */
 export const FELL_ORDER = ['chain', 'unread', 'unreached', 'own-dust'] as const;

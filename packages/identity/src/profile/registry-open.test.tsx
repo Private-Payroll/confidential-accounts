@@ -52,8 +52,8 @@ const THROWAWAY: AttributeDefinition = define({
     members: [
       { value: 'not-listed', label: 'Not on any list' },
       { value: 'listed', label: 'On a list' },
-      { value: 'inconclusive', label: 'Could not be determined' },
-    ],
+      { value: 'inconclusive', label: 'Could not be determined' }
+    ]
   },
   selfAssertable: false,
   acceptedIssuers: ['a-checking-service'],
@@ -62,9 +62,9 @@ const THROWAWAY: AttributeDefinition = define({
   render: {
     label: 'Sanctions status',
     hint: 'Whether a check found you on a sanctions list. Only a checker can say this.',
-    abbreviate: 'middle',
+    abbreviate: 'middle'
   },
-  provable: ['not-listed'],
+  provable: ['not-listed']
 });
 
 const EXTENDED = registryOf([...REGISTRY.all, THROWAWAY]);
@@ -82,14 +82,22 @@ const memory = (): Port => {
   const map = new Map<string, string>();
   return {
     getItem: (k) => map.get(k) ?? null,
-    setItem: (k, v) => { map.set(k, v); },
-    removeItem: (k) => { map.delete(k); },
+    setItem: (k, v) => {
+      map.set(k, v);
+    },
+    removeItem: (k) => {
+      map.delete(k);
+    }
   };
 };
 
 let port: Port;
-beforeEach(() => { port = memory(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = memory();
+});
+afterEach(() => {
+  cleanup();
+});
 
 const issued = (expiresAt: number | null) => ({
   by: 'issuer' as const,
@@ -97,7 +105,7 @@ const issued = (expiresAt: number | null) => ({
   signature: 'ab12',
   issuedAt: NOW - 86_400_000,
   expiresAt,
-  reachableAt: 'https://a-checking-service.example/again',
+  reachableAt: 'https://a-checking-service.example/again'
 });
 
 describe('the shipped registry does not know it, and that is the baseline', () => {
@@ -109,12 +117,12 @@ describe('the shipped registry does not know it, and that is the baseline', () =
 });
 
 describe('the FORM gets it right with no line changed in the form', () => {
-  it('shows the entry\'s own label and hint', async () => {
+  it("shows the entry's own label and hint", async () => {
     render(<ProfileScreen identity={identity} registry={EXTENDED} port={port} />);
     await screen.findByText('Sanctions status');
-    expect(screen.getByText(
-      'Whether a check found you on a sanctions list. Only a checker can say this.'))
-      .toBeTruthy();
+    expect(
+      screen.getByText('Whether a check found you on a sanctions list. Only a checker can say this.')
+    ).toBeTruthy();
   });
 
   it('OFFERS NO FIELD, because the entry says a person may not state it', async () => {
@@ -127,32 +135,39 @@ describe('the FORM gets it right with no line changed in the form', () => {
     expect(document.querySelector('[data-add="given-name"]')).not.toBeNull();
   });
 
-  it('a shipped attribute still renders a TEXT field and an enum would render a select',
-    async () => {
-      /* The one `switch` in the form is on the RULE'S KIND, which is the cost
-       * `definition.ts` names. Adding an attribute adds no arm to it; this is
-       * that arm working for an entry it has never seen. */
-      const selfAssertableEnum = registryOf([...REGISTRY.all, define({
+  it('a shipped attribute still renders a TEXT field and an enum would render a select', async () => {
+    /* The one `switch` in the form is on the RULE'S KIND, which is the cost
+     * `definition.ts` names. Adding an attribute adds no arm to it; this is
+     * that arm working for an entry it has never seen. */
+    const selfAssertableEnum = registryOf([
+      ...REGISTRY.all,
+      define({
         ...THROWAWAY,
         name: 'a-self-enum',
         selfAssertable: true,
-        render: { label: 'A self enum', hint: '', abbreviate: 'none' },
-      })]);
-      render(<ProfileScreen identity={identity} registry={selfAssertableEnum} port={port} />);
-      await waitFor(() => {
-        if (!document.querySelector('[data-add="a-self-enum"]')) throw new Error('waiting');
-      });
-      expect(document.querySelector('[data-add="a-self-enum"] [data-kind="enum"]')).not.toBeNull();
-      expect(document.querySelector('[data-add="given-name"] [data-kind="text"]')).not.toBeNull();
+        render: { label: 'A self enum', hint: '', abbreviate: 'none' }
+      })
+    ]);
+    render(<ProfileScreen identity={identity} registry={selfAssertableEnum} port={port} />);
+    await waitFor(() => {
+      if (!document.querySelector('[data-add="a-self-enum"]')) throw new Error('waiting');
     });
+    expect(document.querySelector('[data-add="a-self-enum"] [data-kind="enum"]')).not.toBeNull();
+    expect(document.querySelector('[data-add="given-name"] [data-kind="text"]')).not.toBeNull();
+  });
 });
 
 describe('the ISSUER path, exercised before any issuer exists', () => {
   it('a CLAIM about it is held, with no value invented for the attribute', async () => {
     const profile = recordIssued(
-      emptyProfile(NOW), EXTENDED, 'sanctions-status',
-      { of: 'predicate', predicate: 'not-listed', result: true }, '',
-      issued(NOW + 30 * 86_400_000), NOW);
+      emptyProfile(NOW),
+      EXTENDED,
+      'sanctions-status',
+      { of: 'predicate', predicate: 'not-listed', result: true },
+      '',
+      issued(NOW + 30 * 86_400_000),
+      NOW
+    );
     await save(port, identity, profile);
     render(<ProfileScreen identity={identity} registry={EXTENDED} port={port} />);
 
@@ -167,8 +182,14 @@ describe('the ISSUER path, exercised before any issuer exists', () => {
 
   it('AND IT LOOKS NOTHING LIKE A SELF-ASSERTED ONE — §3.1', async () => {
     let profile = recordIssued(
-      emptyProfile(NOW), EXTENDED, 'sanctions-status',
-      { of: 'predicate', predicate: 'not-listed', result: true }, '', issued(null), NOW);
+      emptyProfile(NOW),
+      EXTENDED,
+      'sanctions-status',
+      { of: 'predicate', predicate: 'not-listed', result: true },
+      '',
+      issued(null),
+      NOW
+    );
     profile = selfAssert(profile, EXTENDED, 'given-name', 'Sarah', '', NOW);
     await save(port, identity, profile);
     render(<ProfileScreen identity={identity} registry={EXTENDED} port={port} />);
@@ -183,8 +204,14 @@ describe('the ISSUER path, exercised before any issuer exists', () => {
 
   it('a claim cannot be edited, and the screen says why', async () => {
     const profile = recordIssued(
-      emptyProfile(NOW), EXTENDED, 'sanctions-status',
-      { of: 'predicate', predicate: 'not-listed', result: true }, '', issued(null), NOW);
+      emptyProfile(NOW),
+      EXTENDED,
+      'sanctions-status',
+      { of: 'predicate', predicate: 'not-listed', result: true },
+      '',
+      issued(null),
+      NOW
+    );
     await save(port, identity, profile);
     render(<ProfileScreen identity={identity} registry={EXTENDED} port={port} />);
     await screen.findByText('not-listed: yes');
@@ -192,141 +219,160 @@ describe('the ISSUER path, exercised before any issuer exists', () => {
   });
 });
 
-describe('the APPROVAL SCREEN gets it right with no line changed in the approval screen',
-  () => {
-    const wire = (attribute: string) => ({
-      schema: 'midnight-identity/disclosure-request/v1',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-      purpose: 'To pay you.',
-      wants: [{ attribute, required: true, reason: 'Our regulator makes us.' }],
-      nonce: 'n1',
-      expiresAt: NOW + 600_000,
-    });
+describe('the APPROVAL SCREEN gets it right with no line changed in the approval screen', () => {
+  const wire = (attribute: string) => ({
+    schema: 'midnight-identity/disclosure-request/v1',
+    requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+    purpose: 'To pay you.',
+    wants: [{ attribute, required: true, reason: 'Our regulator makes us.' }],
+    nonce: 'n1',
+    expiresAt: NOW + 600_000
+  });
 
-    const openWith = (data: unknown, registry = EXTENDED) => {
-      const sent: { message: unknown; target: string }[] = [];
-      const opener = {
-        postMessage: (message: unknown, target: string) => { sent.push({ message, target }); },
-      };
-      const handlers: ((event: MessageEvent) => void)[] = [];
-      const view: ChannelWindow = {
-        opener: opener as ChannelWindow['opener'],
-        addEventListener: (_t, h) => { handlers.push(h); },
-        removeEventListener: () => { /* torn down by cleanup */ },
-      };
-      render(
-        <Approve
-          identity={identity}
-          secret={SECRET}
-          registry={registry}
-          port={port}
-          view={view}
-          now={() => NOW}
-          embedder="https://payroll-a.example"
-        />);
-      for (const h of handlers) {
-        h({ source: opener, origin: 'https://payroll-a.example', data } as unknown as MessageEvent);
+  const openWith = (data: unknown, registry = EXTENDED) => {
+    const sent: { message: unknown; target: string }[] = [];
+    const opener = {
+      postMessage: (message: unknown, target: string) => {
+        sent.push({ message, target });
       }
-      return sent;
     };
+    const handlers: ((event: MessageEvent) => void)[] = [];
+    const view: ChannelWindow = {
+      opener: opener as ChannelWindow['opener'],
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
+    };
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        registry={registry}
+        port={port}
+        view={view}
+        now={() => NOW}
+        embedder="https://payroll-a.example"
+      />
+    );
+    for (const h of handlers) {
+      h({ source: opener, origin: 'https://payroll-a.example', data } as unknown as MessageEvent);
+    }
+    return sent;
+  };
 
-    it('renders a row for it, labelled and marked sensitive, from the entry alone', async () => {
-      const profile = recordIssued(
-        emptyProfile(NOW), EXTENDED, 'sanctions-status',
-        { of: 'predicate', predicate: 'not-listed', result: true }, '', issued(null), NOW);
-      await save(port, identity, profile);
-      openWith(wire('sanctions-status'));
-      const row = await waitFor(() => {
-        const found = document.querySelector('[data-row="sanctions-status"]');
-        if (!found) throw new Error('no row yet');
-        return found;
-      });
-      expect(row.getAttribute('data-sensitivity')).toBe('sensitive');
-      expect(row.getAttribute('data-required')).toBe('yes');
-      expect(row.textContent).toContain('Sanctions status');
-      expect(row.textContent).toContain('Our regulator makes us.');
+  it('renders a row for it, labelled and marked sensitive, from the entry alone', async () => {
+    const profile = recordIssued(
+      emptyProfile(NOW),
+      EXTENDED,
+      'sanctions-status',
+      { of: 'predicate', predicate: 'not-listed', result: true },
+      '',
+      issued(null),
+      NOW
+    );
+    await save(port, identity, profile);
+    openWith(wire('sanctions-status'));
+    const row = await waitFor(() => {
+      const found = document.querySelector('[data-row="sanctions-status"]');
+      if (!found) throw new Error('no row yet');
+      return found;
+    });
+    expect(row.getAttribute('data-sensitivity')).toBe('sensitive');
+    expect(row.getAttribute('data-required')).toBe('yes');
+    expect(row.textContent).toContain('Sanctions status');
+    expect(row.textContent).toContain('Our regulator makes us.');
+  });
+
+  it('OFFERS NO WAY TO TYPE IT IN, because the entry says so', async () => {
+    openWith(wire('sanctions-status'));
+    await waitFor(() => {
+      if (!document.querySelector('[data-row="sanctions-status"]')) throw new Error('waiting');
+    });
+    expect(document.querySelector('[data-fill="sanctions-status"]')).toBeNull();
+    expect(screen.getByText(/not something you can state about yourself/u)).toBeTruthy();
+  });
+
+  it('THE WHOLE WAY THROUGH: the claim is chosen, signed, and VERIFIES', async () => {
+    const profile = recordIssued(
+      emptyProfile(NOW),
+      EXTENDED,
+      'sanctions-status',
+      { of: 'predicate', predicate: 'not-listed', result: true },
+      '',
+      issued(NOW + 30 * 86_400_000),
+      NOW
+    );
+    await save(port, identity, profile);
+    const sent = openWith(wire('sanctions-status'));
+
+    const option = await waitFor(() => {
+      const found = document.querySelector<HTMLInputElement>('[data-row="sanctions-status"] [data-option] input');
+      if (!found) throw new Error('no option yet');
+      return found;
+    });
+    fireEvent.click(option);
+    /* The button is written in the OBSERVED origin's words now. The
+     * same button, found where it is. */
+    fireEvent.click(screen.getByText('Send these to https://payroll-a.example'));
+
+    await waitFor(() => {
+      if (sent.length < 2) throw new Error('nothing answered yet');
+    });
+    const response = sent[sent.length - 1]!;
+    expect(response.target).toBe('https://payroll-a.example');
+
+    const body = response.message as Parameters<typeof verify>[0];
+    /* The claim crossed as a PREDICATE, with its issuer and its date, and
+     * with no value invented for the attribute it is about. */
+    expect(body.payload.disclosed).toHaveLength(1);
+    expect(body.payload.disclosed[0]!.about).toBe('sanctions-status');
+    expect(body.payload.disclosed[0]!.says).toEqual({ of: 'predicate', predicate: 'not-listed', result: true });
+    expect(body.payload.disclosed[0]!.asserted).toMatchObject({
+      by: 'issuer',
+      issuer: 'a-checking-service'
     });
 
-    it('OFFERS NO WAY TO TYPE IT IN, because the entry says so', async () => {
-      openWith(wire('sanctions-status'));
-      await waitFor(() => {
-        if (!document.querySelector('[data-row="sanctions-status"]')) throw new Error('waiting');
-      });
-      expect(document.querySelector('[data-fill="sanctions-status"]')).toBeNull();
-      expect(screen.getByText(/not something you can state about yourself/u)).toBeTruthy();
-    });
-
-    it('THE WHOLE WAY THROUGH: the claim is chosen, signed, and VERIFIES', async () => {
-      const profile = recordIssued(
-        emptyProfile(NOW), EXTENDED, 'sanctions-status',
-        { of: 'predicate', predicate: 'not-listed', result: true }, '',
-        issued(NOW + 30 * 86_400_000), NOW);
-      await save(port, identity, profile);
-      const sent = openWith(wire('sanctions-status'));
-
-      const option = await waitFor(() => {
-        const found = document.querySelector<HTMLInputElement>(
-          '[data-row="sanctions-status"] [data-option] input');
-        if (!found) throw new Error('no option yet');
-        return found;
-      });
-      fireEvent.click(option);
-      /* The button is written in the OBSERVED origin's words now. The
-       * same button, found where it is. */
-      fireEvent.click(screen.getByText('Send these to https://payroll-a.example'));
-
-      await waitFor(() => {
-        if (sent.length < 2) throw new Error('nothing answered yet');
-      });
-      const response = sent[sent.length - 1]!;
-      expect(response.target).toBe('https://payroll-a.example');
-
-      const body = response.message as Parameters<typeof verify>[0];
-      /* The claim crossed as a PREDICATE, with its issuer and its date, and
-       * with no value invented for the attribute it is about. */
-      expect(body.payload.disclosed).toHaveLength(1);
-      expect(body.payload.disclosed[0]!.about).toBe('sanctions-status');
-      expect(body.payload.disclosed[0]!.says)
-        .toEqual({ of: 'predicate', predicate: 'not-listed', result: true });
-      expect(body.payload.disclosed[0]!.asserted).toMatchObject({
-        by: 'issuer', issuer: 'a-checking-service',
-      });
-
-      /* And the recipient's own check passes — the same function the payroll
-       * product will run. */
-      expect(verify(body, {
+    /* And the recipient's own check passes — the same function the payroll
+     * product will run. */
+    expect(
+      verify(body, {
         atOrigin: 'https://payroll-a.example',
         expectingNonce: 'n1',
         payingAddress: body.payload.address,
         networkId: NETWORK,
-        now: NOW,
-      })).toEqual({ ok: true });
+        now: NOW
+      })
+    ).toEqual({ ok: true });
 
-      /* AND IS REFUSED AT A SECOND RECIPIENT. */
-      expect(verify(body, {
+    /* AND IS REFUSED AT A SECOND RECIPIENT. */
+    expect(
+      verify(body, {
         atOrigin: 'https://payroll-b.example',
         expectingNonce: 'n1',
         payingAddress: body.payload.address,
         networkId: NETWORK,
-        now: NOW,
-      })).toMatchObject({ ok: false, code: 'origin-mismatch' });
-    });
-
-    it('the SHIPPED registry shows the same name as unknown, and invents nothing',
-      async () => {
-        /* The other half of §3.4: an application asking for a name our
-         * vocabulary does not know gets a row that says so. It is not dropped
-         * — a request asking for one thing and a screen showing none is a
-         * screen lying about what was asked — and it does not become an
-         * attribute. */
-        openWith(wire('sanctions-status'), REGISTRY);
-        const row = await waitFor(() => {
-          const found = document.querySelector('[data-row="sanctions-status"]');
-          if (!found) throw new Error('no row yet');
-          return found;
-        });
-        expect(row.hasAttribute('data-unknown')).toBe(true);
-        expect(row.textContent).toContain('will not invent it');
-        expect(REGISTRY.knows('sanctions-status')).toBe(false);
-      });
+        now: NOW
+      })
+    ).toMatchObject({ ok: false, code: 'origin-mismatch' });
   });
+
+  it('the SHIPPED registry shows the same name as unknown, and invents nothing', async () => {
+    /* The other half of §3.4: an application asking for a name our
+     * vocabulary does not know gets a row that says so. It is not dropped
+     * — a request asking for one thing and a screen showing none is a
+     * screen lying about what was asked — and it does not become an
+     * attribute. */
+    openWith(wire('sanctions-status'), REGISTRY);
+    const row = await waitFor(() => {
+      const found = document.querySelector('[data-row="sanctions-status"]');
+      if (!found) throw new Error('no row yet');
+      return found;
+    });
+    expect(row.hasAttribute('data-unknown')).toBe(true);
+    expect(row.textContent).toContain('will not invent it');
+    expect(REGISTRY.knows('sanctions-status')).toBe(false);
+  });
+});

@@ -6,12 +6,8 @@ import { NETWORK } from '../config.js';
 import { ownedAddressFor } from '../accounts/owned-address.js';
 import type { OwnedAddress } from '../accounts/owned-address.js';
 import { splitShortAddress } from '../accounts/short-address.js';
-import {
-  MAIN_ACCOUNT, OFFERED_UP_FRONT, SUBWALLET_ACCOUNTS, WALLET_ACCOUNTS,
-} from '../accounts/subwallets.js';
-import {
-  Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
-} from 'vaults-ui';
+import { MAIN_ACCOUNT, OFFERED_UP_FRONT, SUBWALLET_ACCOUNTS, WALLET_ACCOUNTS } from '../accounts/subwallets.js';
+import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from 'vaults-ui';
 import { Item } from 'vaults-ui/components/item';
 import { GLYPH, Glyph } from '../glyphs.js';
 import { Mark } from './mark.js';
@@ -57,7 +53,12 @@ export function AddressEnds({ short }: { readonly short: string }): ReactNode {
   return (
     <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">
       {parts.head}
-      {parts.tail !== null && <><span className="text-muted-foreground">…</span>{parts.tail}</>}
+      {parts.tail !== null && (
+        <>
+          <span className="text-muted-foreground">…</span>
+          {parts.tail}
+        </>
+      )}
     </span>
   );
 }
@@ -68,7 +69,12 @@ export const endsOf = (short: string): string => {
   return parts.tail === null ? parts.head : `${parts.head}…${parts.tail}`;
 };
 
-function WalletRow({ owned, current, balance, onChoose }: {
+function WalletRow({
+  owned,
+  current,
+  balance,
+  onChoose
+}: {
   readonly owned: OwnedAddress;
   readonly current: boolean;
   /** What is known about this slot's money, or nothing at all. */
@@ -94,43 +100,45 @@ function WalletRow({ owned, current, balance, onChoose }: {
         aria-current={current ? 'true' : undefined}
         onClick={onChoose}
       >
-      <Mark address={owned.address.bech32} account={owned.account} size={30} />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-foreground">{owned.name}</span>
-        <span className="block truncate">
-          <AddressEnds short={shortPayee(owned.address)} />
+        <Mark address={owned.address.bech32} account={owned.account} size={30} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold text-foreground">{owned.name}</span>
+          <span className="block truncate">
+            <AddressEnds short={shortPayee(owned.address)} />
+          </span>
         </span>
-      </span>
-      {/* THE COLUMN IS FIXED, AND THAT IS THE WHOLE OF THE FIX.
-        *
-        * It was `shrink-0` with no width, and the balance line inside it was
-        * `whitespace-nowrap` (`shell/wallet-balances.tsx`): an unbreakable
-        * forty-character run that the row's minimum width could not go below.
-        * `DialogContent` is a `grid` with `overflow-y-auto` and no `overflow-x`
-        * (the kit's dialog), so its implicit column sized itself to that
-        * minimum and the browser resolved the other axis to `auto` — which is
-        * why the panel grew a horizontal scrollbar SECONDS after opening, when
-        * the stored checkpoints answered and `never checked` became a number
-        * with a moment beside it. The nowrap is gone; this width is what stops
-        * it coming back through anything else printed here.
-        *
-        * A WIDTH RATHER THAN A MAX-WIDTH, because the requirement is that the
-        * dialog does not JUMP. A column sized to its content changes size when
-        * the content arrives and drags every other column with it; this one is
-        * the same width before the sweep answers and after it, so the space is
-        * reserved rather than found.
-        *
-        * 7rem below the layout switch and 8rem above it. Above it the panel is
-        * a fixed 26rem and can spare the room; below it the panel is as wide as
-        * the phone, and the address beside it is seventeen monospaced
-        * characters that must not be shortened to buy space here. */}
-      <span className="w-28 shrink-0 text-right md:w-32">
-        <span className="block truncate text-xs text-muted-foreground">{owned.slot}</span>
-        {balance !== undefined && <span className="block">{balance}</span>}
-      </span>
-      {current
-          ? <Glyph icon={GLYPH.chosen} className="size-4 text-primary" />
-          : <span className="size-4 shrink-0" aria-hidden="true" />}
+        {/* THE COLUMN IS FIXED, AND THAT IS THE WHOLE OF THE FIX.
+         *
+         * It was `shrink-0` with no width, and the balance line inside it was
+         * `whitespace-nowrap` (`shell/wallet-balances.tsx`): an unbreakable
+         * forty-character run that the row's minimum width could not go below.
+         * `DialogContent` is a `grid` with `overflow-y-auto` and no `overflow-x`
+         * (the kit's dialog), so its implicit column sized itself to that
+         * minimum and the browser resolved the other axis to `auto` — which is
+         * why the panel grew a horizontal scrollbar SECONDS after opening, when
+         * the stored checkpoints answered and `never checked` became a number
+         * with a moment beside it. The nowrap is gone; this width is what stops
+         * it coming back through anything else printed here.
+         *
+         * A WIDTH RATHER THAN A MAX-WIDTH, because the requirement is that the
+         * dialog does not JUMP. A column sized to its content changes size when
+         * the content arrives and drags every other column with it; this one is
+         * the same width before the sweep answers and after it, so the space is
+         * reserved rather than found.
+         *
+         * 7rem below the layout switch and 8rem above it. Above it the panel is
+         * a fixed 26rem and can spare the room; below it the panel is as wide as
+         * the phone, and the address beside it is seventeen monospaced
+         * characters that must not be shortened to buy space here. */}
+        <span className="w-28 shrink-0 text-right md:w-32">
+          <span className="block truncate text-xs text-muted-foreground">{owned.slot}</span>
+          {balance !== undefined && <span className="block">{balance}</span>}
+        </span>
+        {current ? (
+          <Glyph icon={GLYPH.chosen} className="size-4 text-primary" />
+        ) : (
+          <span className="size-4 shrink-0" aria-hidden="true" />
+        )}
       </button>
     </Item>
   );
@@ -175,7 +183,12 @@ function WalletRow({ owned, current, balance, onChoose }: {
  * has opened. `showAll` re-renders this component without unmounting it, so
  * a sweep in flight is unaffected.
  */
-function WalletList({ identity, names, account, onSwitch }: {
+function WalletList({
+  identity,
+  names,
+  account,
+  onSwitch
+}: {
   readonly identity: Identity;
   readonly names: Readonly<Record<string, string>>;
   readonly account: number;
@@ -183,16 +196,14 @@ function WalletList({ identity, names, account, onSwitch }: {
 }): ReactNode {
   const { rows, sweeping, sweep } = useWalletBalances(identity);
   const [showAll, setShowAll] = useState(
-    () => !SUBWALLET_ACCOUNTS.slice(0, OFFERED_UP_FRONT).concat(MAIN_ACCOUNT).includes(account),
+    () => !SUBWALLET_ACCOUNTS.slice(0, OFFERED_UP_FRONT).concat(MAIN_ACCOUNT).includes(account)
   );
-  const offered = showAll
-    ? WALLET_ACCOUNTS
-    : [MAIN_ACCOUNT, ...SUBWALLET_ACCOUNTS.slice(0, OFFERED_UP_FRONT)];
+  const offered = showAll ? WALLET_ACCOUNTS : [MAIN_ACCOUNT, ...SUBWALLET_ACCOUNTS.slice(0, OFFERED_UP_FRONT)];
   const owned = useMemo(
     () => offered.map((a) => ownedAddressFor(identity, a, names, NETWORK)),
     /* `showAll` stands in for `offered`, which is derived from it — listing the
      * array itself would rebuild eleven addresses on every render. */
-    [identity, names, showAll],
+    [identity, names, showAll]
   );
   return (
     /* `min-w-0` — the list is the grid item inside `DialogContent`, and a grid
@@ -215,26 +226,28 @@ function WalletList({ identity, names, account, onSwitch }: {
       )}
 
       {/* THE SWEEP, AND ITS OWN PARAGRAPH — both moved here from Home's card
-        * together. The words are the ones that were on
-        * that card: they say what the sweep costs, that nothing happens
-        * unasked, and what these rows do NOT read. Moved, not rewritten —
-        * except for the last clause, which named the missing sweep as *not
-        * built yet* and now names it as *coming soon*, because that is the one
-        * phrase this wallet uses for anything planned (`screens/explore.tsx`
-        * carries the decision). The admission itself is unchanged, and it is
-        * the part that matters: the limit is SAID here rather than implied. */}
+       * together. The words are the ones that were on
+       * that card: they say what the sweep costs, that nothing happens
+       * unasked, and what these rows do NOT read. Moved, not rewritten —
+       * except for the last clause, which named the missing sweep as *not
+       * built yet* and now names it as *coming soon*, because that is the one
+       * phrase this wallet uses for anything planned (`screens/explore.tsx`
+       * carries the decision). The admission itself is unchanged, and it is
+       * the part that matters: the limit is SAID here rather than implied. */}
       <p className="m-0 mt-3 text-xs text-muted-foreground">
-        Checking asks the indexer about each wallet in turn, one at a time — nothing
-        syncs in the background unasked. These rows read the SHIELDED balance only; the
-        open wallet&rsquo;s card reads both kinds. A sweep that reads unshielded NIGHT
-        too is coming soon — said here rather than implied.
+        Checking asks the indexer about each wallet in turn, one at a time — nothing syncs in the background unasked.
+        These rows read the SHIELDED balance only; the open wallet&rsquo;s card reads both kinds. A sweep that reads
+        unshielded NIGHT too is coming soon — said here rather than implied.
       </p>
       <Button
         type="button"
         variant="outline"
         className="mt-2 self-start"
         disabled={sweeping}
-        onClick={() => { setShowAll(true); sweep(); }}
+        onClick={() => {
+          setShowAll(true);
+          sweep();
+        }}
       >
         {sweeping ? 'Checking every wallet…' : `Check all ${WALLET_ACCOUNTS.length} wallets`}
       </Button>
@@ -249,7 +262,11 @@ function WalletList({ identity, names, account, onSwitch }: {
  * caller keeps its own element — the sidebar's `SidebarMenuButton`, the place
  * header's chip, Home's plain button — and this file keeps the behaviour.
  */
-export function WalletSwitcher({ identity, secret, children }: {
+export function WalletSwitcher({
+  identity,
+  secret,
+  children
+}: {
   readonly identity: Identity;
   readonly secret: Secret;
   readonly children: ReactNode;
@@ -273,10 +290,10 @@ export function WalletSwitcher({ identity, secret, children }: {
         <DialogHeader>
           <DialogTitle>Which wallet</DialogTitle>
           {/* THE HEADER IS WHERE THE WALLET IDENTIFIES ITSELF AS A
-            * WHOLE, so this is the name of the wallet that HOLDS the rows
-            * below, never one of them. The sentence says which is which,
-            * because "Main wallet" and "Subwallet 3" are accounts inside it
-            * and the copy must not let those two ideas trade places. */}
+           * WHOLE, so this is the name of the wallet that HOLDS the rows
+           * below, never one of them. The sentence says which is which,
+           * because "Main wallet" and "Subwallet 3" are accounts inside it
+           * and the copy must not let those two ideas trade places. */}
           {wallet !== null && (
             <p className="m-0 text-sm font-semibold text-foreground" data-whole-wallet="">
               {wallet}
@@ -284,16 +301,10 @@ export function WalletSwitcher({ identity, secret, children }: {
           )}
           <DialogDescription>
             {wallet !== null && `These are the accounts in ${wallet}. `}
-            Every slot exists whether or not it has been used, and each one has its own
-            address and its own money.
+            Every slot exists whether or not it has been used, and each one has its own address and its own money.
           </DialogDescription>
         </DialogHeader>
-        <WalletList
-          identity={identity}
-          names={names}
-          account={account}
-          onSwitch={switchTo}
-        />
+        <WalletList identity={identity} names={names} account={account} onSwitch={switchTo} />
       </DialogContent>
     </Dialog>
   );

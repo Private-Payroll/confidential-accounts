@@ -38,18 +38,27 @@ export const READER_OF = { open: 'open', refused: 'refused' } as const;
 export const READER_REFUSED = { notTheCompanys: 'not-the-companys', unreached: 'unreached' } as const;
 
 export type ReaderCompany =
-  | { readonly of: typeof READER_OF.open; readonly id: string; readonly label: CompanyLabel; readonly runs: ReaderRead<ReaderRuns>; readonly proposals: ReaderRead<readonly ProposalRow[]> }
+  | {
+      readonly of: typeof READER_OF.open;
+      readonly id: string;
+      readonly label: CompanyLabel;
+      readonly runs: ReaderRead<ReaderRuns>;
+      readonly proposals: ReaderRead<readonly ProposalRow[]>;
+    }
   | { readonly of: typeof READER_OF.refused; readonly why: (typeof READER_REFUSED)[keyof typeof READER_REFUSED] };
 
 type SealedWithRoster = SealedAccount & { readonly roster?: SealedCompanyRecord | null };
 type Signers = readonly (SignerRow & { readonly signingPublicKey?: string })[];
 
 /** One of the company's lists as the reader's view read it, with its whole numbers read back as whole numbers. */
-const listed = async (view: ReaderView, kind: typeof LIST.runs | typeof LIST.proposals): Promise<unknown> => reviveBigints(await view.list(kind));
+const listed = async (view: ReaderView, kind: typeof LIST.runs | typeof LIST.proposals): Promise<unknown> =>
+  reviveBigints(await view.list(kind));
 
 /** One read on its own: a failure is handed on as unreadable, and a "not found" as outside this reader's access. */
 async function readerRead<T>(read: () => Promise<T>): Promise<ReaderRead<T>> {
-  try { return { of: READ.read, value: await read() }; } catch (e) {
+  try {
+    return { of: READ.read, value: await read() };
+  } catch (e) {
     return e instanceof NotOnTheService ? { of: NOT_IN_ACCESS } : { of: READ.unreadable };
   }
 }
@@ -59,7 +68,11 @@ function signersOf(held: PurposeWrapsHeld, sealed: SealedWithRoster): Signers {
   const roster = sealed.roster ?? null;
   if (roster === null || roster.company !== held.accountId) return [];
   try {
-    return openRoster(roster, purposeKeysAt(held, roster.keyEpoch)).signers.map((s) => ({ id: s.id, name: s.name, signingPublicKey: s.signingPublicKey }));
+    return openRoster(roster, purposeKeysAt(held, roster.keyEpoch)).signers.map((s) => ({
+      id: s.id,
+      name: s.name,
+      signingPublicKey: s.signingPublicKey
+    }));
   } catch {
     /* A roster that does not open with this reader's keys names nobody: the rows then name no raiser, and nothing else is lost. */
     return [];
@@ -80,11 +93,15 @@ interface ReaderRunUnread {
 
 /** The runs the reader's payroll key opens, each opened on its own so one sealed at an epoch the grant never wrapped is listed, not fatal. */
 async function readReaderRuns(held: PurposeWrapsHeld, view: ReaderView): Promise<RunsOpened> {
-  const served = await listed(view, LIST.runs) as SealedRun[];
+  const served = (await listed(view, LIST.runs)) as SealedRun[];
   const opened: PayrollRun[] = [];
   const unreadable: ReaderRunUnread[] = [];
   for (const r of served) {
-    try { opened.push(openRun(r, held)); } catch { unreadable.push({ id: r.id, period: r.period }); }
+    try {
+      opened.push(openRun(r, held));
+    } catch {
+      unreadable.push({ id: r.id, period: r.period });
+    }
   }
   return { opened, unreadable };
 }
@@ -100,9 +117,13 @@ const chainAt = (view: ReaderView): ChainReadAt => ({ company: view.company, ind
 
 /** The proposals, as the chain holds them and as the roster's signers filed them, each opened with the proposals key of its epoch. */
 async function readReaderProposals(
-  held: PurposeWrapsHeld, view: ReaderView, link: ReaderLink, sealed: SealedWithRoster, runs: readonly PayrollRun[],
+  held: PurposeWrapsHeld,
+  view: ReaderView,
+  link: ReaderLink,
+  sealed: SealedWithRoster,
+  runs: readonly PayrollRun[]
 ): Promise<readonly ProposalRow[]> {
-  const served = await listed(view, LIST.proposals) as SealedProposal[];
+  const served = (await listed(view, LIST.proposals)) as SealedProposal[];
   const here = await proposalsHere(chainAt(view), sealed, served, readerDirectoryIn(view, link, held), held);
   const signers = signersOf(held, sealed);
   return [...here.believed.map((p) => proposalRow(p.opened, p.standing, signers, runs)), ...here.unreadable];
@@ -120,14 +141,27 @@ async function readThrough(held: PurposeWrapsHeld, link: ReaderLink, view: Reade
   } catch {
     return { of: READER_OF.refused, why: READER_REFUSED.unreached };
   }
-  if (held.accountId !== link.id || sealed.companyLabel !== link.label || sealed.contractAddress?.toLowerCase() !== link.account.toLowerCase()) {
+  if (
+    held.accountId !== link.id ||
+    sealed.companyLabel !== link.label ||
+    sealed.contractAddress?.toLowerCase() !== link.account.toLowerCase()
+  ) {
     return { of: READER_OF.refused, why: READER_REFUSED.notTheCompanys };
   }
   const opened = await readerRead(() => readReaderRuns(held, view));
-  const runs: ReaderRead<ReaderRuns> = opened.of !== READ.read ? opened : await readerRead(async () => ({
-    rows: await runsPaidFromTheChain(chainAt(view), sealed, opened.value.opened.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))),
-    unreadable: opened.value.unreadable,
-  }));
-  const proposals = await readerRead(() => readReaderProposals(held, view, link, sealed, opened.of === READ.read ? opened.value.opened : []));
+  const runs: ReaderRead<ReaderRuns> =
+    opened.of !== READ.read
+      ? opened
+      : await readerRead(async () => ({
+          rows: await runsPaidFromTheChain(
+            chainAt(view),
+            sealed,
+            opened.value.opened.map((r) => runRow(r)).sort((a, b) => b.period.localeCompare(a.period))
+          ),
+          unreadable: opened.value.unreadable
+        }));
+  const proposals = await readerRead(() =>
+    readReaderProposals(held, view, link, sealed, opened.of === READ.read ? opened.value.opened : [])
+  );
   return { of: READER_OF.open, id: link.id, label: link.label, runs, proposals };
 }

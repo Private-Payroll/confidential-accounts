@@ -107,9 +107,8 @@ const SCHEMES: Entry[] = [
        * that happen to match would prove only that they happen to match today.
        */
       fromContract: hex(pureCircuits.signerLeaf(PK, BLINDING, pureCircuits.allVaults())),
-      fromClient: MidnightCommitments.signerLeaf(
-        hex(PK), hex(BLINDING), MidnightCommitments.allVaults()),
-    }),
+      fromClient: MidnightCommitments.signerLeaf(hex(PK), hex(BLINDING), MidnightCommitments.allVaults())
+    })
   },
   {
     /*
@@ -133,8 +132,8 @@ const SCHEMES: Entry[] = [
     circuit: 'assetKeyOf',
     mirrored: () => ({
       fromContract: hex(pureCircuits.assetKeyOf(TOKEN_BYTES, BLINDING)),
-      fromClient: MidnightCommitments.assetKey(TOKEN, hex(BLINDING)),
-    }),
+      fromClient: MidnightCommitments.assetKey(TOKEN, hex(BLINDING))
+    })
   },
   /*
    * `balanceCommitmentOf` STOOD HERE, mirrored against
@@ -161,8 +160,8 @@ const SCHEMES: Entry[] = [
     circuit: 'changeCommitmentOf',
     mirrored: () => ({
       fromContract: hex(pureCircuits.changeCommitmentOf(ASSET_KEY, 20_000n, BATCH, SALT)),
-      fromClient: MidnightCommitments.changeCommitment(hex(ASSET_KEY), 20_000n, hex(BATCH), hex(SALT)),
-    }),
+      fromClient: MidnightCommitments.changeCommitment(hex(ASSET_KEY), 20_000n, hex(BATCH), hex(SALT))
+    })
   },
   {
     /*
@@ -185,9 +184,8 @@ const SCHEMES: Entry[] = [
        * construction — which is the exact failure this file exists to catch.
        */
       fromContract: hex(pureCircuits.proposalIdOf(PAYLOAD, pureCircuits.noVault(), SALT)),
-      fromClient: MidnightCommitments.proposalId(
-        hex(PAYLOAD), hex(SALT), MidnightCommitments.noVault()),
-    }),
+      fromClient: MidnightCommitments.proposalId(hex(PAYLOAD), hex(SALT), MidnightCommitments.noVault())
+    })
   },
   {
     /*
@@ -204,17 +202,17 @@ const SCHEMES: Entry[] = [
      */
     circuit: 'slotOf',
     contractOnly:
-      'the slot is DERIVED inside the circuit from the membership path\'s own left/right ' +
+      "the slot is DERIVED inside the circuit from the membership path's own left/right " +
       'flags, so a caller cannot supply one and the client never computes one. It is pinned ' +
-      'against the runtime\'s own indexing in signer-governance.test.ts, which is a check ' +
-      'that the derivation is right — not a second implementation of it.',
+      "against the runtime's own indexing in signer-governance.test.ts, which is a check " +
+      'that the derivation is right — not a second implementation of it.'
   },
   {
     circuit: 'vacantSlot',
     contractOnly:
       'a fixed marker a removal writes into the slot it frees. The client does not RECOMPUTE ' +
       'it — witnesses.ts reads it straight off pureCircuits, because a copy of this constant ' +
-      'in TypeScript is a shared value written twice.',
+      'in TypeScript is a shared value written twice.'
   },
   {
     /*
@@ -237,8 +235,8 @@ const SCHEMES: Entry[] = [
     circuit: 'signerPublicKey',
     mirrored: () => ({
       fromContract: hex(pureCircuits.signerPublicKey(SIGNING_SECRET)),
-      fromClient: MidnightCommitments.signerPublicKey(hex(SIGNING_SECRET)),
-    }),
+      fromClient: MidnightCommitments.signerPublicKey(hex(SIGNING_SECRET))
+    })
   },
   {
     /*
@@ -266,16 +264,16 @@ const SCHEMES: Entry[] = [
     circuit: 'signerInvitePayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD, 3n)),
-      fromClient: MidnightCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 3),
-    }),
+      fromClient: MidnightCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 3)
+    })
   },
   {
     /* The commitment an inviter makes to the invited address's coin public key: the payload above names it. */
     circuit: 'inviteAddressOf',
     mirrored: () => ({
       fromContract: hex(pureCircuits.inviteAddressOf(PK, SALT)),
-      fromClient: MidnightCommitments.inviteAddressOf(hex(PK), hex(SALT)),
-    }),
+      fromClient: MidnightCommitments.inviteAddressOf(hex(PK), hex(SALT))
+    })
   },
   {
     /*
@@ -286,8 +284,8 @@ const SCHEMES: Entry[] = [
     circuit: 'coinPublicKeyOf',
     mirrored: () => ({
       fromContract: hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET)),
-      fromClient: MidnightCommitments.coinPublicKeyOf(hex(SIGNING_SECRET)),
-    }),
+      fromClient: MidnightCommitments.coinPublicKeyOf(hex(SIGNING_SECRET))
+    })
   },
   {
     /*
@@ -306,14 +304,14 @@ const SCHEMES: Entry[] = [
     contractOnly:
       'the scope every signer carries unless narrowed. midnight/commitments.ts reads it off ' +
       'pureCircuits rather than recomputing it; core/ledger.ts holds a deliberately separate ' +
-      'simulated sentinel.',
+      'simulated sentinel.'
   },
   {
     circuit: 'noVault',
     contractOnly:
-      'the scope a proposal names when it concerns no vault — governance and the account\'s ' +
+      "the scope a proposal names when it concerns no vault — governance and the account's " +
       'own ledger. Same arrangement as allVaults: read off pureCircuits on the Midnight side, ' +
-      'a deliberately separate sentinel in the simulation.',
+      'a deliberately separate sentinel in the simulation.'
   },
   {
     /*
@@ -325,8 +323,8 @@ const SCHEMES: Entry[] = [
     circuit: 'payoutLeaf',
     mirrored: () => ({
       fromContract: hex(pureCircuits.payoutLeaf(PAYLOAD, SALT)),
-      fromClient: payoutLeafOf({ details: hex(PAYLOAD), nonce: hex(SALT) }),
-    }),
+      fromClient: payoutLeafOf({ details: hex(PAYLOAD), nonce: hex(SALT) })
+    })
   },
   {
     /*
@@ -346,7 +344,7 @@ const SCHEMES: Entry[] = [
     circuit: 'paidMovementOf',
     contractOnly:
       'the client calls this circuit rather than deriving the value; run-status.ts takes it as ' +
-      'an argument and never reimplements it.',
+      'an argument and never reimplements it.'
   },
   {
     /*
@@ -374,8 +372,8 @@ const SCHEMES: Entry[] = [
     circuit: 'runPayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.runPayload(ROOT, 5n, 1_800_000_000n, 1_800_604_800n, 3n)),
-      fromClient: MidnightCommitments.runPayload(hex(ROOT), 5n, 1_800_000_000n, 1_800_604_800n, 3n),
-    }),
+      fromClient: MidnightCommitments.runPayload(hex(ROOT), 5n, 1_800_000_000n, 1_800_604_800n, 3n)
+    })
   },
   {
     /*
@@ -394,8 +392,8 @@ const SCHEMES: Entry[] = [
     circuit: 'setThresholdPayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.setThresholdPayload(3n)),
-      fromClient: MidnightCommitments.signerThresholdPayload(3),
-    }),
+      fromClient: MidnightCommitments.signerThresholdPayload(3)
+    })
   },
   {
     /*
@@ -422,16 +420,16 @@ const SCHEMES: Entry[] = [
     circuit: 'setVaultThresholdPayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.setVaultThresholdPayload(VAULT, 2n)),
-      fromClient: MidnightCommitments.vaultThresholdPayload(hex(VAULT), 2),
-    }),
+      fromClient: MidnightCommitments.vaultThresholdPayload(hex(VAULT), 2)
+    })
   },
   {
     /* The client name is `signerRemovePayload`; the circuit's is this. */
     circuit: 'removeAndSetThresholdPayload',
     mirrored: () => ({
       fromContract: hex(pureCircuits.removeAndSetThresholdPayload(LEAF, 2n)),
-      fromClient: MidnightCommitments.signerRemovePayload(hex(LEAF), 2),
-    }),
+      fromClient: MidnightCommitments.signerRemovePayload(hex(LEAF), 2)
+    })
   },
   {
     /*
@@ -457,7 +455,7 @@ const SCHEMES: Entry[] = [
       'reverse ratchet below maps every member of both CommitmentScheme objects to a circuit, ' +
       'and nothing maps here. The product raises its adopt round from the device with this ' +
       'circuit itself, never through a scheme; the day the account service writes one down, ' +
-      'mirror it the way the four governance payloads above are mirrored.',
+      'mirror it the way the four governance payloads above are mirrored.'
   },
   {
     /*
@@ -476,194 +474,195 @@ const SCHEMES: Entry[] = [
       'NO METHOD ON EITHER SCHEME DERIVES THIS, read by the reverse ratchet below rather ' +
       'than asserted by hand. A retirement round is claimed by the vault from the salt, so ' +
       'a second derivation here produces rounds that can never be run — mirror it instead, ' +
-      'and the ratchet will refuse until you do.',
+      'and the ratchet will refuse until you do.'
   },
   {
     circuit: 'companyWide',
     contractOnly:
       'a fixed marker naming a company-wide decision, which setVaultThreshold refuses. No ' +
-      'client derives it; the day one does, it reads it off pureCircuits as it does noVault.',
+      'client derives it; the day one does, it reads it off pureCircuits as it does noVault.'
   },
   {
     circuit: 'withdrawSecretOf',
     contractOnly:
       'the device works it out in contracts/src/witnesses.ts by calling this circuit off ' +
-      'pureCircuits, so there is no second derivation in TypeScript to drift from it.',
+      'pureCircuits, so there is no second derivation in TypeScript to drift from it.'
   },
   {
     circuit: 'withdrawKeyOf',
     contractOnly:
       'the same as withdrawSecretOf: witnesses.ts calls this circuit off pureCircuits, and ' +
-      'cancel recomputes it inside the proof. No TypeScript copy exists.',
+      'cancel recomputes it inside the proof. No TypeScript copy exists.'
   },
   {
     circuit: 'companyLabelKey',
     contractOnly:
       'the key the constructor writes the company label under, derived inside the contract ' +
-      'and never taken from a caller. Nothing in the product reads the label yet.',
+      'and never taken from a caller. Nothing in the product reads the label yet.'
   },
   {
     circuit: 'removalCountKey',
     contractOnly:
       'the fixed key the account keeps its removal count under in proposalHolds. Read only ' +
-      'inside the contract; the client has no reason to compute it.',
+      'inside the contract; the client has no reason to compute it.'
   },
   {
     circuit: 'batchLeafOf',
     contractOnly:
-      'the leaf a batch of up to four payees makes in a run\'s sum tree, under its own tag. ' +
-      'Whoever builds a run over batches calls this circuit off pureCircuits; no TypeScript copy exists.',
-  },  {
+      "the leaf a batch of up to four payees makes in a run's sum tree, under its own tag. " +
+      'Whoever builds a run over batches calls this circuit off pureCircuits; no TypeScript copy exists.'
+  },
+  {
     circuit: 'paidOnceOf',
     contractOnly:
       'the value the account records for the person and month a nonce stands for. The client ' +
-      'calls it off pureCircuits (payout-tree.ts, ledger.ts) and never derives it a second way.',
+      'calls it off pureCircuits (payout-tree.ts, ledger.ts) and never derives it a second way.'
   },
   {
     circuit: 'payKeyCommitmentKey',
     contractOnly:
       'where the account keeps its commitment to the pay-record key in signerRoles, derived ' +
-      'inside the contract and never taken from a caller. ledger.ts reads it off pureCircuits.',
+      'inside the contract and never taken from a caller. ledger.ts reads it off pureCircuits.'
   },
   {
     circuit: 'payKeyWrapKeyOf',
     contractOnly:
-      'where one signer\'s sealed copy of the pay-record key sits, from their own secret key; ' +
-      'sealPayKey derives it inside the proof and ledger.ts calls this circuit to find it.',
+      "where one signer's sealed copy of the pay-record key sits, from their own secret key; " +
+      'sealPayKey derives it inside the proof and ledger.ts calls this circuit to find it.'
   },
   {
     circuit: 'payKeyCommitmentOf',
     contractOnly:
       'the commitment every device checks its unsealed key against; pay-key-commitment.ts calls this ' +
-      'circuit off pureCircuits and has no TypeScript copy.',
+      'circuit off pureCircuits and has no TypeScript copy.'
   },
   {
     circuit: 'anchorKey',
     contractOnly:
-      'where the company\'s record anchor sits in signerRoles, derived inside the contract and ' +
-      'never taken from a caller; only anchor writes it. key-collisions.test.ts pins it apart.',
+      "where the company's record anchor sits in signerRoles, derived inside the contract and " +
+      'never taken from a caller; only anchor writes it. key-collisions.test.ts pins it apart.'
   },
   {
     circuit: 'anchorHeadOf',
     contractOnly:
       'the head one batch of records moves the anchor to, from the head before it. anchor computes ' +
-      'it inside the proof, and whoever folds the company\'s records calls this circuit off ' +
-      'pureCircuits; no TypeScript copy exists.',
+      "it inside the proof, and whoever folds the company's records calls this circuit off " +
+      'pureCircuits; no TypeScript copy exists.'
   },
   {
     circuit: 'anchorHeldOf',
     contractOnly:
       'what one anchor call folds into the head: the batch, who held the account as it was judged, ' +
-      'and the anchoring seat\'s tag. anchor computes it inside the proof, and whoever folds the ' +
-      'company\'s records calls this circuit off pureCircuits in the worker; no TypeScript copy exists.',
+      "and the anchoring seat's tag. anchor computes it inside the proof, and whoever folds the " +
+      "company's records calls this circuit off pureCircuits in the worker; no TypeScript copy exists."
   },
   {
     circuit: 'anchorSeatKey',
     contractOnly:
       'where the tag of the seat that moved the record anchor last sits in signerRoles, derived inside ' +
-      'the contract; only anchor and recoverAnchor write it. key-collisions.test.ts pins it apart.',
+      'the contract; only anchor and recoverAnchor write it. key-collisions.test.ts pins it apart.'
   },
   {
     circuit: 'anchorTagOf',
     contractOnly:
-      'the tag one seat anchors under in one account, from its key and its leaf\'s blinding. anchor ' +
+      "the tag one seat anchors under in one account, from its key and its leaf's blinding. anchor " +
       'and recoverAnchor work it out inside the proof from the seat they prove, and a member maps a ' +
-      'tag to a seat by calling this circuit off pureCircuits; no TypeScript copy exists.',
+      'tag to a seat by calling this circuit off pureCircuits; no TypeScript copy exists.'
   },
   {
     circuit: 'anchorRecoveredOf',
     contractOnly:
       'what one recovery folds into the head, under its own tag: as anchorHeldOf, with the head it ' +
-      'resumes from. recoverAnchor computes it inside the proof, and whoever folds the company\'s ' +
-      'records calls this circuit off pureCircuits; no TypeScript copy exists.',
+      "resumes from. recoverAnchor computes it inside the proof, and whoever folds the company's " +
+      'records calls this circuit off pureCircuits; no TypeScript copy exists.'
   },
   {
     circuit: 'recoverAnchorPayload',
     contractOnly:
       'what signers approve to recover the record anchor from a head their devices checked; the ' +
       'raising device calls this circuit off pureCircuits, and recoverAnchor checks the proposal ' +
-      'against it; no TypeScript copy exists.',
+      'against it; no TypeScript copy exists.'
   },
   {
     circuit: 'lastRecoveryKey',
     contractOnly:
       'where the head the latest recovery carried out wrote sits in signerRoles, derived inside the ' +
-      'contract; only recoverAnchor writes it. key-collisions.test.ts pins it apart.',
+      'contract; only recoverAnchor writes it. key-collisions.test.ts pins it apart.'
   },
   {
     circuit: 'vaultBarOf',
     contractOnly:
-      'the approvals a vault\'s runs need at least: its own threshold, or the account\'s when it has ' +
-      'none. thresholdFor computes it inside the proof; no TypeScript copy exists.',
+      "the approvals a vault's runs need at least: its own threshold, or the account's when it has " +
+      'none. thresholdFor computes it inside the proof; no TypeScript copy exists.'
   },
   {
     circuit: 'runApprovalsNeeded',
     contractOnly:
       'the approvals a run needs before a vault pays or charges it, removals since it was raised ' +
       'included. requireApprovedForVault computes it inside the proof, and vouchingRunsIn calls this ' +
-      'circuit off pureCircuits; no TypeScript copy exists.',
+      'circuit off pureCircuits; no TypeScript copy exists.'
   },
   {
     circuit: 'periodTotalTag',
     contractOnly:
-      'the tag a period\'s running total is committed under; periodTotalOf and clearRun take it from ' +
-      'this circuit, and no client spells it.',
+      "the tag a period's running total is committed under; periodTotalOf and clearRun take it from " +
+      'this circuit, and no client spells it.'
   },
   {
     circuit: 'legTakenTag',
     contractOnly:
-      'the tag what a charged leg\'s retries have taken is committed under, so it never shows as equal ' +
-      'to a period\'s total of the same amount; legTakenOf and clearRun take it from this circuit.',
+      "the tag what a charged leg's retries have taken is committed under, so it never shows as equal " +
+      "to a period's total of the same amount; legTakenOf and clearRun take it from this circuit."
   },
   {
     circuit: 'legTakenOf',
     contractOnly:
-      'what a charged leg\'s retries have taken, committed under the leg\'s period\'s blinding. clearRun ' +
+      "what a charged leg's retries have taken, committed under the leg's period's blinding. clearRun " +
       'commits it inside the proof, and whoever opens it calls this circuit off pureCircuits; no ' +
-      'TypeScript copy exists.',
+      'TypeScript copy exists.'
   },
   {
     circuit: 'retrySaltOf',
     contractOnly:
-      'a retry\'s salt, binding its leg\'s root into the id its signers approve. clearRun recomputes ' +
+      "a retry's salt, binding its leg's root into the id its signers approve. clearRun recomputes " +
       'it inside the proof, and whoever raises a retry calls this circuit off pureCircuits; no ' +
-      'TypeScript copy exists.',
+      'TypeScript copy exists.'
   },
   {
     circuit: 'paymentReceiptTag',
     contractOnly:
       'the tag a vault mints its payment receipt under. The account receives tokenType of it ' +
-      'and the paying vault inside the proof; no client derives the token.',
+      'and the paying vault inside the proof; no client derives the token.'
   },
   {
     circuit: 'changeReceiptTag',
     contractOnly:
       'the tag a vault mints its receipt for a change that moves no money under. The account ' +
-      'receives tokenType of it and the changed vault inside the proof; no client derives the token.',
+      'receives tokenType of it and the changed vault inside the proof; no client derives the token.'
   },
   {
     circuit: 'retireReceiptTag',
     contractOnly:
       'the tag a vault mints its receipt for its own retirement under. The account receives ' +
-      'tokenType of it and the retiring vault inside retireVault\'s proof; no client derives the token.',
+      "tokenType of it and the retiring vault inside retireVault's proof; no client derives the token."
   },
   {
     circuit: 'changesUsedKeyOf',
     contractOnly:
-      'the key the account counts a run\'s used changes under in signerRoles, read and written only ' +
-      'inside approveVaultChange; the client has no reason to compute it.',
+      "the key the account counts a run's used changes under in signerRoles, read and written only " +
+      'inside approveVaultChange; the client has no reason to compute it.'
   },
   {
     circuit: 'companyWideDetailsOf',
     contractOnly:
-      'binds a company-wide run\'s leaf to the vault paying it; the account computes it inside ' +
-      'recordPaymentFromVault. No client builds a company-wide run yet.',
+      "binds a company-wide run's leaf to the vault paying it; the account computes it inside " +
+      'recordPaymentFromVault. No client builds a company-wide run yet.'
   },
   {
     circuit: 'payKeyPayload',
     contractOnly:
       'what signers approve to commit the account to its pay-record key; pay-key-commitment.ts calls this ' +
-      'circuit off pureCircuits to raise the proposal, and sealPayKey recomputes it inside the proof.',
+      'circuit off pureCircuits to raise the proposal, and sealPayKey recomputes it inside the proof.'
   },
   {
     /*
@@ -679,110 +678,130 @@ const SCHEMES: Entry[] = [
       const tree = sumTreeOfLeaves(leaves, [3n, 5n, 7n], hex(PAYLOAD));
       return {
         fromContract: hex(pureCircuits.sumPathRoot(SALT, 5n, tree.pathFor(1) as never, PAYLOAD)),
-        fromClient: tree.root,
+        fromClient: tree.root
       };
-    },
+    }
   },
   {
     circuit: 'sumLeafNode',
-    contractOnly: 'a payee node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.',
+    contractOnly:
+      'a payee node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.'
   },
   {
     circuit: 'sumInnerNode',
-    contractOnly: 'an inner node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.',
+    contractOnly:
+      'an inner node of the sum tree; payout-tree.ts calls this circuit off pureCircuits, and sumPathRoot is pinned above.'
   },
   {
     circuit: 'sumRootOf',
-    contractOnly: 'a run root over its top node, total and token; payout-tree.ts calls this circuit off pureCircuits.',
+    contractOnly: 'a run root over its top node, total and token; payout-tree.ts calls this circuit off pureCircuits.'
   },
   {
     circuit: 'bandApprovals',
-    contractOnly: 'the approvals a total needs under a policy; spending-policy.ts calls this circuit off pureCircuits, and clearRun runs it inside the proof.',
+    contractOnly:
+      'the approvals a total needs under a policy; spending-policy.ts calls this circuit off pureCircuits, and clearRun runs it inside the proof.'
   },
   {
     circuit: 'policyCommitmentOf',
-    contractOnly: 'a spending policy\'s commitment; spending-policy.ts calls this circuit off pureCircuits, and clearRun recomputes it inside the proof.',
+    contractOnly:
+      "a spending policy's commitment; spending-policy.ts calls this circuit off pureCircuits, and clearRun recomputes it inside the proof."
   },
   {
     circuit: 'setPolicyPayload',
-    contractOnly: 'what signers approve to set a policy; spending-policy.ts calls this circuit off pureCircuits, and setPolicy recomputes it inside the proof.',
+    contractOnly:
+      'what signers approve to set a policy; spending-policy.ts calls this circuit off pureCircuits, and setPolicy recomputes it inside the proof.'
   },
   {
     circuit: 'policyKeyOf',
-    contractOnly: 'where a policy sits in the shared map; derived inside setPolicy and clearRun, and read by spending-policy.ts off pureCircuits.',
+    contractOnly:
+      'where a policy sits in the shared map; derived inside setPolicy and clearRun, and read by spending-policy.ts off pureCircuits.'
   },
   {
     circuit: 'policyOnKeyOf',
-    contractOnly: 'where the marker that a vault is under a policy sits; derived inside setPolicy and the receipt step.',
+    contractOnly: 'where the marker that a vault is under a policy sits; derived inside setPolicy and the receipt step.'
   },
   {
     circuit: 'policyOnMark',
-    contractOnly: 'the marker\'s value; written by setPolicy and nowhere else.',
+    contractOnly: "the marker's value; written by setPolicy and nowhere else."
   },
   {
     circuit: 'periodKeyOf',
-    contractOnly: 'where a period\'s running total sits; derived inside clearRun, and read by spending-policy.ts off pureCircuits.',
+    contractOnly:
+      "where a period's running total sits; derived inside clearRun, and read by spending-policy.ts off pureCircuits."
   },
   {
     circuit: 'periodBlindingOf',
-    contractOnly: 'the blinding of a period\'s total; derived inside clearRun, and by spending-policy.ts off pureCircuits.',
+    contractOnly:
+      "the blinding of a period's total; derived inside clearRun, and by spending-policy.ts off pureCircuits."
   },
   {
     circuit: 'periodTotalOf',
-    contractOnly: 'a period\'s running total as the chain holds it; clearRun computes it inside the proof, and spending-policy.ts off pureCircuits.',
+    contractOnly:
+      "a period's running total as the chain holds it; clearRun computes it inside the proof, and spending-policy.ts off pureCircuits."
   },
   {
     circuit: 'chargedKeyOf',
-    contractOnly: 'where the record that a tree was charged in a period sits; derived inside clearRun only.',
+    contractOnly: 'where the record that a tree was charged in a period sits; derived inside clearRun only.'
   },
   {
     circuit: 'chargedMark',
-    contractOnly: 'the value written under a charged key; clearRun writes it and nothing reads it.',
+    contractOnly: 'the value written under a charged key; clearRun writes it and nothing reads it.'
   },
   {
     circuit: 'clearedMark',
-    contractOnly: 'what a cleared run\'s change commitment is overwritten with; clearRun writes it and the receipt step compares against it.',
+    contractOnly:
+      "what a cleared run's change commitment is overwritten with; clearRun writes it and the receipt step compares against it."
   },
   {
     circuit: 'policyBarKey',
-    contractOnly: 'the key in the per-vault thresholds for the approvals a policy change needs; setPolicyBar writes it, setPolicy raises it to a policy\'s highest band, every change of who is seated and both removals read it, setVaultThreshold refuses it, spending-policy.ts off pureCircuits.',
+    contractOnly:
+      "the key in the per-vault thresholds for the approvals a policy change needs; setPolicyBar writes it, setPolicy raises it to a policy's highest band, every change of who is seated and both removals read it, setVaultThreshold refuses it, spending-policy.ts off pureCircuits."
   },
   {
     circuit: 'rightsScopeOf',
-    contractOnly: 'a rights record as a leaf\'s scope; witnesses.ts scopeOfRights calls this circuit off pureCircuits, and every run the seat raises, approves or holds recomputes it inside the proof.',
+    contractOnly:
+      "a rights record as a leaf's scope; witnesses.ts scopeOfRights calls this circuit off pureCircuits, and every run the seat raises, approves or holds recomputes it inside the proof."
   },
   {
     circuit: 'coversVault',
-    contractOnly: 'whether a rights record covers a vault; only the proof reads it, and the rights test calls it off pureCircuits.',
+    contractOnly:
+      'whether a rights record covers a vault; only the proof reads it, and the rights test calls it off pureCircuits.'
   },
   {
     circuit: 'reseatPayload',
-    contractOnly: 'what signers approve to replace one leaf with another; reseatSigner recomputes it, and nothing on the client derives it yet.',
+    contractOnly:
+      'what signers approve to replace one leaf with another; reseatSigner recomputes it, and nothing on the client derives it yet.'
   },
   {
     circuit: 'setPolicyBarPayload',
-    contractOnly: 'what signers approve to set the approvals a policy change needs; setPolicyBar recomputes it, and nothing on the client derives it yet.',
+    contractOnly:
+      'what signers approve to set the approvals a policy change needs; setPolicyBar recomputes it, and nothing on the client derives it yet.'
   },
   {
     circuit: 'holderKeyOf',
-    contractOnly: 'the key a hold is placed under, from the holder\'s secret key; only holdRun and releaseHold derive it, inside the proof.',
+    contractOnly:
+      "the key a hold is placed under, from the holder's secret key; only holdRun and releaseHold derive it, inside the proof."
   },
   {
     circuit: 'approvalNullifierOf',
-    contractOnly: 'one seat\'s approval marker for one proposal in one account; approve and both raises write it through approvalNullifier, and a device reads its own seat\'s from the ledger\'s approvals with this circuit off pureCircuits (roundsOnChainIn, startStandingOf), never a copy.',
+    contractOnly:
+      "one seat's approval marker for one proposal in one account; approve and both raises write it through approvalNullifier, and a device reads its own seat's from the ledger's approvals with this circuit off pureCircuits (roundsOnChainIn, startStandingOf), never a copy."
   },
   {
     circuit: 'releasedMark',
-    contractOnly: 'what a released hold is marked with; releaseHold writes it and holdRun and the receipt step compare against it.',
+    contractOnly:
+      'what a released hold is marked with; releaseHold writes it and holdRun and the receipt step compare against it.'
   },
   {
     circuit: 'paidFromMark',
-    contractOnly: 'what a run\'s hold is marked with once a payment from it lands; the receipt step writes it and holdRun refuses on it.',
+    contractOnly:
+      "what a run's hold is marked with once a payment from it lands; the receipt step writes it and holdRun refuses on it."
   },
   {
     circuit: 'companyChangeMark',
-    contractOnly: 'what an open company change is stored with where a run stores its change; proposeCompanyChange writes it and no circuit reads it back for a company change.',
-  },
+    contractOnly:
+      'what an open company change is stored with where a run stores its change; proposeCompanyChange writes it and no circuit reads it back for a company change.'
+  }
 ];
 
 describe('one definition: the contract and the client agree', () => {
@@ -811,7 +830,7 @@ describe('one definition: the contract and the client agree', () => {
      * by editing a list and forgetting the circuit, or the reverse.
      */
     const compiled = Object.keys(pureCircuits).sort();
-    const registered = SCHEMES.map(e => e.circuit).sort();
+    const registered = SCHEMES.map((e) => e.circuit).sort();
     expect(registered).toEqual(compiled);
   });
 
@@ -897,7 +916,10 @@ describe('one definition: the contract and the client agree', () => {
    * what it costs to write them falsely.**
    */
   const SCHEME_MEMBERS: {
-    method: string; circuit: string | null; kind: 'mirrored' | 'passthrough' | 'none'; why?: string;
+    method: string;
+    circuit: string | null;
+    kind: 'mirrored' | 'passthrough' | 'none';
+    why?: string;
   }[] = [
     { method: 'signerPublicKey', circuit: 'signerPublicKey', kind: 'mirrored' },
     { method: 'signerLeaf', circuit: 'signerLeaf', kind: 'mirrored' },
@@ -915,23 +937,29 @@ describe('one definition: the contract and the client agree', () => {
     { method: 'signerThresholdPayload', circuit: 'setThresholdPayload', kind: 'mirrored' },
     { method: 'vaultThresholdPayload', circuit: 'setVaultThresholdPayload', kind: 'mirrored' },
     {
-      method: 'noVault', circuit: 'noVault', kind: 'passthrough',
-      why: 'midnight/commitments.ts:184-190 reads both sentinels off pureCircuits; core/ledger.ts '
-        + 'holds its own, deliberately apart (decision 0004)',
+      method: 'noVault',
+      circuit: 'noVault',
+      kind: 'passthrough',
+      why:
+        'midnight/commitments.ts:184-190 reads both sentinels off pureCircuits; core/ledger.ts ' +
+        'holds its own, deliberately apart (decision 0004)'
     },
     {
-      method: 'allVaults', circuit: 'allVaults', kind: 'passthrough',
-      why: 'the same arrangement as noVault, and the entry above says so in the registry',
+      method: 'allVaults',
+      circuit: 'allVaults',
+      kind: 'passthrough',
+      why: 'the same arrangement as noVault, and the entry above says so in the registry'
     },
     {
-      method: 'describe', circuit: NO_CIRCUIT, kind: 'none',
-      why: 'a sentence for a log line and a screen, not a value the chain compares against',
-    },
+      method: 'describe',
+      circuit: NO_CIRCUIT,
+      kind: 'none',
+      why: 'a sentence for a log line and a screen, not a value the chain compares against'
+    }
   ];
 
   /** The registry's own answer about each circuit, read off `SCHEMES`. */
-  const contractOnlyCircuits = new Set(
-    SCHEMES.filter(e => 'contractOnly' in e).map(e => e.circuit));
+  const contractOnlyCircuits = new Set(SCHEMES.filter((e) => 'contractOnly' in e).map((e) => e.circuit));
 
   it('EVERY member of BOTH schemes is declared here — the reverse ratchet', () => {
     /*
@@ -946,21 +974,20 @@ describe('one definition: the contract and the client agree', () => {
      * a member added to one implementation and not the other is exactly the
      * asymmetry the add/remove/threshold notes used to hide.
      */
-    const declared = SCHEME_MEMBERS.map(m => m.method).sort();
+    const declared = SCHEME_MEMBERS.map((m) => m.method).sort();
     expect(Object.keys(SimulatedCommitments).sort()).toEqual(declared);
     expect(Object.keys(MidnightCommitments).sort()).toEqual(declared);
   });
 
   it('every declared member names a registered circuit, and its kind matches the registry', () => {
-    const registered = new Set(SCHEMES.map(e => e.circuit));
+    const registered = new Set(SCHEMES.map((e) => e.circuit));
     for (const m of SCHEME_MEMBERS) {
       if (m.circuit === NO_CIRCUIT) {
         expect(m.kind).toBe('none');
         expect(m.why, `${m.method} carries no circuit and no reason`).toBeTruthy();
         continue;
       }
-      expect(registered, `${m.method} names ${m.circuit}, which is not a circuit`)
-        .toContain(m.circuit);
+      expect(registered, `${m.method} names ${m.circuit}, which is not a circuit`).toContain(m.circuit);
       /*
        * **THE KIND AND THE REGISTRY MUST AGREE.** A member declared `mirrored`
        * against an entry the registry calls `contractOnly` is one of the two
@@ -971,10 +998,10 @@ describe('one definition: the contract and the client agree', () => {
       const isContractOnly = contractOnlyCircuits.has(m.circuit);
       expect(
         m.kind,
-        `${m.method} is declared ${m.kind} but ${m.circuit} is registered as `
-        + `${isContractOnly ? 'contractOnly' : 'mirrored'} above. Either the entry's note is `
-        + `false or this row is — and a passthrough must say, in its "why", that the Midnight `
-        + `side reads the circuit rather than recomputing it.`,
+        `${m.method} is declared ${m.kind} but ${m.circuit} is registered as ` +
+          `${isContractOnly ? 'contractOnly' : 'mirrored'} above. Either the entry's note is ` +
+          `false or this row is — and a passthrough must say, in its "why", that the Midnight ` +
+          `side reads the circuit rather than recomputing it.`
       ).toBe(isContractOnly ? 'passthrough' : 'mirrored');
       if (m.kind === 'passthrough') {
         expect(m.why, `${m.method} is a passthrough with no reason beside it`).toBeTruthy();
@@ -994,12 +1021,12 @@ describe('one definition: the contract and the client agree', () => {
      * The copy that cost the most was a second derivation under a name that
      * was not the circuit's. This is that, one layer in.
      */
-    const claimed = SCHEME_MEMBERS.filter(m => m.kind === 'mirrored').map(m => m.circuit);
+    const claimed = SCHEME_MEMBERS.filter((m) => m.kind === 'mirrored').map((m) => m.circuit);
     expect(
       [...new Set(claimed)].sort(),
-      'two scheme members name the same circuit as a mirror. Only one of them can be the '
-      + 'client side that this file\'s mirrored entry actually calls; the other is a second '
-      + 'copy with nothing checking it.',
+      'two scheme members name the same circuit as a mirror. Only one of them can be the ' +
+        "client side that this file's mirrored entry actually calls; the other is a second " +
+        'copy with nothing checking it.'
     ).toEqual([...claimed].sort());
   });
 
@@ -1020,23 +1047,75 @@ describe('one definition: the contract and the client agree', () => {
      * question, and a list that named only the two would be a list somebody
      * has to remember to extend.
      */
-    const named = new Set(SCHEME_MEMBERS.map(m => m.circuit).filter(c => c !== NO_CIRCUIT));
-    const untouched = [...contractOnlyCircuits].filter(c => !named.has(c)).sort();
+    const named = new Set(SCHEME_MEMBERS.map((m) => m.circuit).filter((c) => c !== NO_CIRCUIT));
+    const untouched = [...contractOnlyCircuits].filter((c) => !named.has(c)).sort();
     expect(
       untouched,
-      'a circuit registered contractOnly has gained a scheme member, or lost one. If a client '
-      + 'copy now exists, turn its registry entry into a mirrored one the way the four '
-      + 'governance payloads are — do not write a second derivation. If it is a passthrough '
-      + 'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.',
+      'a circuit registered contractOnly has gained a scheme member, or lost one. If a client ' +
+        'copy now exists, turn its registry entry into a mirrored one the way the four ' +
+        'governance payloads are — do not write a second derivation. If it is a passthrough ' +
+        'that reads the circuit, declare it as one in SCHEME_MEMBERS and say so.'
     ).toEqual([
-      'adoptVaultPayload', 'anchorHeadOf', 'anchorHeldOf', 'anchorKey', 'anchorRecoveredOf', 'anchorSeatKey', 'anchorTagOf', 'approvalNullifierOf', 'bandApprovals', 'batchLeafOf', 'changeReceiptTag', 'changesUsedKeyOf', 'chargedKeyOf', 'chargedMark', 'clearedMark',
-      'companyChangeMark', 'companyLabelKey', 'companyWide', 'companyWideDetailsOf', 'coversVault', 'holderKeyOf', 'lastRecoveryKey', 'legTakenOf', 'legTakenTag',
-      'paidFromMark', 'paidMovementOf', 'paidOnceOf', 'payKeyCommitmentKey', 'payKeyCommitmentOf', 'payKeyPayload',
-      'payKeyWrapKeyOf', 'paymentReceiptTag', 'periodBlindingOf', 'periodKeyOf', 'periodTotalOf', 'periodTotalTag',
-      'policyBarKey', 'policyCommitmentOf', 'policyKeyOf', 'policyOnKeyOf', 'policyOnMark',
-      'recoverAnchorPayload', 'releasedMark', 'removalCountKey', 'reseatPayload', 'retireReceiptTag', 'retireVaultPayload', 'retrySaltOf',
-      'rightsScopeOf', 'runApprovalsNeeded', 'setPolicyBarPayload', 'setPolicyPayload', 'slotOf',
-      'sumInnerNode', 'sumLeafNode', 'sumRootOf', 'vacantSlot', 'vaultBarOf', 'withdrawKeyOf', 'withdrawSecretOf',
+      'adoptVaultPayload',
+      'anchorHeadOf',
+      'anchorHeldOf',
+      'anchorKey',
+      'anchorRecoveredOf',
+      'anchorSeatKey',
+      'anchorTagOf',
+      'approvalNullifierOf',
+      'bandApprovals',
+      'batchLeafOf',
+      'changeReceiptTag',
+      'changesUsedKeyOf',
+      'chargedKeyOf',
+      'chargedMark',
+      'clearedMark',
+      'companyChangeMark',
+      'companyLabelKey',
+      'companyWide',
+      'companyWideDetailsOf',
+      'coversVault',
+      'holderKeyOf',
+      'lastRecoveryKey',
+      'legTakenOf',
+      'legTakenTag',
+      'paidFromMark',
+      'paidMovementOf',
+      'paidOnceOf',
+      'payKeyCommitmentKey',
+      'payKeyCommitmentOf',
+      'payKeyPayload',
+      'payKeyWrapKeyOf',
+      'paymentReceiptTag',
+      'periodBlindingOf',
+      'periodKeyOf',
+      'periodTotalOf',
+      'periodTotalTag',
+      'policyBarKey',
+      'policyCommitmentOf',
+      'policyKeyOf',
+      'policyOnKeyOf',
+      'policyOnMark',
+      'recoverAnchorPayload',
+      'releasedMark',
+      'removalCountKey',
+      'reseatPayload',
+      'retireReceiptTag',
+      'retireVaultPayload',
+      'retrySaltOf',
+      'rightsScopeOf',
+      'runApprovalsNeeded',
+      'setPolicyBarPayload',
+      'setPolicyPayload',
+      'slotOf',
+      'sumInnerNode',
+      'sumLeafNode',
+      'sumRootOf',
+      'vacantSlot',
+      'vaultBarOf',
+      'withdrawKeyOf',
+      'withdrawSecretOf'
     ]);
   });
 
@@ -1077,8 +1156,9 @@ describe('one definition: the contract and the client agree', () => {
    */
   it('the run payload differs between the schemes and carries all four arguments', () => {
     const r = hex(ROOT);
-    expect(SimulatedCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n))
-      .not.toBe(MidnightCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n));
+    expect(SimulatedCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n)).not.toBe(
+      MidnightCommitments.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n)
+    );
 
     for (const scheme of [MidnightCommitments, SimulatedCommitments]) {
       const base = scheme.runPayload(r, 5n, 1_800_000_000n, 1_800_604_800n, 0n);
@@ -1090,12 +1170,15 @@ describe('one definition: the contract and the client agree', () => {
   });
 
   it('the SIMULATED governance payloads are pinned to fixed values', () => {
-    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0))
-      .toBe('b6588d1a55f778562051f9827192c4bab3b23621e21684f4acae381148387e69');
-    expect(SimulatedCommitments.signerThresholdPayload(3))
-      .toBe('cffb8ca4c82c7d95e140142b8947eb56fecca0d575f37fd9af91a5422d212246');
-    expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2))
-      .toBe('68d9a947fd55a7555b1e9d773c22a98a12d3625e226d1c6ebc88fc8bf5674d77');
+    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0)).toBe(
+      'b6588d1a55f778562051f9827192c4bab3b23621e21684f4acae381148387e69'
+    );
+    expect(SimulatedCommitments.signerThresholdPayload(3)).toBe(
+      'cffb8ca4c82c7d95e140142b8947eb56fecca0d575f37fd9af91a5422d212246'
+    );
+    expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2)).toBe(
+      '68d9a947fd55a7555b1e9d773c22a98a12d3625e226d1c6ebc88fc8bf5674d77'
+    );
   });
 
   /**
@@ -1134,19 +1217,19 @@ describe('one definition: the contract and the client agree', () => {
   it('the threshold adapters carry BOTH arguments through, not one of them', () => {
     const v = hex(VAULT);
     const other = hex(LEAF);
-    expect(MidnightCommitments.vaultThresholdPayload(v, 2))
-      .not.toBe(MidnightCommitments.vaultThresholdPayload(v, 3));
-    expect(MidnightCommitments.vaultThresholdPayload(v, 2))
-      .not.toBe(MidnightCommitments.vaultThresholdPayload(other, 2));
-    expect(MidnightCommitments.signerThresholdPayload(2))
-      .not.toBe(MidnightCommitments.signerThresholdPayload(3));
+    expect(MidnightCommitments.vaultThresholdPayload(v, 2)).not.toBe(MidnightCommitments.vaultThresholdPayload(v, 3));
+    expect(MidnightCommitments.vaultThresholdPayload(v, 2)).not.toBe(
+      MidnightCommitments.vaultThresholdPayload(other, 2)
+    );
+    expect(MidnightCommitments.signerThresholdPayload(2)).not.toBe(MidnightCommitments.signerThresholdPayload(3));
     /* And the same of the simulated pair, which has the same two arguments and
      * its own reason to drop one. */
-    expect(SimulatedCommitments.vaultThresholdPayload(v, 2))
-      .not.toBe(SimulatedCommitments.vaultThresholdPayload(other, 2));
+    expect(SimulatedCommitments.vaultThresholdPayload(v, 2)).not.toBe(
+      SimulatedCommitments.vaultThresholdPayload(other, 2)
+    );
   });
 
-  it('the simulated schemes are NOT the contract\'s, and must never become so', () => {
+  it("the simulated schemes are NOT the contract's, and must never become so", () => {
     /*
      * decision 0004: `core/` runs a different commitment scheme because it
      * cannot import generated Midnight code. That is fine while the two never
@@ -1163,14 +1246,18 @@ describe('one definition: the contract and the client agree', () => {
      * described honestly because a test that claims more than it checks is
      * worse than no test.
      */
-    expect(SimulatedCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 0))
-      .not.toBe(hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD, 0n)));
-    expect(SimulatedCommitments.inviteAddressOf(hex(PK), hex(SALT)))
-      .not.toBe(hex(pureCircuits.inviteAddressOf(PK, SALT)));
-    expect(SimulatedCommitments.coinPublicKeyOf(hex(SIGNING_SECRET)))
-      .not.toBe(hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET)));
-    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0))
-      .not.toBe(hex(pureCircuits.removeAndSetThresholdPayload(LEAF, 0n)));
+    expect(SimulatedCommitments.signerInvitePayload(hex(LEAF), hex(PAYLOAD), 0)).not.toBe(
+      hex(pureCircuits.signerInvitePayload(LEAF, PAYLOAD, 0n))
+    );
+    expect(SimulatedCommitments.inviteAddressOf(hex(PK), hex(SALT))).not.toBe(
+      hex(pureCircuits.inviteAddressOf(PK, SALT))
+    );
+    expect(SimulatedCommitments.coinPublicKeyOf(hex(SIGNING_SECRET))).not.toBe(
+      hex(pureCircuits.coinPublicKeyOf(SIGNING_SECRET))
+    );
+    expect(SimulatedCommitments.signerRemovePayload(hex(LEAF), 0)).not.toBe(
+      hex(pureCircuits.removeAndSetThresholdPayload(LEAF, 0n))
+    );
     /*
      * **THE OTHER TWO.** All four governance payloads are on
      * `CommitmentScheme` now, so all four have a simulated implementation that
@@ -1178,35 +1265,60 @@ describe('one definition: the contract and the client agree', () => {
      * whose names differ, so this also fails if somebody "unifies" them by
      * pointing the simulated scheme at the wrong circuit.
      */
-    expect(SimulatedCommitments.signerThresholdPayload(3))
-      .not.toBe(hex(pureCircuits.setThresholdPayload(3n)));
-    expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2))
-      .not.toBe(hex(pureCircuits.setVaultThresholdPayload(VAULT, 2n)));
+    expect(SimulatedCommitments.signerThresholdPayload(3)).not.toBe(hex(pureCircuits.setThresholdPayload(3n)));
+    expect(SimulatedCommitments.vaultThresholdPayload(hex(VAULT), 2)).not.toBe(
+      hex(pureCircuits.setVaultThresholdPayload(VAULT, 2n))
+    );
     void fromHex;
   });
 });
 
-describe('A VAULT\'S START IS MADE BY THE CONTRACTS\' OWN FUNCTIONS, NOT A SECOND COPY OF THEM', () => {
+describe("A VAULT'S START IS MADE BY THE CONTRACTS' OWN FUNCTIONS, NOT A SECOND COPY OF THEM", () => {
   const VAULT_HEX = 'ab'.repeat(32);
-  it('the adoption round the product raises is the circuit\'s adoption payload, under no vault, with its salt', () => {
+  it("the adoption round the product raises is the circuit's adoption payload, under no vault, with its salt", () => {
     const round = adoptionRoundOf(pureCircuits as never, VAULT_HEX);
     /* RED WHEN: the adoption round is made by anything but the contract's own payload - one vault approved, another adopted. */
     expect(round.payload).toBe(toHex(pureCircuits.adoptVaultPayload(fromHex(VAULT_HEX))));
-    expect(round.proposal).toBe(toHex(pureCircuits.proposalIdOf(
-      pureCircuits.adoptVaultPayload(fromHex(VAULT_HEX)), pureCircuits.noVault(), fromHex(round.salt))));
+    expect(round.proposal).toBe(
+      toHex(
+        pureCircuits.proposalIdOf(
+          pureCircuits.adoptVaultPayload(fromHex(VAULT_HEX)),
+          pureCircuits.noVault(),
+          fromHex(round.salt)
+        )
+      )
+    );
   });
 
-  it('the first secret run\'s one leaf is the vault\'s own secret-run details, in the account\'s own leaf and tree', () => {
-    const run = secretRunOf({ vault: vaultCircuits as never, account: pureCircuits as never },
-      { vault: VAULT_HEX, secret: '5e'.repeat(31) + '00', readers: ['40'.repeat(32)] });
+  it("the first secret run's one leaf is the vault's own secret-run details, in the account's own leaf and tree", () => {
+    const run = secretRunOf(
+      { vault: vaultCircuits as never, account: pureCircuits as never },
+      { vault: VAULT_HEX, secret: '5e'.repeat(31) + '00', readers: ['40'.repeat(32)] }
+    );
     const commitment = vaultCircuits.secretCommitmentOf(fromHex(VAULT_HEX), fromHex('5e'.repeat(31) + '00'));
     expect(run.commitment).toBe(toHex(commitment));
     /* RED WHEN: the run approves details the vault's setNonceSecret does not ask the account for. */
-    expect(run.details).toBe(toHex(vaultCircuits.secretRunDetails(
-      fromHex(VAULT_HEX), new Uint8Array(32), commitment, fromHex(run.copiesRoot), run.count)));
+    expect(run.details).toBe(
+      toHex(
+        vaultCircuits.secretRunDetails(
+          fromHex(VAULT_HEX),
+          new Uint8Array(32),
+          commitment,
+          fromHex(run.copiesRoot),
+          run.count
+        )
+      )
+    );
     const leaf = payoutLeafOf({ details: run.details, nonce: run.nonce });
     expect(toHex(pureCircuits.sumPathRoot(fromHex(leaf), 0n, run.path as never, fromHex(run.asset)))).toBe(run.root);
-    expect(secretRunProposalOf(pureCircuits as never, run, { opensAt: 1n, closesAt: 2n })).toBe(toHex(pureCircuits.proposalIdOf(
-      pureCircuits.runPayload(fromHex(run.root), 1n, 1n, 2n, 0n), fromHex(VAULT_HEX), fromHex(run.salt))));
+    expect(secretRunProposalOf(pureCircuits as never, run, { opensAt: 1n, closesAt: 2n })).toBe(
+      toHex(
+        pureCircuits.proposalIdOf(
+          pureCircuits.runPayload(fromHex(run.root), 1n, 1n, 2n, 0n),
+          fromHex(VAULT_HEX),
+          fromHex(run.salt)
+        )
+      )
+    );
   });
 });

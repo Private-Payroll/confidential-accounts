@@ -119,10 +119,10 @@ const PERBILL = 1_000_000_000n;
  */
 export const EXTRINSIC_FRACTION = {
   num:
-    ((NORMAL_DISPATCH_RATIO_PERBILL - AVG_BLOCK_INIT_PERBILL) * MAX_BLOCK_REF_TIME_PS) / PERBILL
-    - BASE_EXTRINSIC_REF_TIME_PS
-    - TX_SIZE_WEIGHT_REF_TIME_PS,
-  den: MAX_BLOCK_REF_TIME_PS,
+    ((NORMAL_DISPATCH_RATIO_PERBILL - AVG_BLOCK_INIT_PERBILL) * MAX_BLOCK_REF_TIME_PS) / PERBILL -
+    BASE_EXTRINSIC_REF_TIME_PS -
+    TX_SIZE_WEIGHT_REF_TIME_PS,
+  den: MAX_BLOCK_REF_TIME_PS
 } as const;
 
 /** The Normal CLASS's per-block fraction — the old "ceiling", kept and printed
@@ -141,8 +141,7 @@ export const classCeiling = (limit: number): number =>
   Number((BigInt(Math.trunc(limit)) * CLASS_FRACTION.num) / CLASS_FRACTION.den);
 
 /** The derived fraction as a decimal, for percentage displays only. */
-export const extrinsicFraction = (): number =>
-  Number(EXTRINSIC_FRACTION.num) / Number(EXTRINSIC_FRACTION.den);
+export const extrinsicFraction = (): number => Number(EXTRINSIC_FRACTION.num) / Number(EXTRINSIC_FRACTION.den);
 
 /* ─── Calibration: the two real submissions the ceiling must sit between. ──── */
 
@@ -166,12 +165,16 @@ export const BYTES_WRITTEN_LIMIT = 50_000;
  */
 export const calibrate = (ceiling: number = extrinsicCeiling(BYTES_WRITTEN_LIMIT)): string | null => {
   if (!(ceiling > ACCEPTED_BYTES_WRITTEN)) {
-    return `the computed ceiling ${ceiling.toLocaleString()} would refuse the deploy the chain `
-      + `ACCEPTED at ${ACCEPTED_BYTES_WRITTEN.toLocaleString()}`;
+    return (
+      `the computed ceiling ${ceiling.toLocaleString()} would refuse the deploy the chain ` +
+      `ACCEPTED at ${ACCEPTED_BYTES_WRITTEN.toLocaleString()}`
+    );
   }
   if (!(ceiling < REFUSED_BYTES_WRITTEN)) {
-    return `the computed ceiling ${ceiling.toLocaleString()} would pass the deploy the chain `
-      + `REFUSED at ${REFUSED_BYTES_WRITTEN.toLocaleString()}`;
+    return (
+      `the computed ceiling ${ceiling.toLocaleString()} would pass the deploy the chain ` +
+      `REFUSED at ${REFUSED_BYTES_WRITTEN.toLocaleString()}`
+    );
   }
   return null;
 };
@@ -197,15 +200,21 @@ export const printDerivation = (line: (s?: string) => void, bytesWrittenLimit: n
   line('    the node adds a size weight to every transaction: 20,000,000,000 ps');
   line('    (1% of the block) by default, an on-chain setting that can change');
   line('                                              pallets/midnight/src/lib.rs:633-638, :108');
-  line(`    room for the ledger cost = 0.75 − 0.10 − 0.0000540785 − 0.01 = ${extrinsicFraction().toFixed(10)} of the block`);
+  line(
+    `    room for the ledger cost = 0.75 − 0.10 − 0.0000540785 − 0.01 = ${extrinsicFraction().toFixed(10)} of the block`
+  );
   line('    one transaction is priced by its WORST dimension scaled to the whole');
   line('    block — pallets/midnight/src/lib.rs:618, ledger common/mod.rs:1361-1374 —');
   line('    so the same fraction applies to each ledger dimension.');
-  line(`    bytesWritten ${lim.toLocaleString()}: the CLASS may write ${classCeiling(lim).toLocaleString()} a block (75%);`);
+  line(
+    `    bytesWritten ${lim.toLocaleString()}: the CLASS may write ${classCeiling(lim).toLocaleString()} a block (75%);`
+  );
   line(`    ONE EXTRINSIC may write ${extrinsicCeiling(lim).toLocaleString()} (~64%). The second decides a deploy.`);
   const c = calibrate(extrinsicCeiling(lim === BYTES_WRITTEN_LIMIT ? lim : BYTES_WRITTEN_LIMIT));
-  line(`    calibration: accepted ${ACCEPTED_BYTES_WRITTEN.toLocaleString()} < ceiling < refused ${REFUSED_BYTES_WRITTEN.toLocaleString()} — `
-    + (c === null ? 'HOLDS' : `FAILS: ${c}`));
+  line(
+    `    calibration: accepted ${ACCEPTED_BYTES_WRITTEN.toLocaleString()} < ceiling < refused ${REFUSED_BYTES_WRITTEN.toLocaleString()} — ` +
+      (c === null ? 'HOLDS' : `FAILS: ${c}`)
+  );
   line('    not derived here: whether CheckWeight adds extension weights before the');
   line('    comparison — worth at most a few bytes; the calibration window bounds it.');
 };

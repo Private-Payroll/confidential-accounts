@@ -28,7 +28,9 @@ const pageAt = (href: string): void => {
   listeners = {};
   posts = [];
   (globalThis as unknown as { window: unknown }).window = {
-    addEventListener: (type: string, handler: (event: unknown) => void) => { (listeners[type] ??= []).push(handler); },
+    addEventListener: (type: string, handler: (event: unknown) => void) => {
+      (listeners[type] ??= []).push(handler);
+    },
     fetch: async (url: string, init: { body: string }) => {
       posts.push({ url, body: init.body });
       appendWebConsole(JSON.parse(init.body).page, JSON.parse(init.body).entries);
@@ -36,7 +38,10 @@ const pageAt = (href: string): void => {
     },
     console: { error: () => {}, warn: () => {} },
     location: { href },
-    setTimeout: (fn: () => void) => { fn(); return 0; },
+    setTimeout: (fn: () => void) => {
+      fn();
+      return 0;
+    }
   };
 };
 

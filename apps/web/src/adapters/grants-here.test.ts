@@ -2,7 +2,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { aViewOf } from './page-view.test-support.js';
 import { newSymmetricKey, sign, signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
-import { entriesInOrder, grantEntryOf, grantsMessage, type GrantEntry } from '../../../../src/midnight/grants-record.js';
+import {
+  entriesInOrder,
+  grantEntryOf,
+  grantsMessage,
+  type GrantEntry
+} from '../../../../src/midnight/grants-record.js';
 import { ACT_REFUSAL } from './refusals.js';
 
 /*
@@ -14,27 +19,38 @@ import { ACT_REFUSAL } from './refusals.js';
 const COMPANY = 'c-1';
 const ACCOUNT = 'c0'.repeat(32);
 const kr = vi.hoisted(() => ({
-  user: { id: 'u1' } as { id: string } | null, acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
-  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown, seat: null as unknown, grants: null as unknown,
-  after: null as unknown, reads: 0, fail: null as Error | null,
+  user: { id: 'u1' } as { id: string } | null,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  named: { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) } as unknown,
+  seat: null as unknown,
+  grants: null as unknown,
+  after: null as unknown,
+  reads: 0,
+  fail: null as Error | null
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  actOnACompanyInTheWallet: async (intent: Record<string, string>) => { kr.acts.push(intent); return kr.ended; },
+  actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
+    kr.acts.push(intent);
+    return kr.ended;
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async () => kr.named,
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('./service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async () => kr.named
+  })
+);
 vi.mock('./filing-judge.js', async (real) => ({
-  ...(await real<typeof import('./filing-judge.js')>()),
+  ...(await real<typeof import('./filing-judge.js')>())
 }));
 vi.mock('./vault-private-money.js', async (real) => ({
   ...(await real<typeof import('./vault-private-money.js')>()),
-  seatAndRecordsHere: async () => kr.seat,
+  seatAndRecordsHere: async () => kr.seat
 }));
 vi.mock('vaults-web-shared/purpose-wraps.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/purpose-wraps.js')>()),
@@ -42,7 +58,7 @@ vi.mock('vaults-web-shared/purpose-wraps.js', async (real) => ({
     kr.reads += 1;
     if (kr.fail !== null) throw kr.fail;
     return kr.reads > 1 && kr.after !== null ? kr.after : kr.grants;
-  },
+  }
 }));
 
 async function load() {
@@ -53,8 +69,12 @@ async function load() {
 
 const SECRETS = [newSymmetricKey(), newSymmetricKey(), newSymmetricKey()];
 const SEATS = SECRETS.map((secret, i) => ({
-  seat: `0${i + 1}`.padEnd(64, '0'), person: `p${i + 1}`, signingKey: signingPublicKeyOf(secret).toLowerCase() as Hex, wrappingKey: 'ab'.repeat(32) as Hex,
-  role: 'admin' as const, retired: null,
+  seat: `0${i + 1}`.padEnd(64, '0'),
+  person: `p${i + 1}`,
+  signingKey: signingPublicKeyOf(secret).toLowerCase() as Hex,
+  wrappingKey: 'ab'.repeat(32) as Hex,
+  role: 'admin' as const,
+  retired: null
 }));
 const HERE = { leaf: SEATS[1]!.seat };
 const key = (n: number): Hex => n.toString(16).padStart(64, '0') as Hex;
@@ -63,18 +83,45 @@ const ABE = grantEntryOf({ recipient: key(6), person: 'abe', role: 'limited' });
 const signedBy = (sequence: number, entries: readonly GrantEntry[], who: readonly number[]) => {
   const ordered = entriesInOrder(entries);
   const message = grantsMessage(COMPANY, { sequence, entries: ordered });
-  return { sequence, entries: ordered, wraps: {}, signatures: who.map((i) => ({ publicKey: SEATS[i]!.signingKey, signature: sign(message, SECRETS[i]!) })) };
+  return {
+    sequence,
+    entries: ordered,
+    wraps: {},
+    signatures: who.map((i) => ({ publicKey: SEATS[i]!.signingKey, signature: sign(message, SECRETS[i]!) }))
+  };
 };
-const grantsWith = (over: { inForce?: readonly GrantEntry[]; waiting?: ReturnType<typeof signedBy> | null; bar?: number }) => ({
+const grantsWith = (over: {
+  inForce?: readonly GrantEntry[];
+  waiting?: ReturnType<typeof signedBy> | null;
+  bar?: number;
+}) => ({
   inForce: { version: 1, keyEpoch: 0, grants: signedBy(1, over.inForce ?? [RHEA], [0, 1]) },
-  waiting: over.waiting === null || over.waiting === undefined ? null : { version: 2, keyEpoch: 0, grants: over.waiting },
-  revokedAt: null, refused: new Map(),
+  waiting:
+    over.waiting === null || over.waiting === undefined ? null : { version: 2, keyEpoch: 0, grants: over.waiting },
+  revokedAt: null,
+  refused: new Map(),
   here: { dir: { seats: SEATS }, holders: { seats: SEATS.map((s) => s.seat), seatBar: over.bar ?? 2 } },
-  highest: 2, inForceSealedTo: [],
+  highest: 2,
+  inForceSealedTo: []
 });
-const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({ of: 'stopped', step: 2, steps: 4, relayed: 0, unconfirmed: 0, why: 'check-failed', ...(refused === undefined ? {} : { refused }), ...over });
+const stopped = (refused?: string, over: Record<string, unknown> = {}) => ({
+  of: 'stopped',
+  step: 2,
+  steps: 4,
+  relayed: 0,
+  unconfirmed: 0,
+  why: 'check-failed',
+  ...(refused === undefined ? {} : { refused }),
+  ...over
+});
 const reset = (): void => {
-  kr.user = { id: 'u1' }; kr.acts = []; kr.ended = { of: 'done', steps: 1, relayed: 0 }; kr.seat = HERE; kr.after = null; kr.reads = 0; kr.fail = null;
+  kr.user = { id: 'u1' };
+  kr.acts = [];
+  kr.ended = { of: 'done', steps: 1, relayed: 0 };
+  kr.seat = HERE;
+  kr.after = null;
+  kr.reads = 0;
+  kr.fail = null;
   kr.grants = grantsWith({});
 };
 
@@ -84,7 +131,11 @@ describe('what the page reads of the read grants', () => {
     reset();
     const { readGrants, GRANTS_READ } = await load();
     const read = await readGrants('u1', aViewOf(COMPANY));
-    expect(read).toEqual({ of: GRANTS_READ.read, readers: [{ recipient: key(5), person: 'rhea', role: 'accountant' }], waiting: null });
+    expect(read).toEqual({
+      of: GRANTS_READ.read,
+      readers: [{ recipient: key(5), person: 'rhea', role: 'accountant' }],
+      waiting: null
+    });
   });
 
   /* RED WHEN: a change waiting for more signers is not shown as what it gives and what it takes away, or its count is not the signers who signed it. */
@@ -93,7 +144,15 @@ describe('what the page reads of the read grants', () => {
     kr.grants = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0]) });
     const { readGrants } = await load();
     const read = await readGrants('u1', aViewOf(COMPANY));
-    expect(read).toMatchObject({ waiting: { gives: [{ recipient: key(6), person: 'abe', role: 'limited' }], takesAway: [], signed: 1, needed: 2, mine: false } });
+    expect(read).toMatchObject({
+      waiting: {
+        gives: [{ recipient: key(6), person: 'abe', role: 'limited' }],
+        takesAway: [],
+        signed: 1,
+        needed: 2,
+        mine: false
+      }
+    });
     kr.grants = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0, 1]), bar: 3 });
     expect(await readGrants('u1', aViewOf(COMPANY))).toMatchObject({ waiting: { signed: 2, needed: 3, mine: true } });
   });
@@ -103,26 +162,32 @@ describe('what the page reads of the read grants', () => {
     reset();
     kr.grants = grantsWith({ inForce: [RHEA, ABE], waiting: signedBy(2, [RHEA], [2]) });
     const { readGrants } = await load();
-    expect(await readGrants('u1', aViewOf(COMPANY))).toMatchObject({ waiting: { gives: [], takesAway: [{ recipient: key(6), person: 'abe', role: 'limited' }], signed: 1, mine: false } });
+    expect(await readGrants('u1', aViewOf(COMPANY))).toMatchObject({
+      waiting: { gives: [], takesAway: [{ recipient: key(6), person: 'abe', role: 'limited' }], signed: 1, mine: false }
+    });
   });
 
   /* RED WHEN: a signature that does not verify is counted, or the count is shown as a number when it could not be made. */
   it('shows no count when a signature on the waiting change does not verify', async () => {
     reset();
     const w = signedBy(2, [RHEA, ABE], [0]);
-    kr.grants = grantsWith({ inForce: [RHEA], waiting: { ...w, signatures: [{ ...w.signatures[0]!, signature: '00'.repeat(64) }] } });
+    kr.grants = grantsWith({
+      inForce: [RHEA],
+      waiting: { ...w, signatures: [{ ...w.signatures[0]!, signature: '00'.repeat(64) }] }
+    });
     const { readGrants } = await load();
     expect(await readGrants('u1', aViewOf(COMPANY))).toMatchObject({ waiting: { signed: null, needed: 2 } });
   });
 
   /* RED WHEN: a page that has no company key released reads the grants anyway, or says nothing about why they were not read. */
-  it('refuses with the seat read\'s own reason, and with the reason the grants could not be read', async () => {
+  it("refuses with the seat read's own reason, and with the reason the grants could not be read", async () => {
     reset();
     kr.seat = ACT_REFUSAL.noKeysHere;
     const { readGrants, GRANTS_READ } = await load();
     expect(await readGrants('u1', aViewOf(COMPANY))).toEqual({ of: GRANTS_READ.refused, why: ACT_REFUSAL.noKeysHere });
     expect(kr.reads).toBe(0);
-    kr.seat = HERE; kr.fail = new Error('withheld');
+    kr.seat = HERE;
+    kr.fail = new Error('withheld');
     expect(await readGrants('u1', aViewOf(COMPANY))).toMatchObject({ of: GRANTS_READ.refused });
   });
 });
@@ -131,7 +196,7 @@ describe('what the page asks of the wallet', () => {
   const NAMED = { name: 'grant-read', record: COMPANY, company: 'label-1', account: ACCOUNT };
 
   /* RED WHEN: a give carries a key the page chose, or loses the reader's code or role. */
-  it('sends a give as the reader\'s code and role, never a key', async () => {
+  it("sends a give as the reader's code and role, never a key", async () => {
     reset();
     const { giveReadAccess } = await load();
     const ended = await giveReadAccess('u1', aViewOf(COMPANY), { code: ' abc ', role: 'limited' });
@@ -143,13 +208,19 @@ describe('what the page asks of the wallet', () => {
   it('asks nothing of the wallet for a give it can see is not one', async () => {
     reset();
     const { giveReadAccess, GRANT_ACTED } = await load();
-    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: '  ', role: 'limited' })).toEqual({ of: GRANT_ACTED.problem, problem: 'no-code' });
-    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'admin' })).toEqual({ of: GRANT_ACTED.problem, problem: 'no-role' });
+    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: '  ', role: 'limited' })).toEqual({
+      of: GRANT_ACTED.problem,
+      problem: 'no-code'
+    });
+    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'admin' })).toEqual({
+      of: GRANT_ACTED.problem,
+      problem: 'no-role'
+    });
     expect(kr.acts).toEqual([]);
   });
 
   /* RED WHEN: a take-away carries a code, or does not name the reader's key as the grants in force hold it, or leaves out the choice. */
-  it('sends a take-away as the reader\'s key and the choice to take away', async () => {
+  it("sends a take-away as the reader's key and the choice to take away", async () => {
     reset();
     const { takeAwayReadAccess } = await load();
     await takeAwayReadAccess('u1', aViewOf(COMPANY), key(0xab).toUpperCase());
@@ -161,15 +232,28 @@ describe('what the page asks of the wallet', () => {
     reset();
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 1, needed: 2 } };
     const { giveReadAccess } = await load();
-    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' })).toEqual({ of: 'done', state: 'waiting-for-signers', signed: 1, needed: 2 });
+    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' })).toEqual({
+      of: 'done',
+      state: 'waiting-for-signers',
+      signed: 1,
+      needed: 2
+    });
   });
 
   /* RED WHEN: a wallet's stop is shown as the wrong reason, or a stop that may have part-filed is not marked so. */
   it('says why the wallet stopped, and whether part of it may have gone through', async () => {
     reset();
     const { giveReadAccess } = await load();
-    const why = async (refused?: string, over: Record<string, unknown> = {}) => { kr.ended = stopped(refused, over); return giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }); };
-    expect(await why('act.grant-read.why.code-not-signed')).toEqual({ of: 'stopped', why: 'code-not-signed', partial: false, handedOver: false });
+    const why = async (refused?: string, over: Record<string, unknown> = {}) => {
+      kr.ended = stopped(refused, over);
+      return giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' });
+    };
+    expect(await why('act.grant-read.why.code-not-signed')).toEqual({
+      of: 'stopped',
+      why: 'code-not-signed',
+      partial: false,
+      handedOver: false
+    });
     expect(await why('act.grant-read.why.code-another-company')).toMatchObject({ why: 'code-another-company' });
     expect(await why('act.grant-read.why.not-a-reader-code')).toMatchObject({ why: 'not-a-code' });
     expect(await why('act.grant-read.why.filed-meanwhile')).toMatchObject({ why: 'filed-meanwhile', partial: false });
@@ -184,7 +268,9 @@ describe('what the page asks of the wallet', () => {
     reset();
     const { giveReadAccess, GRANT_ACTED } = await load();
     kr.named = null;
-    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' })).toMatchObject({ of: GRANT_ACTED.refused });
+    expect(await giveReadAccess('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' })).toMatchObject({
+      of: GRANT_ACTED.refused
+    });
     kr.named = { companyLabel: 'label-1', contractAddress: ACCOUNT };
     expect(kr.acts).toEqual([]);
   });
@@ -197,17 +283,22 @@ describe('signing a waiting change from a second seat', () => {
     if (read.of !== 'read' || read.waiting === null) throw new Error('no waiting change');
     return read.waiting;
   };
-  const before = () => { reset(); kr.grants = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0]) }); };
+  const before = () => {
+    reset();
+    kr.grants = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0]) });
+  };
 
   /* RED WHEN: the page says a second seat's signature counted when the waiting change still carries only the first seat's. */
-  it('says the waiting change carries this seat\'s signature once it does', async () => {
+  it("says the waiting change carries this seat's signature once it does", async () => {
     before();
     const waiting = await waitingGive();
     kr.after = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0, 1]), bar: 3 });
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 2, needed: 3 } };
     const { approveWaitingChange } = await load();
     const ended = await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting);
-    expect(kr.acts).toEqual([{ name: 'grant-read', record: COMPANY, company: 'label-1', account: ACCOUNT, code: 'abc', role: 'limited' }]);
+    expect(kr.acts).toEqual([
+      { name: 'grant-read', record: COMPANY, company: 'label-1', account: ACCOUNT, code: 'abc', role: 'limited' }
+    ]);
     expect(ended).toMatchObject({ acted: { of: 'done', state: 'waiting-for-signers' }, carries: 'signed' });
   });
 
@@ -219,17 +310,21 @@ describe('signing a waiting change from a second seat', () => {
     kr.after = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, other], [1]) });
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 1, needed: 2 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'zzz', role: 'limited' }, waiting)).toMatchObject({ carries: 'not-the-waiting-change' });
+    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'zzz', role: 'limited' }, waiting)).toMatchObject(
+      { carries: 'not-the-waiting-change' }
+    );
   });
 
   /* RED WHEN: the page says this seat signed when the change that waits still carries only the other signer's signature. */
-  it('does not say it signed when this seat\'s signature is not on the waiting change', async () => {
+  it("does not say it signed when this seat's signature is not on the waiting change", async () => {
     before();
     const waiting = await waitingGive();
     kr.after = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, ABE], [0]) });
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 1, needed: 2 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject({ carries: 'not-the-waiting-change' });
+    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject(
+      { carries: 'not-the-waiting-change' }
+    );
   });
 
   /* RED WHEN: a role other than the waiting change's makes the page say it signed that change. */
@@ -240,7 +335,9 @@ describe('signing a waiting change from a second seat', () => {
     kr.after = grantsWith({ inForce: [RHEA], waiting: signedBy(2, [RHEA, other], [1]) });
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 1, needed: 2 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'accountant' }, waiting)).toMatchObject({ carries: 'not-the-waiting-change' });
+    expect(
+      await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'accountant' }, waiting)
+    ).toMatchObject({ carries: 'not-the-waiting-change' });
   });
 
   /* RED WHEN: a change that reached the bar is told as still waiting. */
@@ -249,20 +346,31 @@ describe('signing a waiting change from a second seat', () => {
     const waiting = await waitingGive();
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'in-force', filed: 2, needed: 2 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject({ carries: 'in-force' });
+    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject(
+      { carries: 'in-force' }
+    );
     expect(kr.reads).toBe(1);
   });
 
   /* RED WHEN: a take-away waiting for more signers cannot be signed from a second seat by the reader as the grants hold them. */
-  it('signs a waiting take-away by the reader\'s key as it stands', async () => {
+  it("signs a waiting take-away by the reader's key as it stands", async () => {
     reset();
     kr.grants = grantsWith({ inForce: [RHEA, ABE], waiting: signedBy(2, [RHEA], [0]) });
     const waiting = await waitingGive();
     kr.after = grantsWith({ inForce: [RHEA, ABE], waiting: signedBy(2, [RHEA], [0, 1]), bar: 3 });
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 2, needed: 3 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { takeAway: key(6) }, waiting)).toMatchObject({ carries: 'signed' });
-    expect(kr.acts.at(-1)).toEqual({ name: 'grant-read', record: COMPANY, company: 'label-1', account: ACCOUNT, recipient: key(6), away: 'yes' });
+    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { takeAway: key(6) }, waiting)).toMatchObject({
+      carries: 'signed'
+    });
+    expect(kr.acts.at(-1)).toEqual({
+      name: 'grant-read',
+      record: COMPANY,
+      company: 'label-1',
+      account: ACCOUNT,
+      recipient: key(6),
+      away: 'yes'
+    });
   });
 
   /* RED WHEN: a signature the wallet gave is told as counted when the grants cannot be read again to check it. */
@@ -272,7 +380,9 @@ describe('signing a waiting change from a second seat', () => {
     kr.fail = new Error('withheld');
     kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'waiting-for-signers', filed: 2, needed: 3 } };
     const { approveWaitingChange } = await load();
-    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject({ carries: 'unread' });
+    expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toMatchObject(
+      { carries: 'unread' }
+    );
   });
 
   /* RED WHEN: a stop of the wallet is told as a signature, so the page says the change carries this seat's signature. */
@@ -282,7 +392,8 @@ describe('signing a waiting change from a second seat', () => {
     kr.ended = stopped('act.grant-read.why.code-not-signed');
     const { approveWaitingChange } = await load();
     expect(await approveWaitingChange('u1', aViewOf(COMPANY), { code: 'abc', role: 'limited' }, waiting)).toEqual({
-      acted: { of: 'stopped', why: 'code-not-signed', partial: false, handedOver: false }, carries: null,
+      acted: { of: 'stopped', why: 'code-not-signed', partial: false, handedOver: false },
+      carries: null
     });
   });
 });

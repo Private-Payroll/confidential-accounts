@@ -11,7 +11,11 @@ import { signatureVerifyingKey } from '@midnightntwrk/ledger-v9';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import { readAccountAddress, readCompanyLabel } from 'midnight-identity/profile/company-label';
 import { signJoinCode } from 'midnight-identity/profile/join-code';
-import { CLAIMED_HANDOVER_SCHEMA, typedAddressIsShielded, type AddressClaimFor } from 'midnight-identity/profile/address-claim';
+import {
+  CLAIMED_HANDOVER_SCHEMA,
+  typedAddressIsShielded,
+  type AddressClaimFor
+} from 'midnight-identity/profile/address-claim';
 import { signUnshieldedClaim } from 'midnight-identity/profile/address-claim-signed';
 import type { JoinCodeRequest } from 'midnight-identity/profile/request';
 import { acceptanceProofOf, invitationIdOf, offerExpiredRefusal, openOffer } from '../../../../src/core/invitation.js';
@@ -25,19 +29,31 @@ import { withPaidBy } from '../../../../packages/web-shared/src/keyring-blob.js'
 import { StepRefused, type ActionDefinition, type ShownLine, type StepContext, type Words } from './definition.js';
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.claim-by-address.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.claim-by-address.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
-const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => { throw new StepRefused(why(key, values)); };
+const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => {
+  throw new StepRefused(why(key, values));
+};
 
 /** Which of this wallet's accounts holds an address, and as which kind, or null when none does. */
-export function heldAt(identity: Identity, network: string, address: string): { readonly account: number; readonly kind: 'shielded' | 'unshielded' } | null {
+export function heldAt(
+  identity: Identity,
+  network: string,
+  address: string
+): { readonly account: number; readonly kind: 'shielded' | 'unshielded' } | null {
   for (const account of WALLET_ACCOUNTS) {
     try {
       const money = identity.moneyAt(account);
       if (addressFor(money.zswap, network as never).bech32 === address) return { account, kind: 'shielded' };
-      const night = signatureVerifyingKey({ tag: 'schnorr', value: Array.from(money.night, (b) => b.toString(16).padStart(2, '0')).join('') });
+      const night = signatureVerifyingKey({
+        tag: 'schnorr',
+        value: Array.from(money.night, (b) => b.toString(16).padStart(2, '0')).join('')
+      });
       if (addressOfVerifyingKey(night.value, network as never) === address) return { account, kind: 'unshielded' };
-    } catch { /* an account this wallet cannot read an address of holds nothing to claim with */ }
+    } catch {
+      /* an account this wallet cannot read an address of holds nothing to claim with */
+    }
   }
   return null;
 }
@@ -48,7 +64,8 @@ export interface ClaimReach {
 }
 
 const fieldsRefusal = (fields: Readonly<Record<string, string>>): Words | null => {
-  if (readCompanyLabel(fields['company']) === null || readAccountAddress(fields['account']) === null) return why('not-a-company');
+  if (readCompanyLabel(fields['company']) === null || readAccountAddress(fields['account']) === null)
+    return why('not-a-company');
   if (!/^[0-9a-f]{64}$/u.test(fields['token'] ?? '')) return why('not-an-invitation');
   if (typedAddressIsShielded(fields['address'] ?? '')) return why('private');
   return null;
@@ -79,10 +96,19 @@ async function openedOffer(ctx: StepContext): Promise<Opened> {
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
   let signed: ReturnType<typeof openOffer>;
-  try { signed = openOffer(sealed, token); } catch { return refuse('no-offer'); }
+  try {
+    signed = openOffer(sealed, token);
+  } catch {
+    return refuse('no-offer');
+  }
   const o = signed.offer;
   if (offerExpiredRefusal(o, Date.now()) !== null) return refuse('expired');
-  if (o.company !== f['record'] || o.label !== label || String(o.account).toLowerCase() !== String(account).toLowerCase()) return refuse('another-company');
+  if (
+    o.company !== f['record'] ||
+    o.label !== label ||
+    String(o.account).toLowerCase() !== String(account).toLowerCase()
+  )
+    return refuse('another-company');
   if (o.for.kind !== 'employee' && o.for.kind !== 'vendor') return refuse('not-a-payee');
   const address = (o.for as { address?: unknown }).address;
   if (typeof address !== 'string' || address !== f['address']) return refuse('not-by-address');
@@ -100,55 +126,84 @@ export function claimByAddressAction(reach: ClaimReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.claim-by-address.headline',
     shown: async (intent): Promise<readonly ShownLine[]> => [
-      { key: 'act.claim-by-address.shown.company', values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
-      { key: 'act.claim-by-address.shown.address', values: { address: String(intent.fields['address'] ?? '') }, from: 'page' },
+      {
+        key: 'act.claim-by-address.shown.company',
+        values: { label: String(intent.fields['company'] ?? '') },
+        from: 'page'
+      },
+      {
+        key: 'act.claim-by-address.shown.address',
+        values: { address: String(intent.fields['address'] ?? '') },
+        from: 'page'
+      },
       { key: 'act.claim-by-address.shown.proof', from: 'action' },
-      { key: 'act.claim-by-address.shown.nothing-else', from: 'action' },
+      { key: 'act.claim-by-address.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.claim-by-address.check.offer' },
       { key: 'act.claim-by-address.check.held' },
-      { key: 'act.claim-by-address.check.signed' },
+      { key: 'act.claim-by-address.check.signed' }
     ],
-    check: async (intent, held) => fieldsRefusal(intent.fields)
-      ?? (heldAt(held.identity, reach.network, intent.fields['address'] ?? '')?.kind !== 'unshielded' ? why('not-held') : null),
-    steps: () => [{
-      title: { key: 'act.claim-by-address.step.claim' },
-      run: async (ctx) => {
-        const refused = fieldsRefusal(ctx.intent.fields);
-        if (refused !== null) throw new StepRefused(refused);
-        const saved = ctx.keyring;
-        if (saved === null) return refuse('no-saved-keys');
-        const o = await openedOffer(ctx);
-        const at = heldAt(ctx.held.identity, reach.network, o.address);
-        if (at === null || at.kind !== 'unshielded') return refuse('not-held');
-        const company = readCompanyLabel(ctx.intent.fields['company'])!;
-        let payslipKey: string;
-        try {
-          payslipKey = payslipKeyOfThisWallet(ctx.held.identity, { company, requester: ctx.asker } as unknown as JoinCodeRequest);
-        } catch {
-          return refuse('no-payslip-key');
+    check: async (intent, held) =>
+      fieldsRefusal(intent.fields) ??
+      (heldAt(held.identity, reach.network, intent.fields['address'] ?? '')?.kind !== 'unshielded'
+        ? why('not-held')
+        : null),
+    steps: () => [
+      {
+        title: { key: 'act.claim-by-address.step.claim' },
+        run: async (ctx) => {
+          const refused = fieldsRefusal(ctx.intent.fields);
+          if (refused !== null) throw new StepRefused(refused);
+          const saved = ctx.keyring;
+          if (saved === null) return refuse('no-saved-keys');
+          const o = await openedOffer(ctx);
+          const at = heldAt(ctx.held.identity, reach.network, o.address);
+          if (at === null || at.kind !== 'unshielded') return refuse('not-held');
+          const company = readCompanyLabel(ctx.intent.fields['company'])!;
+          let payslipKey: string;
+          try {
+            payslipKey = payslipKeyOfThisWallet(ctx.held.identity, {
+              company,
+              requester: ctx.asker
+            } as unknown as JoinCodeRequest);
+          } catch {
+            return refuse('no-payslip-key');
+          }
+          const claimFor: AddressClaimFor = {
+            company,
+            person: o.person,
+            payslipKey,
+            address: o.address,
+            network: reach.network
+          };
+          let code: ReturnType<typeof signJoinCode>;
+          let claim: ReturnType<typeof signUnshieldedClaim>;
+          try {
+            code = signJoinCode(ctx.held.identity, company, o.person, {
+              kind: 'payee',
+              address: o.address,
+              payslipKey
+            });
+            claim = signUnshieldedClaim(ctx.held.identity, at.account, claimFor);
+          } catch (e) {
+            return refuse('not-signed', { says: String((e as Error)?.message ?? e) });
+          }
+          /* Listed before the hand-over, which an invitation takes once: listed after, a keep that failed would leave
+           * the person joined and their wallet not knowing the company pays them, with nothing to run again. */
+          if (!(saved.open().read().paidBy ?? []).includes(company)) await saved.keep((k) => withPaidBy(k, company));
+          const handover = sealToInbox({ schema: CLAIMED_HANDOVER_SCHEMA, code, claim }, o.inbox);
+          const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token), {
+            acceptance: acceptanceProofOf(o.token),
+            handover,
+            kind: o.payee
+          });
+          if (answer.status !== 201) {
+            const said = (answer.body as { error?: unknown } | null)?.error;
+            refuse('not-taken', { says: typeof said === 'string' ? said : `the service answered ${answer.status}` });
+          }
         }
-        const claimFor: AddressClaimFor = { company, person: o.person, payslipKey, address: o.address, network: reach.network };
-        let code: ReturnType<typeof signJoinCode>;
-        let claim: ReturnType<typeof signUnshieldedClaim>;
-        try {
-          code = signJoinCode(ctx.held.identity, company, o.person, { kind: 'payee', address: o.address, payslipKey });
-          claim = signUnshieldedClaim(ctx.held.identity, at.account, claimFor);
-        } catch (e) {
-          return refuse('not-signed', { says: String((e as Error)?.message ?? e) });
-        }
-        /* Listed before the hand-over, which an invitation takes once: listed after, a keep that failed would leave
-         * the person joined and their wallet not knowing the company pays them, with nothing to run again. */
-        if (!(saved.open().read().paidBy ?? []).includes(company)) await saved.keep((k) => withPaidBy(k, company));
-        const handover = sealToInbox({ schema: CLAIMED_HANDOVER_SCHEMA, code, claim }, o.inbox);
-        const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token),
-          { acceptance: acceptanceProofOf(o.token), handover, kind: o.payee });
-        if (answer.status !== 201) {
-          const said = (answer.body as { error?: unknown } | null)?.error;
-          refuse('not-taken', { says: typeof said === 'string' ? said : `the service answered ${answer.status}` });
-        }
-      },
-    }],
+      }
+    ]
   } satisfies ActionDefinition);
 }

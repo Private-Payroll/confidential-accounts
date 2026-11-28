@@ -77,7 +77,17 @@
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  writeFileSync
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -98,7 +108,9 @@ const SRS = 'https://srs.midnight.network';
 
 /* The ledger's own circuits the wallet proves with, read from the file the
  * wallet serves them by (src/chain/ledger-keys.json), three files each. */
-export const LEDGER_CIRCUITS = Object.values(JSON.parse(readFileSync(path.join(WALLET_DIR, 'src', 'chain', 'ledger-keys.json'), 'utf8')));
+export const LEDGER_CIRCUITS = Object.values(
+  JSON.parse(readFileSync(path.join(WALLET_DIR, 'src', 'chain', 'ledger-keys.json'), 'utf8'))
+);
 /* The hash the ledger release preprod runs declares for every file of its own
  * circuits, in its source (ledger/static/dust/spend.*.sha256 and
  * zswap/static/*.sha256). A file that hashes to anything else is refused. */
@@ -114,7 +126,7 @@ export const LEDGER_DECLARED = Object.freeze({
   'zswap/9/sign.bzkir': '37ea2094516e145a738126307cf92bd293f7cb524b1ccd49fa6f3225a9ec3a50',
   'dust/10/spend.prover': '3dff9f54add761350ad02621a425d67fe3d656c8145fef8ef147870489ffdc81',
   'dust/10/spend.verifier': 'd15a1295780549f534287a39c938005e1faa3232be21861573bd0cdb148949cb',
-  'dust/10/spend.bzkir': 'd211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1',
+  'dust/10/spend.bzkir': 'd211cacb22391b9db60f945787d98c16d344cbb4790246132117084c080399c1'
 });
 /* The ledger circuits the bucket serves other bytes for than the release
  * declares: these are fetched from the trusted-setup host, every other ledger
@@ -126,7 +138,7 @@ export { BUCKET, SRS as TRUSTED_SETUP };
 
 /** The host a ledger circuit file is fetched from. */
 export const ledgerSourceOf = (relPath) =>
-  (FROM_THE_TRUSTED_SETUP.some((c) => relPath.startsWith(`${c}.`)) ? SRS : BUCKET);
+  FROM_THE_TRUSTED_SETUP.some((c) => relPath.startsWith(`${c}.`)) ? SRS : BUCKET;
 
 /** The lines refusing a ledger circuit file whose bytes are not the ones its release declares, or null when they are (or nothing is declared for it). */
 export const declaredRefusal = (relPath, hash, from) => {
@@ -135,7 +147,7 @@ export const declaredRefusal = (relPath, hash, from) => {
   return [
     `  !! REFUSED ${relPath}: ${from} serves ${hash}, but the ledger release declares`,
     `     ${declared}. A ledger key that is not the release's is refused by the node. Nothing`,
-    '     was written for this file.',
+    '     was written for this file.'
   ];
 };
 
@@ -146,7 +158,7 @@ export const declaredRefusal = (relPath, hash, from) => {
 export const droppedRefusal = (relPath, url, cause) => [
   `  !! REFUSED ${relPath}: the download from ${url} dropped (${cause?.cause?.code ?? cause?.message ?? cause}).`,
   '     Nothing was written for this file; every file this run accepted is written and pinned.',
-  '     Run this door again (with the same options) to fetch it afresh.',
+  '     Run this door again (with the same options) to fetch it afresh.'
 ];
 
 /** Every folder of ledger circuit files the keys folder or the pins hold, one generation deep (zswap/9, dust/10, ...). */
@@ -177,7 +189,7 @@ const ALL_K = [10, 11, 12, 13, 14, 15, 16, 17, 18];
  * every size; SIZE was compared against it, the published digest was NOT,
  * so treat the two-host agreement as the evidence and not the catalog. */
 const KNOWN_PINS = {
-  bls_midnight_2p16: '09c877216d6589b370263e18af40a030a901b41a7a7c37ef58c9901db41f05c6',
+  bls_midnight_2p16: '09c877216d6589b370263e18af40a030a901b41a7a7c37ef58c9901db41f05c6'
 };
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -189,11 +201,32 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
  * company account, `managed-vault` for the vault). With `verifierOnly`, the
  * verifier key alone: what a deploy installs, for a circuit the wallet never proves.
  */
-export const accountFilesOf = (circuits, folder, compiled = 'managed', verifierOnly = false) => circuits.flatMap((circuit) => [
-  ...(verifierOnly ? [] : [{ served: `${folder}/${circuit}.prover`, built: path.join('contracts', compiled, 'keys', `${circuit}.prover`), circuit }]),
-  { served: `${folder}/${circuit}.verifier`, built: path.join('contracts', compiled, 'keys', `${circuit}.verifier`), circuit },
-  ...(verifierOnly ? [] : [{ served: `${folder}/${circuit}.bzkir`, built: path.join('contracts', compiled, 'zkir', `${circuit}.bzkir`), circuit }]),
-]);
+export const accountFilesOf = (circuits, folder, compiled = 'managed', verifierOnly = false) =>
+  circuits.flatMap((circuit) => [
+    ...(verifierOnly
+      ? []
+      : [
+          {
+            served: `${folder}/${circuit}.prover`,
+            built: path.join('contracts', compiled, 'keys', `${circuit}.prover`),
+            circuit
+          }
+        ]),
+    {
+      served: `${folder}/${circuit}.verifier`,
+      built: path.join('contracts', compiled, 'keys', `${circuit}.verifier`),
+      circuit
+    },
+    ...(verifierOnly
+      ? []
+      : [
+          {
+            served: `${folder}/${circuit}.bzkir`,
+            built: path.join('contracts', compiled, 'zkir', `${circuit}.bzkir`),
+            circuit
+          }
+        ])
+  ]);
 
 /**
  * Copies the private registry's circuits the wallet proves from the registry's own compile, each checked
@@ -201,16 +234,36 @@ export const accountFilesOf = (circuits, folder, compiled = 'managed', verifierO
  * copies nothing. Returns how many circuits were refused, whether the registry's folder was walked, and
  * every path it serves.
  */
-export async function vendorRegistryKeys({ repoRoot, keysDir, circuits, folder, artefacts, repin = false, log = console.log }) {
+export async function vendorRegistryKeys({
+  repoRoot,
+  keysDir,
+  circuits,
+  folder,
+  artefacts,
+  repin = false,
+  log = console.log
+}) {
   const compiled = path.join(repoRoot, 'contracts', 'managed-registry', 'contract', 'index.js');
   if (!existsSync(compiled)) {
-    log('  !! REFUSED the registry\'s keys: there is no compiled registry at contracts/managed-registry.');
+    log("  !! REFUSED the registry's keys: there is no compiled registry at contracts/managed-registry.");
     log('     `npm run compact` builds it with its keys. The keys above are still pinned.');
     return { refused: 1, walked: false, expected: [] };
   }
   const { expectedVk } = await import(pathToFileURL(compiled).href);
-  log(`  The private registry's circuits this wallet proves (${circuits.length}), copied from contracts/managed-registry:`);
-  const refused = vendorAccountKeys({ repoRoot, keysDir, circuits, folder, expectedVk, artefacts, repin, log, compiled: 'managed-registry' });
+  log(
+    `  The private registry's circuits this wallet proves (${circuits.length}), copied from contracts/managed-registry:`
+  );
+  const refused = vendorAccountKeys({
+    repoRoot,
+    keysDir,
+    circuits,
+    folder,
+    expectedVk,
+    artefacts,
+    repin,
+    log,
+    compiled: 'managed-registry'
+  });
   return { refused, walked: true, expected: accountFilesOf(circuits, folder, 'managed-registry').map((f) => f.served) };
 }
 
@@ -223,13 +276,26 @@ export async function vendorRegistryKeys({ repoRoot, keysDir, circuits, folder, 
  * A refused circuit writes none of its three files, so a prover is never
  * served beside a verifier from another build.
  */
-export function vendorAccountKeys({ repoRoot, keysDir, circuits, folder, expectedVk, artefacts, repin = false, log = console.log, compiled = 'managed', verifierOnly = false }) {
+export function vendorAccountKeys({
+  repoRoot,
+  keysDir,
+  circuits,
+  folder,
+  expectedVk,
+  artefacts,
+  repin = false,
+  log = console.log,
+  compiled = 'managed',
+  verifierOnly = false
+}) {
   let refused = 0;
   for (const circuit of circuits) {
     const files = accountFilesOf([circuit], folder, compiled, verifierOnly);
     const missing = files.filter((f) => !existsSync(path.join(repoRoot, f.built)));
     if (missing.length > 0) {
-      log(`  !! REFUSED ${circuit}: ${missing.map((f) => f.built).join(', ')} not on disk. \`npm run compact\` builds them.`);
+      log(
+        `  !! REFUSED ${circuit}: ${missing.map((f) => f.built).join(', ')} not on disk. \`npm run compact\` builds them.`
+      );
       refused += 1;
       continue;
     }
@@ -298,7 +364,17 @@ export function pruneStale({ keysDir, artefacts, stale, graveyard, stamp }) {
 }
 
 /* A stale key is refused unless the run was told to prune; returns how many refusals to add. */
-export function pruneOrRefuse({ keysDir, artefacts, folders, expected, prune, graveyard, stamp, log = console.log, command = 'npm run vendor-keys:account -- --prune' }) {
+export function pruneOrRefuse({
+  keysDir,
+  artefacts,
+  folders,
+  expected,
+  prune,
+  graveyard,
+  stamp,
+  log = console.log,
+  command = 'npm run vendor-keys:account -- --prune'
+}) {
   const stale = staleKeysOf({ keysDir, artefacts, folders, expected });
   if (stale.length === 0) return 0;
   if (!prune) {
@@ -309,7 +385,9 @@ export function pruneOrRefuse({ keysDir, artefacts, folders, expected, prune, gr
     return 1;
   }
   const moved = pruneStale({ keysDir, artefacts, stale, graveyard, stamp });
-  log(`  PRUNED ${stale.length} pin(s), moved ${moved} file(s) into ${path.basename(graveyard)}/ (--prune, deliberate)`);
+  log(
+    `  PRUNED ${stale.length} pin(s), moved ${moved} file(s) into ${path.basename(graveyard)}/ (--prune, deliberate)`
+  );
   return 0;
 }
 
@@ -321,15 +399,20 @@ export function keysFolderOrRefuse({ keysDir, repoRoot, log = console.log }) {
   if (existsSync(keysDir) && statSync(keysDir).isDirectory()) return 0;
   log(`  !! REFUSED: ${fromRoot(repoRoot, keysDir)} is not there, and this script does not make it.`);
   log('     The folder ships with manifest.json inside it, so a full checkout of the repository has it.');
-  log(`     Restore it by checking out ${fromRoot(repoRoot, path.join(keysDir, 'manifest.json'))}, or run this from a full checkout, then run again.`);
+  log(
+    `     Restore it by checking out ${fromRoot(repoRoot, path.join(keysDir, 'manifest.json'))}, or run this from a full checkout, then run again.`
+  );
   return 1;
 }
 
 /** The closing line of a run: where the manifest of pins was written, read from that path. */
-export const wroteLine = ({ repoRoot, manifestPath, pins }) => `  Wrote ${pins} pins to ${fromRoot(repoRoot, manifestPath)}`;
+export const wroteLine = ({ repoRoot, manifestPath, pins }) =>
+  `  Wrote ${pins} pins to ${fromRoot(repoRoot, manifestPath)}`;
 
 /** Node reports this file's URL by its real path, so the path it was started by is resolved the same way: a symlinked folder (macOS /var -> /private/var) must not make the script think it was imported. */
-const isMain = process.argv[1] !== undefined && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+const isMain =
+  process.argv[1] !== undefined &&
+  realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
 
 if (isMain) {
   const args = process.argv.slice(2);
@@ -351,9 +434,7 @@ if (isMain) {
     return { bytes, ms: Date.now() - started };
   }
 
-  const existing = existsSync(MANIFEST)
-    ? JSON.parse(readFileSync(MANIFEST, 'utf8'))
-    : null;
+  const existing = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, 'utf8')) : null;
   if (existing) {
     console.log(`  A manifest already exists (made ${existing.generatedAt}). Its pins are`);
     console.log('  DEFENDED: a source file that hashes differently is refused, not repinned.');
@@ -426,8 +507,10 @@ if (isMain) {
     writeFileSync(target, bytes);
     artefacts[relPath] = { bytes: bytes.length, sha256: hash };
     downloadedBytes += bytes.length;
-    console.log(`  ${relPath.padEnd(24)} ${String(bytes.length).padStart(10)} bytes  `
-      + `${String(ms).padStart(6)}ms  sha256 ${hash}`);
+    console.log(
+      `  ${relPath.padEnd(24)} ${String(bytes.length).padStart(10)} bytes  ` +
+        `${String(ms).padStart(6)}ms  sha256 ${hash}`
+    );
   }
 
   const accountOnly = args.includes('--account');
@@ -438,11 +521,13 @@ if (isMain) {
     let folder;
     try {
       ({ ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR: circuits } = await import(
-        pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href));
+        pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href
+      ));
       ({ ACCOUNT_KEYS_FOLDER: folder } = await import(
-        pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href));
+        pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href
+      ));
     } catch (e) {
-      console.log('  --account reads the wallet\'s list of account circuits, which is TypeScript, so it');
+      console.log("  --account reads the wallet's list of account circuits, which is TypeScript, so it");
       console.log(`  runs as \`npm run vendor-keys:account\` (${e?.message ?? e}).`);
       process.exit(1);
     }
@@ -453,40 +538,92 @@ if (isMain) {
       process.exit(1);
     }
     const { expectedVk } = await import(pathToFileURL(compiled).href);
-    console.log(`  The company account's circuits this wallet proves, itself or as a vault's call (${circuits.length}), copied from contracts/managed:`);
-    refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits, folder, expectedVk, artefacts, repin });
+    console.log(
+      `  The company account's circuits this wallet proves, itself or as a vault's call (${circuits.length}), copied from contracts/managed:`
+    );
+    refused += vendorAccountKeys({
+      repoRoot: REPO_ROOT,
+      keysDir: KEYS_DIR,
+      circuits,
+      folder,
+      expectedVk,
+      artefacts,
+      repin
+    });
     const walked = [folder];
     const expected = accountFilesOf(circuits, folder).map((f) => f.served);
 
     /* The vault's: the circuits the wallet proves whole, and every other one's verifier key, which a deploy installs. */
     const { VAULT_CIRCUITS_THE_WALLET_PROVES: vaultProved, VAULT_CIRCUITS_THE_WALLET_DEPLOYS: vaultAll } = await import(
-      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href);
-    const { VAULT_KEYS_FOLDER: vaultFolder } = await import(pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href);
+      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href
+    );
+    const { VAULT_KEYS_FOLDER: vaultFolder } = await import(
+      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href
+    );
     const compiledVault = path.join(REPO_ROOT, 'contracts', 'managed-vault', 'contract', 'index.js');
     if (!existsSync(compiledVault)) {
-      console.log('  !! REFUSED the vault\'s keys: there is no compiled vault at contracts/managed-vault.');
-      console.log('     `npm run compact:vault -- --full` builds it. The account\'s keys above are still pinned.');
+      console.log("  !! REFUSED the vault's keys: there is no compiled vault at contracts/managed-vault.");
+      console.log("     `npm run compact:vault -- --full` builds it. The account's keys above are still pinned.");
       refused += 1;
     } else {
       const { expectedVk: vaultVk } = await import(pathToFileURL(compiledVault).href);
       const verifiersOnly = vaultAll.filter((c) => !vaultProved.includes(c));
-      console.log(`  The vault's circuits this wallet proves (${vaultProved.length}) and the verifier keys of the rest (${verifiersOnly.length}), copied from contracts/managed-vault:`);
+      console.log(
+        `  The vault's circuits this wallet proves (${vaultProved.length}) and the verifier keys of the rest (${verifiersOnly.length}), copied from contracts/managed-vault:`
+      );
       walked.push(vaultFolder);
       expected.push(
         ...accountFilesOf(vaultProved, vaultFolder, 'managed-vault').map((f) => f.served),
-        ...accountFilesOf(verifiersOnly, vaultFolder, 'managed-vault', true).map((f) => f.served),
+        ...accountFilesOf(verifiersOnly, vaultFolder, 'managed-vault', true).map((f) => f.served)
       );
-      refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: vaultProved, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault' });
-      refused += vendorAccountKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: verifiersOnly, folder: vaultFolder, expectedVk: vaultVk, artefacts, repin, compiled: 'managed-vault', verifierOnly: true });
+      refused += vendorAccountKeys({
+        repoRoot: REPO_ROOT,
+        keysDir: KEYS_DIR,
+        circuits: vaultProved,
+        folder: vaultFolder,
+        expectedVk: vaultVk,
+        artefacts,
+        repin,
+        compiled: 'managed-vault'
+      });
+      refused += vendorAccountKeys({
+        repoRoot: REPO_ROOT,
+        keysDir: KEYS_DIR,
+        circuits: verifiersOnly,
+        folder: vaultFolder,
+        expectedVk: vaultVk,
+        artefacts,
+        repin,
+        compiled: 'managed-vault',
+        verifierOnly: true
+      });
     }
     const { REGISTRY_CIRCUITS_THE_WALLET_PROVES: registryProved } = await import(
-      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href);
-    const { REGISTRY_KEYS_FOLDER: registryFolder } = await import(pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href);
-    const registry = await vendorRegistryKeys({ repoRoot: REPO_ROOT, keysDir: KEYS_DIR, circuits: registryProved, folder: registryFolder, artefacts, repin });
+      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'account-circuits.ts')).href
+    );
+    const { REGISTRY_KEYS_FOLDER: registryFolder } = await import(
+      pathToFileURL(path.join(WALLET_DIR, 'src', 'chain', 'key-material.ts')).href
+    );
+    const registry = await vendorRegistryKeys({
+      repoRoot: REPO_ROOT,
+      keysDir: KEYS_DIR,
+      circuits: registryProved,
+      folder: registryFolder,
+      artefacts,
+      repin
+    });
     refused += registry.refused;
     if (registry.walked) walked.push(registryFolder);
     expected.push(...registry.expected);
-    refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders: walked, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10) });
+    refused += pruneOrRefuse({
+      keysDir: KEYS_DIR,
+      artefacts,
+      folders: walked,
+      expected,
+      prune,
+      graveyard: path.join(REPO_ROOT, '_to_delete'),
+      stamp: new Date().toISOString().slice(0, 10)
+    });
   } else {
     console.log('  Circuit key material (prover, verifier, IR per circuit):');
     for (const circuit of LEDGER_CIRCUITS) {
@@ -497,7 +634,16 @@ if (isMain) {
     }
     const expected = LEDGER_CIRCUITS.flatMap((c) => SUFFIXES.map((suffix) => `${c}${suffix}`));
     const folders = ledgerFoldersOf({ keysDir: KEYS_DIR, artefacts, circuits: LEDGER_CIRCUITS });
-    refused += pruneOrRefuse({ keysDir: KEYS_DIR, artefacts, folders, expected, prune, graveyard: path.join(REPO_ROOT, '_to_delete'), stamp: new Date().toISOString().slice(0, 10), command: 'npm run vendor-keys -- --prune' });
+    refused += pruneOrRefuse({
+      keysDir: KEYS_DIR,
+      artefacts,
+      folders,
+      expected,
+      prune,
+      graveyard: path.join(REPO_ROOT, '_to_delete'),
+      stamp: new Date().toISOString().slice(0, 10),
+      command: 'npm run vendor-keys -- --prune'
+    });
 
     console.log('');
     console.log(`  Shared SRS parameters (sizes: ${sizes.map((k) => `2p${k}`).join(', ')}) —`);
@@ -517,8 +663,13 @@ if (isMain) {
     version: 9,
     generatedAt: existing?.generatedAt && !repin ? existing.generatedAt : new Date().toISOString(),
     lastVendoredAt: new Date().toISOString(),
-    sources: { ...existing?.sources, ...(accountOnly ? { account: 'contracts/managed', vault: 'contracts/managed-vault', registry: 'contracts/managed-registry' } : { circuits: [BUCKET, SRS], parameters: [BUCKET, SRS] }) },
-    artefacts,
+    sources: {
+      ...existing?.sources,
+      ...(accountOnly
+        ? { account: 'contracts/managed', vault: 'contracts/managed-vault', registry: 'contracts/managed-registry' }
+        : { circuits: [BUCKET, SRS], parameters: [BUCKET, SRS] })
+    },
+    artefacts
   };
   writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -527,9 +678,9 @@ if (isMain) {
   if (accountOnly) process.exit(refused > 0 ? 1 : 0);
   console.log(`  (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB downloaded this run). The app now`);
   console.log('  serves and verifies key material from its own origin at /keys/ — the');
-  console.log('  Foundation\'s bucket is never dialled by a page again.');
+  console.log("  Foundation's bucket is never dialled by a page again.");
   console.log('');
-  console.log('  A send needs ONE parameter size, not nine. The wallet\'s own probe screen');
+  console.log("  A send needs ONE parameter size, not nine. The wallet's own probe screen");
   console.log('  records which k a real send asks for (watch for "params k=" under THE');
   console.log('  MEASUREMENT);');
   console.log('  the production hosting decision should carry the circuits plus that k.');

@@ -33,68 +33,68 @@ import type { AccountAddress, CompanyLabel } from './company-label.js';
  */
 export type Assertion =
   | {
-    readonly by: 'self';
-    /**
-     * §3.2b — WHAT THIS FIELD IS FOR, AND IT IS ARITHMETIC RATHER THAN POLICY.
-     *
-     * A signature is over what the issuer said. Editing the text does not edit
-     * the signature, so an edited issued value is a FORGED one. Editing one
-     * therefore drops it to self-asserted — **visibly, with the previous
-     * assertion named**, which is what this field carries. `null` is the
-     * ordinary case: a fact the person typed and nobody ever signed.
-     */
-    readonly formerly: { readonly issuer: string; readonly issuedAt: number } | null;
-  }
+      readonly by: 'self';
+      /**
+       * §3.2b — WHAT THIS FIELD IS FOR, AND IT IS ARITHMETIC RATHER THAN POLICY.
+       *
+       * A signature is over what the issuer said. Editing the text does not edit
+       * the signature, so an edited issued value is a FORGED one. Editing one
+       * therefore drops it to self-asserted — **visibly, with the previous
+       * assertion named**, which is what this field carries. `null` is the
+       * ordinary case: a fact the person typed and nobody ever signed.
+       */
+      readonly formerly: { readonly issuer: string; readonly issuedAt: number } | null;
+    }
   | {
-    readonly by: 'issuer';
-    /** Who signed it. An opaque identifier; nothing here knows any provider. */
-    readonly issuer: string;
-    readonly signature: string;
-    /**
-     * REQUIRED. §3.1: **an issued fact is dated or it is not evidence.** A
-     * sanctions check from January is not evidence in August, and the
-     * interface may never show a verified mark without the date beside it —
-     * the same rule §7.12 already imposes on `rebuiltAt`.
-     */
-    readonly issuedAt: number;
-    /**
-     * ONE NULL, ONE MEANING: *the issuer set no expiry*. Never *this never
-     * expires*. The issuer either set one or did not; there is no third state,
-     * so the two-values rule is satisfied by there being one.
-     */
-    readonly expiresAt: number | null;
-    /**
-     * WHERE TO ASK AGAIN. §4: an issued attestation must never be the
-     * wallet's ONLY copy. Self-typed facts are cheap to re-enter; a KYC
-     * attestation cost money and time, and decision 4 says recovery does
-     * NOT restore the profile. Without this field decision 4 quietly means
-     * *lose your KYC when you lose your laptop*, which is not what was agreed.
-     * `null` means the issuer gave no way back.
-     */
-    readonly reachableAt: string | null;
-  }
+      readonly by: 'issuer';
+      /** Who signed it. An opaque identifier; nothing here knows any provider. */
+      readonly issuer: string;
+      readonly signature: string;
+      /**
+       * REQUIRED. §3.1: **an issued fact is dated or it is not evidence.** A
+       * sanctions check from January is not evidence in August, and the
+       * interface may never show a verified mark without the date beside it —
+       * the same rule §7.12 already imposes on `rebuiltAt`.
+       */
+      readonly issuedAt: number;
+      /**
+       * ONE NULL, ONE MEANING: *the issuer set no expiry*. Never *this never
+       * expires*. The issuer either set one or did not; there is no third state,
+       * so the two-values rule is satisfied by there being one.
+       */
+      readonly expiresAt: number | null;
+      /**
+       * WHERE TO ASK AGAIN. §4: an issued attestation must never be the
+       * wallet's ONLY copy. Self-typed facts are cheap to re-enter; a KYC
+       * attestation cost money and time, and decision 4 says recovery does
+       * NOT restore the profile. Without this field decision 4 quietly means
+       * *lose your KYC when you lose your laptop*, which is not what was agreed.
+       * `null` means the issuer gave no way back.
+       */
+      readonly reachableAt: string | null;
+    }
   | {
-    /**
-     * **NOBODY SAID IT. THIS WALLET WORKED IT OUT.** See
-     * `definition.ts`'s `Source`.
-     *
-     * A receiving address is not a claim about a person: it is a function of
-     * their own keys and of the subwallet they picked on the approval screen,
-     * computed at the moment of asking. **`by: 'self'` would be a lie of
-     * exactly the kind this union exists to make impossible** — it would tell a
-     * recipient the person TYPED this, when nothing they could type would
-     * change it, and would make an edited value indistinguishable from a
-     * computed one.
-     *
-     * **THERE IS NO SECOND FIELD ON THIS ARM AND THERE MUST NOT BE.** Not the
-     * subwallet number, not the derivation path, not a label. The subwallet is
-     * a choice the person made once, on one screen, for one recipient; putting
-     * it in the signed payload would hand every recipient a slot INDEX to
-     * compare notes on, which is the one thing choosing a slot per employer
-     * exists to prevent.
-     */
-    readonly by: 'wallet';
-  };
+      /**
+       * **NOBODY SAID IT. THIS WALLET WORKED IT OUT.** See
+       * `definition.ts`'s `Source`.
+       *
+       * A receiving address is not a claim about a person: it is a function of
+       * their own keys and of the subwallet they picked on the approval screen,
+       * computed at the moment of asking. **`by: 'self'` would be a lie of
+       * exactly the kind this union exists to make impossible** — it would tell a
+       * recipient the person TYPED this, when nothing they could type would
+       * change it, and would make an edited value indistinguishable from a
+       * computed one.
+       *
+       * **THERE IS NO SECOND FIELD ON THIS ARM AND THERE MUST NOT BE.** Not the
+       * subwallet number, not the derivation path, not a label. The subwallet is
+       * a choice the person made once, on one screen, for one recipient; putting
+       * it in the signed payload would hand every recipient a slot INDEX to
+       * compare notes on, which is the one thing choosing a slot per employer
+       * exists to prevent.
+       */
+      readonly by: 'wallet';
+    };
 
 /** Whether an issued record has gone stale, as at a moment. */
 export const isExpired = (assertion: Assertion, now: number): boolean =>
@@ -318,8 +318,7 @@ export interface Disclosure {
  *
  * This change puts `kind` on the same footing, for the same reason.
  */
-export type NewDisclosure =
-  Omit<Disclosure, 'signed' | 'kind'>
+export type NewDisclosure = Omit<Disclosure, 'signed' | 'kind'> &
   /*
    * **AN UNLOCK IS NOT WRITABLE HERE, AND THE TYPE IS WHAT SAYS SO.**
    * A `Disclosure` is *what was sent, and the bytes that were signed*. A
@@ -331,7 +330,7 @@ export type NewDisclosure =
    * READING stays tolerant -- `Disclosure.kind` is still `AskKind | null` -- so
    * an entry from a wallet that did write one is readable rather than a crash.
    */
-  & { readonly signed: SignedBytes; readonly kind: Exclude<AskKind, 'unlock'> };
+  { readonly signed: SignedBytes; readonly kind: Exclude<AskKind, 'unlock'> };
 
 /**
  * **WHAT A RELEASED KEY LEAVES BEHIND, AND WHAT IT MUST NOT.**
@@ -414,7 +413,9 @@ export const releasesOf = (profile: Profile): readonly Release[] => profile.rele
  * list means *nothing to compare against*, and the screen proceeds normally.
  */
 export const originsFor = (
-  profile: Profile, company: CompanyLabel, account: AccountAddress | null,
+  profile: Profile,
+  company: CompanyLabel,
+  account: AccountAddress | null
 ): readonly string[] => {
   const seen: string[] = [];
   for (const release of releasesOf(profile)) {
@@ -454,13 +455,14 @@ export class ProfileError extends Error {
 
 const newId = (): string => toBase64Url(crypto.getRandomValues(new Uint8Array(12)));
 
-export const emptyProfile = (now: number): Profile => Object.freeze({
-  schema: 'midnight-identity/profile/v1' as const,
-  held: Object.freeze([]),
-  grants: Object.freeze([]),
-  releases: Object.freeze([]),
-  updatedAt: now,
-});
+export const emptyProfile = (now: number): Profile =>
+  Object.freeze({
+    schema: 'midnight-identity/profile/v1' as const,
+    held: Object.freeze([]),
+    grants: Object.freeze([]),
+    releases: Object.freeze([]),
+    updatedAt: now
+  });
 
 const withHeld = (profile: Profile, held: readonly Held[], now: number): Profile =>
   Object.freeze({ ...profile, held: Object.freeze([...held]), updatedAt: now });
@@ -470,8 +472,8 @@ const definitionFor = (registry: Registry, about: AttributeName) => {
   if (!definition) {
     throw new ProfileError(
       'not-in-vocabulary',
-      `'${about}' is not an attribute this wallet knows. The vocabulary is ours and a `
-      + 'requester cannot add to it.');
+      `'${about}' is not an attribute this wallet knows. The vocabulary is ours and a ` + 'requester cannot add to it.'
+    );
   }
   return definition;
 };
@@ -483,23 +485,28 @@ const definitionFor = (registry: Registry, about: AttributeName) => {
  * DEFINITION and nothing here knows what attribute it is checking.
  */
 export function selfAssert(
-  profile: Profile, registry: Registry,
-  about: AttributeName, typed: string, label: string, now: number,
+  profile: Profile,
+  registry: Registry,
+  about: AttributeName,
+  typed: string,
+  label: string,
+  now: number
 ): Profile {
   const definition = definitionFor(registry, about);
   if (!definition.selfAssertable) {
     throw new ProfileError(
       'not-self-assertable',
       definition.source === 'derived'
-        /* The honest sentence for the other reason. *Somebody else has to
-         * say it* is true of an issued attribute and false of this one: nobody
-         * says it at all, and telling a person to go and get it signed would
-         * send them looking for a party that does not exist. */
-        ? `${definition.render.label} is not something anybody states. This wallet works it `
-          + 'out from your own keys when a company asks for it, and which wallet you choose '
-          + 'is what decides the answer.'
-        : `${definition.render.label} is not something you can state about yourself — it has `
-          + 'to come from whoever is in a position to say it.');
+        ? /* The honest sentence for the other reason. *Somebody else has to
+           * say it* is true of an issued attribute and false of this one: nobody
+           * says it at all, and telling a person to go and get it signed would
+           * send them looking for a party that does not exist. */
+          `${definition.render.label} is not something anybody states. This wallet works it ` +
+            'out from your own keys when a company asks for it, and which wallet you choose ' +
+            'is what decides the answer.'
+        : `${definition.render.label} is not something you can state about yourself — it has ` +
+            'to come from whoever is in a position to say it.'
+    );
   }
   const checked = check(definition, typed);
   if (!checked.ok) throw new ProfileError('value-refused', checked.says);
@@ -508,8 +515,8 @@ export function selfAssert(
   if (!definition.multiple && already.length > 0) {
     throw new ProfileError(
       'only-one-allowed',
-      `you hold one ${definition.render.label.toLowerCase()}; change it rather than adding `
-      + 'a second.');
+      `you hold one ${definition.render.label.toLowerCase()}; change it rather than adding ` + 'a second.'
+    );
   }
   const held: Held = Object.freeze({
     id: newId(),
@@ -517,7 +524,7 @@ export function selfAssert(
     says: Object.freeze({ of: 'value' as const, value: checked.value }),
     label: label.trim(),
     asserted: Object.freeze({ by: 'self' as const, formerly: null }),
-    definitionVersion: definition.version,
+    definitionVersion: definition.version
   });
   return withHeld(profile, [...profile.held, held], now);
 }
@@ -533,35 +540,41 @@ export function selfAssert(
  * `registry-open.test.ts` rather than left as a claim.
  */
 export function recordIssued(
-  profile: Profile, registry: Registry,
-  about: AttributeName, says: Says, label: string,
-  asserted: Extract<Assertion, { by: 'issuer' }>, now: number,
+  profile: Profile,
+  registry: Registry,
+  about: AttributeName,
+  says: Says,
+  label: string,
+  asserted: Extract<Assertion, { by: 'issuer' }>,
+  now: number
 ): Profile {
   const definition = definitionFor(registry, about);
   if (!Number.isFinite(asserted.issuedAt)) {
     throw new ProfileError(
       'issued-without-a-date',
-      'an issued record carries the date it was issued, or it is not evidence.');
+      'an issued record carries the date it was issued, or it is not evidence.'
+    );
   }
   const accepted = definition.acceptedIssuers;
   if (accepted === null) {
     throw new ProfileError(
       'issuer-not-accepted',
       definition.source === 'derived'
-        /* A signature over a derived value would be an issuer attesting to
-         * arithmetic somebody else can do for themselves, and storing it would
-         * put a copy in `held` that goes stale the moment a different subwallet
-         * is chosen. */
-        ? `nothing may be issued about ${definition.render.label.toLowerCase()}; it is `
-          + 'worked out from your own keys and is not a fact anybody signs.'
-        : `nothing may be issued about ${definition.render.label.toLowerCase()}; it is `
-          + 'something you state yourself.');
+        ? /* A signature over a derived value would be an issuer attesting to
+           * arithmetic somebody else can do for themselves, and storing it would
+           * put a copy in `held` that goes stale the moment a different subwallet
+           * is chosen. */
+          `nothing may be issued about ${definition.render.label.toLowerCase()}; it is ` +
+            'worked out from your own keys and is not a fact anybody signs.'
+        : `nothing may be issued about ${definition.render.label.toLowerCase()}; it is ` +
+            'something you state yourself.'
+    );
   }
   if (accepted !== 'any' && !accepted.includes(asserted.issuer)) {
     throw new ProfileError(
       'issuer-not-accepted',
-      `this wallet does not accept records about ${definition.render.label.toLowerCase()} `
-      + `from ${asserted.issuer}.`);
+      `this wallet does not accept records about ${definition.render.label.toLowerCase()} ` + `from ${asserted.issuer}.`
+    );
   }
   /* A VALUE is still checked against the rule. A PREDICATE is not, because
    * there is no text to check — which is exactly §3.2c's point. */
@@ -575,7 +588,7 @@ export function recordIssued(
     says: Object.freeze({ ...says }),
     label: label.trim(),
     asserted: Object.freeze({ ...asserted }),
-    definitionVersion: definition.version,
+    definitionVersion: definition.version
   });
   return withHeld(profile, [...profile.held, held], now);
 }
@@ -597,36 +610,41 @@ export function recordIssued(
  * touched here, and `Sent` carries content rather than a pointer, so a history
  * entry cannot change when a value does.
  */
-export function editValue(
-  profile: Profile, registry: Registry, id: string, typed: string, now: number,
-): Profile {
+export function editValue(profile: Profile, registry: Registry, id: string, typed: string, now: number): Profile {
   const existing = profile.held.find((h) => h.id === id);
   if (!existing) throw new ProfileError('no-such-value', 'there is no such value to change.');
   if (existing.says.of !== 'value') {
     throw new ProfileError(
       'a-claim-has-no-text',
-      'that is a claim somebody proved about you, not something with text in it. It cannot '
-      + 'be edited — it can only be proved again.');
+      'that is a claim somebody proved about you, not something with text in it. It cannot ' +
+        'be edited — it can only be proved again.'
+    );
   }
   const definition = definitionFor(registry, existing.about);
   const checked = check(definition, typed);
   if (!checked.ok) throw new ProfileError('value-refused', checked.says);
 
-  const asserted: Assertion = existing.asserted.by === 'issuer'
-    ? Object.freeze({
-      by: 'self' as const,
-      formerly: Object.freeze({
-        issuer: existing.asserted.issuer, issuedAt: existing.asserted.issuedAt,
-      }),
-    })
-    : existing.asserted;
+  const asserted: Assertion =
+    existing.asserted.by === 'issuer'
+      ? Object.freeze({
+          by: 'self' as const,
+          formerly: Object.freeze({
+            issuer: existing.asserted.issuer,
+            issuedAt: existing.asserted.issuedAt
+          })
+        })
+      : existing.asserted;
 
   const next: Held = Object.freeze({
     ...existing,
     says: Object.freeze({ of: 'value' as const, value: checked.value }),
-    asserted,
+    asserted
   });
-  return withHeld(profile, profile.held.map((h) => (h.id === id ? next : h)), now);
+  return withHeld(
+    profile,
+    profile.held.map((h) => (h.id === id ? next : h)),
+    now
+  );
 }
 
 /** The person's own word for a value — a label is not a fact and never
@@ -637,7 +655,8 @@ export function relabel(profile: Profile, id: string, label: string, now: number
   return withHeld(
     profile,
     profile.held.map((h) => (h.id === id ? Object.freeze({ ...h, label: label.trim() }) : h)),
-    now);
+    now
+  );
 }
 
 /**
@@ -652,40 +671,47 @@ export function forgetValue(profile: Profile, id: string, now: number): Profile 
   return Object.freeze({
     ...profile,
     held: Object.freeze(profile.held.filter((h) => h.id !== id)),
-    grants: Object.freeze(profile.grants.map((g) => Object.freeze({
-      ...g, values: Object.freeze(g.values.filter((v) => v !== id)),
-    }))),
-    updatedAt: now,
+    grants: Object.freeze(
+      profile.grants.map((g) =>
+        Object.freeze({
+          ...g,
+          values: Object.freeze(g.values.filter((v) => v !== id))
+        })
+      )
+    ),
+    updatedAt: now
   });
 }
 
 /* --------------------------- grants and history -------------------------- */
 
-const sameRecipient = (a: Recipient, b: Recipient): boolean =>
-  a.origin === b.origin && a.rdns === b.rdns;
+const sameRecipient = (a: Recipient, b: Recipient): boolean => a.origin === b.origin && a.rdns === b.rdns;
 
 /** What a recipient may see, remembered. A grant PRE-TICKS a box; §6 says it
  * may never skip the screen, and nothing in this file shows a screen. */
 export function grantTo(
-  profile: Profile, recipient: Recipient, subwallet: number,
-  values: readonly string[], now: number,
+  profile: Profile,
+  recipient: Recipient,
+  subwallet: number,
+  values: readonly string[],
+  now: number
 ): Profile {
   for (const id of values) {
     if (!profile.held.some((h) => h.id === id)) {
       throw new ProfileError('no-such-value', `nothing held here has the id '${id}'.`);
     }
   }
-  const existing = profile.grants.find(
-    (g) => sameRecipient(g.recipient, recipient) && g.subwallet === subwallet);
+  const existing = profile.grants.find((g) => sameRecipient(g.recipient, recipient) && g.subwallet === subwallet);
   const grant: Grant = existing
     ? Object.freeze({ ...existing, recipient, values: Object.freeze([...values]) })
     : Object.freeze({
-      recipient, subwallet, values: Object.freeze([...values]), madeAt: now,
-      disclosures: Object.freeze([]),
-    });
-  const grants = existing
-    ? profile.grants.map((g) => (g === existing ? grant : g))
-    : [...profile.grants, grant];
+        recipient,
+        subwallet,
+        values: Object.freeze([...values]),
+        madeAt: now,
+        disclosures: Object.freeze([])
+      });
+  const grants = existing ? profile.grants.map((g) => (g === existing ? grant : g)) : [...profile.grants, grant];
   return Object.freeze({ ...profile, grants: Object.freeze(grants), updatedAt: now });
 }
 
@@ -695,22 +721,27 @@ export function grantTo(
  * left and when.
  */
 export function recordDisclosure(
-  profile: Profile, recipient: Recipient, subwallet: number,
-  disclosure: NewDisclosure, now: number,
+  profile: Profile,
+  recipient: Recipient,
+  subwallet: number,
+  disclosure: NewDisclosure,
+  now: number
 ): Profile {
-  const existing = profile.grants.find(
-    (g) => sameRecipient(g.recipient, recipient) && g.subwallet === subwallet);
-  const base: Grant = existing ?? Object.freeze({
-    recipient, subwallet, values: Object.freeze([]), madeAt: now,
-    disclosures: Object.freeze([]),
-  });
+  const existing = profile.grants.find((g) => sameRecipient(g.recipient, recipient) && g.subwallet === subwallet);
+  const base: Grant =
+    existing ??
+    Object.freeze({
+      recipient,
+      subwallet,
+      values: Object.freeze([]),
+      madeAt: now,
+      disclosures: Object.freeze([])
+    });
   const grant: Grant = Object.freeze({
     ...base,
-    disclosures: Object.freeze([...base.disclosures, Object.freeze(disclosure)]),
+    disclosures: Object.freeze([...base.disclosures, Object.freeze(disclosure)])
   });
-  const grants = existing
-    ? profile.grants.map((g) => (g === existing ? grant : g))
-    : [...profile.grants, grant];
+  const grants = existing ? profile.grants.map((g) => (g === existing ? grant : g)) : [...profile.grants, grant];
   return Object.freeze({ ...profile, grants: Object.freeze(grants), updatedAt: now });
 }
 
@@ -729,7 +760,7 @@ export function recordRelease(profile: Profile, release: Release, now: number): 
   return Object.freeze({
     ...profile,
     releases: Object.freeze([...releasesOf(profile), Object.freeze(release)]),
-    updatedAt: now,
+    updatedAt: now
   });
 }
 
@@ -744,11 +775,10 @@ export interface Stale {
   readonly sentAt: number;
 }
 
-const saysDiffer = (a: Says, b: Says): boolean => (
-  a.of !== b.of
-  || (a.of === 'value' && b.of === 'value' && a.value !== b.value)
-  || (a.of === 'predicate' && b.of === 'predicate'
-    && (a.predicate !== b.predicate || a.result !== b.result)));
+const saysDiffer = (a: Says, b: Says): boolean =>
+  a.of !== b.of ||
+  (a.of === 'value' && b.of === 'value' && a.value !== b.value) ||
+  (a.of === 'predicate' && b.of === 'predicate' && (a.predicate !== b.predicate || a.result !== b.result));
 
 /**
  * **WHAT THE WALLET CAN HONESTLY SAY ABOUT A CHANGED VALUE, AND WHAT IT MUST
@@ -778,14 +808,16 @@ export function changed(profile: Profile): readonly Stale[] {
         if (wasDerived(sent.asserted)) continue;
         const current = now.get(sent.id) ?? null;
         if (current === null || saysDiffer(sent.says, current)) {
-          out.push(Object.freeze({
-            recipient: grant.recipient,
-            subwallet: grant.subwallet,
-            about: sent.about,
-            theyHold: sent.says,
-            itNowSays: current,
-            sentAt: disclosure.at,
-          }));
+          out.push(
+            Object.freeze({
+              recipient: grant.recipient,
+              subwallet: grant.subwallet,
+              about: sent.about,
+              theyHold: sent.says,
+              itNowSays: current,
+              sentAt: disclosure.at
+            })
+          );
         }
       }
     }
@@ -797,5 +829,4 @@ export function changed(profile: Profile): readonly Stale[] {
 export const heldAbout = (profile: Profile, about: AttributeName): readonly Held[] =>
   profile.held.filter((h) => h.about === about);
 
-export const heldById = (profile: Profile, id: string): Held | null =>
-  profile.held.find((h) => h.id === id) ?? null;
+export const heldById = (profile: Profile, id: string): Held | null => profile.held.find((h) => h.id === id) ?? null;

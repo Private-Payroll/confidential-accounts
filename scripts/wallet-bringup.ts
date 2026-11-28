@@ -25,9 +25,17 @@
 import type { MidnightWalletProvider } from '@midnight-ntwrk/testkit-js';
 import type { NetworkName } from '../src/midnight/network.js';
 import {
-  buildWalletWithDust, facadeAtLedger9, registrationSidesSynced, dustCachePath, waitForDustAtTip, networkHeightAt,
+  buildWalletWithDust,
+  facadeAtLedger9,
+  registrationSidesSynced,
+  dustCachePath,
+  waitForDustAtTip,
+  networkHeightAt,
   dustIndexerHttpOf,
-  describeDustView, type AtTipOptions, type AtTipOutcome, type WalletWithDust,
+  describeDustView,
+  type AtTipOptions,
+  type AtTipOutcome,
+  type WalletWithDust
 } from './dust-wallet.js';
 import { floorKnownAbsent } from './dust-fee-floor.js';
 import { waitForShieldedScan, type ShieldedWaitOutcome } from './shielded-wallet.js';
@@ -62,7 +70,11 @@ export interface LiveWallet {
 
 /** Within a small gap, not strictly equal: a live chain keeps producing blocks. */
 const complete = (p: any): boolean => {
-  try { if (typeof p?.isCompleteWithin === 'function') return !!p.isCompleteWithin(10n); } catch { /* fall through */ }
+  try {
+    if (typeof p?.isCompleteWithin === 'function') return !!p.isCompleteWithin(10n);
+  } catch {
+    /* fall through */
+  }
   const a = p?.appliedIndex ?? p?.appliedId;
   const h = p?.highestRelevantIndex ?? p?.highestIndex ?? p?.highestTransactionId;
   if (a == null || h == null) return false;
@@ -74,8 +86,9 @@ const progresses = (st: any): any[] => {
   for (const p of [
     st?.unshielded?.progress ?? st?.unshielded?.state?.progress,
     st?.shielded?.state?.progress ?? st?.shielded?.progress,
-    st?.dust?.state?.progress ?? st?.dust?.progress,
-  ]) if (p && typeof p === 'object') out.push(p);
+    st?.dust?.state?.progress ?? st?.dust?.progress
+  ])
+    if (p && typeof p === 'object') out.push(p);
   return out;
 };
 
@@ -125,10 +138,11 @@ export interface BringUpOptions {
 export async function dustViewAtTip(
   live: Pick<LiveWallet, 'wallet' | 'state'>,
   note: (s: string) => void,
-  options: AtTipOptions = {},
+  options: AtTipOptions = {}
 ): Promise<AtTipOutcome> {
   const http = dustIndexerHttpOf(live.wallet?.wallet?.dust);
-  if (http === null) return { ok: false, why: 'the installed DUST wallet names no indexer to read the network\'s newest block from' };
+  if (http === null)
+    return { ok: false, why: "the installed DUST wallet names no indexer to read the network's newest block from" };
   return waitForDustAtTip(live, () => networkHeightAt(http), note, options);
 }
 
@@ -137,10 +151,16 @@ export async function dustViewAtTip(
  * in force.
  */
 async function walletWithOurDust(
-  logger: unknown, cfg: unknown, seed: string, network: NetworkName, root: string, note: (s: string) => void,
+  logger: unknown,
+  cfg: unknown,
+  seed: string,
+  network: NetworkName,
+  root: string,
+  note: (s: string) => void
 ): Promise<WalletWithDust> {
-  const built = await buildWalletWithDust(loggerWithoutSecret(logger as any, seed), cfg as any, seed, network, root,
-    { note });
+  const built = await buildWalletWithDust(loggerWithoutSecret(logger as any, seed), cfg as any, seed, network, root, {
+    note
+  });
   const installed = built.installed;
   note(`dust wallet ${installed.how} — ${installed.detail}`);
   /*
@@ -157,13 +177,17 @@ async function walletWithOurDust(
    * field. So that case is said as loudly as a refusal and the run goes on.
    */
   if (installed.how === 'refused' && floorKnownAbsent(installed.reason ?? 'unreadable')) {
-    try { await built.wallet.stop?.(); } catch { /* nothing useful to do */ }
+    try {
+      await built.wallet.stop?.();
+    } catch {
+      /* nothing useful to do */
+    }
     throw new Error(
       `the dust wallet set-up did not complete with a fee floor in force: ${installed.detail}\n` +
         '  A fee that can come out at nothing selects no dust coin, and a transaction carrying\n' +
         '  no dust spend is refused by the node as malformed.\n' +
         '  Nothing has been submitted and nothing is at risk. This is a defect in the wallet\n' +
-        '  set-up rather than a chain or funding problem, and re-running will not clear it.',
+        '  set-up rather than a chain or funding problem, and re-running will not clear it.'
     );
   }
   if (installed.how === 'refused') {
@@ -183,21 +207,31 @@ async function walletWithOurDust(
  * wallet that holds DUST, or has no NIGHT left to register, registers nothing.
  */
 async function registerOwnNightWhenNoDust(
-  provider: MidnightWalletProvider, forkV9: bigint, bound: number, note: (s: string) => void,
+  provider: MidnightWalletProvider,
+  forkV9: bigint,
+  bound: number,
+  note: (s: string) => void
 ): Promise<void> {
   const sides = () => registrationSidesSynced(provider.wallet, forkV9, note);
   const synced = await withTimeout('the wallet syncing before its NIGHT is registered for DUST', bound, sides());
   if (synced.dust.balance(new Date()) > 0n) return;
-  const done = await registerNightForDust(provider.wallet, {
-    verifyingKey: provider.unshieldedKeystore.getPublicKey(),
-    sign: (payload) => provider.unshieldedKeystore.signDataAsync(payload),
-  }, {
-    send: async (recipe) => String(await provider.wallet.submitTransaction(await provider.wallet.finalizeRecipe(recipe))),
-    synced: async () => synced,
-  });
+  const done = await registerNightForDust(
+    provider.wallet,
+    {
+      verifyingKey: provider.unshieldedKeystore.getPublicKey(),
+      sign: (payload) => provider.unshieldedKeystore.signDataAsync(payload)
+    },
+    {
+      send: async (recipe) =>
+        String(await provider.wallet.submitTransaction(await provider.wallet.finalizeRecipe(recipe))),
+      synced: async () => synced
+    }
+  );
   if ('transaction' in done) {
-    note(`no DUST, so ${done.registered} of this wallet's own NIGHT coin(s) were registered for DUST generation `
-      + `(fee ${done.fee}, transaction ${done.transaction.slice(0, 24)}…)`);
+    note(
+      `no DUST, so ${done.registered} of this wallet's own NIGHT coin(s) were registered for DUST generation ` +
+        `(fee ${done.fee}, transaction ${done.transaction.slice(0, 24)}…)`
+    );
   }
 }
 
@@ -208,25 +242,34 @@ async function registerOwnNightWhenNoDust(
  */
 export function noDustAfterTheDeadline(night: bigint): string {
   if (night === 0n) {
-    return 'the wallet still reports no DUST after the full deadline, and it holds no NIGHT.\n'
-      + '  DUST is generated by registered NIGHT, so with none there is nothing to register and nothing to pay with.\n'
-      + '  What resolves it: send NIGHT to this wallet\'s address, then start again; it registers that NIGHT itself.';
+    return (
+      'the wallet still reports no DUST after the full deadline, and it holds no NIGHT.\n' +
+      '  DUST is generated by registered NIGHT, so with none there is nothing to register and nothing to pay with.\n' +
+      "  What resolves it: send NIGHT to this wallet's address, then start again; it registers that NIGHT itself."
+    );
   }
-  return 'the dust wallet still reports no DUST after the full deadline.\n'
-    + `  It holds ${night} NIGHT, registered for DUST generation (here, if it was not already), so a balance should exist.\n`
-    + '  This is most likely the dust wallet failing to sync rather than missing DUST.';
+  return (
+    'the dust wallet still reports no DUST after the full deadline.\n' +
+    `  It holds ${night} NIGHT, registered for DUST generation (here, if it was not already), so a balance should exist.\n` +
+    '  This is most likely the dust wallet failing to sync rather than missing DUST.'
+  );
 }
 
 /** Waits up to `bound` ms for the wallet to report a DUST balance, saying how it goes every ten seconds. */
 async function waitForTheDust(
-  live: LiveWallet, bound: number, note: (s: string) => void,
+  live: LiveWallet,
+  bound: number,
+  note: (s: string) => void
 ): Promise<{ timedOut: boolean; waited: number }> {
   const startedAt = Date.now();
   let printed = 0;
   let timedOut = false;
   while (live.dust() === 0n) {
     const elapsed = Date.now() - startedAt;
-    if (elapsed > bound) { timedOut = true; break; }
+    if (elapsed > bound) {
+      timedOut = true;
+      break;
+    }
     if (elapsed - printed >= 10_000) {
       printed = elapsed;
       note(`  ${String(Math.round(elapsed / 1000)).padStart(3)}s  NIGHT ${live.night()}  DUST ${live.dust()}`);
@@ -239,19 +282,26 @@ async function waitForTheDust(
 
 /** Waits for the DUST view to reach the network's tip, and refuses a wallet that will pay when it does not. */
 async function dustViewCaughtUp(
-  live: LiveWallet, wallet: any, options: BringUpOptions, note: (s: string) => void,
+  live: LiveWallet,
+  wallet: any,
+  options: BringUpOptions,
+  note: (s: string) => void
 ): Promise<void> {
   const at = await dustViewAtTip(live, note, options.atTip);
   if (!('why' in at)) {
     note(`dust wallet caught up: ${describeDustView(at.applied, at.tip)}`);
   } else if (options.requireDust) {
     live.stop();
-    try { await wallet.stop?.(); } catch { /* the refusal below is what matters */ }
+    try {
+      await wallet.stop?.();
+    } catch {
+      /* the refusal below is what matters */
+    }
     throw new Error(
       `${at.why}.\n` +
         '  A fee paid from a view behind the network can be refused by the node, so this wallet is not\n' +
         '  handed on. Nothing has been submitted and nothing is at risk. Start again; if it stops at the\n' +
-        '  same place, the indexer or this machine\'s connection to it is where to look.',
+        "  same place, the indexer or this machine's connection to it is where to look."
     );
   } else {
     note(`\x1b[33m${at.why}; anything this wallet pays may be refused (error 170)\x1b[0m`);
@@ -273,7 +323,7 @@ export async function bringUpWallet(
   seed: string,
   network: NetworkName,
   root: string,
-  options: BringUpOptions = {},
+  options: BringUpOptions = {}
 ): Promise<LiveWallet> {
   const note = options.onNote ?? (() => {});
   const { unshieldedToken } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
@@ -288,21 +338,36 @@ export async function bringUpWallet(
   let shieldedOutcome: ShieldedWaitOutcome | null = null;
 
   const live: LiveWallet = {
-    get wallet() { return wallet; },
+    get wallet() {
+      return wallet;
+    },
     state: () => latest,
-    dust: () => { try { return BigInt(latest?.dust?.balance(new Date()) ?? 0n); } catch { return 0n; } },
+    dust: () => {
+      try {
+        return BigInt(latest?.dust?.balance(new Date()) ?? 0n);
+      } catch {
+        return 0n;
+      }
+    },
     night: () => BigInt(latest?.unshielded?.balances?.[NIGHT] ?? 0n),
     synced: () => {
       const found = progresses(latest);
       return found.length > 0 && found.every(complete);
     },
     shieldedScan: () => shieldedOutcome,
-    stop: () => { try { sub?.unsubscribe?.(); } catch { /* already gone */ } },
+    stop: () => {
+      try {
+        sub?.unsubscribe?.();
+      } catch {
+        /* already gone */
+      }
+    }
   } as LiveWallet;
 
-  const waitForShielded = () => waitForShieldedScan(live, note, {
-    ...(options.shieldedTimeoutMs === undefined ? {} : { timeoutMs: options.shieldedTimeoutMs }),
-  });
+  const waitForShielded = () =>
+    waitForShieldedScan(live, note, {
+      ...(options.shieldedTimeoutMs === undefined ? {} : { timeoutMs: options.shieldedTimeoutMs })
+    });
 
   /*
    * THE RETRY EXISTS FOR THE CACHE, not for the network.
@@ -338,8 +403,14 @@ export async function bringUpWallet(
     } else {
       // A wallet that will not pay still gets our DUST wallet: the facade reads its version from the wallets it is
       // built with, and the testkit's unstarted DUST wallet would hold it at ledger 8.
-      const built = await buildWalletWithDust(loggerWithoutSecret(logger as any, seed), cfg as any, seed, network, root,
-        { note });
+      const built = await buildWalletWithDust(
+        loggerWithoutSecret(logger as any, seed),
+        cfg as any,
+        seed,
+        network,
+        root,
+        { note }
+      );
       wallet = built.wallet;
       forkV9 = built.forkV9;
     }
@@ -362,12 +433,12 @@ export async function bringUpWallet(
 
     /* A restored wallet catches up only what happened since it was saved, but through a provider's indexer that has
      * taken longer than two minutes (15 Nov, preprod, a state 97 minutes old); waiting sends nothing, so it waits longer. */
-    const bound = usedCache
-      ? (options.cachedTimeoutMs ?? 8 * 60_000)
-      : (options.coldTimeoutMs ?? 12 * 60_000);
-    note(usedCache
-      ? 'catching the restored dust wallet up to the tip'
-      : 'waiting for the dust wallet to sync from genesis (this is the ~5 minutes)');
+    const bound = usedCache ? (options.cachedTimeoutMs ?? 8 * 60_000) : (options.coldTimeoutMs ?? 12 * 60_000);
+    note(
+      usedCache
+        ? 'catching the restored dust wallet up to the tip'
+        : 'waiting for the dust wallet to sync from genesis (this is the ~5 minutes)'
+    );
 
     await registerOwnNightWhenNoDust(wallet, forkV9, bound, note);
     const dust = await waitForTheDust(live, bound, note);
@@ -377,16 +448,28 @@ export async function bringUpWallet(
     if (!timedOut) break;
 
     if (usedCache) {
-      note('  the restored wallet did not reach a DUST balance in time — discarding the cache and syncing from scratch');
-      try { rmSync(dustCachePath(root, network, seed), { force: true }); } catch { /* it may already be gone */ }
+      note(
+        '  the restored wallet did not reach a DUST balance in time — discarding the cache and syncing from scratch'
+      );
+      try {
+        rmSync(dustCachePath(root, network, seed), { force: true });
+      } catch {
+        /* it may already be gone */
+      }
       live.stop();
-      try { await wallet.stop?.(); } catch { /* nothing useful to do */ }
+      try {
+        await wallet.stop?.();
+      } catch {
+        /* nothing useful to do */
+      }
       continue;
     }
 
     live.stop();
     if (options.requireDust) throw new Error(noDustAfterTheDeadline(live.night()));
-    note(`no DUST after ${waited}s — a transaction it pays for carries no DUST spend and is refused (BalanceCheckOverspend, 138)`);
+    note(
+      `no DUST after ${waited}s — a transaction it pays for carries no DUST spend and is refused (BalanceCheckOverspend, 138)`
+    );
     break;
   }
 

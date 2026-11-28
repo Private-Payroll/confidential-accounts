@@ -33,16 +33,27 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  assertNoSignerWouldLoseAccess, openPool, sealPool, SealedNotePool, type PoolSigner, type SealedPool, type SealedPoolStore,
+  assertNoSignerWouldLoseAccess,
+  openPool,
+  sealPool,
+  SealedNotePool,
+  type PoolSigner,
+  type SealedPool,
+  type SealedPoolStore
 } from '../../../src/midnight/vault-pool.js';
 import type { Note } from '../../../src/midnight/vault-notes.js';
 import { DepositJournalInStore, attemptKey, noteKey, stepOfLine } from '../../../src/midnight/vault-journal.js';
+import { claimNewDepositCoin, type DepositCoin, type DepositMoney } from '../../../src/midnight/deposit-nonce.js';
 import {
-  claimNewDepositCoin, type DepositCoin, type DepositMoney,
-} from '../../../src/midnight/deposit-nonce.js';
-import {
-  currentDepositNonceKey, keepsEveryEpochOf, openNonceSecrets, recordsKeypairFrom, refileNonceSecret,
-  startNonceSecret, startNonceSecretAgain, type NonceSecretReader, type OpenedNonceSecrets,
+  currentDepositNonceKey,
+  keepsEveryEpochOf,
+  openNonceSecrets,
+  recordsKeypairFrom,
+  refileNonceSecret,
+  startNonceSecret,
+  startNonceSecretAgain,
+  type NonceSecretReader,
+  type OpenedNonceSecrets
 } from '../../../src/midnight/company-nonce-secret.js';
 import type { FiledPoolVersion, PassedOverVersion } from '../../../src/midnight/vault-pool.js';
 import type { WireRecord } from '../../../src/midnight/sealed-record-wire.js';
@@ -92,17 +103,20 @@ export interface VaultAsRead {
  */
 export class VaultSecretBeingChanged extends Error {
   constructor(readonly vault: Hex) {
-    super('a signer has left this company since this vault\'s secret was last changed, so a deposit made under it could be '
-      + 'recognised by them. Nothing is filed or deposited. Deposits into this vault resume once its new secret is set and '
-      + 'filed. A signer who stays presses Change vault secrets on the Signers page to start it. Once the other signers '
-      + 'approve it, the next action a signer who stays takes in their wallet files it.');
+    super(
+      "a signer has left this company since this vault's secret was last changed, so a deposit made under it could be " +
+        'recognised by them. Nothing is filed or deposited. Deposits into this vault resume once its new secret is set and ' +
+        'filed. A signer who stays presses Change vault secrets on the Signers page to start it. Once the other signers ' +
+        'approve it, the next action a signer who stays takes in their wallet files it.'
+    );
     this.name = 'VaultSecretBeingChanged';
   }
 }
 
 /** The public half of this signer's records key, which is what other signers wrap the vault's nonce secret to. */
-export const recordsReaderOf = (companyKey: Uint8Array): NonceSecretReader =>
-  ({ publicKey: recordsKeypairFrom(companyKey).publicKey });
+export const recordsReaderOf = (companyKey: Uint8Array): NonceSecretReader => ({
+  publicKey: recordsKeypairFrom(companyKey).publicKey
+});
 
 /**
  * **STARTS A VAULT'S NONCE SECRET**, made here and filed only sealed, wrapped
@@ -110,15 +124,20 @@ export const recordsReaderOf = (companyKey: Uint8Array): NonceSecretReader =>
  * count `removals`.
  */
 export async function startVaultNonceSecretOnThisDevice(
-  vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
+  vault: Hex,
+  me: DeviceSigner,
+  others: readonly NonceSecretReader[],
+  records: DeviceRecords,
   /** Every coin the chain has ever created for the vault, as read now. */
-  everCreated: ReadonlySet<string>, removals = 0,
+  everCreated: ReadonlySet<string>,
+  removals = 0
 ): Promise<SealedPool> {
   const store = records('nonce-secret');
   if (await store.get(vault)) {
     throw new Error(
-      'this vault already has a nonce secret. Starting another would make deposits nobody else can name. '
-      + 'Nothing is written.');
+      'this vault already has a nonce secret. Starting another would make deposits nobody else can name. ' +
+        'Nothing is written.'
+    );
   }
   if (everCreated.size > 0) {
     /*
@@ -127,11 +146,12 @@ export async function startVaultNonceSecretOnThisDevice(
      * deposit named by nothing, and it would look like a first start.
      */
     throw new Error(
-      'the chain has already made coins for this vault, and no nonce secret is filed for it. That is a '
-      + 'record that has been lost, or a vault funded before its deposits were derived from a nonce secret, '
-      + 'not a new vault. Nothing is written. If the company keeps a copy of the vault\x27s nonce secret, '
-      + 'file that copy again. A vault funded before nonce secrets existed has none, and cannot take a '
-      + 'private deposit from this device: deposit into a new vault instead.');
+      'the chain has already made coins for this vault, and no nonce secret is filed for it. That is a ' +
+        'record that has been lost, or a vault funded before its deposits were derived from a nonce secret, ' +
+        'not a new vault. Nothing is written. If the company keeps a copy of the vault\x27s nonce secret, ' +
+        'file that copy again. A vault funded before nonce secrets existed has none, and cannot take a ' +
+        'private deposit from this device: deposit into a new vault instead.'
+    );
   }
   const made = startNonceSecret(vault, [recordsReaderOf(me.companyKey), ...others], removals);
   await store.put(vault, made);
@@ -139,7 +159,9 @@ export async function startVaultNonceSecretOnThisDevice(
 }
 
 /** A store that can also list every version as filed, without the check of who filed it. */
-interface ListsAsFiled { versionsAsFiled(vault: string): Promise<readonly FiledPoolVersion[]> }
+interface ListsAsFiled {
+  versionsAsFiled(vault: string): Promise<readonly FiledPoolVersion[]>;
+}
 
 /** What became of the records' newest nonce secret against the vault's own commitment. */
 type ChainsSecret =
@@ -189,7 +211,7 @@ export async function fileTheChainsSecretAsTheNewest(input: {
   }
   if (believed !== null) {
     const s = newestSecretOf(believed);
-    if (s !== null && await input.secretIsTheVaults(s)) return 'the-newest';
+    if (s !== null && (await input.secretIsTheVaults(s))) return 'the-newest';
   }
   const all = await versionsAsFiledOf(store, input.vault);
   if (all.length === 0) return 'none-names-it';
@@ -208,7 +230,7 @@ export async function fileTheChainsSecretAsTheNewest(input: {
     const v: FiledPoolVersion | PassedOverVersion = all[i]!;
     if (v.neverEntered === true) continue;
     const candidate = openedOf(v.sealed);
-    const s = candidate === null ? null : candidate.secrets[candidate.secrets.length - 1]! as Hex;
+    const s = candidate === null ? null : (candidate.secrets[candidate.secrets.length - 1]! as Hex);
     if (candidate !== null && newer.some((n) => !keepsEveryEpochOf(candidate, n))) continue;
     if (candidate !== null) newer.push(candidate);
     if (s === null || !(await input.secretIsTheVaults(s))) continue;
@@ -243,12 +265,17 @@ export interface PoolTheChainHolds {
  * it. While a version filed above the one believed is passed over, nothing is added to that journal.
  */
 const notFiledAgain = (record: 'payment-journal' | 'deposit-journal', e: unknown): string =>
-  `this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal could not be filed again from what the chain `
-  + `vouches for (${e instanceof Error ? e.message : String(e)}), so no line is added to it while a version a seat that `
-  + 'left filed sits above the one believed; the next read of this vault by a seat that may file its records tries again';
+  `this vault's ${record === 'deposit-journal' ? 'deposit' : 'payment'} journal could not be filed again from what the chain ` +
+  `vouches for (${e instanceof Error ? e.message : String(e)}), so no line is added to it while a version a seat that ` +
+  'left filed sits above the one believed; the next read of this vault by a seat that may file its records tries again';
 
 /** One step a payment journal line names, with every note it spends. */
-type JournalStep = { readonly spent: Note; readonly further?: readonly Note[]; readonly step?: string; readonly amount: bigint };
+type JournalStep = {
+  readonly spent: Note;
+  readonly further?: readonly Note[];
+  readonly step?: string;
+  readonly amount: bigint;
+};
 
 /** The same step, keyed as every other reader of the payment journal keys it. */
 const stepKey = (a: JournalStep): string => attemptKey(stepOfLine(a));
@@ -292,10 +319,15 @@ export async function fileThePoolTheChainHolds(input: {
 }): Promise<PoolTheChainHolds> {
   const said: string[] = [];
   const journals: ('payment-journal' | 'deposit-journal')[] = [];
-  const opened = (rec: SealedPool, record: 'pool' | 'payment-journal' | 'deposit-journal', store: SealedPoolStore): Record<string, unknown> | null => {
+  const opened = (
+    rec: SealedPool,
+    record: 'pool' | 'payment-journal' | 'deposit-journal',
+    store: SealedPoolStore
+  ): Record<string, unknown> | null => {
     try {
       return openPool(rec, input.me.signerId, input.me.wrappingSecret, {
-        record, unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse',
+        record,
+        unlabelled: store.unlabelledRecordsFiled === true ? 'accept' : 'refuse'
       }) as unknown as Record<string, unknown>;
     } catch {
       return null;
@@ -313,8 +345,14 @@ export async function fileThePoolTheChainHolds(input: {
     const judged = await store.versions(input.vault);
     const passed = new Set(judged.filter((v) => v.neverEntered === true).map((v) => v.version));
     const lister = store as SealedPoolStore & Partial<ListsAsFiled>;
-    const asFiled = passed.size === 0 || typeof lister.versionsAsFiled !== 'function' ? [] : await lister.versionsAsFiled(input.vault);
-    return { passed: asFiled.filter((v) => passed.has(v.version)), newest: judged.length === 0 ? 0 : judged[judged.length - 1]!.version };
+    const asFiled =
+      passed.size === 0 || typeof lister.versionsAsFiled !== 'function'
+        ? []
+        : await lister.versionsAsFiled(input.vault);
+    return {
+      passed: asFiled.filter((v) => passed.has(v.version)),
+      newest: judged.length === 0 ? 0 : judged[judged.length - 1]!.version
+    };
   };
   const heldAll = async (notes: readonly Note[]): Promise<boolean> => {
     for (const n of notes) if (!(await input.held(n))) return false;
@@ -324,10 +362,19 @@ export async function fileThePoolTheChainHolds(input: {
     for (const n of notes) if (await input.held(n)) return false;
     return true;
   };
-  const refile = async (store: SealedPoolStore, believed: SealedPool | null, page: Record<string, unknown>, version: number,
-    record: 'pool' | 'payment-journal' | 'deposit-journal'): Promise<void> => {
+  const refile = async (
+    store: SealedPoolStore,
+    believed: SealedPool | null,
+    page: Record<string, unknown>,
+    version: number,
+    record: 'pool' | 'payment-journal' | 'deposit-journal'
+  ): Promise<void> => {
     const to = await input.signers();
-    if (believed !== null) assertNoSignerWouldLoseAccess(believed.wrapped.map((w) => w.signerId), to.map((x) => x.id));
+    if (believed !== null)
+      assertNoSignerWouldLoseAccess(
+        believed.wrapped.map((w) => w.signerId),
+        to.map((x) => x.id)
+      );
     await store.put(input.vault, sealPool(input.vault, page as never, to, version, record));
   };
 
@@ -342,7 +389,8 @@ export async function fileThePoolTheChainHolds(input: {
         const lines = opened(v.sealed, 'payment-journal', store)?.attempts;
         if (!Array.isArray(lines)) continue;
         for (const line of lines as JournalStep[]) {
-          if (await goneAll([line.spent, ...(line.further ?? [])]) && !out.some((l) => stepKey(l) === stepKey(line))) out.push(line);
+          if ((await goneAll([line.spent, ...(line.further ?? [])])) && !out.some((l) => stepKey(l) === stepKey(line)))
+            out.push(line);
         }
       }
     } catch {
@@ -358,32 +406,51 @@ export async function fileThePoolTheChainHolds(input: {
   try {
     const payments = await believedOf('payment-journal');
     if (payments.above) {
-      const believedLines = (payments.believed === null ? [] : opened(payments.believed, 'payment-journal', payments.store)?.attempts ?? []) as JournalStep[];
-      const carried = [...believedLines, ...(await landed()).filter((l) => !believedLines.some((b) => stepKey(b) === stepKey(l)))];
-      await refile(payments.store, payments.believed, { attempts: carried }, (await passedOverIn(payments.store)).newest + 1, 'payment-journal');
+      const believedLines = (
+        payments.believed === null ? [] : (opened(payments.believed, 'payment-journal', payments.store)?.attempts ?? [])
+      ) as JournalStep[];
+      const carried = [
+        ...believedLines,
+        ...(await landed()).filter((l) => !believedLines.some((b) => stepKey(b) === stepKey(l)))
+      ];
+      await refile(
+        payments.store,
+        payments.believed,
+        { attempts: carried },
+        (await passedOverIn(payments.store)).newest + 1,
+        'payment-journal'
+      );
       journals.push('payment-journal');
     }
-  } catch (e) { said.push(notFiledAgain('payment-journal', e)); }
+  } catch (e) {
+    said.push(notFiledAgain('payment-journal', e));
+  }
   try {
     const deposits = await believedOf('deposit-journal');
     if (deposits.above) {
-      const believedCoins = (deposits.believed === null ? [] : opened(deposits.believed, 'deposit-journal', deposits.store)?.notes ?? []) as Note[];
+      const believedCoins = (
+        deposits.believed === null ? [] : (opened(deposits.believed, 'deposit-journal', deposits.store)?.notes ?? [])
+      ) as Note[];
       const carried = [...believedCoins];
       const { passed, newest } = await passedOverIn(deposits.store);
       for (const v of passed) {
         const coins = opened(v.sealed, 'deposit-journal', deposits.store)?.notes;
         if (!Array.isArray(coins)) continue;
         for (const c of coins as Note[]) {
-          if (!carried.some((b) => noteKey(b) === noteKey(c)) && await input.held(c)) carried.push(c);
+          if (!carried.some((b) => noteKey(b) === noteKey(c)) && (await input.held(c))) carried.push(c);
         }
       }
       await refile(deposits.store, deposits.believed, { notes: carried }, newest + 1, 'deposit-journal');
       journals.push('deposit-journal');
     }
-  } catch (e) { said.push(notFiledAgain('deposit-journal', e)); }
+  } catch (e) {
+    said.push(notFiledAgain('deposit-journal', e));
+  }
 
   const believedPool = await believedOf('pool');
-  const believedNotes = (believedPool.believed === null ? [] : opened(believedPool.believed, 'pool', believedPool.store)?.notes ?? []) as Note[];
+  const believedNotes = (
+    believedPool.believed === null ? [] : (opened(believedPool.believed, 'pool', believedPool.store)?.notes ?? [])
+  ) as Note[];
   const contradicted = !(await heldAll(believedNotes));
   if (!contradicted && !believedPool.above) return { answer: 'the-newest', journals, said };
   const pool = { ...believedPool, ...(await passedOverIn(believedPool.store)) };
@@ -393,16 +460,20 @@ export async function fileThePoolTheChainHolds(input: {
   for (const v of pool.passed) {
     const notes = opened(v.sealed, 'pool', pool.store)?.notes;
     if (!Array.isArray(notes)) {
-      said.push(`version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, does not open `
-        + 'with this signer\'s key, so none of its notes is taken');
+      said.push(
+        `version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, does not open ` +
+          "with this signer's key, so none of its notes is taken"
+      );
       continue;
     }
     if (new Set((notes as Note[]).map((n) => n.nonce.toLowerCase())).size !== notes.length) {
-      said.push(`version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, names a note `
-        + 'more than once, so it is not a pool and none of its notes is taken');
+      said.push(
+        `version ${v.version} of this vault's pool, filed by a seat past the boundary its leaving keeps, names a note ` +
+          'more than once, so it is not a pool and none of its notes is taken'
+      );
       continue;
     }
-    for (const n of notes as Note[]) if (!taken.has(noteKey(n)) && await input.held(n)) taken.set(noteKey(n), n);
+    for (const n of notes as Note[]) if (!taken.has(noteKey(n)) && (await input.held(n))) taken.set(noteKey(n), n);
   }
   /* Each landed payment's change: from the line, where the chain holds it; said where nothing taken holds it. */
   for (const line of await landed()) {
@@ -410,16 +481,22 @@ export async function fileThePoolTheChainHolds(input: {
     const keeps = spentValue - (line.step === 'merge' ? 0n : line.amount);
     if (keeps <= 0n) continue;
     const change = input.changeOf === undefined ? null : await input.changeOf(line);
-    if (change !== null && !taken.has(noteKey(change)) && await input.held(change)) {
+    if (change !== null && !taken.has(noteKey(change)) && (await input.held(change))) {
       taken.set(noteKey(change), change);
-      said.push(`a payment a seat that left carried out after its removal was raised kept ${keeps} as change, and no pool it `
-        + 'filed holds that change; the chain holds it, so it is taken from the payment journal\'s line');
+      said.push(
+        `a payment a seat that left carried out after its removal was raised kept ${keeps} as change, and no pool it ` +
+          "filed holds that change; the chain holds it, so it is taken from the payment journal's line"
+      );
       continue;
     }
-    if (![...taken.values()].some((n) => n.token.toLowerCase() === line.spent.token.toLowerCase() && n.value === keeps)) {
-      said.push(`a payment a seat that left carried out after its removal was raised landed - every note it spent is gone from the `
-        + `chain - and kept ${keeps} as change, which no pool this device can take holds. The chain holds that change: a `
-        + 'rebuild of the vault from its journals and the chain names it');
+    if (
+      ![...taken.values()].some((n) => n.token.toLowerCase() === line.spent.token.toLowerCase() && n.value === keeps)
+    ) {
+      said.push(
+        `a payment a seat that left carried out after its removal was raised landed - every note it spent is gone from the ` +
+          `chain - and kept ${keeps} as change, which no pool this device can take holds. The chain holds that change: a ` +
+          'rebuild of the vault from its journals and the chain names it'
+      );
     }
   }
   await refile(pool.store, pool.believed, { notes: [...taken.values()] }, pool.newest + 1, 'pool');
@@ -436,17 +513,25 @@ export async function fileThePoolTheChainHolds(input: {
  * the press is made again.
  */
 export async function startVaultNonceSecretAgainOnThisDevice(
-  vault: Hex, me: DeviceSigner, others: readonly NonceSecretReader[], records: DeviceRecords,
-  everCreated: ReadonlySet<string>, filed: SealedPool, removals = 0,
+  vault: Hex,
+  me: DeviceSigner,
+  others: readonly NonceSecretReader[],
+  records: DeviceRecords,
+  everCreated: ReadonlySet<string>,
+  filed: SealedPool,
+  removals = 0
 ): Promise<SealedPool> {
   if (everCreated.size > 0) {
     throw new Error(
-      'the chain has already made coins for this vault, so its secret is not replaced. Nothing is written.');
+      'the chain has already made coins for this vault, so its secret is not replaced. Nothing is written.'
+    );
   }
   const store = records('nonce-secret');
   const newest = await store.get(vault);
   if (newest === null || newest.version !== filed.version) {
-    throw new Error('another secret was filed for this vault while this one was being checked. Nothing is written; try again.');
+    throw new Error(
+      'another secret was filed for this vault while this one was being checked. Nothing is written; try again.'
+    );
   }
   const made = startNonceSecretAgain(filed, vault, [recordsReaderOf(me.companyKey), ...others], removals);
   await store.put(vault, made);
@@ -478,28 +563,43 @@ export async function depositCoinOnThisDevice(input: {
   const newest = await input.records('nonce-secret').get(vault);
   if (newest === null) {
     throw new Error(
-      'this vault has no nonce secret yet, so a private deposit would be one the company could not name '
-      + 'again. Nothing is filed or deposited. Start the vault\x27s nonce secret first.');
+      'this vault has no nonce secret yet, so a private deposit would be one the company could not name ' +
+        'again. Nothing is filed or deposited. Start the vault\x27s nonce secret first.'
+    );
   }
   const secrets = openNonceSecrets(newest, vault, opener);
   if (!Number.isSafeInteger(input.chain.removals) || input.chain.removals < 0) {
-    throw new Error('how many signers the company has removed was not read from the chain, so nothing is filed or deposited. Try again.');
+    throw new Error(
+      'how many signers the company has removed was not read from the chain, so nothing is filed or deposited. Try again.'
+    );
   }
   /*
    * **NO DEPOSIT UNDER A SECRET A LEAVER MAY HOLD, CHECKED BEFORE THE JOURNAL AND THE CLAIM**, so a refused deposit
    * leaves no line. It rests on the chain's counts, never on what a version says of itself (`secretMustChange`).
    */
-  if (await secretMustChange({ opened: secrets, chainRemovals: input.chain.removals, set: input.chain.secretSet }) !== null) throw new VaultSecretBeingChanged(vault);
+  if (
+    (await secretMustChange({ opened: secrets, chainRemovals: input.chain.removals, set: input.chain.secretSet })) !==
+    null
+  )
+    throw new VaultSecretBeingChanged(vault);
   if (!(await input.chain.secretIsTheVaults(secrets.secrets[secrets.secrets.length - 1]! as Hex))) {
     throw new Error(
-      'the secret the company\x27s records hold for this vault is not the one the vault holds on the chain, so a '
-      + 'deposit made under it could be traced by whoever made it. Nothing is filed or deposited; contact support.');
+      'the secret the company\x27s records hold for this vault is not the one the vault holds on the chain, so a ' +
+        'deposit made under it could be traced by whoever made it. Nothing is filed or deposited; contact support.'
+    );
   }
   const journal = new DepositJournalInStore(
-    input.records('deposit-journal'), vault, { id: me.signerId, wrappingSecret: me.wrappingSecret },
-    input.signers, currentDepositNonceKey(secrets));
+    input.records('deposit-journal'),
+    vault,
+    { id: me.signerId, wrappingSecret: me.wrappingSecret },
+    input.signers,
+    currentDepositNonceKey(secrets)
+  );
   const pool = new SealedNotePool(
-    input.records('pool'), { signerId: me.signerId, wrappingSecret: me.wrappingSecret }, input.signers);
+    input.records('pool'),
+    { signerId: me.signerId, wrappingSecret: me.wrappingSecret },
+    input.signers
+  );
   const { coin, slot } = await claimNewDepositCoin({
     vault,
     money: input.money,
@@ -508,7 +608,7 @@ export async function depositCoinOnThisDevice(input: {
     everCreated: input.chain.everCreated,
     outputCommitmentOf: input.chain.outputCommitmentOf,
     heldNow: input.chain.heldNow,
-    poolHoldsTheNonce: async (nonce) => (await pool.load(vault)).notes.some((n) => n.nonce === nonce),
+    poolHoldsTheNonce: async (nonce) => (await pool.load(vault)).notes.some((n) => n.nonce === nonce)
   });
   return { coin, slot, epoch: secrets.epoch };
 }

@@ -29,7 +29,13 @@ const peopleScreenOpened = async (): Promise<ScreenCount> => {
 
 const R = '/api/accounts/:record';
 /* The reads a vault's tile makes for its money: its vault records, their newest versions and proofs, and its state on the chain. */
-const TILE_READS = [`POST ${R}/vault-records/read`, `POST ${R}/manifest/newest`, `POST ${R}/manifest/tree/proofs`, 'indexer vaultOnChain', 'indexer vaultsOnChain'];
+const TILE_READS = [
+  `POST ${R}/vault-records/read`,
+  `POST ${R}/manifest/newest`,
+  `POST ${R}/manifest/tree/proofs`,
+  'indexer vaultOnChain',
+  'indexer vaultsOnChain'
+];
 /*
  * What the People screen reads, measured on this company at three people, two vendors, two vaults and one open
  * proposal, and again at twice of each: every route once for the opening (the newest versions and the records read by
@@ -39,14 +45,25 @@ const TILE_READS = [`POST ${R}/vault-records/read`, `POST ${R}/manifest/newest`,
  */
 const PEOPLE = {
   routes: {
-    [`GET ${R}`]: 1, [`GET ${R}/directory`]: 1, [`GET ${R}/manifest/tree/pending`]: 1, [`POST ${R}/manifest/tree/proofs`]: 1,
-    [`POST ${R}/manifest/newest`]: 4, [`POST ${R}/records/read`]: 2, [`POST ${R}/handovers`]: 1, [`GET ${R}/runs`]: 1, [`GET ${R}/people`]: 1,
-    [`GET ${R}/vaults`]: 1, [`GET ${R}/invites`]: 1, [`GET ${R}/proposals`]: 1,
+    [`GET ${R}`]: 1,
+    [`GET ${R}/directory`]: 1,
+    [`GET ${R}/manifest/tree/pending`]: 1,
+    [`POST ${R}/manifest/tree/proofs`]: 1,
+    [`POST ${R}/manifest/newest`]: 4,
+    [`POST ${R}/records/read`]: 2,
+    [`POST ${R}/handovers`]: 1,
+    [`GET ${R}/runs`]: 1,
+    [`GET ${R}/people`]: 1,
+    [`GET ${R}/vaults`]: 1,
+    [`GET ${R}/invites`]: 1,
+    [`GET ${R}/proposals`]: 1
   },
   wallet: { holders: 1 },
   asks: {
-    'indexer invitedSeats': 1, 'onChain anchorsOnChain': 1, 'indexer roundsOnChain': 1,
-  },
+    'indexer invitedSeats': 1,
+    'onChain anchorsOnChain': 1,
+    'indexer roundsOnChain': 1
+  }
 };
 /*
  * The other screens counted, opened twice at each size, the second opening counted: the Vaults screen, and the home
@@ -68,9 +85,13 @@ describe('A SCREEN OPENED ON A COMPANY OF A CHOSEN SIZE HAS EVERY READ IT MAKES 
 
   it('a call is named by the route an action declares for it, or by its path with each record written as an id', () => {
     /* RED WHEN: a call to a declared route is named by its path, so the same read of two records counts as two routes. */
-    expect(pageRouteOf('GET', `/api/accounts/${CO}/records/person/p1/versions`, CO)).toBe(`GET ${R}/records/:kind/:id/versions`);
+    expect(pageRouteOf('GET', `/api/accounts/${CO}/records/person/p1/versions`, CO)).toBe(
+      `GET ${R}/records/:kind/:id/versions`
+    );
     /* RED WHEN: a call no action declares is named by the record it reads, or not said to be undeclared. */
-    expect(pageRouteOf('GET', `/api/accounts/${CO}/nothing/ab12`, CO)).toBe('GET /api/accounts/:id/nothing/:id (no action declares it)');
+    expect(pageRouteOf('GET', `/api/accounts/${CO}/nothing/ab12`, CO)).toBe(
+      'GET /api/accounts/:id/nothing/:id (no action declares it)'
+    );
   });
 
   it('the company holds the open proposals asked for', () => {
@@ -86,7 +107,9 @@ describe('A SCREEN OPENED ON A COMPANY OF A CHOSEN SIZE HAS EVERY READ IT MAKES 
     /* RED WHEN: a call the screen makes is not counted, or is counted without reaching the service. */
     expect(total(first.routes)).toBe(company.served() - before);
     /* RED WHEN: the wallet's asks, or the chain, builder or indexer reads, are made without being counted against the opening. */
-    expect(Math.min(total(first.wallet), first.doors.onChain, first.doors.builder, first.doors.indexer)).toBeGreaterThan(0);
+    expect(
+      Math.min(total(first.wallet), first.doors.onChain, first.doors.builder, first.doors.indexer)
+    ).toBeGreaterThan(0);
   });
 
   it('an opening on a device that has checked the company before reads the same each time, apart from its first', async () => {
@@ -118,8 +141,9 @@ describe('A SCREEN OPENED ON A COMPANY OF A CHOSEN SIZE HAS EVERY READ IT MAKES 
     }
   });
 
-  it('the home page reads every vault tile\'s money in the reads of one opening, on four vaults as on two', () => {
-    const tileReads = (c: ScreenCount) => Object.fromEntries(TILE_READS.map((read) => [read, c.routes[read] ?? c.asks[read] ?? 0]));
+  it("the home page reads every vault tile's money in the reads of one opening, on four vaults as on two", () => {
+    const tileReads = (c: ScreenCount) =>
+      Object.fromEntries(TILE_READS.map((read) => [read, c.routes[read] ?? c.asks[read] ?? 0]));
     const told = (c: ScreenCount) => c.text.split(ENGLISH['vaults.money.none']!).length - 1;
     /* RED WHEN: a tile does not say what its vault holds once its money is read: this company's vaults hold none of the tokens shown. */
     expect([told(others.get('home')!), told(grown.get('home')!)]).toEqual([2, 4]);

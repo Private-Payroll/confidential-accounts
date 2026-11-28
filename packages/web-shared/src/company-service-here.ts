@@ -4,11 +4,21 @@
  * counted only while its filer is seated; a choice that cannot be read whole is said as unread, never taken as ours.
  */
 import { canonical, unwrapKey, type Hex } from '../../../src/core/crypto.js';
-import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  verifiedCompanyFiler,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import type { CompanyRecordAsked } from './records-source.js';
 import {
-  COMPANY_SERVICE_RECORD, openCompanyService, openedWithTheCompanyKey, serviceInForce, type CompanyService, type ServiceInForce,
-  type ServiceOpener, type ServiceVersion,
+  COMPANY_SERVICE_RECORD,
+  openCompanyService,
+  openedWithTheCompanyKey,
+  serviceInForce,
+  type CompanyService,
+  type ServiceInForce,
+  type ServiceOpener,
+  type ServiceVersion
 } from '../../../src/midnight/company-service-record.js';
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-manifest.js';
@@ -38,9 +48,14 @@ export interface ServiceReach {
  * the opened copy.
  */
 export const serviceOpenerFor = (
-  accountId: string, signerId: string, keyOf: ServiceOpener['keyOf'], companyKeys: Pick<CompanyKeyHere, 'keyAt'>,
+  accountId: string,
+  signerId: string,
+  keyOf: ServiceOpener['keyOf'],
+  companyKeys: Pick<CompanyKeyHere, 'keyAt'>
 ): ServiceOpener => ({
-  signerId, keyOf, companyCopy: openedWithTheCompanyKey(accountId, (epoch) => companyKeys.keyAt(epoch)),
+  signerId,
+  keyOf,
+  companyCopy: openedWithTheCompanyKey(accountId, (epoch) => companyKeys.keyAt(epoch))
 });
 
 /**
@@ -48,13 +63,19 @@ export const serviceOpenerFor = (
  * not a seat's own secret): its own copy is opened with that signer's wrapping key, here and nowhere else on the page.
  */
 export const serviceOpenerOfSigner = (
-  accountId: string, me: { readonly signerId: string; readonly wrappingSecret: Hex }, companyKeys: Pick<CompanyKeyHere, 'keyAt'>,
-): ServiceOpener => serviceOpenerFor(accountId, me.signerId, (wrapped) => unwrapKey(wrapped, me.wrappingSecret) as Hex, companyKeys);
+  accountId: string,
+  me: { readonly signerId: string; readonly wrappingSecret: Hex },
+  companyKeys: Pick<CompanyKeyHere, 'keyAt'>
+): ServiceOpener =>
+  serviceOpenerFor(accountId, me.signerId, (wrapped) => unwrapKey(wrapped, me.wrappingSecret) as Hex, companyKeys);
 
 /** The company's choice of service as read, or why it could not be read whole. */
 export type ServiceRead = ServiceInForce | { readonly unread: string };
 
-const whyOf = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\s*Nothing was [a-z ]+\.?/giu, '').replace(/\.\s*$/u, '');
+const whyOf = (e: unknown): string =>
+  String((e as Error)?.message ?? e)
+    .replace(/\s*Nothing was [a-z ]+\.?/giu, '')
+    .replace(/\.\s*$/u, '');
 
 /**
  * The versions of the company's choice of service this seat counts, read as `companyServiceHere` reads them, for
@@ -63,19 +84,32 @@ const whyOf = (e: unknown): string => String((e as Error)?.message ?? e).replace
 export async function companyServiceFiledHere(r: ServiceReach): Promise<ServiceFiled | ServiceUnread> {
   const { kind, id } = COMPANY_SERVICE_RECORD;
   try {
-    const [b] = await r.records([{ kind, id, every: true }]) as readonly ({ versions?: unknown } | null | undefined)[];
+    const [b] = (await r.records([{ kind, id, every: true }])) as readonly (
+      { versions?: unknown } | null | undefined
+    )[];
     const served = Array.isArray(b?.versions)
-      ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind, id }).sealed) : [];
-    const here = await r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster)({ records: [{ store: 'company', kind, id }] }) as DirectoryHere;
+      ? b!.versions.map((m) => fromCompanyWire(m, { company: r.accountId, kind, id }).sealed)
+      : [];
+    const here = (await r.judges.directoryHereFor(
+      r.accountId,
+      r.label,
+      r.account,
+      r.companyKeys,
+      r.roster
+    )({ records: [{ store: 'company', kind, id }] })) as DirectoryHere;
     const judge = judgeIn(here);
     const named = versionsNamedIn(here.records);
     return serviceVersionsFrom(served, {
-      company: r.accountId, judge, needed: here.holders.policyBar ?? here.holders.approvals, me: r.opener,
-      named, withheld: served.length === 0 ? withheldIn(judge, { store: 'company', kind, id }) : null,
+      company: r.accountId,
+      judge,
+      needed: here.holders.policyBar ?? here.holders.approvals,
+      me: r.opener,
+      named,
+      withheld: served.length === 0 ? withheldIn(judge, { store: 'company', kind, id }) : null,
       seatedNow: (filer) => {
         const seat = here.dir.seats.find((x) => x.signingKey.toLowerCase() === filer.toLowerCase());
         return seat !== undefined && seatNotBelievedHere(here, seat) === null;
-      },
+      }
     });
   } catch (e) {
     return { unread: whyOf(e) };
@@ -83,15 +117,22 @@ export async function companyServiceFiledHere(r: ServiceReach): Promise<ServiceF
 }
 
 /** Why the company's records say the record was withheld; a judge that cannot say is taken as withholding it. */
-const withheldIn = (judge: ReturnType<typeof judgeIn>, read: { readonly store: 'company'; readonly kind: string; readonly id: string }): string | null =>
-  (judge.withheld === undefined ? 'this wallet cannot tell which versions the company\'s records hold' : judge.withheld(read));
+const withheldIn = (
+  judge: ReturnType<typeof judgeIn>,
+  read: { readonly store: 'company'; readonly kind: string; readonly id: string }
+): string | null =>
+  judge.withheld === undefined
+    ? "this wallet cannot tell which versions the company's records hold"
+    : judge.withheld(read);
 
 /** Every version of the company's choice of service its anchored records name: those anchored, and those entered since. */
-export const versionsNamedIn = (records: Pick<DirectoryHere['records'], 'history' | 'notYetAnchored'>): readonly number[] => {
+export const versionsNamedIn = (
+  records: Pick<DirectoryHere['records'], 'history' | 'notYetAnchored'>
+): readonly number[] => {
   const key = recordKeyOf({ store: 'company', ...COMPANY_SERVICE_RECORD });
   return [
     ...(records.history.get(key) ?? []).map((v) => v.version),
-    ...records.notYetAnchored.filter((e) => recordKeyOf(e) === key).map((e) => e.version),
+    ...records.notYetAnchored.filter((e) => recordKeyOf(e) === key).map((e) => e.version)
   ];
 };
 
@@ -118,7 +159,14 @@ export interface ServiceUnread {
 /** What `serviceVersionsFrom` is given beside the versions served. */
 interface ServiceReadDoors {
   readonly company: string;
-  readonly judge: (filer: Hex | null, kind: 'policy', recordKey: string, read: ReturnType<typeof companyRecordEntry>, newest: boolean, sealedAt?: number) => string | null;
+  readonly judge: (
+    filer: Hex | null,
+    kind: 'policy',
+    recordKey: string,
+    read: ReturnType<typeof companyRecordEntry>,
+    newest: boolean,
+    sealedAt?: number
+  ) => string | null;
   readonly needed: number;
   readonly me: ServiceOpener;
   /** Every version the company's anchored records name, anchored or entered since. */
@@ -135,8 +183,9 @@ export function serviceFromVersions(served: readonly SealedCompanyRecord[], d: S
   return 'unread' in filed ? { unread: filed.unread } : serviceInForce(filed.versions, filed.needed);
 }
 
-const NO_LONGER_AGREED = 'the company\'s choice of service was agreed by signers who are no longer seated, and the signers '
-  + 'seated now have not filed it as many times as it needs, so it is not read as ours. A seated signer files the choice again';
+const NO_LONGER_AGREED =
+  "the company's choice of service was agreed by signers who are no longer seated, and the signers " +
+  'seated now have not filed it as many times as it needs, so it is not read as ours. A seated signer files the choice again';
 
 /**
  * The versions this seat counts among those served, or why the choice cannot be read whole:
@@ -155,14 +204,19 @@ const NO_LONGER_AGREED = 'the company\'s choice of service was agreed by signers
  * - a choice the company agreed that the signers seated now no longer agree, because seats that filed it have
  *   left, is unread, never ours: our service is the answer only for a company whose seats never agreed a choice.
  */
-export function serviceVersionsFrom(served: readonly SealedCompanyRecord[], d: ServiceReadDoors): ServiceFiled | ServiceUnread {
+export function serviceVersionsFrom(
+  served: readonly SealedCompanyRecord[],
+  d: ServiceReadDoors
+): ServiceFiled | ServiceUnread {
   const { kind, id } = COMPANY_SERVICE_RECORD;
   if (d.withheld !== null) return { unread: d.withheld };
   const given = new Set(served.map((rec) => rec.version));
   const named = new Set(d.named);
   const missing = [...named].sort((a, b) => a - b).find((v) => !given.has(v));
   if (missing !== undefined) {
-    return { unread: `the company's records name version ${missing} of the company's choice of service, and the service did not give it` };
+    return {
+      unread: `the company's records name version ${missing} of the company's choice of service, and the service did not give it`
+    };
   }
   const highest = Math.max(0, ...served.map((rec) => rec.version));
   let versions: ServiceVersion[] = [];
@@ -173,12 +227,18 @@ export function serviceVersionsFrom(served: readonly SealedCompanyRecord[], d: S
   for (const rec of [...served].sort((a, b) => a.version - b.version)) {
     const filer = verifiedCompanyFiler(rec);
     const ours = rec.company === d.company && rec.kind === kind && rec.id === id;
-    const refused = ours ? d.judge(filer, kind, companyRecordKey(kind, id), companyRecordEntry(rec), rec.version === highest, rec.keyEpoch) : 'it is filed for another record';
+    const refused = ours
+      ? d.judge(filer, kind, companyRecordKey(kind, id), companyRecordEntry(rec), rec.version === highest, rec.keyEpoch)
+      : 'it is filed for another record';
     let left = false;
     if (refused !== null) {
       const code = filingRefusalCodeOf(refused);
-      if (rec.version === highest && code === 'not-entered' && !named.has(rec.version)) { unentered = { rec, why: refused }; continue; }
-      if (rec.version === highest && code !== 'seat-not-seated' && code !== 'role-may-not-file') return { unread: refused };
+      if (rec.version === highest && code === 'not-entered' && !named.has(rec.version)) {
+        unentered = { rec, why: refused };
+        continue;
+      }
+      if (rec.version === highest && code !== 'seat-not-seated' && code !== 'role-may-not-file')
+        return { unread: refused };
       if (!named.has(rec.version) || code === 'past-its-boundary' || code === 'role-may-not-file') continue;
       if (code !== 'seat-not-seated') return { unread: refused };
       left = true;
@@ -198,11 +258,19 @@ export function serviceVersionsFrom(served: readonly SealedCompanyRecord[], d: S
     all.push({ version: rec.version, filer, choice });
     if (!left) versions.push({ version: rec.version, filer, choice });
   }
-  const filed: ServiceFiled = { versions, needed: d.needed, highest, ...(unentered === null ? {} : { unentered: unentered.rec }) };
+  const filed: ServiceFiled = {
+    versions,
+    needed: d.needed,
+    highest,
+    ...(unentered === null ? {} : { unentered: unentered.rec })
+  };
   const seated = serviceInForce(versions, d.needed);
   if (passedOver !== null && seated.unchosen !== undefined) return { unread: passedOver, fileOver: filed };
   const once = serviceInForce(all, d.needed);
-  if (once.unchosen === undefined && (seated.unchosen !== undefined || canonical(once.choice) !== canonical(seated.choice))) {
+  if (
+    once.unchosen === undefined &&
+    (seated.unchosen !== undefined || canonical(once.choice) !== canonical(seated.choice))
+  ) {
     return { unread: NO_LONGER_AGREED, fileOver: filed };
   }
   if (unentered !== null) return { unread: unentered.why, fileOver: filed };

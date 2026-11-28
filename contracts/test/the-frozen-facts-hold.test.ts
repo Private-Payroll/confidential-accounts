@@ -13,31 +13,47 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { RELEASED_VERSIONS } from '../../packages/identity/src/wallet/released-versions.js';
 import {
-  ACCOUNT_THRESHOLD_FIELD, ADOPTED_VAULTS_FIELD, RETIRED_VAULTS_FIELD, ROLES_FIELD, SIGNER_LEAVES_FIELD, THRESHOLDS_FIELD,
+  ACCOUNT_THRESHOLD_FIELD,
+  ADOPTED_VAULTS_FIELD,
+  RETIRED_VAULTS_FIELD,
+  ROLES_FIELD,
+  SIGNER_LEAVES_FIELD,
+  THRESHOLDS_FIELD
 } from '../../packages/identity/src/profile/account-state.js';
 import { COMPANY_LABEL_ENTRY } from '../../packages/identity/src/profile/company-label.js';
 import { PAY_KEY_COMMITMENT_ENTRY } from '../../packages/identity/src/profile/records-key.js';
 import {
-  MOVEMENTS_FIELD, OPEN_PROPOSALS_FIELD, VAULT_ACCOUNT_FIELD, VAULT_FIELDS,
+  MOVEMENTS_FIELD,
+  OPEN_PROPOSALS_FIELD,
+  VAULT_ACCOUNT_FIELD,
+  VAULT_FIELDS
 } from '../../apps/wallet/src/chain/company-label-on-chain.js';
 import { OPEN_PROPOSALS_FIELD as OPEN_PROPOSALS_FIELD_SHARED } from '../../packages/web-shared/src/account-anchors-read.js';
 import { pureCircuits as V } from '../managed-vault/contract/index.js';
 import { receiptColourIn } from './facts-at-an-address.js';
 import {
-  entryDigestOf, newestVersionIn, readFrozenFacts, RECORDED_CONTRACTS, versionsInForce, walletReadFactsOf, type VersionFacts,
+  entryDigestOf,
+  newestVersionIn,
+  readFrozenFacts,
+  RECORDED_CONTRACTS,
+  versionsInForce,
+  walletReadFactsOf,
+  type VersionFacts
 } from './frozen-facts.js';
 import { factsOfTheBuild } from './frozen-facts-of-the-build.js';
 
 /** Each recorded version's entry, by the digest it was recorded with. A new version's line is printed by add-frozen-facts.ts. */
 const PINNED: Readonly<Record<string, string>> = {
-  '1': 'fe0d16f0320f61da884585258246fc892b829d4eb7654704ebd64e19a335b873',
+  '1': 'fe0d16f0320f61da884585258246fc892b829d4eb7654704ebd64e19a335b873'
 };
 
 const RECORD = readFrozenFacts();
 const RECORDED = RECORD[String(newestVersionIn(RECORD))]!;
 let built: VersionFacts;
 
-beforeAll(async () => { built = await factsOfTheBuild(RECORDED); });
+beforeAll(async () => {
+  built = await factsOfTheBuild(RECORDED);
+});
 
 describe('the record is only ever added to, names released versions only, and its newest is the newest released', () => {
   it('every recorded version is exactly the entry it was recorded as', () => {
@@ -79,14 +95,14 @@ describe.each(RECORDED_CONTRACTS)('the %s of the newest released version, as bui
   });
 });
 
-describe('what depends on a contract\'s own address', () => {
+describe("what depends on a contract's own address", () => {
   it('every derivation inside the account that approvals, holds, run ids and batch payees are keyed on gives what it gave', () => {
     /* RED WHEN an approval or release nullifier, a governance or run id, or a batch payee's leaf is worked out another way. */
     expect(built.atAnAddress.account).toBe(RECORDED.atAnAddress.account);
     expect(built.atAnAddress.internal).toEqual(RECORDED.atAnAddress.internal);
   });
 
-  it('each circuit keys a hold and an anchor seat on the account\'s address as it did, and a hold is released by the key it was placed under', () => {
+  it("each circuit keys a hold and an anchor seat on the account's address as it did, and a hold is released by the key it was placed under", () => {
     /* RED WHEN a call site passes its arguments in another order, or holdRun and releaseHold key a hold differently. */
     expect(built.atAnAddress.callSites).toEqual(RECORDED.atAnAddress.callSites);
     expect(new Set(built.atAnAddress.callSites.holderKeyOf!.map((s) => s.key)).size).toBe(1);
@@ -100,40 +116,49 @@ describe('what depends on a contract\'s own address', () => {
 
   it('the account accepts each receipt in the colour the vault mints it', async () => {
     /* RED WHEN the account and the vault work out a receipt's colour differently: no payment, change or retirement could be recorded. */
-    for (const [kind, tag] of [['payment', V.paymentReceiptTag()], ['change', V.changeReceiptTag()], ['retire', V.retireReceiptTag()]] as const) {
-      expect(await receiptColourIn('account', tag, RECORDED.atAnAddress.vault), kind).toBe(RECORDED.atAnAddress.receiptColours[kind]);
+    for (const [kind, tag] of [
+      ['payment', V.paymentReceiptTag()],
+      ['change', V.changeReceiptTag()],
+      ['retire', V.retireReceiptTag()]
+    ] as const) {
+      expect(await receiptColourIn('account', tag, RECORDED.atAnAddress.vault), kind).toBe(
+        RECORDED.atAnAddress.receiptColours[kind]
+      );
     }
   });
 });
 
-describe('the wallet finds a person\'s registry entries as it did', () => {
+describe("the wallet finds a person's registry entries as it did", () => {
   it('works out the same registry key, sealing key and tags on every network, and seals an entry the recorded way', () => {
     /* RED WHEN a registry key, sealing key or tag is worked out another way, or an entry is sealed with another layout or binding. */
     expect(built.registry.inTheWallet).toEqual(RECORDED.registry.inTheWallet);
   });
 });
 
-describe.each(versionsInForce(RECORD))('the wallet reads a company on version %s by that version\'s recorded places', (_, facts) => {
-  it('every field the wallet reads the account and the vault by is the recorded field of that name', () => {
-    const recorded = walletReadFactsOf(facts);
-    /* RED WHEN a wallet field constant names a place a version still in force does not give that field: the wallet would read another field's value. */
-    expect(ROLES_FIELD).toBe(recorded['account field signerRoles']);
-    expect(SIGNER_LEAVES_FIELD).toBe(recorded['account field signerLeaves']);
-    expect(ACCOUNT_THRESHOLD_FIELD).toBe(recorded['account field threshold']);
-    expect(THRESHOLDS_FIELD).toBe(recorded['account field thresholds']);
-    expect(ADOPTED_VAULTS_FIELD).toBe(recorded['account field vaults']);
-    expect(RETIRED_VAULTS_FIELD).toBe(recorded['account field retiredAt']);
-    expect(MOVEMENTS_FIELD).toBe(recorded['account field movements']);
-    expect(OPEN_PROPOSALS_FIELD).toBe(recorded['account field openProposals']);
-    expect(OPEN_PROPOSALS_FIELD_SHARED).toBe(recorded['account field openProposals']);
-    expect(VAULT_ACCOUNT_FIELD).toBe(recorded['vault field account']);
-    expect(VAULT_FIELDS).toBe(recorded['vault field count']);
-  });
+describe.each(versionsInForce(RECORD))(
+  "the wallet reads a company on version %s by that version's recorded places",
+  (_, facts) => {
+    it('every field the wallet reads the account and the vault by is the recorded field of that name', () => {
+      const recorded = walletReadFactsOf(facts);
+      /* RED WHEN a wallet field constant names a place a version still in force does not give that field: the wallet would read another field's value. */
+      expect(ROLES_FIELD).toBe(recorded['account field signerRoles']);
+      expect(SIGNER_LEAVES_FIELD).toBe(recorded['account field signerLeaves']);
+      expect(ACCOUNT_THRESHOLD_FIELD).toBe(recorded['account field threshold']);
+      expect(THRESHOLDS_FIELD).toBe(recorded['account field thresholds']);
+      expect(ADOPTED_VAULTS_FIELD).toBe(recorded['account field vaults']);
+      expect(RETIRED_VAULTS_FIELD).toBe(recorded['account field retiredAt']);
+      expect(MOVEMENTS_FIELD).toBe(recorded['account field movements']);
+      expect(OPEN_PROPOSALS_FIELD).toBe(recorded['account field openProposals']);
+      expect(OPEN_PROPOSALS_FIELD_SHARED).toBe(recorded['account field openProposals']);
+      expect(VAULT_ACCOUNT_FIELD).toBe(recorded['vault field account']);
+      expect(VAULT_FIELDS).toBe(recorded['vault field count']);
+    });
 
-  it('the entries the wallet looks up in signerRoles are the recorded keys', () => {
-    const recorded = walletReadFactsOf(facts);
-    /* RED WHEN the wallet looks for the company's label or the pay-record key's commitment under a key a version in force never writes. */
-    expect(COMPANY_LABEL_ENTRY).toBe(recorded['entry key companyLabelKey']);
-    expect(PAY_KEY_COMMITMENT_ENTRY).toBe(recorded['entry key payKeyCommitmentKey']);
-  });
-});
+    it('the entries the wallet looks up in signerRoles are the recorded keys', () => {
+      const recorded = walletReadFactsOf(facts);
+      /* RED WHEN the wallet looks for the company's label or the pay-record key's commitment under a key a version in force never writes. */
+      expect(COMPANY_LABEL_ENTRY).toBe(recorded['entry key companyLabelKey']);
+      expect(PAY_KEY_COMMITMENT_ENTRY).toBe(recorded['entry key payKeyCommitmentKey']);
+    });
+  }
+);

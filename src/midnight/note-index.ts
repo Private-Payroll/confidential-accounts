@@ -1,74 +1,24 @@
 /**
- * **WHERE THE CHAIN FILED A VAULT'S NOTE, READ BACK OFF THE CHAIN'S OWN RECORD
- * OF THE TRANSACTION THAT CREATED IT.**
- *
- * A vault spends a note by proving where it sits in the chain's commitment
- * tree. That position is assigned when the transaction is applied, so no
- * client can know it when it builds the transaction, and nothing the vault's
- * owner holds is a function of it.
- *
- * **The ledger records it anyway.** Applying a transaction emits one event per
- * output, and a `zswapOutput` event carries the output's commitment, the
- * contract that owns it and its `mtIndex`, looked up by commitment rather than
- * by position. The indexer serves those events per transaction. So the index is
- * read, never worked out: not from an output's position in its offer, which is
- * wrong whenever a transaction has more than one offer or a transient, and not
- * from any count kept on this machine.
- *
- * **THREE STEPS, AND EACH REFUSES RATHER THAN GUESSING.**
- *
- *   1. `vaultNoteCommitment`: the commitment the chain holds for a note the
- *      vault owns, from the note's own colour, nonce and value.
- *   2. `indexerNoteEvents`, beside the indexer's other questions: every zswap
- *      event the chain holds for one transaction, deserialised by the ledger. A
- *      reply that cannot be read is an error, never an empty list.
- *   3. `noteIndexFrom`: the one event for that commitment, owned by that vault,
- *      and its `mtIndex`.
- *
- * **THERE ARE THREE ANSWERS AND THEY ARE THREE ERRORS**, because each one asks
- * for a different act. A transaction the node has finalised can still be
- * missing from the indexer for a moment afterwards; that is
- * `NoteIndexUnreadable`, and reading again later is the answer to it. A
- * transaction the chain holds that did not create this note is
- * `NoteIndexRefused`, and reading again changes nothing. **And a question the
- * indexer will not take at all is `NoteIndexUnaskable`** - not the chain being
- * slow and not the chain saying no, but this client and that indexer out of
- * step, which no amount of reading again repairs.
- *
- * **ONE MORE READ IS JUDGED HERE: WHETHER A TRANSACTION THIS DEVICE HOLDS LANDED
- * FOR ONE VAULT CALL.** `indexerTransactionsByIdentifier`, with the indexer's
- * other questions, asks the indexer for
- * the transactions that carry an identifier the device read off the bytes it
- * holds, with the result the ledger applied each with, each part's own result
- * and its contract calls. `vaultCallOnChain` judges them by the part of the
- * transaction that carries the vault's call, and `vaultCallByIdentifiers`
- * asks about every identifier in turn. An indexer that cannot be read, or will
- * not take the question, is an error, never an empty list.
+ * Where the chain filed a vault's note, read from the chain's record of the transaction that created it. The position
+ * is assigned when the transaction is applied, so it is read from the ledger's events, never counted here.
  */
 import type { Hex } from '../core/crypto.js';
 import type { NotePool } from './vault-ledger.js';
 import type { Note } from './vault-notes.js';
 export {
-  indexerNoteEvents, indexerTransactionsByIdentifier, indexerVaultTransactions,
-  type IndexerSocket, type TransactionByIdentifier,
+  indexerNoteEvents,
+  type IndexerSocket,
+  indexerTransactionsByIdentifier,
+  indexerVaultTransactions,
+  type TransactionByIdentifier
 } from './indexer-queries.js';
 import type { TransactionByIdentifier } from './indexer-queries.js';
 
-/**
- * **A NOTE'S INDEX AS THE CHAIN REPORTED IT, AND NO OTHER NUMBER.**
- *
- * A branded `bigint`. `noteIndexFrom` is the only function that makes one,
- * and `withIndexRead`, which sets the index on a payment's own copy of the pool,
- * takes nothing else, so a number that was counted, assumed or typed in does not
- * type-check there. A cast can still make one; the type is a guard against a
- * mistake, not against a decision.
- */
+/** A note's index as the chain reported it: only `noteIndexFrom` makes one, so a counted number does not type-check. */
 export type ChainReadIndex = bigint & { readonly __readFromTheChain: unique symbol };
 
 /** The transaction that created a note, as the chain names it. */
-export type CreatingTransaction =
-  | { readonly hash: Hex }
-  | { readonly identifier: Hex };
+export type CreatingTransaction = { readonly hash: Hex } | { readonly identifier: Hex };
 
 /** The coin a vault note is, as the pool records it. */
 export interface NoteCoin {
@@ -92,30 +42,32 @@ export interface ServedEvent {
 /** One zswap event as it crosses a wire: the same fields, its index as decimal digits. */
 export interface EventOnTheWire {
   readonly transactionHash: string;
-  readonly details: { readonly tag: string; readonly commitment?: string; readonly contract?: string; readonly mtIndex?: string };
+  readonly details: {
+    readonly tag: string;
+    readonly commitment?: string;
+    readonly contract?: string;
+    readonly mtIndex?: string;
+  };
 }
 
-/** **AN EVENT AS IT CROSSES A WIRE**, the one way it is written for one: every field kept, the index as decimal digits. */
+/** The one way an event is written for a wire. */
 export const eventOnTheWire = (e: ServedEvent): EventOnTheWire => ({
   transactionHash: e.transactionHash,
   details: {
     tag: e.details.tag,
     ...(e.details.commitment === undefined ? {} : { commitment: e.details.commitment }),
     ...(e.details.contract === undefined ? {} : { contract: e.details.contract }),
-    ...(e.details.mtIndex === undefined ? {} : { mtIndex: e.details.mtIndex.toString() }),
-  },
+    ...(e.details.mtIndex === undefined ? {} : { mtIndex: e.details.mtIndex.toString() })
+  }
 });
 
 /** Where a transaction's events come from. The indexer, in production. */
 export interface NoteEvents {
   /**
-   * Every zswap event the chain holds for one transaction.
-   *
-   * Throws `NoteIndexUnreadable` when it cannot say YET, `NoteIndexUnaskable`
-   * when the question itself will not be taken, and never answers an empty list
-   * for a transaction it could not find.
+   * Every zswap event the chain holds for one transaction, never an empty list for one it could not find. Throws
+   * `NoteIndexUnreadable` when it cannot say yet, and `NoteIndexUnaskable` when the question is refused.
    */
-  eventsOf(tx: CreatingTransaction): Promise<ReadonlyArray<ServedEvent>>;
+  eventsOf(tx: CreatingTransaction): Promise<readonly ServedEvent[]>;
 }
 
 /** The chain could not be asked, or has not caught up. Reading again later may answer. */
@@ -127,17 +79,8 @@ export class NoteIndexUnreadable extends Error {
 }
 
 /**
- * **THE QUESTION ITSELF COULD NOT BE PUT, AND PUTTING IT AGAIN WILL NOT HELP.**
- *
- * Not the chain being slow and not the chain saying no: the indexer and this
- * client disagree about what may be ASKED. A field that has been renamed, a
- * query this schema does not have, an argument it does not take. **Every one of
- * those used to be reported as "read again shortly"**, so somebody reading it
- * waits, and reads again, for ever.
- *
- * It is a third answer rather than either of the other two because it needs a
- * different act: neither waiting nor accepting that the note has no index, but
- * a client and an indexer brought back into step.
+ * The indexer will not take the question (a renamed field, an unknown query or argument): reading again cannot help,
+ * only bringing this client and the indexer back into step.
  */
 export class NoteIndexUnaskable extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -159,77 +102,57 @@ export const bare = (hex: string): string => hex.trim().toLowerCase().replace(/^
 export const named = (tx: CreatingTransaction): string =>
   'hash' in tx ? `transaction ${tx.hash}` : `transaction identifier ${tx.identifier}`;
 
-/* ------------------------------------------------------------------ *
- * which kind of no a GraphQL error is
- * ------------------------------------------------------------------ */
+/** Errors that mean the question is wrong, not the moment; GraphQL marks none permanent, so these are what servers send. */
+const CANNOT_BE_ASKED_CODES = new Set(['GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT']);
 
-/**
- * **THE SHAPES THAT MEAN THE QUESTION IS WRONG RATHER THAN THE MOMENT.**
- *
- * GraphQL says nothing about which errors are permanent, so this is read off
- * what servers actually send: a validation code in `extensions`, or one of the
- * sentences a schema check produces. It is deliberately a list of ways to say
- * PERMANENT and not a list of ways to say transient.
- */
-const CANNOT_BE_ASKED_CODES = new Set([
-  'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'BAD_USER_INPUT',
-]);
-
-/*
- * **`PERSISTED_QUERY_NOT_FOUND` IS NOT ON THAT LIST AND IT LOOKS LIKE IT
- * SHOULD BE.** In the convention that sends it, it means *send the same
- * question again with its full text* - so the act it asks for is one more
- * request, which is the opposite of what this file would say about it. The
- * question above is always sent with its full text, so nothing here should ever
- * produce it; something in front of the indexer could.
- */
-
+// Not `PERSISTED_QUERY_NOT_FOUND`: it asks for the same question again with its full text, which is a retry.
 const CANNOT_BE_ASKED_SAYS = [
-  /cannot query field/i, /unknown field ["']/i, /unknown argument ["']/i, /unknown type ["']/i,
-  /^syntax error/i, /is not defined by type/i, /did not match expected type/i,
-  /must not have a selection/i, /of required type/i, /^validation error/i,
+  /cannot query field/i,
+  /unknown field ["']/i,
+  /unknown argument ["']/i,
+  /unknown type ["']/i,
+  /^syntax error/i,
+  /is not defined by type/i,
+  /did not match expected type/i,
+  /must not have a selection/i,
+  /of required type/i,
+  /^validation error/i
 ];
 
 /**
- * **WHETHER ASKING AGAIN COULD POSSIBLY ANSWER, AND THE DEFAULT IS THAT IT
- * COULD.**
- *
- * Getting this wrong in one direction tells somebody to wait for an answer that
- * will never come; **getting it wrong in the other tells them to stop waiting
- * for one that would have**. The second is worse, because a note whose index is
- * never read is money nobody reaches. So an error is permanent only when it
- * SAYS it is, and everything unrecognised stays retryable.
+ * Whether asking again could never answer. Anything unrecognised stays retryable, because a note whose index is never
+ * read is money nobody reaches.
  */
+const messageOf = (e: unknown): unknown =>
+  typeof e === 'object' && e !== null && 'message' in e ? e.message : undefined;
+const codeOf = (e: unknown): unknown =>
+  typeof e === 'object' && e !== null && 'extensions' in e && typeof e.extensions === 'object' && e.extensions !== null
+    ? 'code' in e.extensions
+      ? e.extensions.code
+      : undefined
+    : undefined;
+
 export function theQuestionCannotBeAsked(errors: readonly unknown[]): boolean {
   return errors.some((e) => {
-    const err = e as { message?: unknown; extensions?: { code?: unknown } } | null;
-    const code = err?.extensions?.code;
+    const code = codeOf(e);
     if (typeof code === 'string' && CANNOT_BE_ASKED_CODES.has(code)) return true;
-    const said = typeof err?.message === 'string' ? err.message : '';
+    const message = messageOf(e);
+    const said = typeof message === 'string' ? message : '';
     return CANNOT_BE_ASKED_SAYS.some((shape) => shape.test(said));
   });
 }
 
-/**
- * **EVERY ERROR, NOT THE FIRST.** A schema that has moved usually complains
- * about several fields at once, and a reader shown one of them fixes one of
- * them. Bounded, because an error list is somebody else's output.
- */
+/** Every error, not the first, since a schema that moved complains about several fields; bounded, being another's output. */
 export function everyThingSaid(errors: readonly unknown[]): string {
-  /*
-   * **BOUNDED IN LENGTH AS WELL AS IN COUNT, AND STRIPPED OF CONTROL
-   * CHARACTERS.** This text is somebody else's output and it reaches a
-   * terminal. Five messages with no length limit are as unbounded as fifty;
-   * and an escape sequence in one of them moves the cursor over lines this
-   * door has already printed, including the line saying nothing was written.
-   */
+  // Stripped of control characters: this reaches a terminal, where an escape sequence could overwrite printed lines.
   const plain = (text: string): string =>
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- control characters are exactly what this takes out.
     text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 400);
   const said = errors.slice(0, 5).map((e) => {
-    const err = e as { message?: unknown; extensions?: { code?: unknown } } | null;
-    const code = typeof err?.extensions?.code === 'string' ? plain(err.extensions.code as string) : '';
-    const text = typeof err?.message === 'string' && err.message ? plain(err.message) : 'no message';
+    const rawCode = codeOf(e);
+    const message = messageOf(e);
+    const code = typeof rawCode === 'string' ? plain(rawCode) : '';
+    const text = typeof message === 'string' && message ? plain(message) : 'no message';
     return code ? `${text} [${code}]` : text;
   });
   const more = errors.length - said.length;
@@ -237,184 +160,136 @@ export function everyThingSaid(errors: readonly unknown[]): string {
 }
 
 /**
- * **THE COMMITMENT THE CHAIN HOLDS FOR A NOTE THIS VAULT OWNS.**
- *
- * The ledger's commitment for a coin owned by a contract. The binding offers
- * no function that computes it directly for a contract, so it is read off an
- * output built for that contract; the output is built and discarded, and its
- * commitment does not depend on the segment it is built for.
- *
- * This is NOT the vault's own record of the note. The vault's `notes` set holds
- * a different commitment, over the coin and a blinding, and an event never
- * carries that one.
+ * The ledger's commitment for a coin this vault owns, read off an output built for it and discarded. Not the vault's own
+ * `notes` commitment, which adds a blinding and never appears in an event.
  */
 export async function vaultNoteCommitment(coin: NoteCoin, vault: Hex): Promise<string> {
   const { ZswapOutput } = await import('@midnight-ntwrk/midnight-js-protocol/v9');
   const output = ZswapOutput.newContractOwned(
     { type: bare(coin.token), nonce: bare(coin.nonce), value: coin.value },
     0,
-    bare(vault),
+    bare(vault)
   );
   return bare(output.commitment);
 }
 
 /**
- * **WHICH TRANSACTION THESE EVENTS ARE FROM, AS SIXTY-FOUR HEX CHARACTERS OR
- * NOT AT ALL.**
- *
- * When the transaction was named by HASH, that is the caller's own value and
- * every event is compared against it. When it was named by the 33-byte
- * IDENTIFIER, the hash is not something the caller has: it is read off the
- * first event, and the comparison that follows is then against a value taken
- * from the answer itself.
- *
- * **SO ON THAT BRANCH THE COMPARISON CANNOT REFUSE THE VALUE IT IS BUILT FROM**,
- * and an event carrying an empty hash, `0x`, or forty hex characters passed
- * every check and was written into the pool as the note's `createdIn`. A note
- * recording a hash nothing created reads as a HEALTHY note everywhere
- * afterwards - in the pool, on the screen, in the pre-flight a payment makes -
- * and is refused only at the spend, after a proposal and its approvals have
- * been paid for.
- *
- * The shape is the one the deposit path already applies to the same value: a
- * transaction hash is thirty-two bytes written as sixty-four lower-case hex
- * characters, and anything else is not one.
+ * The hash of the transaction these events are from, refused unless it is sixty-four hex characters. Named by identifier,
+ * the hash comes from the answer itself, and a bad one would be recorded as a healthy note until it is spent.
  */
 export function theTransactionTheseEventsAreFrom(
-  events: ReadonlyArray<ServedEvent>,
-  transaction: CreatingTransaction,
+  events: readonly ServedEvent[],
+  transaction: CreatingTransaction
 ): Hex {
   const fromTheCaller = 'hash' in transaction;
   const value = fromTheCaller ? bare(transaction.hash) : bare(events[0]!.transactionHash);
   if (!/^[0-9a-f]{64}$/.test(value)) {
     throw new NoteIndexRefused(
       fromTheCaller
-        ? `"${transaction.hash}" is not a transaction hash. One is thirty-two bytes written as `
-          + 'sixty-four hex characters. Nothing is recorded against a name no spend could read '
-          + 'the note\x27s place from.'
-        : `the chain answered about ${named(transaction)} without naming its hash: it gave `
-          + `"${events[0]!.transactionHash}", and a transaction hash is thirty-two bytes written `
-          + 'as sixty-four hex characters. Nothing is recorded, because a note recording a hash '
-          + 'no spend can use reads as a healthy note until the moment it is spent. Read again '
-          + 'once the transaction shows on the indexer, or name it by its hash.');
+        ? `"${transaction.hash}" is not a transaction hash. One is thirty-two bytes written as ` +
+            'sixty-four hex characters. Nothing is recorded against a name no spend could read ' +
+            'the note\x27s place from.'
+        : `the chain answered about ${named(transaction)} without naming its hash: it gave ` +
+            `"${events[0]!.transactionHash}", and a transaction hash is thirty-two bytes written ` +
+            'as sixty-four hex characters. Nothing is recorded, because a note recording a hash ' +
+            'no spend can use reads as a healthy note until the moment it is spent. Read again ' +
+            'once the transaction shows on the indexer, or name it by its hash.'
+    );
   }
   return value as Hex;
 }
 
 /**
- * **THE INDEX OF ONE NOTE, OUT OF THE EVENTS OF THE TRANSACTION THAT CREATED
- * IT.**
- *
- * Exactly one `zswapOutput` event must carry the note's commitment, it must be
- * owned by this vault, and when the transaction is named by hash every event
- * must say it came from that transaction. Anything else is refused with what
- * would resolve it.
+ * One note's index from the events of the transaction that created it: exactly one output with its commitment, owned
+ * by this vault, and every event from that transaction. Anything else is refused with what would resolve it.
  */
 export function noteIndexFrom(
-  events: ReadonlyArray<ServedEvent>,
-  want: { readonly vault: Hex; readonly commitment: string; readonly transaction: CreatingTransaction },
+  events: readonly ServedEvent[],
+  want: { readonly vault: Hex; readonly commitment: string; readonly transaction: CreatingTransaction }
 ): ChainReadIndex {
   const where = named(want.transaction);
 
   if (events.length === 0) {
     throw new NoteIndexUnreadable(
-      `the chain returned no events for ${where}. That is not the chain saying this note does `
-      + 'not exist: a transaction the node has finalised can be missing from the indexer for a '
-      + 'moment. Read the index again once the transaction shows on the indexer.');
+      `the chain returned no events for ${where}. That is not the chain saying this note does ` +
+        'not exist: a transaction the node has finalised can be missing from the indexer for a ' +
+        'moment. Read the index again once the transaction shows on the indexer.'
+    );
   }
 
   const asked = theTransactionTheseEventsAreFrom(events, want.transaction);
   const other = events.find((e) => bare(e.transactionHash) !== asked);
   if (other) {
     throw new NoteIndexRefused(
-      `the events returned for ${where} include one from transaction ${other.transactionHash}. `
-      + 'Nothing is recorded from an answer that is about more than one transaction. Check which '
-      + 'indexer this client is pointed at, then read again.');
+      `the events returned for ${where} include one from transaction ${other.transactionHash}. ` +
+        'Nothing is recorded from an answer that is about more than one transaction. Check which ' +
+        'indexer this client is pointed at, then read again.'
+    );
   }
 
   const commitment = bare(want.commitment);
-  const matches = events.filter((e) => e.details.tag === 'zswapOutput'
-    && typeof e.details.commitment === 'string'
-    && bare(e.details.commitment) === commitment);
+  const matches = events.filter(
+    (e) =>
+      e.details.tag === 'zswapOutput' &&
+      typeof e.details.commitment === 'string' &&
+      bare(e.details.commitment) === commitment
+  );
 
   if (matches.length === 0) {
     throw new NoteIndexRefused(
-      `${where} did not create this note: none of its ${events.length} events is an output `
-      + 'with this note\'s commitment. Either this is not the transaction that created it, or '
-      + 'the note recorded here is not the coin that transaction sent. Name the transaction '
-      + 'that paid this note into the vault and read again.');
+      `${where} did not create this note: none of its ${events.length} events is an output ` +
+        "with this note's commitment. Either this is not the transaction that created it, or " +
+        'the note recorded here is not the coin that transaction sent. Name the transaction ' +
+        'that paid this note into the vault and read again.'
+    );
   }
   if (matches.length > 1) {
     throw new NoteIndexRefused(
-      `${where} reports this note's commitment ${matches.length} times. A commitment is one `
-      + 'place in the tree, so this answer cannot be right about all of them and nothing is '
-      + 'recorded from it.');
+      `${where} reports this note's commitment ${matches.length} times. A commitment is one ` +
+        'place in the tree, so this answer cannot be right about all of them and nothing is ' +
+        'recorded from it.'
+    );
   }
 
   const found = matches[0]!.details;
   if (typeof found.contract !== 'string' || bare(found.contract) !== bare(want.vault)) {
     throw new NoteIndexRefused(
-      `${where} created an output with this note's commitment, but ${found.contract === undefined
-        ? 'not for a contract' : 'for a different contract'}. A note this vault cannot spend is `
-      + 'not recorded as one it can. Check that the vault named is the vault this note was '
-      + 'paid into.');
+      `${where} created an output with this note's commitment, but ${
+        found.contract === undefined ? 'not for a contract' : 'for a different contract'
+      }. A note this vault cannot spend is ` +
+        'not recorded as one it can. Check that the vault named is the vault this note was ' +
+        'paid into.'
+    );
   }
 
   if (typeof found.mtIndex !== 'bigint' || found.mtIndex < 0n) {
-    throw new NoteIndexRefused(
-      `${where} carries this note's output without a readable index. Nothing is recorded.`);
+    throw new NoteIndexRefused(`${where} carries this note's output without a readable index. Nothing is recorded.`);
   }
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the one place a chain-read index is branded.
   return found.mtIndex as ChainReadIndex;
 }
 
 /**
- * **WHETHER ONE TRANSACTION CREATED ONE NOTE, AND IF SO ITS HASH: THE ONLY
- * PLACE THAT IS DECIDED.**
- *
- * The three questions, asked of one transaction's events: exactly one output
- * carries the note's commitment, that output is owned by this vault, and every
- * event is that transaction's. Then the transaction's hash, in the one shape a
- * spend can read it in.
- *
- * **EVERY WRITER OF A NOTE'S `createdIn` COMES THROUGH HERE.** A deposit whose
- * call reported no hash, the repair that is handed a transaction by name, and a
- * rebuild that has recovered a note this machine never finished writing. They
- * used to spell the composition out each time, and a hash taken any other way
- * - the first event's, say - makes the note read as healthy in the pool, on the
- * screen and in the pre-flight, and be refused at the spend after a proposal
- * and its approvals have been paid for.
- *
- * The commitment is the caller's, from `vaultNoteCommitment`, so a caller asking
- * about one note and many transactions computes it once.
+ * Whether one transaction created one note, with its hash in the shape a spend reads. Every writer of a note's
+ * `createdIn` comes through here, so none can record a hash that is refused only at the spend.
  */
 export function establishCreatingTransaction(
-  served: ReadonlyArray<ServedEvent>,
-  want: { readonly vault: Hex; readonly commitment: string; readonly transaction: CreatingTransaction },
+  served: readonly ServedEvent[],
+  want: { readonly vault: Hex; readonly commitment: string; readonly transaction: CreatingTransaction }
 ): { index: ChainReadIndex; createdIn: Hex } {
   const index = noteIndexFrom(served, want);
   return { index, createdIn: theTransactionTheseEventsAreFrom(served, want.transaction) };
 }
 
-/**
- * **THE INDEX A SPEND USES, READ FROM THE CHAIN AT THE MOMENT OF THE SPEND.**
- *
- * Never taken from the pool. The pool records which transaction created the
- * note; the index is read from that transaction's events now, so a number
- * written down earlier is never what is spent against. An index the pool
- * happens to hold is not consulted at all, not even to compare: nothing reads
- * it, so nothing can be misled by it.
- */
-export async function indexForSpend(
-  vault: Hex,
-  note: Note,
-  events: NoteEvents,
-): Promise<ChainReadIndex> {
+/** The index a spend uses, read from the creating transaction's events at the moment of the spend, never from the pool. */
+export async function indexForSpend(vault: Hex, note: Note, events: NoteEvents): Promise<ChainReadIndex> {
   if (note.createdIn === undefined) {
     throw new NoteIndexRefused(
-      `the vault's note ${note.nonce} does not record which transaction created it, so its `
-      + 'place in the chain\'s commitment tree cannot be read. It is still on chain and still '
-      + 'the vault\'s. Name the transaction that paid it into the vault to '
-      + 'recordCreatingTransaction, and pay again.');
+      `the vault's note ${note.nonce} does not record which transaction created it, so its ` +
+        "place in the chain's commitment tree cannot be read. It is still on chain and still " +
+        "the vault's. Name the transaction that paid it into the vault to " +
+        'recordCreatingTransaction, and pay again.'
+    );
   }
   const transaction = { hash: note.createdIn };
   const commitment = await vaultNoteCommitment(note, vault);
@@ -422,67 +297,49 @@ export async function indexForSpend(
 }
 
 /**
- * **RECORD WHICH TRANSACTION CREATED A NOTE, ONCE THE CHAIN HAS CONFIRMED IT
- * DID.**
- *
- * For a note whose pool entry does not say, such as one recorded before the
- * creating transaction was kept with it, or one whose recorded transaction is
- * wrong. The transaction is named by hash or identifier; its events must show
- * an output with this note's commitment, owned by this vault, or nothing is
- * written.
- *
- * **ONLY THE TRANSACTION IS WRITTEN, NEVER THE INDEX.** A spend reads the index
- * from this transaction's events at the moment it spends, so a number stored
- * here would have no reader but a mismatch check, and a stored number is one a
- * later spend could be handed by mistake. The index read now is returned so a
- * caller can show it.
- *
- * The events are read first and the pool is loaded again just before the
- * write, so the copy written is not the one held across the network read. The
- * write is built on the version that second load read, so another process
- * writing the pool between that load and the save is refused at the save
- * rather than overwritten.
+ * Records which transaction created a note once its events show this vault's output with the note's commitment; only
+ * the transaction is written. The pool is reloaded and saved on that version, so a concurrent write is refused.
  */
 export async function recordCreatingTransaction(
   pool: NotePool,
   vault: Hex,
   nonce: Hex,
   events: NoteEvents,
-  tx: CreatingTransaction,
+  tx: CreatingTransaction
 ): Promise<{ index: ChainReadIndex; createdIn: Hex; previously?: Hex }> {
   const before = (await pool.load(vault)).notes.find((n) => n.nonce === nonce);
   if (!before) {
     throw new NoteIndexRefused(
-      `this vault's pool has no note ${nonce}. There is nothing to record a transaction against.`);
+      `this vault's pool has no note ${nonce}. There is nothing to record a transaction against.`
+    );
   }
 
   const commitment = await vaultNoteCommitment(before, vault);
   const served = await events.eventsOf(tx);
-  /*
-   * The index and the hash come out of one composition, the one every writer of
-   * `createdIn` uses. The hash is the value every event was compared against,
-   * shaped by the same guard, never read off the array a second time: it used
-   * to be taken straight from `served[0]`, which was the one value on this path
-   * that nothing had checked.
-   */
-  const { index, createdIn } = establishCreatingTransaction(
-    served, { vault, commitment, transaction: tx });
+  // One composition gives both, so the hash recorded is the one every event was checked against.
+  const { index, createdIn } = establishCreatingTransaction(served, { vault, commitment, transaction: tx });
 
   const now = await pool.load(vault);
   const current = now.notes.find((n) => n.nonce === nonce);
   if (!current) {
     throw new NoteIndexRefused(
-      `note ${nonce} left this vault's pool while the chain was being read, so it has been `
-      + 'spent or rebuilt. Nothing is recorded.');
+      `note ${nonce} left this vault's pool while the chain was being read, so it has been ` +
+        'spent or rebuilt. Nothing is recorded.'
+    );
   }
   if (current.token !== before.token || current.value !== before.value) {
     throw new NoteIndexRefused(
-      `note ${nonce} changed while the chain was being read: it is no longer the coin whose `
-      + 'commitment was checked. Nothing is recorded; read again.');
+      `note ${nonce} changed while the chain was being read: it is no longer the coin whose ` +
+        'commitment was checked. Nothing is recorded; read again.'
+    );
   }
-  await pool.save(vault, {
-    notes: now.notes.map((n) => (n.nonce === nonce ? { ...n, createdIn } : n)),
-  }, now.readAt);
+  await pool.save(
+    vault,
+    {
+      notes: now.notes.map((n) => (n.nonce === nonce ? { ...n, createdIn } : n))
+    },
+    now.readAt
+  );
   return current.createdIn !== undefined && bare(current.createdIn) !== createdIn
     ? { index, createdIn, previously: current.createdIn }
     : { index, createdIn };
@@ -495,12 +352,8 @@ export interface VaultCall {
 }
 
 /**
- * Where one vault call stands on the chain, judged by the transaction's own identifiers.
- *
- * - `landed`: the chain applied the part of the transaction that carries the call.
- * - `refused`: the chain took the transaction and that part failed, so the call did nothing. It cannot be applied again.
- * - `not-seen`: the indexer lists no transaction carrying the call under any of the identifiers.
- * - `not-known`: the indexer lists it, but whether the call took effect cannot be told (`why` says what is missing).
+ * Where one vault call stands on the chain: `landed`, `refused` (taken, but the call's part failed and cannot run
+ * again), `not-seen` under every identifier, or `not-known`, with `why` saying what is missing.
  */
 export type VaultCallOnChain =
   | { readonly of: 'landed'; readonly transactionHash: string }
@@ -509,9 +362,8 @@ export type VaultCallOnChain =
   | { readonly of: 'not-known'; readonly why: string };
 
 /**
- * One contract call in a transaction this device holds, read from its own bytes: the contract (lower-case hex without
- * a prefix), the circuit, and every part of the transaction the call has a transcript in, ascending: 0 for the part
- * that always runs, an intent's own number for the part that may fail alone.
+ * One contract call in a transaction this device holds, from its own bytes: the contract (bare lower-case hex), the
+ * circuit, and each part it has a transcript in, ascending (0 is the part that always runs, else an intent's number).
  */
 export interface CallAsBuilt {
   readonly address: string;
@@ -520,35 +372,44 @@ export interface CallAsBuilt {
 }
 
 /**
- * **WHETHER THE ONE CALL TO `call.vault` IN A TRANSACTION THIS DEVICE BUILT TOOK EFFECT**, among the transactions the
- * indexer listed under one of its identifiers. Which parts the call runs in is read from the device's own bytes
- * (`built`), never from the indexer, which names no part for a call; the indexer gives each part's result. A full
- * success lands it. A partial success lands it only when every part it runs in succeeded, and refuses it when every
- * one failed; a call split across parts, one failed, is `not-known`, because the part that always runs moved its share.
- * A failure refuses it. A call the bytes do not carry exactly once is `not-known`: nothing here can say which part to
- * read.
+ * Whether the one call to `call.vault` in a transaction this device built took effect. Its parts come from the device's
+ * bytes and each part's result from the indexer; a call split across parts with only one failed is `not-known`.
  */
 export function vaultCallOnChain(
-  call: VaultCall, built: readonly CallAsBuilt[], found: readonly TransactionByIdentifier[],
+  call: VaultCall,
+  built: readonly CallAsBuilt[],
+  found: readonly TransactionByIdentifier[]
 ): VaultCallOnChain {
   const into = bare(call.vault);
-  const counts = (address: string, entryPoint: string | null) => address === into && entryPoint !== null && call.entryPoints.includes(entryPoint);
+  const counts = (address: string, entryPoint: string | null) =>
+    address === into && entryPoint !== null && call.entryPoints.includes(entryPoint);
   const ours = built.filter((c) => counts(bare(c.address), c.entryPoint));
   if (ours.length !== 1 || ours[0]!.segments.length === 0) {
-    return { of: 'not-known', why: 'the transaction this device holds does not carry exactly one such call to this vault' };
+    return {
+      of: 'not-known',
+      why: 'the transaction this device holds does not carry exactly one such call to this vault'
+    };
   }
   const parts = ours[0]!.segments;
-  const listed = found.find((tx) => /^[0-9a-f]{64}$/u.test(tx.hash) && tx.calls.some((c) => counts(c.address, c.entryPoint)));
+  const listed = found.find(
+    (tx) => /^[0-9a-f]{64}$/u.test(tx.hash) && tx.calls.some((c) => counts(c.address, c.entryPoint))
+  );
   if (listed === undefined) return { of: 'not-seen' };
   const transactionHash = listed.hash;
   if (listed.status === 'SUCCESS') return { of: 'landed', transactionHash };
   if (listed.status === 'FAILURE') return { of: 'refused', transactionHash };
   if (listed.status !== 'PARTIAL_SUCCESS' || listed.segments === null) {
-    return { of: 'not-known', why: `the indexer reports the transaction ${transactionHash} with no result this can read` };
+    return {
+      of: 'not-known',
+      why: `the indexer reports the transaction ${transactionHash} with no result this can read`
+    };
   }
   const results = parts.map((id) => (id === 0 ? true : listed.segments!.find((g) => g.id === id)?.success));
   if (results.some((r) => r === undefined)) {
-    return { of: 'not-known', why: `the indexer reports no result for the part of ${transactionHash} that carries the call` };
+    return {
+      of: 'not-known',
+      why: `the indexer reports no result for the part of ${transactionHash} that carries the call`
+    };
   }
   if (results.every((r) => r === true)) return { of: 'landed', transactionHash };
   if (results.every((r) => r === false)) return { of: 'refused', transactionHash };
@@ -562,7 +423,7 @@ export function vaultCallOnChain(
 export async function vaultCallByIdentifiers(
   reader: { byIdentifier(identifier: string): Promise<readonly TransactionByIdentifier[]> },
   built: { readonly identifiers: readonly string[]; readonly calls: readonly CallAsBuilt[] },
-  call: VaultCall,
+  call: VaultCall
 ): Promise<VaultCallOnChain> {
   for (const identifier of built.identifiers) {
     const seen = vaultCallOnChain(call, built.calls, await reader.byIdentifier(identifier));
@@ -571,92 +432,55 @@ export async function vaultCallByIdentifiers(
   return { of: 'not-seen' };
 }
 
-/* ------------------------------------------------------------------ *
- * a note nobody recorded the transaction of
- * ------------------------------------------------------------------ */
-
-/**
- * **EVERY TRANSACTION THAT DEPLOYED OR CALLED ONE VAULT, AS THE CHAIN NAMES
- * THEM.** The indexer, in production.
- */
+/** Every transaction that deployed or called one vault, as the chain names them. */
 export interface VaultTransactions {
   /**
-   * Newest first, by hash. Throws `NoteIndexUnreadable` when the chain cannot
-   * answer yet and `NoteIndexUnaskable` when the question will not be taken, and
-   * never answers a list it knows to be shorter than the one the chain holds.
+   * Newest first, by hash. Throws `NoteIndexUnreadable` when the chain cannot answer yet and `NoteIndexUnaskable` when
+   * the question is refused, and never answers a list it knows is shorter than the chain's.
    */
-  of(vault: Hex): Promise<ReadonlyArray<Hex>>;
+  of(vault: Hex): Promise<readonly Hex[]>;
 }
 
 /** What the search found for one note: its creating transaction, or why there is none. */
 export type CreatingTransactionFound =
   | { readonly nonce: Hex; readonly createdIn: Hex }
   | {
-    readonly nonce: Hex;
-    readonly unresolved: string;
-    /**
-     * **THE TRANSACTIONS A PERSON COULD NAME FOR THIS NOTE, IN FULL.** Every
-     * listed transaction that carries the note's commitment and was refused,
-     * then every one that could not be read. `unresolved` shortens hashes to
-     * keep a sentence readable, and a repair takes a whole hash, so a screen
-     * that offers the remedy prints these. Empty when no listed transaction
-     * could be the one.
-     */
-    readonly candidates: readonly Hex[];
-  };
+      readonly nonce: Hex;
+      readonly unresolved: string;
+      /**
+       * Every listed transaction carrying the note's commitment that was refused, then every unreadable one, in full:
+       * `unresolved` shortens hashes, and a repair takes a whole one.
+       */
+      readonly candidates: readonly Hex[];
+    };
 
 /**
- * **WHICH TRANSACTION CREATED EACH OF THESE NOTES, WHEN NOBODY WROTE IT DOWN.**
- *
- * A note a rebuild recovers - a deposit whose pool write was lost, or the change
- * of a payment whose write was lost - is named from what this machine journalled
- * before the call, and a journal line is written before the transaction exists,
- * so it cannot carry the hash. A note without one cannot be spent. But the
- * transaction that created it is not unknowable: **only a call to the vault
- * changes the vault's note set**, so it is one of the transactions the chain
- * lists as having acted on this vault.
- *
- * **THE LIST ONLY PROPOSES. NOTHING ON IT IS BELIEVED.** Each listed transaction
- * is read and put to `establishCreatingTransaction`, the same three questions
- * every other writer of `createdIn` asks, and a note is given a hash only when a
- * transaction answers all three for it. So this is not a second way of
- * establishing which transaction created a note: it is a second way of finding
- * candidates to ask the one way about. A wrong list costs reads and ends in
- * `unresolved`; it cannot put a hash on a note.
- *
- * Newest first, and it stops reading once every note is answered: a recovered
- * note is almost always from the latest calls. When two transactions both carry
- * a note's commitment, the newest one that answers is recorded; either is a
- * transaction that created an output with this commitment for this vault, which
- * is exactly what the other writers establish and no more.
- *
- * **IT NEVER THROWS FOR THE CHAIN'S SAKE.** A list that cannot be read, or a
- * transaction that cannot, becomes a reason on the notes it leaves unanswered -
- * because the caller's job is to write what it recovered either way, and a note
- * written without its transaction is refused before any fee, while a note not
- * written at all is money nobody can name.
+ * Which of the vault's listed transactions created each recovered note, newest first, each put to
+ * `establishCreatingTransaction`. A chain that cannot be read leaves a reason on the note, never a throw.
  */
 export async function creatingTransactionsAmong(
   vault: Hex,
-  notes: ReadonlyArray<NoteCoin>,
-  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents },
+  notes: readonly NoteCoin[],
+  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents }
 ): Promise<{ found: CreatingTransactionFound[]; listed: number; read: number }> {
   if (notes.length === 0) return { found: [], listed: 0, read: 0 };
 
   const unresolvedAll = (why: string, listed: number, read: number) => ({
     found: notes.map((n): CreatingTransactionFound => ({ nonce: n.nonce, unresolved: why, candidates: [] })),
     listed,
-    read,
+    read
   });
 
-  let listed: ReadonlyArray<Hex>;
+  let listed: readonly Hex[];
   try {
     listed = await chain.transactions.of(vault);
   } catch (cause) {
     if (!(cause instanceof NoteIndexUnreadable || cause instanceof NoteIndexUnaskable)) throw cause;
     return unresolvedAll(
       `the chain could not list the transactions that acted on this vault (${(cause as Error).message})`,
-      0, 0);
+      0,
+      0
+    );
   }
 
   const open = new Map<Hex, { coin: NoteCoin; commitment: string; refused: string[]; carriers: Hex[] }>();
@@ -671,37 +495,28 @@ export async function creatingTransactionsAmong(
   for (const hash of listed) {
     if (open.size === 0) break;
     const transaction = { hash };
-    let served: ReadonlyArray<ServedEvent>;
+    let served: readonly ServedEvent[];
     try {
       served = await chain.events.eventsOf(transaction);
       read += 1;
     } catch (cause) {
       if (!(cause instanceof NoteIndexUnreadable || cause instanceof NoteIndexUnaskable)) throw cause;
-      /*
-       * **A TRANSACTION THAT COULD NOT BE READ IS NOT ONE THAT DID NOT CREATE
-       * THE NOTE**, so it is remembered: a note left unanswered says that one of
-       * its candidates was never asked.
-       */
+      // An unreadable transaction may still be the creator, so a note left unanswered says one was never asked.
       unreadable.push(`${hash.slice(0, 16)}… (${(cause as Error).message})`);
       unreadHashes.push(hash);
       continue;
     }
     for (const [nonce, want] of [...open]) {
-      /*
-       * **ONLY A TRANSACTION THAT CARRIES THE COMMITMENT IS PUT TO THE THREE
-       * QUESTIONS.** This decides nothing about the note - the questions do -
-       * it decides whether a refusal is worth reporting. A transaction with no
-       * output of this commitment did not create it, which is the answer for
-       * every call but one and not news; a transaction that carries it and is
-       * still refused is, and its reason is kept for the operator.
-       */
-      const carries = served.some((e) => e.details.tag === 'zswapOutput'
-        && typeof e.details.commitment === 'string'
-        && bare(e.details.commitment) === bare(want.commitment));
+      // Only a carrier of the commitment is asked: its refusal is news, and the reason is kept for the operator.
+      const carries = served.some(
+        (e) =>
+          e.details.tag === 'zswapOutput' &&
+          typeof e.details.commitment === 'string' &&
+          bare(e.details.commitment) === bare(want.commitment)
+      );
       if (!carries) continue;
       try {
-        const { createdIn } = establishCreatingTransaction(
-          served, { vault, commitment: want.commitment, transaction });
+        const { createdIn } = establishCreatingTransaction(served, { vault, commitment: want.commitment, transaction });
         answered.set(nonce, createdIn);
         open.delete(nonce);
       } catch (cause) {
@@ -720,8 +535,10 @@ export async function creatingTransactionsAmong(
       `none of the ${listed.length} transaction(s) the chain lists for this vault answered for it`,
       ...(want.refused.length > 0 ? [want.refused.join('; ')] : []),
       ...(unreadable.length > 0
-        ? [`${unreadable.length} of them could not be read, so they were never asked: ${unreadable.slice(0, 3).join('; ')}`]
-        : []),
+        ? [
+            `${unreadable.length} of them could not be read, so they were never asked: ${unreadable.slice(0, 3).join('; ')}`
+          ]
+        : [])
     ];
     return { nonce: n.nonce, unresolved: parts.join('. '), candidates: [...want.carriers, ...unreadHashes] };
   });
@@ -729,39 +546,21 @@ export async function creatingTransactionsAmong(
 }
 
 /**
- * **THE TRANSACTION IN A VAULT'S OWN HISTORY THAT CREATED ONE OUTPUT, FOUND BY
- * THE OUTPUT'S COMMITMENT ALONE.**
- *
- * For a note whose sender could not name the transaction it sent: the answer to
- * the send was lost, or the service could not name it. The commitment is what
- * the chain publishes for the output when it lands, so asking by it says
- * nothing the transaction itself did not.
- *
- * **ONLY THIS VAULT'S TRANSACTIONS ARE ASKED, AND AN OUTPUT COUNTS ONLY WHEN
- * THE CHAIN SAYS THIS VAULT OWNS IT.** A coin paid to a contract is committed
- * together with that contract's address, so another vault's output never has
- * this commitment; and a transaction that did not call this vault is not on
- * the list. The answer is still only a proposal: whoever records it puts these
- * events to `establishCreatingTransaction`, the one test every writer of a
- * note's transaction uses.
- *
- * Newest first, and it stops at the first transaction that carries the output.
- * `null` when no listed transaction carries it and every one was read: the
- * indexer has not caught up, or the output was never made. A transaction that
- * could not be read, when nothing else answered, is `NoteIndexUnreadable`,
- * because the unread one may be the answer.
+ * The transaction in this vault's history that created the output with `commitment`, owned by this vault, newest
+ * first; a proposal for `establishCreatingTransaction`. Null when every listed one was read and none carries it.
+ * @throws {NoteIndexUnreadable} when one could not be read and none of the rest carries it.
  */
 export async function transactionThatCreatedOutput(
   vault: Hex,
   commitment: string,
-  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents },
-): Promise<{ readonly transactionHash: Hex; readonly events: ReadonlyArray<ServedEvent> } | null> {
+  chain: { readonly transactions: VaultTransactions; readonly events: NoteEvents }
+): Promise<{ readonly transactionHash: Hex; readonly events: readonly ServedEvent[] } | null> {
   const mine = bare(vault);
   const wanted = bare(commitment);
   const listed = await chain.transactions.of(vault);
   let unread: Error | null = null;
   for (const hash of listed) {
-    let served: ReadonlyArray<ServedEvent>;
+    let served: readonly ServedEvent[];
     try {
       served = await chain.events.eventsOf({ hash });
     } catch (cause) {
@@ -769,15 +568,21 @@ export async function transactionThatCreatedOutput(
       unread ??= cause;
       continue;
     }
-    const carries = served.some((e) => e.details.tag === 'zswapOutput'
-      && typeof e.details.commitment === 'string' && bare(e.details.commitment) === wanted
-      && typeof e.details.contract === 'string' && bare(e.details.contract) === mine);
+    const carries = served.some(
+      (e) =>
+        e.details.tag === 'zswapOutput' &&
+        typeof e.details.commitment === 'string' &&
+        bare(e.details.commitment) === wanted &&
+        typeof e.details.contract === 'string' &&
+        bare(e.details.contract) === mine
+    );
     if (carries) return { transactionHash: bare(hash) as Hex, events: served };
   }
   if (unread !== null) {
     throw new NoteIndexUnreadable(
-      `none of the ${listed.length} transaction(s) the chain lists for this vault that could be read `
-      + `created this output, and at least one could not be read (${unread.message}). Read again.`);
+      `none of the ${listed.length} transaction(s) the chain lists for this vault that could be read ` +
+        `created this output, and at least one could not be read (${unread.message}). Read again.`
+    );
   }
   return null;
 }

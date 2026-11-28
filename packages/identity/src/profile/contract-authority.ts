@@ -36,23 +36,26 @@ const HEX = /^[0-9a-fA-F]+$/u;
  * the state beyond what it checks here.
  */
 export function authorityIn(state: unknown): ContractAuthority | { readonly why: string } {
-  if (state === null || typeof state !== 'object') return { why: 'the contract\'s state is not an object.' };
+  if (state === null || typeof state !== 'object') return { why: "the contract's state is not an object." };
   const authority = (state as { maintenanceAuthority?: unknown }).maintenanceAuthority;
-  if (authority === null || typeof authority !== 'object') return { why: 'the contract\'s state carries no maintenance authority.' };
+  if (authority === null || typeof authority !== 'object')
+    return { why: "the contract's state carries no maintenance authority." };
   const raw = authority as { committee?: unknown; threshold?: unknown; counter?: unknown };
-  if (!Array.isArray(raw.committee)) return { why: 'the contract\'s committee is not a list.' };
+  if (!Array.isArray(raw.committee)) return { why: "the contract's committee is not a list." };
   const committee: AuthorityMember[] = [];
   for (const key of raw.committee as unknown[]) {
     const k = key as { tag?: unknown; value?: unknown } | null;
     if (k === null || typeof k !== 'object' || typeof k.tag !== 'string' || k.tag === '') {
       return { why: 'a committee member has no kind of key.' };
     }
-    if (typeof k.value !== 'string' || !HEX.test(k.value)) return { why: 'a committee member\'s key is not hex digits.' };
+    if (typeof k.value !== 'string' || !HEX.test(k.value))
+      return { why: "a committee member's key is not hex digits." };
     committee.push(Object.freeze({ tag: k.tag, value: k.value.toLowerCase() }));
   }
   if (typeof raw.threshold !== 'number' || !Number.isSafeInteger(raw.threshold) || raw.threshold < 0) {
-    return { why: 'the contract\'s threshold is not a whole number of at least zero.' };
+    return { why: "the contract's threshold is not a whole number of at least zero." };
   }
-  if (typeof raw.counter !== 'bigint' || raw.counter < 0n) return { why: 'the contract\'s counter is not a bigint of at least zero.' };
+  if (typeof raw.counter !== 'bigint' || raw.counter < 0n)
+    return { why: "the contract's counter is not a bigint of at least zero." };
   return Object.freeze({ committee: Object.freeze(committee), threshold: raw.threshold, counter: raw.counter });
 }

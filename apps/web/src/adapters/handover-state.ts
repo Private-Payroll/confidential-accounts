@@ -29,11 +29,20 @@ export const HANDOVER = {
   /** The person is no longer signed in here. */
   notSignedIn: 'not-signed-in',
   /** Somebody else has signed in on this browser since. */
-  anotherPerson: 'another-person',
+  anotherPerson: 'another-person'
 } as const;
 
 export type Handover =
-  | { of: typeof HANDOVER.notOnChain | typeof HANDOVER.held | typeof HANDOVER.heldByOtherKeys | typeof HANDOVER.unreadable | typeof HANDOVER.unreachable | typeof HANDOVER.notSignedIn | typeof HANDOVER.anotherPerson }
+  | {
+      of:
+        | typeof HANDOVER.notOnChain
+        | typeof HANDOVER.held
+        | typeof HANDOVER.heldByOtherKeys
+        | typeof HANDOVER.unreadable
+        | typeof HANDOVER.unreachable
+        | typeof HANDOVER.notSignedIn
+        | typeof HANDOVER.anotherPerson;
+    }
   | { of: typeof HANDOVER.changeOwed; signed: readonly { have: number; required: number }[] };
 
 /** The part of the service's answer this reads: the super admins' side alone, no signer, count or threshold of theirs. */
@@ -43,7 +52,9 @@ interface Authority {
   contracts: readonly { read: string; heldByTheCompany: boolean }[];
   change: { possible: boolean };
 }
-interface ChangeOwed { contracts: readonly { signedIndexes: readonly number[]; required: number }[] }
+interface ChangeOwed {
+  contracts: readonly { signedIndexes: readonly number[]; required: number }[];
+}
 
 /** The service's word for the chain's answer, compared and never shown. */
 const SERVICE = { read: 'read' } as const;
@@ -57,7 +68,11 @@ const SERVICE = { read: 'read' } as const;
  */
 export function handoverFrom(a: Authority, owed: ChangeOwed | null): Handover {
   if (a.company === null) return { of: HANDOVER.notOnChain };
-  if (a.change.possible) return { of: HANDOVER.changeOwed, signed: (owed?.contracts ?? []).map((c) => ({ have: c.signedIndexes.length, required: c.required })) };
+  if (a.change.possible)
+    return {
+      of: HANDOVER.changeOwed,
+      signed: (owed?.contracts ?? []).map((c) => ({ have: c.signedIndexes.length, required: c.required }))
+    };
   const account = a.contracts[0];
   if (account === undefined || account.read !== SERVICE.read) return { of: HANDOVER.unreadable };
   if (a.committee !== null && account.heldByTheCompany === true) return { of: HANDOVER.held };
@@ -73,14 +88,18 @@ export function handoverFrom(a: Authority, owed: ChangeOwed | null): Handover {
 export function failureOf(e: unknown): Handover {
   if (e instanceof AnotherPersonError) return { of: HANDOVER.anotherPerson };
   if (e instanceof AuthError) return { of: HANDOVER.notSignedIn };
-  if ((e instanceof Error && e.name === 'ServiceNotReached') || e instanceof TypeError) return { of: HANDOVER.unreachable };
+  if ((e instanceof Error && e.name === 'ServiceNotReached') || e instanceof TypeError)
+    return { of: HANDOVER.unreachable };
   return { of: HANDOVER.unreadable };
 }
 
 /** The authority and, when a change is owed, the change, read through `view`. */
 const readIn = async (view: PageView): Promise<{ authority: Authority; owed: ChangeOwed | null }> => {
-  const authority = await view.authority() as Authority;
-  return { authority, owed: authority?.change?.possible === true ? await view.committeeChange() as ChangeOwed : null };
+  const authority = (await view.authority()) as Authority;
+  return {
+    authority,
+    owed: authority?.change?.possible === true ? ((await view.committeeChange()) as ChangeOwed) : null
+  };
 };
 
 /**
@@ -95,7 +114,8 @@ export async function readHandover(personId: string, opening: PageView): Promise
   let owed: ChangeOwed | null;
   try {
     if (!(await keyringFor(personId))) return { of: HANDOVER.notSignedIn };
-    ({ authority, owed } = opening.ended === null ? await readIn(opening) : await readThroughAViewOf(opening.company, readIn));
+    ({ authority, owed } =
+      opening.ended === null ? await readIn(opening) : await readThroughAViewOf(opening.company, readIn));
   } catch (e) {
     return failureOf(e);
   }

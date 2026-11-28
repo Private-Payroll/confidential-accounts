@@ -21,12 +21,18 @@ const aManifest = () => {
       if (records.length > READ_AT_ONCE) throw new AskTooLong('records', records.length);
       return records.map((r) => (r.id.endsWith('0') ? 2 : 0));
     },
-    enter: async (_company, entries) => { for (const e of entries) entered.push({ id: e.id, version: e.version }); },
+    enter: async (_company, entries) => {
+      for (const e of entries) entered.push({ id: e.id, version: e.version });
+    }
   };
   return { manifest, asked, entered };
 };
 
-const runs = (n: number): Filed[] => Array.from({ length: n }, (_, i) => ({ store: 'run' as const, run: { id: `run_${String(i).padStart(12, '0')}` } as never }));
+const runs = (n: number): Filed[] =>
+  Array.from({ length: n }, (_, i) => ({
+    store: 'run' as const,
+    run: { id: `run_${String(i).padStart(12, '0')}` } as never
+  }));
 
 describe('A DEVICE ENTERING MORE THAN 256 RUNS ASKS FOR THEIR NEWEST VERSIONS IN PARTS OF 256', () => {
   it('asks one request for each 256 runs, and enters each at the version after its newest', async () => {

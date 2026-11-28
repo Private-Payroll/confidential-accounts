@@ -56,9 +56,21 @@ export interface ApproveBalanceProps {
  * is not on this screen because this wallet does not pay it.
  */
 export function ApproveBalance({
-  request, identity, account, channel, consent, whoIsAsking, whichWallet, onDecline,
-  doorsFor = liveBalanceDoors, now = Date.now, onStage, onBusy, readLabel = liveLabelReader, answerAtOnce = false,
-  reads = readWhatThePageAsksToBalance,
+  request,
+  identity,
+  account,
+  channel,
+  consent,
+  whoIsAsking,
+  whichWallet,
+  onDecline,
+  doorsFor = liveBalanceDoors,
+  now = Date.now,
+  onStage,
+  onBusy,
+  readLabel = liveLabelReader,
+  answerAtOnce = false,
+  reads = readWhatThePageAsksToBalance
 }: ApproveBalanceProps): ReactNode {
   const doors = useMemo(() => doorsFor(identity, account), [doorsFor, identity, account]);
   /* **NOTHING IS PAID UNTIL THE COMPANY'S ACCOUNT IS READ OFF THE CHAIN AND
@@ -72,10 +84,17 @@ export function ApproveBalance({
   /* A person who says no while the wallet is still reading the chain has already been answered for. */
   const declined = useRef(false);
   const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   /* The wallet on screen now. A press belongs to the wallet it was made with, and stops if the person picks another. */
   const onScreen = useRef(doors);
-  useEffect(() => { onScreen.current = doors; }, [doors]);
+  useEffect(() => {
+    onScreen.current = doors;
+  }, [doors]);
   const channelNow = useRef(channel);
   channelNow.current = channel;
   /*
@@ -99,13 +118,20 @@ export function ApproveBalance({
   tellBusy.current = onBusy;
   const tellStage = useRef(onStage);
   tellStage.current = onStage;
-  useEffect(() => { tellStage.current?.(stage.of === 'paying' && stage.reading ? 'paying-reading' : stage.of); }, [stage]);
+  useEffect(() => {
+    tellStage.current?.(stage.of === 'paying' && stage.reading ? 'paying-reading' : stage.of);
+  }, [stage]);
   /*
    * **THE WALLET'S PARTS STOP WHEN THEIR SCREEN GOES**, or when the person picks
    * another wallet - except a wallet whose press is still running, which stops
    * the moment that press is over, so an approved payment is never cut off.
    */
-  useEffect(() => () => { if (!pressing.current.has(doors)) void doors.stop?.(); }, [doors]);
+  useEffect(
+    () => () => {
+      if (!pressing.current.has(doors)) void doors.stop?.();
+    },
+    [doors]
+  );
   const decline = useCallback((): void => {
     if (booking.current > 0) return;
     declined.current = true;
@@ -131,40 +157,72 @@ export function ApproveBalance({
       setStage({ of: 'refused', says });
       if (pressing.current.size === 0) channelNow.current?.refuse('unreadable');
     };
-    void doors.ledger().then((ledger) => {
-      if (!alive) return;
-      try {
-        const read = reads(ledger, request.transaction, request.vault);
-        setStage({ of: 'ready', tx: read.tx, leaves: read.leaves, pays: read.pays });
-      } catch (e) {
-        refuse(e instanceof BalanceRefused ? e.message : 'Nothing has been paid.');
+    void doors.ledger().then(
+      (ledger) => {
+        if (!alive) return;
+        try {
+          const read = reads(ledger, request.transaction, request.vault);
+          setStage({ of: 'ready', tx: read.tx, leaves: read.leaves, pays: read.pays });
+        } catch (e) {
+          refuse(e instanceof BalanceRefused ? e.message : 'Nothing has been paid.');
+        }
+      },
+      () => {
+        if (alive) refuse('This wallet could not load what it reads a transaction with. Nothing has been paid.');
       }
-    }, () => { if (alive) refuse('This wallet could not load what it reads a transaction with. Nothing has been paid.'); });
-    return () => { alive = false; };
+    );
+    return () => {
+      alive = false;
+    };
   }, [doors, request.transaction, request.vault, reads]);
 
   const pay = useCallback((): void => {
     if (stage.of !== 'ready' || channel === null || channel.over() || pressing.current.size > 0 || !onChain) return;
     const { tx, leaves, pays } = stage;
     startPaying({
-      tx, leaves, pays, channel, doors, request, now, setStage, setBusy, setHeld,
-      refs: { pressing, booking, declined, mounted, onScreen },
+      tx,
+      leaves,
+      pays,
+      channel,
+      doors,
+      request,
+      now,
+      setStage,
+      setBusy,
+      setHeld,
+      refs: { pressing, booking, declined, mounted, onScreen }
     });
   }, [stage, channel, doors, request, now, onChain]);
-  useAnswerAtOnce(answerAtOnce, consent.ok && stage.of === 'ready' && channel !== null && !busy && !channel.over() && onChain, pay);
+  useAnswerAtOnce(
+    answerAtOnce,
+    consent.ok && stage.of === 'ready' && channel !== null && !busy && !channel.over() && onChain,
+    pay
+  );
 
   /* The wallet stays as it is while a press runs and once the page has been answered. */
   const locked = busy || stage.of === 'sent' || stage.of === 'failed';
-  useEffect(() => { tellBusy.current?.(locked); }, [locked]);
+  useEffect(() => {
+    tellBusy.current?.(locked);
+  }, [locked]);
 
   if (stage.of === 'sent' && stage.pays === 'public') return <PaidPublicly request={request} stage={stage} />;
   if (stage.of === 'sent') return <PaidPrivately request={request} stage={stage} />;
 
   return (
     <BalanceAsk
-      stage={stage} request={request} check={check} consent={consent} channel={channel}
-      busy={busy} held={held} onChain={onChain} whoIsAsking={whoIsAsking} whichWallet={whichWallet}
-      pay={pay} close={close} decline={decline}
+      stage={stage}
+      request={request}
+      check={check}
+      consent={consent}
+      channel={channel}
+      busy={busy}
+      held={held}
+      onChain={onChain}
+      whoIsAsking={whoIsAsking}
+      whichWallet={whichWallet}
+      pay={pay}
+      close={close}
+      decline={decline}
     />
   );
 }

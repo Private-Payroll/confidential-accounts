@@ -13,16 +13,25 @@ import * as transport from './service-transport.js';
  * does not say nothing was sent, or one with a code the page does not know, is given one.
  */
 let answers: Array<() => Response | Promise<Response>> = [];
-const reply = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const reply = (status: number, body: unknown) => () =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn(async () => answers[0]!()));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => answers[0]!())
+  );
 });
-afterEach(() => { vi.unstubAllGlobals(); keyring.forgetLocally(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  keyring.forgetLocally();
+});
 
 describe('a refusal that says nothing was sent reaches the page with the reason it can say in plain words', () => {
   const codeOf = async () => {
-    const caught = await transport.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e) as Error & { code?: unknown };
+    const caught = (await transport.api('/api/accounts', { method: 'POST' }).catch((e: unknown) => e)) as Error & {
+      code?: unknown;
+    };
     expect(caught).toBeInstanceOf(Error);
     return caught.code;
   };

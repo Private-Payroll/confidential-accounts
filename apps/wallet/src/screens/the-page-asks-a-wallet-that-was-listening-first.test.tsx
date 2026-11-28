@@ -13,13 +13,15 @@ import { IDBFactory } from 'fake-indexeddb';
  * stood in for by its answers; the passkey calls are stood in for and never reached.
  */
 
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { Buffer as PolyfillBuffer } from 'buffer/';
@@ -55,13 +57,19 @@ function theService(keys: 'answer' | 'refuse'): void {
     const route = `${String(init?.method ?? 'GET')} ${url}`;
     const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b }) as Response;
     switch (route) {
-      case 'GET /api/me': return json(200, { user: { id: PERSON, email: null, name: 'Priya' } });
+      case 'GET /api/me':
+        return json(200, { user: { id: PERSON, email: null, name: 'Priya' } });
       case 'GET /api/me/keys':
         await walletListening;
-        return keys === 'answer' ? json(200, { keyBundle: null, version: 0 }) : json(500, { error: 'the store did not answer' });
-      case 'GET /api/accounts': return json(200, []);
-      case `POST /api/accounts/${COMPANY}/unlock`: return json(200, { company: LABEL, account: ACCOUNT });
-      default: return json(404, { error: `no route for ${route}` });
+        return keys === 'answer'
+          ? json(200, { keyBundle: null, version: 0 })
+          : json(500, { error: 'the store did not answer' });
+      case 'GET /api/accounts':
+        return json(200, []);
+      case `POST /api/accounts/${COMPANY}/unlock`:
+        return json(200, { company: LABEL, account: ACCOUNT });
+      default:
+        return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
 }
@@ -78,18 +86,23 @@ function aPageWithItsWalletFrame(): Openable {
     postMessage: (m: unknown, target: string) => {
       if (target !== PAGE) return;
       setTimeout(() => {
-        for (const h of [...pageHandlers]) h({ origin: WALLET, source: frameWindow, data: m } as unknown as MessageEvent);
+        for (const h of [...pageHandlers])
+          h({ origin: WALLET, source: frameWindow, data: m } as unknown as MessageEvent);
         heardTheWallet();
       }, 0);
-    },
+    }
   };
   const walletView = {
     opener: null,
     parent,
     self: undefined as unknown,
     location: { ancestorOrigins: [PAGE] },
-    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { walletHandlers.add(h); },
-    removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { walletHandlers.delete(h); },
+    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+      walletHandlers.add(h);
+    },
+    removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+      walletHandlers.delete(h);
+    }
   };
   walletView.self = walletView;
   let shut = false;
@@ -98,8 +111,13 @@ function aPageWithItsWalletFrame(): Openable {
       setTimeout(() => {
         render(
           <SessionProvider>
-            <ApproveEntry phase={{ name: 'welcome' }} entry={null} view={walletView as unknown as ChannelWindow} embedder={PAGE} />
-          </SessionProvider>,
+            <ApproveEntry
+              phase={{ name: 'welcome' }}
+              entry={null}
+              view={walletView as unknown as ChannelWindow}
+              embedder={PAGE}
+            />
+          </SessionProvider>
         );
       }, 0);
       return {
@@ -107,18 +125,31 @@ function aPageWithItsWalletFrame(): Openable {
           if (target !== WALLET) return;
           reachedTheWallet.push(m as Record<string, unknown>);
           setTimeout(() => {
-            act(() => { for (const h of [...walletHandlers]) h({ origin: PAGE, source: parent, data: m } as unknown as MessageEvent); });
+            act(() => {
+              for (const h of [...walletHandlers])
+                h({ origin: PAGE, source: parent, data: m } as unknown as MessageEvent);
+            });
           }, 0);
         },
         messageSource: frameWindow,
-        close: () => { shut = true; },
-        get closed(): boolean { return shut; },
+        close: () => {
+          shut = true;
+        },
+        get closed(): boolean {
+          return shut;
+        }
       };
     },
-    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { pageHandlers.add(h); },
-    removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { pageHandlers.delete(h); },
+    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+      pageHandlers.add(h);
+    },
+    removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+      pageHandlers.delete(h);
+    },
     setTimeout: (h: () => void, ms: number) => setTimeout(h, ms) as unknown as number,
-    clearTimeout: (id: number) => { clearTimeout(id); },
+    clearTimeout: (id: number) => {
+      clearTimeout(id);
+    }
   };
 }
 
@@ -132,12 +163,18 @@ beforeEach(() => {
   localStorage.clear();
   (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
   reachedTheWallet = [];
-  walletListening = new Promise<void>((heard) => { heardTheWallet = heard; });
+  walletListening = new Promise<void>((heard) => {
+    heardTheWallet = heard;
+  });
   dialogs.length = 0;
-  stopWatching = walletAsks.onWalletWaiting((d) => { if (d !== null) dialogs.push(d); });
+  stopWatching = walletAsks.onWalletWaiting((d) => {
+    if (d !== null) dialogs.push(d);
+  });
   written = [];
   vi.stubEnv('VITE_DEV_ERROR_SINK', '1');
-  console.warn = (line: unknown) => { written.push(String(line)); };
+  console.warn = (line: unknown) => {
+    written.push(String(line));
+  };
 });
 afterEach(() => {
   for (const d of dialogs) d.giveUp();
@@ -155,25 +192,38 @@ describe('opening a company from its pages, with the wallet listening before the
     opening.catch(() => {});
     await walletListening;
     /* RED WHEN: the page misses the wallet saying it is listening while it is still reading what to hand over, so it never sends the ask and the window waits for a request that never comes. */
-    await waitFor(() => expect(reachedTheWallet.map((m) => [m['kind'], m['company']])).toEqual([['keyring', LABEL]]), { timeout: 3000 });
+    await waitFor(() => expect(reachedTheWallet.map((m) => [m['kind'], m['company']])).toEqual([['keyring', LABEL]]), {
+      timeout: 3000
+    });
     /* RED WHEN: the window keeps saying the page is still preparing after the ask has reached it. */
-    await waitFor(() => expect(document.querySelector('[data-no-wallet-for-a-request]')).not.toBeNull(), { timeout: 3000 });
+    await waitFor(() => expect(document.querySelector('[data-no-wallet-for-a-request]')).not.toBeNull(), {
+      timeout: 3000
+    });
     expect(document.querySelector('[data-waiting-for-ask]')).toBeNull();
   });
 
-  it('that stops before asking shows the page\'s reason in the window and writes the step it stopped at', async () => {
+  it("that stops before asking shows the page's reason in the window and writes the step it stopped at", async () => {
     theService('refuse');
     await keyring.resumeSession(null);
     const opening = keyring.openKeysWithWallet(WALLET, aPageWithItsWalletFrame(), PAGE, undefined, COMPANY);
-    const ended = opening.then(() => null, (e: unknown) => e);
+    const ended = opening.then(
+      () => null,
+      (e: unknown) => e
+    );
     expect(await ended).toBeInstanceOf(Error);
     /* RED WHEN: the window is left saying the page is still preparing, instead of why the page did not ask. */
-    await waitFor(() => expect(document.querySelector('[data-page-did-not-ask]')?.textContent).toMatch(/could not read your saved keys/u), { timeout: 3000 });
+    await waitFor(
+      () =>
+        expect(document.querySelector('[data-page-did-not-ask]')?.textContent).toMatch(
+          /could not read your saved keys/u
+        ),
+      { timeout: 3000 }
+    );
     expect(document.querySelector('[data-waiting-for-ask]')).toBeNull();
     expect(reachedTheWallet.map((m) => m['kind'] ?? null)).toEqual([null]);
     /* RED WHEN: the page gives up without writing which preparing step it was on and why it stopped. */
     expect(written.filter((l) => l.startsWith('read opening a company: stopped'))).toEqual([
-      'read opening a company: stopped while reading your saved keys from the service (ServiceRefused), before anything was asked of the wallet',
+      'read opening a company: stopped while reading your saved keys from the service (ServiceRefused), before anything was asked of the wallet'
     ]);
     /* RED WHEN: a line the page writes while preparing carries the company's account address or its label. */
     expect(written.filter((l) => l.includes(ACCOUNT) || l.includes(LABEL))).toEqual([]);

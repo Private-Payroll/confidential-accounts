@@ -9,20 +9,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const st = vi.hoisted(() => ({ view: null as unknown, rounds: [] as number[] }));
 vi.mock('../session.js', async (real) => ({
   ...(await real<typeof import('../session.js')>()),
-  useSession: () => ({ person: { id: 'u1' } }),
+  useSession: () => ({ person: { id: 'u1' } })
 }));
 vi.mock('./company-records.js', async (real) => ({
   ...(await real<typeof import('./company-records.js')>()),
-  useCompanyView: () => st.view,
+  useCompanyView: () => st.view
 }));
 /* Each side's read stands in for the chain: which reading of the view it was asked in is what is counted. */
 vi.mock('../adapters/company-vaults-read.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-vaults-read.js')>()),
-  readVaultPublicMoney: async (_p: string, _v: unknown, _vault: string, round = 0) => { st.rounds.push(round); return null; },
+  readVaultPublicMoney: async (_p: string, _v: unknown, _vault: string, round = 0) => {
+    st.rounds.push(round);
+    return null;
+  }
 }));
 vi.mock('../adapters/vault-private-money.js', async (real) => ({
   ...(await real<typeof import('../adapters/vault-private-money.js')>()),
-  readVaultPrivateMoney: async () => ({ of: 'nothing-yet' }),
+  readVaultPrivateMoney: async () => ({ of: 'nothing-yet' })
 }));
 
 const { useVaultMoney } = await import('./parts.js');
@@ -32,10 +35,22 @@ function Tile({ asked }: { asked: number }) {
   useVaultMoney('c1', 'ab'.repeat(32), asked);
   return null;
 }
-const drawn = async (asked: number) => { const r = render(<Tile asked={asked} />); await act(async () => { await new Promise((x) => { setTimeout(x, 5); }); }); return r; };
+const drawn = async (asked: number) => {
+  const r = render(<Tile asked={asked} />);
+  await act(async () => {
+    await new Promise((x) => {
+      setTimeout(x, 5);
+    });
+  });
+  return r;
+};
 const pressed = async (r: Awaited<ReturnType<typeof drawn>>, asked: number) => {
   r.rerender(<Tile asked={asked} />);
-  await act(async () => { await new Promise((x) => { setTimeout(x, 5); }); });
+  await act(async () => {
+    await new Promise((x) => {
+      setTimeout(x, 5);
+    });
+  });
 };
 
 afterEach(cleanup);

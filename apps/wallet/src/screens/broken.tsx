@@ -35,10 +35,9 @@ export function Broken({ message }: { readonly message: string }): ReactNode {
       </div>
       <ErrorNote message={message} />
       <p className="muted" style={{ marginTop: '1rem' }}>
-        The message above says exactly what was found — it is the storage&rsquo;s own
-        words, and different causes say different things. What they share: whatever
-        is stored here can no longer open a wallet, and no retry changes that. It
-        does not touch the account itself — pieces placed elsewhere still work.
+        The message above says exactly what was found — it is the storage&rsquo;s own words, and different causes say
+        different things. What they share: whatever is stored here can no longer open a wallet, and no retry changes
+        that. It does not touch the account itself — pieces placed elsewhere still work.
       </p>
 
       {setup && <PieceMap setup={setup} />}
@@ -50,8 +49,7 @@ export function Broken({ message }: { readonly message: string }): ReactNode {
         <p className="muted small" style={{ marginBottom: 0 }}>
           {setup
             ? 'Enough of the pieces above put this account back — on this machine or any other.'
-            : 'If you placed recovery pieces from another machine, they put this account '
-              + 'back — here or there.'}
+            : 'If you placed recovery pieces from another machine, they put this account ' + 'back — here or there.'}
         </p>
       </section>
 
@@ -60,9 +58,8 @@ export function Broken({ message }: { readonly message: string }): ReactNode {
           <a href={hrefOf('add-device')}>Bring it over from another device</a>
         </h2>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          If another machine still opens this wallet, a scan and a two-digit check put
-          it back on this one — the unopenable copy here is replaced, behind its own
-          warning.
+          If another machine still opens this wallet, a scan and a two-digit check put it back on this one — the
+          unopenable copy here is replaced, behind its own warning.
         </p>
       </section>
 
@@ -87,16 +84,15 @@ function StartOver({ setup }: { readonly setup: SecuredSetup | null }): ReactNod
       <h2>Start over</h2>
       <p className="muted small">
         {setup === null
-          ? 'Forgets the unopenable account and its passkey record, so this browser '
-            + 'can hold a wallet again.'
-          : 'Forgets the stored account, its passkey record, and the list of where '
-            + 'its pieces are, in this browser.'}
+          ? 'Forgets the unopenable account and its passkey record, so this browser ' + 'can hold a wallet again.'
+          : 'Forgets the stored account, its passkey record, and the list of where ' +
+            'its pieces are, in this browser.'}
       </p>
       {setup !== null && !tookTheMap && (
         <>
           <p className="warn-text small">
-            Copy or download the piece list above first — this browser is the only
-            place it is written, and starting over erases it.
+            Copy or download the piece list above first — this browser is the only place it is written, and starting
+            over erases it.
           </p>
           <button type="button" onClick={() => setTookTheMap(true)}>
             I have taken a copy of the list
@@ -104,19 +100,21 @@ function StartOver({ setup }: { readonly setup: SecuredSetup | null }): ReactNod
         </>
       )}
       {tookTheMap && !confirming && (
-        <button type="button" onClick={() => setConfirming(true)}>Start over…</button>
+        <button type="button" onClick={() => setConfirming(true)}>
+          Start over…
+        </button>
       )}
       {tookTheMap && confirming && (
         <>
           <p className="warn-text small">
             {setup === null
-              ? 'This account was never secured from this browser, so there are no '
-                + 'pieces here to rebuild it from. Forgetting it is final: anything '
-                + 'ever paid to its address is gone for good, unless pieces were '
-                + 'placed somewhere else.'
-              : 'If your pieces are not placed somewhere safe, the account — and '
-                + 'anything ever paid to its address — is gone for good. There is '
-                + 'nothing to find later.'}
+              ? 'This account was never secured from this browser, so there are no ' +
+                'pieces here to rebuild it from. Forgetting it is final: anything ' +
+                'ever paid to its address is gone for good, unless pieces were ' +
+                'placed somewhere else.'
+              : 'If your pieces are not placed somewhere safe, the account — and ' +
+                'anything ever paid to its address — is gone for good. There is ' +
+                'nothing to find later.'}
           </p>
           <button type="button" className="danger" onClick={startOver}>
             I understand — forget this account

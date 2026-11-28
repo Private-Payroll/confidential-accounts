@@ -9,9 +9,20 @@
 import { describe, expect, it } from 'vitest';
 import type { Hex } from '../../../src/core/crypto.js';
 import { carriedEntryRefusal } from '../../../src/midnight/carried-entry.js';
-import { companyRecordEntry, EMPTY_HEAD, recordKeyOf, signedWithItsEntry, signManifestEntry, type ManifestEntry } from '../../../src/midnight/record-manifest.js';
+import {
+  companyRecordEntry,
+  EMPTY_HEAD,
+  recordKeyOf,
+  signedWithItsEntry,
+  signManifestEntry,
+  type ManifestEntry
+} from '../../../src/midnight/record-manifest.js';
 import { FOUNDING_RECORDS, type RecordsHeld } from '../../../src/midnight/records-held.js';
-import { signCompanyFiling, toCompanyWire, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  signCompanyFiling,
+  toCompanyWire,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { carriedEntriesEntered, readAfterEntering, recordEnteredHere } from './carried-entries-entered.js';
 
 const CO = 'acc_lost';
@@ -19,37 +30,72 @@ const ADA = '01'.repeat(32) as Hex;
 const BO = '02'.repeat(32) as Hex;
 const NAMED = { store: 'company' as const, kind: 'vault-info', id: 'vlt_1' };
 
-const versionOf = (version: number, by: Hex = ADA, company = CO): SealedCompanyRecord => signedWithItsEntry({
-  company, kind: 'vault-info', id: 'vlt_1', version, keyEpoch: 0, sealed: { iv: 'iv', tag: String(version), body: 'b' } as never, wrapped: [],
-}, by);
+const versionOf = (version: number, by: Hex = ADA, company = CO): SealedCompanyRecord =>
+  signedWithItsEntry(
+    {
+      company,
+      kind: 'vault-info',
+      id: 'vlt_1',
+      version,
+      keyEpoch: 0,
+      sealed: { iv: 'iv', tag: String(version), body: 'b' } as never,
+      wrapped: []
+    },
+    by
+  );
 const heldWith = (o: { seq?: number; stopped?: boolean; pending?: readonly ManifestEntry[] } = {}): RecordsHeld => ({
-  head: EMPTY_HEAD, reached: { seq: o.seq ?? 0, head: EMPTY_HEAD, root: EMPTY_HEAD, dirVersion: 1 },
-  stopped: o.stopped === true ? { why: 'stopped' } as never : null,
-  asked: { records: new Set([NAMED, ...FOUNDING_RECORDS].map(recordKeyOf)), kinds: new Set() }, history: new Map(), notYetAnchored: o.pending ?? [], directory: new Map(),
+  head: EMPTY_HEAD,
+  reached: { seq: o.seq ?? 0, head: EMPTY_HEAD, root: EMPTY_HEAD, dirVersion: 1 },
+  stopped: o.stopped === true ? ({ why: 'stopped' } as never) : null,
+  asked: { records: new Set([NAMED, ...FOUNDING_RECORDS].map(recordKeyOf)), kinds: new Set() },
+  history: new Map(),
+  notYetAnchored: o.pending ?? [],
+  directory: new Map()
 });
 const service = (refuse: string | null = null) => {
   const posted: ManifestEntry[][] = [];
-  return { posted, doors: { accountId: CO, manifest: { enter: async (_c: string, e: readonly ManifestEntry[]) => {
-    if (refuse !== null) throw new Error(refuse);
-    posted.push([...e]);
-  } } } };
+  return {
+    posted,
+    doors: {
+      accountId: CO,
+      manifest: {
+        enter: async (_c: string, e: readonly ManifestEntry[]) => {
+          if (refuse !== null) throw new Error(refuse);
+          posted.push([...e]);
+        }
+      }
+    }
+  };
 };
 
 describe('THE ENTRY A VERSION CARRIES', () => {
-  it('is its own filer\'s signature over exactly that version, and nothing else passes', () => {
+  it("is its own filer's signature over exactly that version, and nothing else passes", () => {
     const own = versionOf(2);
     expect(carriedEntryRefusal(own)).toBeNull();
     /* RED WHEN: a version carrying no entry is taken as carrying one a device could enter. */
     expect(carriedEntryRefusal({ ...own, entry: undefined })).toMatch(/carries no entry/u);
     /* RED WHEN: an entry another seat signed over the same version is entered as the filer's. */
-    expect(carriedEntryRefusal({ ...own, entry: signManifestEntry(CO, companyRecordEntry(own), BO) })).toMatch(/not signed by the seat that filed it/u);
+    expect(carriedEntryRefusal({ ...own, entry: signManifestEntry(CO, companyRecordEntry(own), BO) })).toMatch(
+      /not signed by the seat that filed it/u
+    );
     /* RED WHEN: the entry of another version, or of other bytes, is entered for this one. */
-    expect(carriedEntryRefusal({ ...own, entry: versionOf(3).entry })).toMatch(/another record, another version or other bytes/u);
-    expect(carriedEntryRefusal({ ...own, sealed: { ...own.sealed, body: 'c' } as never, filedBy: signCompanyFiling({ ...own, sealed: { ...own.sealed, body: 'c' } as never }, ADA).filedBy }))
-      .toMatch(/another record, another version or other bytes/u);
+    expect(carriedEntryRefusal({ ...own, entry: versionOf(3).entry })).toMatch(
+      /another record, another version or other bytes/u
+    );
+    expect(
+      carriedEntryRefusal({
+        ...own,
+        sealed: { ...own.sealed, body: 'c' } as never,
+        filedBy: signCompanyFiling({ ...own, sealed: { ...own.sealed, body: 'c' } as never }, ADA).filedBy
+      })
+    ).toMatch(/another record, another version or other bytes/u);
     /* RED WHEN: an entry whose signature covers another company's records is entered here. */
-    expect(carriedEntryRefusal({ ...own, entry: { ...own.entry!, filedBy: signManifestEntry('acc_other', companyRecordEntry(own), ADA).filedBy } }))
-      .toMatch(/not one: its signature does not cover exactly this entry/u);
+    expect(
+      carriedEntryRefusal({
+        ...own,
+        entry: { ...own.entry!, filedBy: signManifestEntry('acc_other', companyRecordEntry(own), ADA).filedBy }
+      })
+    ).toMatch(/not one: its signature does not cover exactly this entry/u);
   });
 
   it('is never carried over from an earlier version when the next is signed', () => {
@@ -70,9 +116,20 @@ describe('THE SWEEP', () => {
   it('enters nothing it must not', async () => {
     const s = service();
     /* RED WHEN: a record the company was founded with is entered, as founded, from a device other than its founding seat's. */
-    const founding = FOUNDING_RECORDS.map((r) => signedWithItsEntry({
-      company: CO, kind: r.kind as 'state' | 'roster', id: r.id, version: 1, keyEpoch: 0, sealed: { iv: 'iv', tag: 't', body: 'b' } as never, wrapped: [],
-    }, ADA));
+    const founding = FOUNDING_RECORDS.map((r) =>
+      signedWithItsEntry(
+        {
+          company: CO,
+          kind: r.kind as 'state' | 'roster',
+          id: r.id,
+          version: 1,
+          keyEpoch: 0,
+          sealed: { iv: 'iv', tag: 't', body: 'b' } as never,
+          wrapped: []
+        },
+        ADA
+      )
+    );
     expect((await carriedEntriesEntered(s.doors, heldWith(), founding.slice(0, 1))).entered).toBe(0);
     expect((await carriedEntriesEntered(s.doors, heldWith(), founding.slice(1))).entered).toBe(0);
     /* RED WHEN: another seat's entry is entered before the company's first anchor, ahead of the records it was founded with. */
@@ -80,8 +137,12 @@ describe('THE SWEEP', () => {
     /* RED WHEN: an entry is entered past a stop the company's records came to. */
     expect((await carriedEntriesEntered(s.doors, heldWith({ stopped: true }), [versionOf(2)])).entered).toBe(0);
     /* RED WHEN: a version the records already name, or pass, is entered again. */
-    expect((await carriedEntriesEntered(s.doors, heldWith({ pending: [versionOf(2).entry!] }), [versionOf(2)])).entered).toBe(0);
-    expect((await carriedEntriesEntered(s.doors, heldWith({ pending: [versionOf(3).entry!] }), [versionOf(2)])).entered).toBe(0);
+    expect(
+      (await carriedEntriesEntered(s.doors, heldWith({ pending: [versionOf(2).entry!] }), [versionOf(2)])).entered
+    ).toBe(0);
+    expect(
+      (await carriedEntriesEntered(s.doors, heldWith({ pending: [versionOf(3).entry!] }), [versionOf(2)])).entered
+    ).toBe(0);
     /* RED WHEN: a version carrying another seat's entry, or another company's version, is entered. */
     const forged = { ...versionOf(2), entry: signManifestEntry(CO, companyRecordEntry(versionOf(2)), BO) };
     expect((await carriedEntriesEntered(s.doors, heldWith(), [forged])).entered).toBe(0);
@@ -89,7 +150,7 @@ describe('THE SWEEP', () => {
     expect(s.posted).toEqual([]);
   });
 
-  it('enters the first version of any other record, such as a person\'s invitation or a vault\'s first name', async () => {
+  it("enters the first version of any other record, such as a person's invitation or a vault's first name", async () => {
     const s = service();
     /* RED WHEN: a lost first version of a record the company was not founded with is left to its own filer, so every device refuses it for good. */
     expect(await carriedEntriesEntered(s.doors, heldWith(), [versionOf(1)])).toEqual({ entered: 1, refused: null });
@@ -98,37 +159,77 @@ describe('THE SWEEP', () => {
 
   it('hands back a refusal by the service and throws nothing', async () => {
     /* RED WHEN: a refused entry is thrown, so a read that could follow an older version stops instead. */
-    expect(await carriedEntriesEntered(service('the signer holds no seat now').doors, heldWith(), [versionOf(2)]))
-      .toEqual({ entered: 0, refused: 'the signer holds no seat now' });
+    expect(
+      await carriedEntriesEntered(service('the signer holds no seat now').doors, heldWith(), [versionOf(2)])
+    ).toEqual({ entered: 0, refused: 'the signer holds no seat now' });
   });
 
   it('a read is made again only when the sweep lifted what refused it', async () => {
     let reads = 0;
-    const read = async () => { reads += 1; if (reads === 1) throw new Error('unentered'); return reads; };
-    expect(await readAfterEntering(read, () => true, async () => ({ entered: 1, refused: null }))).toBe(2);
+    const read = async () => {
+      reads += 1;
+      if (reads === 1) throw new Error('unentered');
+      return reads;
+    };
+    expect(
+      await readAfterEntering(
+        read,
+        () => true,
+        async () => ({ entered: 1, refused: null })
+      )
+    ).toBe(2);
     reads = 0;
     /* RED WHEN: a read is made again though the sweep entered nothing, or for a refusal the sweep cannot lift. */
-    await expect(readAfterEntering(read, () => true, async () => ({ entered: 0, refused: null }))).rejects.toThrow('unentered');
+    await expect(
+      readAfterEntering(
+        read,
+        () => true,
+        async () => ({ entered: 0, refused: null })
+      )
+    ).rejects.toThrow('unentered');
     reads = 0;
-    await expect(readAfterEntering(read, () => false, async () => ({ entered: 1, refused: null }))).rejects.toThrow('unentered');
+    await expect(
+      readAfterEntering(
+        read,
+        () => false,
+        async () => ({ entered: 1, refused: null })
+      )
+    ).rejects.toThrow('unentered');
   });
 });
 
-describe('THE SWEEP OF ONE RECORD, THROUGH THE STEP\'S READ OF THE COMPANY', () => {
+describe("THE SWEEP OF ONE RECORD, THROUGH THE STEP'S READ OF THE COMPANY", () => {
   /** A read of the company serving `vlt_1`'s versions and its records as held, and every ask made of it, in order. */
   const viewServing = (served: readonly SealedCompanyRecord[], company = CO) => {
     const asked: unknown[] = [];
     const posted: ManifestEntry[][] = [];
     return {
-      asked, posted,
+      asked,
+      posted,
       view: {
         company,
-        declare: (d: unknown) => { asked.push(['declared', d]); },
-        records: async (r: readonly unknown[]) => { asked.push(['records', r]); return [{ kind: 'vault-info', id: 'vlt_1', versions: served.map(toCompanyWire) }]; },
-        directory: async () => { asked.push(['directory']); return {} as never; },
-        held: async (r: unknown) => { asked.push(['held', r]); return { records: heldWith() } as never; },
-        manifest: { newest: async () => [], enter: async (_c: string, e: readonly ManifestEntry[]) => { posted.push([...e]); } },
-      },
+        declare: (d: unknown) => {
+          asked.push(['declared', d]);
+        },
+        records: async (r: readonly unknown[]) => {
+          asked.push(['records', r]);
+          return [{ kind: 'vault-info', id: 'vlt_1', versions: served.map(toCompanyWire) }];
+        },
+        directory: async () => {
+          asked.push(['directory']);
+          return {} as never;
+        },
+        held: async (r: unknown) => {
+          asked.push(['held', r]);
+          return { records: heldWith() } as never;
+        },
+        manifest: {
+          newest: async () => [],
+          enter: async (_c: string, e: readonly ManifestEntry[]) => {
+            posted.push([...e]);
+          }
+        }
+      }
     };
   };
 
@@ -141,7 +242,7 @@ describe('THE SWEEP OF ONE RECORD, THROUGH THE STEP\'S READ OF THE COMPANY', () 
       ['declared', { records: [NAMED] }],
       ['records', [{ kind: 'vault-info', id: 'vlt_1', every: true }]],
       ['directory'],
-      ['held', { records: [NAMED] }],
+      ['held', { records: [NAMED] }]
     ]);
     /* RED WHEN: the entries are posted over the manifest's own path, around the view. */
     expect(v.posted).toEqual([[versionOf(1).entry, versionOf(2).entry]]);
@@ -150,8 +251,9 @@ describe('THE SWEEP OF ONE RECORD, THROUGH THE STEP\'S READ OF THE COMPANY', () 
   it('refuses a read of another company handed in for this one, and enters nothing', async () => {
     const v = viewServing([versionOf(2)], 'acc_other');
     /* RED WHEN: a view of one company is used to enter another company's entries. */
-    await expect(recordEnteredHere({ accountId: CO, view: v.view }, 'vault-info', 'vlt_1'))
-      .rejects.toThrow(/acc_other was handed in for company acc_lost/u);
+    await expect(recordEnteredHere({ accountId: CO, view: v.view }, 'vault-info', 'vlt_1')).rejects.toThrow(
+      /acc_other was handed in for company acc_lost/u
+    );
     expect(v.posted).toEqual([]);
   });
 });

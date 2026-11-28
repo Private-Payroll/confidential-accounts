@@ -28,7 +28,13 @@ import { canonical, parseCanonical, seal, unseal, type Hex, type Sealed } from '
 import { keyForThePurpose, type Purpose } from '../../../src/core/sealed-records.js';
 import { sealingWith, type KeysHeld } from '../../../src/core/company-key.js';
 import { keysByPurpose, openedWithAnyEpoch } from './keys-by-purpose.js';
-import { openInFlight, sealInFlight, slotFor, type InFlightOpener, type InFlightRecords } from './in-flight-on-this-device.js';
+import {
+  openInFlight,
+  sealInFlight,
+  slotFor,
+  type InFlightOpener,
+  type InFlightRecords
+} from './in-flight-on-this-device.js';
 
 /** One coin as it is kept and handed over: its nonce and token as 64 lower-case hex characters, its value in decimal digits. */
 export interface CoinKept {
@@ -41,7 +47,10 @@ export interface CoinKept {
 export interface CoinsKeptHere {
   coins(vault: Hex): Promise<readonly CoinKept[]>;
   /** Adds coins to what is kept for the vault; a coin kept already is kept once. */
-  keep(vault: Hex, coins: ReadonlyArray<{ readonly nonce: string; readonly token: string; readonly value: bigint | string }>): Promise<void>;
+  keep(
+    vault: Hex,
+    coins: ReadonlyArray<{ readonly nonce: string; readonly token: string; readonly value: bigint | string }>
+  ): Promise<void>;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -49,7 +58,9 @@ const DIGITS = /^[1-9][0-9]*$/u;
 const KEEP_ATTEMPTS = 5;
 
 /** A coin in the one spelling kept, or null when it is not one. */
-const coinKept = (c: { readonly nonce?: unknown; readonly token?: unknown; readonly value?: unknown } | null | undefined): CoinKept | null => {
+const coinKept = (
+  c: { readonly nonce?: unknown; readonly token?: unknown; readonly value?: unknown } | null | undefined
+): CoinKept | null => {
   const nonce = String(c?.nonce ?? '').toLowerCase();
   const token = String(c?.token ?? '').toLowerCase();
   const value = typeof c?.value === 'bigint' ? c.value.toString() : String(c?.value ?? '');
@@ -66,7 +77,9 @@ export function coinsKeptOnThisDevice(records: InFlightRecords, me: InFlightOpen
   const read = async (vault: Hex) => {
     const sealed = await records.get(slotFor(me, 'coins', vault));
     const opened = sealed === null ? null : openInFlight<{ coins?: unknown }>(me, 'coins', vault, sealed);
-    const coins = Array.isArray(opened?.coins) ? (opened!.coins as unknown[]).map((c) => coinKept(c as never)).filter((c): c is CoinKept => c !== null) : [];
+    const coins = Array.isArray(opened?.coins)
+      ? (opened!.coins as unknown[]).map((c) => coinKept(c as never)).filter((c): c is CoinKept => c !== null)
+      : [];
     return { sealed, coins };
   };
   return {
@@ -82,11 +95,14 @@ export function coinsKeptOnThisDevice(records: InFlightRecords, me: InFlightOpen
         if (all.size === before && now.sealed !== null) return;
         const next = sealInFlight(me, 'coins', vault, { coins: [...all.values()] });
         const slot = slotFor(me, 'coins', vault);
-        if (now.sealed === null ? await records.add(slot, next) : await records.replace(slot, now.sealed.claim, next)) return;
+        if (now.sealed === null ? await records.add(slot, next) : await records.replace(slot, now.sealed.claim, next))
+          return;
       }
-      throw new Error('the coins this device keeps for this vault were written by another tab at the same time on every attempt, '
-        + 'so these were not added. Nothing kept before is lost; open the vault again to add them.');
-    },
+      throw new Error(
+        'the coins this device keeps for this vault were written by another tab at the same time on every attempt, ' +
+          'so these were not added. Nothing kept before is lost; open the vault again to add them.'
+      );
+    }
   };
 }
 
@@ -96,7 +112,9 @@ const COINS_FILE_FORMAT = 'confidential-accounts/vault-coins/v1';
 /** A file of coins handed from one signer to another, refused by name when it is not one. */
 class CoinsFileUnreadable extends Error {
   constructor(why: string) {
-    super(`this is not a file of this vault's coins (${why}), so nothing in it was taken. Ask the signer who saved it to save it again.`);
+    super(
+      `this is not a file of this vault's coins (${why}), so nothing in it was taken. Ask the signer who saved it to save it again.`
+    );
     this.name = 'CoinsFileUnreadable';
   }
 }
@@ -112,7 +130,11 @@ const COINS_PURPOSE: Purpose = 'vaults';
 /** The text of a file of a vault's coins, sealed for the company's signers, for the signer to save and hand to another signer. */
 export const coinsFileText = (vault: Hex, coins: readonly CoinKept[], company: CoinsFileCompany): string => {
   const { key, epoch } = sealingWith(company.keys, 0);
-  const body = { format: COINS_FILE_FORMAT, vault: String(vault).toLowerCase(), coins: coins.map((c) => coinKept(c)).filter((c) => c !== null) };
+  const body = {
+    format: COINS_FILE_FORMAT,
+    vault: String(vault).toLowerCase(),
+    coins: coins.map((c) => coinKept(c)).filter((c) => c !== null)
+  };
   return `${JSON.stringify({ format: COINS_FILE_FORMAT, epoch, sealed: seal(canonical(body), keyForThePurpose(key, company.id, COINS_PURPOSE)) }, null, 2)}\n`;
 };
 
@@ -129,14 +151,21 @@ export function coinsFileRead(text: string, vault: Hex, company: CoinsFileCompan
   }
   let parsed: { format?: unknown; vault?: unknown; coins?: unknown };
   try {
-    parsed = openedWithAnyEpoch(keysByPurpose(company.keys), (keys) => parseCanonical<typeof parsed>(unseal(outer.sealed as Sealed, keyForThePurpose(keys, company.id, COINS_PURPOSE))));
+    parsed = openedWithAnyEpoch(keysByPurpose(company.keys), (keys) =>
+      parseCanonical<typeof parsed>(unseal(outer.sealed as Sealed, keyForThePurpose(keys, company.id, COINS_PURPOSE)))
+    );
   } catch {
-    throw new CoinsFileUnreadable('it does not open with this company\'s key: it was sealed for another company, or under a key this device does not hold');
+    throw new CoinsFileUnreadable(
+      "it does not open with this company's key: it was sealed for another company, or under a key this device does not hold"
+    );
   }
-  if (parsed?.format !== COINS_FILE_FORMAT) throw new CoinsFileUnreadable('what is sealed inside does not say it is a file of coins');
-  if (String(parsed.vault ?? '').toLowerCase() !== String(vault).toLowerCase()) throw new CoinsFileUnreadable('it is for another vault');
+  if (parsed?.format !== COINS_FILE_FORMAT)
+    throw new CoinsFileUnreadable('what is sealed inside does not say it is a file of coins');
+  if (String(parsed.vault ?? '').toLowerCase() !== String(vault).toLowerCase())
+    throw new CoinsFileUnreadable('it is for another vault');
   if (!Array.isArray(parsed.coins)) throw new CoinsFileUnreadable('it holds no list of coins');
   const coins = parsed.coins.map((c) => coinKept(c as never));
-  if (coins.some((c) => c === null)) throw new CoinsFileUnreadable('a coin in it is not a nonce, a token and an amount');
+  if (coins.some((c) => c === null))
+    throw new CoinsFileUnreadable('a coin in it is not a nonce, a token and an amount');
   return coins as CoinKept[];
 }

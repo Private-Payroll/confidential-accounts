@@ -41,12 +41,12 @@ typechecks. So the single command compiles, typechecks four projects and runs th
 
 There are four TypeScript projects, and a change that satisfies one can break another:
 
-| command | project |
-| --- | --- |
-| `npm run typecheck` | `tsconfig.json` — the product: `src/`, `contracts/test/` |
-| `npm run typecheck:scripts` | `tsconfig.scripts.json` — `scripts/` |
-| `npm run typecheck:identity` | `packages/identity/tsconfig.json` — the key library |
-| `npm run typecheck:wallet` | `apps/wallet/tsconfig.json` — the wallet application |
+| command                      | project                                                  |
+| ---------------------------- | -------------------------------------------------------- |
+| `npm run typecheck`          | `tsconfig.json` — the product: `src/`, `contracts/test/` |
+| `npm run typecheck:scripts`  | `tsconfig.scripts.json` — `scripts/`                     |
+| `npm run typecheck:identity` | `packages/identity/tsconfig.json` — the key library      |
+| `npm run typecheck:wallet`   | `apps/wallet/tsconfig.json` — the wallet application     |
 
 Run all four before you open a pull request. The automated checks run them as a four-way matrix, so
 the page shows four marks and a failure names the project rather than a file in a list of four

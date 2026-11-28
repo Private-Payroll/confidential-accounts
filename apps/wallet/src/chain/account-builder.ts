@@ -1,13 +1,28 @@
 import {
-  buildAnchorCall, buildGovernedCall, buildRecoverAnchorCall,
-  type AnchorPlacement, type GovernedCallDeps, type GovernedCallOrder, type OpenedRound, type SignerMaterial,
+  buildAnchorCall,
+  buildGovernedCall,
+  buildRecoverAnchorCall,
+  type AnchorPlacement,
+  type GovernedCallDeps,
+  type GovernedCallOrder,
+  type OpenedRound,
+  type SignerMaterial
 } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { ACCOUNT_CIRCUITS_THE_WALLET_PROVES, REGISTRY_CIRCUITS_THE_WALLET_PROVES } from './account-circuits.js';
 import { makePinnedKeyMaterialProvider, type PinnedKeyMaterialOptions } from './key-material.js';
 import { builderProving, keptProvers, type ProofEvent } from './proving.js';
 import { describeFailure } from '../lib/failure-text.js';
-import { buildAccountDeploy, creationCarriedAgain, finishedCreation } from '../../../../packages/web-shared/src/vault-builder.js';
-import { zkConfigOver, byCircuitName, runtimeVersionOf, verifierOnlySource } from '../../../../packages/web-shared/src/zk-config.js';
+import {
+  buildAccountDeploy,
+  creationCarriedAgain,
+  finishedCreation
+} from '../../../../packages/web-shared/src/vault-builder.js';
+import {
+  zkConfigOver,
+  byCircuitName,
+  runtimeVersionOf,
+  verifierOnlySource
+} from '../../../../packages/web-shared/src/zk-config.js';
 import type { ContractCalls } from '../../../../packages/web-shared/src/contract-call-built.js';
 import { accountTreeOf, contractPieces } from './contract-pieces.js';
 import { registryPutBuilt, registryValuesAt, type RegistryParts } from './registry-put-built.js';
@@ -51,48 +66,93 @@ export interface HeldOnTheWire {
 }
 
 interface AnchorAsked {
-  readonly network: string; readonly account: string; readonly material: SignerMaterial; readonly chain: CallChainOnTheWire;
-  readonly previous: string; readonly batch: string; readonly held: HeldOnTheWire;
+  readonly network: string;
+  readonly account: string;
+  readonly material: SignerMaterial;
+  readonly chain: CallChainOnTheWire;
+  readonly previous: string;
+  readonly batch: string;
+  readonly held: HeldOnTheWire;
 }
 
 export type AccountBuilderAsk =
   | {
-    readonly id: number; readonly ask: 'governed-call'; readonly network: string; readonly account: string;
-    readonly order: GovernedCallOrder; readonly material: SignerMaterial; readonly chain: CallChainOnTheWire; readonly opened: OpenedRound;
-  }
+      readonly id: number;
+      readonly ask: 'governed-call';
+      readonly network: string;
+      readonly account: string;
+      readonly order: GovernedCallOrder;
+      readonly material: SignerMaterial;
+      readonly chain: CallChainOnTheWire;
+      readonly opened: OpenedRound;
+    }
   | ({ readonly id: number; readonly ask: 'anchor' } & AnchorAsked)
   | ({
-    readonly id: number; readonly ask: 'recover-anchor';
-    readonly resumesFrom: string; readonly latest: string; readonly lastRecovery: string; readonly proposal: string; readonly proposalSalt: string;
-  } & AnchorAsked)
+      readonly id: number;
+      readonly ask: 'recover-anchor';
+      readonly resumesFrom: string;
+      readonly latest: string;
+      readonly lastRecovery: string;
+      readonly proposal: string;
+      readonly proposalSalt: string;
+    } & AnchorAsked)
   | {
-    readonly id: number; readonly ask: 'pay-key-standing'; readonly account: string; readonly accountState: string;
-    readonly key: string; readonly signingSecret: string; readonly wrappingPublicKey: string;
-  }
+      readonly id: number;
+      readonly ask: 'pay-key-standing';
+      readonly account: string;
+      readonly accountState: string;
+      readonly key: string;
+      readonly signingSecret: string;
+      readonly wrappingPublicKey: string;
+    }
   | {
-    readonly id: number; readonly ask: 'account-deploy'; readonly network: string; readonly foundingLeaf: string;
-    readonly label: string; readonly foundingKey: { readonly tag: string; readonly value: string };
-    /** The chain's time the steps are built by, in milliseconds; this device's clock when absent. */
-    readonly now?: number;
-    /** The verifier key of every circuit of the account, base64, as this wallet was built with them: the deploy is
-     * built from them all and carries the first step's. */
-    readonly verifiers: ReadonlyArray<readonly [string, string]>;
-  }
+      readonly id: number;
+      readonly ask: 'account-deploy';
+      readonly network: string;
+      readonly foundingLeaf: string;
+      readonly label: string;
+      readonly foundingKey: { readonly tag: string; readonly value: string };
+      /** The chain's time the steps are built by, in milliseconds; this device's clock when absent. */
+      readonly now?: number;
+      /** The verifier key of every circuit of the account, base64, as this wallet was built with them: the deploy is
+       * built from them all and carries the first step's. */
+      readonly verifiers: ReadonlyArray<readonly [string, string]>;
+    }
   | {
-    readonly id: number; readonly ask: 'finished-creation'; readonly network: string; readonly account: string;
-    readonly signature: { readonly tag: string; readonly value: string };
-    readonly now?: number;
-    /** The verifier key of each circuit the second step inserts, base64, as this wallet was built with them. */
-    readonly verifiers: ReadonlyArray<readonly [string, string]>;
-  }
-  | { readonly id: number; readonly ask: 'creation-again'; readonly network: string; readonly deploy: string; readonly insert: string; readonly now?: number }
+      readonly id: number;
+      readonly ask: 'finished-creation';
+      readonly network: string;
+      readonly account: string;
+      readonly signature: { readonly tag: string; readonly value: string };
+      readonly now?: number;
+      /** The verifier key of each circuit the second step inserts, base64, as this wallet was built with them. */
+      readonly verifiers: ReadonlyArray<readonly [string, string]>;
+    }
+  | {
+      readonly id: number;
+      readonly ask: 'creation-again';
+      readonly network: string;
+      readonly deploy: string;
+      readonly insert: string;
+      readonly now?: number;
+    }
   /** One write to a private registry: `value` (base64) at `tag` (hex), built on the registry's state and the chain's parameters (base64). */
   | {
-    readonly id: number; readonly ask: 'registry-put'; readonly network: string; readonly registry: string; readonly tag: string; readonly value: string;
-    readonly chain: { readonly registryState: string; readonly parameters: string };
-  }
+      readonly id: number;
+      readonly ask: 'registry-put';
+      readonly network: string;
+      readonly registry: string;
+      readonly tag: string;
+      readonly value: string;
+      readonly chain: { readonly registryState: string; readonly parameters: string };
+    }
   /** What a private registry, in its state (base64), holds at each tag (hex). */
-  | { readonly id: number; readonly ask: 'registry-values'; readonly registryState: string; readonly tags: readonly string[] };
+  | {
+      readonly id: number;
+      readonly ask: 'registry-values';
+      readonly registryState: string;
+      readonly tags: readonly string[];
+    };
 
 /** Where the company's pay-record key stands, read from the account's state. */
 export interface PayKeyStandingAnswered {
@@ -100,8 +160,14 @@ export interface PayKeyStandingAnswered {
   readonly isThisKey: boolean;
   readonly sealedMine: boolean;
   readonly round: {
-    readonly commitment: string; readonly payload: string; readonly salt: string; readonly proposal: string;
-    readonly open: boolean; readonly approvals: string; readonly needed: string; readonly stale: boolean;
+    readonly commitment: string;
+    readonly payload: string;
+    readonly salt: string;
+    readonly proposal: string;
+    readonly open: boolean;
+    readonly approvals: string;
+    readonly needed: string;
+    readonly stale: boolean;
     /** The account holds this seat's approval of it: its raise counted as its approval, or its approve. */
     readonly approvedHere: boolean;
   };
@@ -111,14 +177,43 @@ export interface PayKeyStandingAnswered {
 
 export type AccountBuilderAnswer =
   | { readonly id: number; readonly ok: true; readonly ask: 'governed-call' | 'anchor'; readonly tx: string }
-  | { readonly id: number; readonly ok: true; readonly ask: 'recover-anchor'; readonly tx: string; readonly placement: AnchorPlacement }
-  | { readonly id: number; readonly ok: true; readonly ask: 'pay-key-standing'; readonly standing: PayKeyStandingAnswered }
-  | { readonly id: number; readonly ok: true; readonly ask: 'account-deploy'; readonly account: string; readonly tx: string }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly ask: 'recover-anchor';
+      readonly tx: string;
+      readonly placement: AnchorPlacement;
+    }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly ask: 'pay-key-standing';
+      readonly standing: PayKeyStandingAnswered;
+    }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly ask: 'account-deploy';
+      readonly account: string;
+      readonly tx: string;
+    }
   | { readonly id: number; readonly ok: true; readonly ask: 'finished-creation'; readonly tx: string }
-  | { readonly id: number; readonly ok: true; readonly ask: 'creation-again'; readonly account: string; readonly deploy: string; readonly insert: string }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly ask: 'creation-again';
+      readonly account: string;
+      readonly deploy: string;
+      readonly insert: string;
+    }
   | { readonly id: number; readonly ok: true; readonly ask: 'registry-put'; readonly tx: string }
   /** Each tag's value, base64, in the order asked, or null for a tag the registry does not hold. */
-  | { readonly id: number; readonly ok: true; readonly ask: 'registry-values'; readonly values: readonly (string | null)[] }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly ask: 'registry-values';
+      readonly values: readonly (string | null)[];
+    }
   | { readonly id: number; readonly ok: false; readonly error: string; readonly name?: string };
 
 /** What the builder tells the thread that started it while it works. */
@@ -138,14 +233,18 @@ const toBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 const bytesOfHex = (hex: string): Uint8Array => {
-  if (!HEX64.test(hex)) throw new Error('a registry tag is thirty-two bytes of hex, and this is not one, so nothing was built.');
+  if (!HEX64.test(hex))
+    throw new Error('a registry tag is thirty-two bytes of hex, and this is not one, so nothing was built.');
   return Uint8Array.from(hex.match(/../gu)!, (x) => Number.parseInt(x, 16));
 };
 const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 const HEX64 = /^[0-9a-f]{64}$/iu;
 
 /** What the account builder loads once: everything a build needs but the network, which each ask names. */
-export type AccountBuildingDeps = Omit<GovernedCallDeps, 'network' | 'contracts'> & { readonly contracts: ContractCalls; readonly registry: RegistryParts };
+export type AccountBuildingDeps = Omit<GovernedCallDeps, 'network' | 'contracts'> & {
+  readonly contracts: ContractCalls;
+  readonly registry: RegistryParts;
+};
 
 export interface AccountBuilderOptions {
   /** Where the wallet's own key material is read from, and who is told when it is not kept. */
@@ -174,11 +273,11 @@ export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => 
         accountCircuits: ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
         compiledVerifierKeys: (account as unknown as { expectedVk: Readonly<Record<string, string>> }).expectedVk,
         registryCircuits: REGISTRY_CIRCUITS_THE_WALLET_PROVES,
-        compiledRegistryVerifierKeys: registry.expectedVk,
+        compiledRegistryVerifierKeys: registry.expectedVk
       });
       const prove = builderProving(keyMaterial, {
         ...(options.provers === undefined ? {} : { provers: options.provers }),
-        ...(options.onProof === undefined ? {} : { onProof: options.onProof }),
+        ...(options.onProof === undefined ? {} : { onProof: options.onProof })
       });
       const CompiledContract = (compactJs as unknown as { CompiledContract: any }).CompiledContract;
       return {
@@ -187,22 +286,33 @@ export const accountBuilderDeps = (options: AccountBuilderOptions = {}): (() => 
         accountTree: accountTreeOf(runtime),
         contracts,
         accountCompiled: CompiledContract.make('ConfidentialAccount', (account as any).Contract).pipe(
-          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)),
-        accountZkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.accountVerifierKey(c), 'the company account'), byCircuitName,
-          runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
+          CompiledContract.withWitnesses((accountWitnesses as any).witnesses)
+        ),
+        accountZkConfig: zkConfigOver(
+          verifierOnlySource((c) => keyMaterial.accountVerifierKey(c), 'the company account'),
+          byCircuitName,
+          runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')
+        ),
         accountPure: (account as any).pureCircuits,
         accountLedger: (account as any).ledger,
         registry: {
-          compiled: CompiledContract.make('PrivateRegistry', registry.Contract).pipe(CompiledContract.withVacantWitnesses),
-          zkConfig: zkConfigOver(verifierOnlySource((c) => keyMaterial.registryVerifierKey(c), 'the private registry'), byCircuitName,
-            runtimeVersionOf(REGISTRY_MANIFEST, 'the private registry')),
+          compiled: CompiledContract.make('PrivateRegistry', registry.Contract).pipe(
+            CompiledContract.withVacantWitnesses
+          ),
+          zkConfig: zkConfigOver(
+            verifierOnlySource((c) => keyMaterial.registryVerifierKey(c), 'the private registry'),
+            byCircuitName,
+            runtimeVersionOf(REGISTRY_MANIFEST, 'the private registry')
+          ),
           ledger: registry.ledger,
-          contractState: runtime.ContractState,
+          contractState: runtime.ContractState
         },
-        prove,
+        prove
       } as AccountBuildingDeps;
     })();
-    loaded.catch(() => { loaded = null; });
+    loaded.catch(() => {
+      loaded = null;
+    });
     return loaded;
   };
 };
@@ -219,52 +329,75 @@ const clockOf = (at: number | undefined): (() => number) => {
   return () => at + (Date.now() - from);
 };
 
-const chainOf = (chain: CallChainOnTheWire) => ({ accountState: fromBase64(chain.accountState), parameters: fromBase64(chain.parameters) });
+const chainOf = (chain: CallChainOnTheWire) => ({
+  accountState: fromBase64(chain.accountState),
+  parameters: fromBase64(chain.parameters)
+});
 
 /* The verifier keys an ask carries, served to the builder by circuit name and by nothing else. */
 const verifiersOf = (verifiers: ReadonlyArray<readonly [string, string]>) => {
   const keys = new Map(verifiers.map(([c, k]) => [c, fromBase64(k)] as [string, Uint8Array]));
   return {
     keys,
-    zkConfig: zkConfigOver({
-      artefact: async (kind: string, circuit: string) => {
-        const key = keys.get(circuit);
-        if (kind !== 'verifier' || key === undefined) throw new Error(`this wallet holds no ${kind} for "${circuit}" to build the account with.`);
-        return key;
+    zkConfig: zkConfigOver(
+      {
+        artefact: async (kind: string, circuit: string) => {
+          const key = keys.get(circuit);
+          if (kind !== 'verifier' || key === undefined)
+            throw new Error(`this wallet holds no ${kind} for "${circuit}" to build the account with.`);
+          return key;
+        }
       },
-    }, (circuit) => circuit, runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')),
+      (circuit) => circuit,
+      runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')
+    )
   };
 };
 
 /** Where a signer's pay-record key stands on the account, and the key sealed to the wrapping key; refuses an ask that is not four keys. */
 const payKeyStandingAnswer = async (
-  d: AccountBuildingDeps, ask: Extract<AccountBuilderAsk, { ask: 'pay-key-standing' }>,
+  d: AccountBuildingDeps,
+  ask: Extract<AccountBuilderAsk, { ask: 'pay-key-standing' }>
 ): Promise<AccountBuilderAnswer> => {
   if (![ask.account, ask.key, ask.signingSecret, ask.wrappingPublicKey].every((h) => HEX64.test(String(h)))) {
-    throw new Error('that is not an account, a pay-record key, a signer\'s key and a wrapping key, so nothing was read.');
+    throw new Error(
+      "that is not an account, a pay-record key, a signer's key and a wrapping key, so nothing was read."
+    );
   }
   const [{ payKeyStandingOf }, { sealPayKeyTo }] = await Promise.all([
     import('../../../../src/midnight/pay-key-round.js'),
-    import('../../../../src/midnight/run-keys.js'),
+    import('../../../../src/midnight/run-keys.js')
   ]);
   const P = d.accountPure as unknown as Parameters<typeof payKeyStandingOf>[0];
   const ledger = d.accountLedger!((d.runtimeState.deserialize(fromBase64(ask.accountState)) as { data: unknown }).data);
   const s = payKeyStandingOf(P, {
-    address: ask.account.toLowerCase(), account: ledger as never, key: ask.key.toLowerCase() as never,
-    secretKey: ask.signingSecret.toLowerCase() as never,
+    address: ask.account.toLowerCase(),
+    account: ledger as never,
+    key: ask.key.toLowerCase() as never,
+    secretKey: ask.signingSecret.toLowerCase() as never
   });
   return {
-    id: ask.id, ok: true, ask: 'pay-key-standing',
+    id: ask.id,
+    ok: true,
+    ask: 'pay-key-standing',
     standing: {
-      committed: s.committed, isThisKey: s.isThisKey, sealedMine: s.sealedMine,
+      committed: s.committed,
+      isThisKey: s.isThisKey,
+      sealedMine: s.sealedMine,
       round: {
-        commitment: s.round.commitment, payload: s.round.payload, salt: s.round.salt, proposal: s.round.proposal,
-        open: s.round.open, approvals: String(s.round.approvals), needed: String(s.round.needed), stale: s.round.stale,
-        approvedHere: s.round.approvedHere,
+        commitment: s.round.commitment,
+        payload: s.round.payload,
+        salt: s.round.salt,
+        proposal: s.round.proposal,
+        open: s.round.open,
+        approvals: String(s.round.approvals),
+        needed: String(s.round.needed),
+        stale: s.round.stale,
+        approvedHere: s.round.approvedHere
       },
       noVault: hexOf(P.noVault()),
-      wrap: sealPayKeyTo(ask.key.toLowerCase() as never, ask.wrappingPublicKey.toLowerCase() as never),
-    },
+      wrap: sealPayKeyTo(ask.key.toLowerCase() as never, ask.wrappingPublicKey.toLowerCase() as never)
+    }
   };
 };
 
@@ -276,70 +409,129 @@ const payKeyStandingAnswer = async (
  */
 export const answerAccountAsk = async (
   deps: () => Promise<AccountBuildingDeps>,
-  ask: AccountBuilderAsk,
+  ask: AccountBuilderAsk
 ): Promise<AccountBuilderAnswer> => {
   try {
     const loaded = await deps();
     if (ask.ask === 'pay-key-standing') return await payKeyStandingAnswer(loaded, ask);
     if (ask.ask === 'registry-values') {
       const values = registryValuesAt(loaded.registry, fromBase64(ask.registryState), ask.tags.map(bytesOfHex));
-      return { id: ask.id, ok: true, ask: 'registry-values', values: values.map((v) => (v === null ? null : toBase64(v))) };
+      return {
+        id: ask.id,
+        ok: true,
+        ask: 'registry-values',
+        values: values.map((v) => (v === null ? null : toBase64(v)))
+      };
     }
     /* The network travels with each ask into what it builds; the builder holds no network of its own. */
     const d = { ...loaded, network: ask.network };
     switch (ask.ask) {
       case 'governed-call': {
         const built = await buildGovernedCall(d, {
-          account: ask.account, order: ask.order, material: ask.material, chain: chainOf(ask.chain), opened: ask.opened,
+          account: ask.account,
+          order: ask.order,
+          material: ask.material,
+          chain: chainOf(ask.chain),
+          opened: ask.opened
         });
         return { id: ask.id, ok: true, ask: 'governed-call', tx: toBase64(built.proven) };
       }
       case 'anchor': {
         const built = await buildAnchorCall(d, {
-          account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held, chain: chainOf(ask.chain),
+          account: ask.account,
+          material: ask.material,
+          previous: ask.previous,
+          batch: ask.batch,
+          held: ask.held,
+          chain: chainOf(ask.chain)
         });
         return { id: ask.id, ok: true, ask: 'anchor', tx: toBase64(built.proven) };
       }
       case 'recover-anchor': {
         const built = await buildRecoverAnchorCall(d, {
-          account: ask.account, material: ask.material, previous: ask.previous, batch: ask.batch, held: ask.held,
-          resumesFrom: ask.resumesFrom, latest: ask.latest, lastRecovery: ask.lastRecovery, proposal: ask.proposal,
-          proposalSalt: ask.proposalSalt, chain: chainOf(ask.chain),
+          account: ask.account,
+          material: ask.material,
+          previous: ask.previous,
+          batch: ask.batch,
+          held: ask.held,
+          resumesFrom: ask.resumesFrom,
+          latest: ask.latest,
+          lastRecovery: ask.lastRecovery,
+          proposal: ask.proposal,
+          proposalSalt: ask.proposalSalt,
+          chain: chainOf(ask.chain)
         });
         return { id: ask.id, ok: true, ask: 'recover-anchor', tx: toBase64(built.proven), placement: built.placement };
       }
       case 'account-deploy': {
-        const built = await buildAccountDeploy({
-          ledger: d.ledger, runtimeState: d.runtimeState, contracts: d.contracts, prove: d.prove, network: ask.network,
-          accountCompiled: d.accountCompiled, accountKeys: verifiersOf(ask.verifiers).zkConfig, now: clockOf(ask.now),
-        } as never, { foundingLeaf: ask.foundingLeaf, label: ask.label, foundingKey: ask.foundingKey });
+        const built = await buildAccountDeploy(
+          {
+            ledger: d.ledger,
+            runtimeState: d.runtimeState,
+            contracts: d.contracts,
+            prove: d.prove,
+            network: ask.network,
+            accountCompiled: d.accountCompiled,
+            accountKeys: verifiersOf(ask.verifiers).zkConfig,
+            now: clockOf(ask.now)
+          } as never,
+          { foundingLeaf: ask.foundingLeaf, label: ask.label, foundingKey: ask.foundingKey }
+        );
         return { id: ask.id, ok: true, ask: 'account-deploy', account: built.address, tx: toBase64(built.proven) };
       }
       case 'finished-creation': {
-        const built = await finishedCreation({ ledger: d.ledger, prove: d.prove, network: ask.network, now: clockOf(ask.now) } as never, {
-          account: ask.account, keys: verifiersOf(ask.verifiers).keys, signature: ask.signature,
-        });
+        const built = await finishedCreation(
+          { ledger: d.ledger, prove: d.prove, network: ask.network, now: clockOf(ask.now) } as never,
+          {
+            account: ask.account,
+            keys: verifiersOf(ask.verifiers).keys,
+            signature: ask.signature
+          }
+        );
         return { id: ask.id, ok: true, ask: 'finished-creation', tx: toBase64(built.proven) };
       }
       case 'registry-put': {
         const tx = await registryPutBuilt(d, {
-          registry: ask.registry, tag: bytesOfHex(ask.tag), value: fromBase64(ask.value),
-          state: fromBase64(ask.chain.registryState), parameters: fromBase64(ask.chain.parameters),
+          registry: ask.registry,
+          tag: bytesOfHex(ask.tag),
+          value: fromBase64(ask.value),
+          state: fromBase64(ask.chain.registryState),
+          parameters: fromBase64(ask.chain.parameters)
         });
         return { id: ask.id, ok: true, ask: 'registry-put', tx: toBase64(tx) };
       }
       case 'creation-again': {
-        const again = await creationCarriedAgain({ ledger: d.ledger, prove: d.prove, network: ask.network, now: clockOf(ask.now) } as never, {
-          deploy: fromBase64(ask.deploy), insert: fromBase64(ask.insert),
-        });
-        return { id: ask.id, ok: true, ask: 'creation-again', account: again.account, deploy: toBase64(again.deploy), insert: toBase64(again.insert) };
+        const again = await creationCarriedAgain(
+          { ledger: d.ledger, prove: d.prove, network: ask.network, now: clockOf(ask.now) } as never,
+          {
+            deploy: fromBase64(ask.deploy),
+            insert: fromBase64(ask.insert)
+          }
+        );
+        return {
+          id: ask.id,
+          ok: true,
+          ask: 'creation-again',
+          account: again.account,
+          deploy: toBase64(again.deploy),
+          insert: toBase64(again.insert)
+        };
       }
       default:
-        return { id: (ask as { id: number }).id, ok: false, error: 'the wallet\'s account builder was asked for something it does not build.' };
+        return {
+          id: (ask as { id: number }).id,
+          ok: false,
+          error: "the wallet's account builder was asked for something it does not build."
+        };
     }
   } catch (e) {
     const name = (e as { name?: unknown } | null)?.name;
-    return { id: ask.id, ok: false, error: describeFailure(e), ...(typeof name === 'string' && name !== 'Error' ? { name } : {}) };
+    return {
+      id: ask.id,
+      ok: false,
+      error: describeFailure(e),
+      ...(typeof name === 'string' && name !== 'Error' ? { name } : {})
+    };
   }
 };
 
@@ -355,30 +547,46 @@ export interface WorkerScopeLike {
  * not be kept on this device, and says `ready` only once it is listening, so no
  * ask is posted into a worker that would drop it.
  */
-export const startAccountBuilder = (
-  scope: WorkerScopeLike,
-  deps?: () => Promise<AccountBuildingDeps>,
-): void => {
+export const startAccountBuilder = (scope: WorkerScopeLike, deps?: () => Promise<AccountBuildingDeps>): void => {
   let current: number | null = null;
-  const say = (word: AccountBuilderWord): void => { try { scope.postMessage(word); } catch { /* the starter has gone */ } };
-  const loaded = deps ?? accountBuilderDeps({
-    keyMaterial: { onNotKept: (file, why) => say({ kind: 'keys-not-kept', file, why }) },
-    onProof: (event) => { if (current !== null) say({ kind: 'account-proof', id: current, state: event.at === 'start' ? 'started' : 'ended' }); },
-  });
+  const say = (word: AccountBuilderWord): void => {
+    try {
+      scope.postMessage(word);
+    } catch {
+      /* the starter has gone */
+    }
+  };
+  const loaded =
+    deps ??
+    accountBuilderDeps({
+      keyMaterial: { onNotKept: (file, why) => say({ kind: 'keys-not-kept', file, why }) },
+      onProof: (event) => {
+        if (current !== null)
+          say({ kind: 'account-proof', id: current, state: event.at === 'start' ? 'started' : 'ended' });
+      }
+    });
   let queue: Promise<unknown> = Promise.resolve();
   scope.addEventListener('message', ({ data }) => {
     const ask = data as AccountBuilderAsk;
     if (typeof ask !== 'object' || ask === null || typeof ask.id !== 'number') return;
-    queue = queue.then(async () => {
-      current = ask.id;
-      const answer = await answerAccountAsk(loaded, ask);
-      current = null;
-      try {
-        scope.postMessage(answer);
-      } catch (e) {
-        scope.postMessage({ id: ask.id, ok: false, error: `the builder could not hand back what it built (${describeFailure(e)}).` });
-      }
-    }).catch(() => { /* the starter has gone; the next ask is still answered */ });
+    queue = queue
+      .then(async () => {
+        current = ask.id;
+        const answer = await answerAccountAsk(loaded, ask);
+        current = null;
+        try {
+          scope.postMessage(answer);
+        } catch (e) {
+          scope.postMessage({
+            id: ask.id,
+            ok: false,
+            error: `the builder could not hand back what it built (${describeFailure(e)}).`
+          });
+        }
+      })
+      .catch(() => {
+        /* the starter has gone; the next ask is still answered */
+      });
   });
   scope.postMessage({ kind: 'account-builder-ready' });
 };

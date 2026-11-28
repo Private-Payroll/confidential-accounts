@@ -21,5 +21,5 @@ export interface BalanceEngines {
 export const BalanceEnginesContext = createContext<BalanceEngines>({
   shielded: startBalance,
   unshielded: startUnshieldedBalance,
-  dust: startDustBalance,
+  dust: startDustBalance
 });

@@ -5,7 +5,11 @@ import { ACT_REFUSAL, type ActRefusal } from './refusals.js';
 import { ACCOUNT_ORIGIN } from './session.js';
 
 /** The company as an action in the person's wallet is asked to name it. */
-interface NamedForTheWallet { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress }
+interface NamedForTheWallet {
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+}
 
 /**
  * What is checked before the wallet is asked to act on the company the screen's `view` reads: the site is set up, the
@@ -16,5 +20,7 @@ export async function namedBefore(personId: string, view: PageView): Promise<Nam
   if (ACCOUNT_ORIGIN === '') return ACT_REFUSAL.notSetUp;
   if (!(await keyringFor(personId))) return ACT_REFUSAL.notSignedIn;
   const named = await namedIn(view);
-  return named === null ? ACT_REFUSAL.didNotFinish : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
+  return named === null
+    ? ACT_REFUSAL.didNotFinish
+    : { record: named.record, company: named.company as CompanyLabel, account: named.account as AccountAddress };
 }

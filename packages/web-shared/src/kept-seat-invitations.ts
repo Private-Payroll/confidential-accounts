@@ -13,9 +13,13 @@ export function withSeatInvitationKept(k: Keyring, kept: KeptSeatInvitation, now
   const held = k.seatInvitationsKept ?? {};
   const was = held[kept.id];
   if (was !== undefined && was.offer.signature !== kept.offer.signature && !signedAgain(was, kept)) {
-    throw new Error('these saved keys already keep another invitation under this id, so it is not written over. Nothing was changed.');
+    throw new Error(
+      'these saved keys already keep another invitation under this id, so it is not written over. Nothing was changed.'
+    );
   }
-  const live = Object.fromEntries(Object.entries(held).filter(([id, x]) => id !== kept.id && x.offer.offer.expiresAt > now));
+  const live = Object.fromEntries(
+    Object.entries(held).filter(([id, x]) => id !== kept.id && x.offer.offer.expiresAt > now)
+  );
   return { ...k, seatInvitationsKept: { ...live, [kept.id]: kept } };
 }
 
@@ -32,11 +36,14 @@ const apartFromTheKey = (signed: SignedOffer): string => {
  * signature that verifies for the seat that invited.
  */
 const signedAgain = (was: KeptSeatInvitation, now: KeptSeatInvitation): boolean =>
-  was.token === now.token && was.link === now.link && was.company === now.company
-  && was.offer.offer.for.kind === 'signer' && now.offer.offer.for.kind === 'signer'
-  && was.offer.offer.inboxPublicKey !== now.offer.offer.inboxPublicKey
-  && apartFromTheKey(was.offer) === apartFromTheKey(now.offer)
-  && whyThisOfferIsNotSigned(now.offer) === null;
+  was.token === now.token &&
+  was.link === now.link &&
+  was.company === now.company &&
+  was.offer.offer.for.kind === 'signer' &&
+  now.offer.offer.for.kind === 'signer' &&
+  was.offer.offer.inboxPublicKey !== now.offer.offer.inboxPublicKey &&
+  apartFromTheKey(was.offer) === apartFromTheKey(now.offer) &&
+  whyThisOfferIsNotSigned(now.offer) === null;
 
 /** The keyring without the kept invitations under these ids. */
 export function withoutSeatInvitationsKept(k: Keyring, ids: readonly string[]): Keyring {
@@ -61,20 +68,35 @@ interface KeptByAddress {
  * in words, because there is no telling which the person meant.
  */
 export async function keptSeatInvitationForAddress(
-  k: Keyring, company: string, address: string, now: number, open: (kept: KeptSeatInvitation) => Promise<boolean>,
+  k: Keyring,
+  company: string,
+  address: string,
+  now: number,
+  open: (kept: KeptSeatInvitation) => Promise<boolean>
 ): Promise<KeptByAddress> {
   const at = address.trim().toLowerCase();
   const live: KeptSeatInvitation[] = [];
   const passedOver: string[] = [];
   for (const x of Object.values(k.seatInvitationsKept ?? {})) {
     const forWhom = x.offer.offer.for;
-    if (x.company !== company || x.offer.offer.expiresAt <= now || forWhom.kind !== 'signer' || forWhom.byAddress?.address.toLowerCase() !== at) continue;
+    if (
+      x.company !== company ||
+      x.offer.offer.expiresAt <= now ||
+      forWhom.kind !== 'signer' ||
+      forWhom.byAddress?.address.toLowerCase() !== at
+    )
+      continue;
     if (await open(x)) live.push(x);
     else passedOver.push(x.id);
   }
   if (live.length > 1) {
-    return { kept: null, passedOver, refused: 'there is more than one invitation kept on this device for this address, so it cannot be told which to take up again: '
-      + 'withdraw the proposals of all but one of them from the company\'s open proposals, then press again' };
+    return {
+      kept: null,
+      passedOver,
+      refused:
+        'there is more than one invitation kept on this device for this address, so it cannot be told which to take up again: ' +
+        "withdraw the proposals of all but one of them from the company's open proposals, then press again"
+    };
   }
   return { kept: live[0] ?? null, refused: null, passedOver };
 }

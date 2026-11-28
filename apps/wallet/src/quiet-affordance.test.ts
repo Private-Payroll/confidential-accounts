@@ -31,10 +31,10 @@ describe('§1 — a quiet button carries its affordance with no pointer on it', 
    * hard way that a test matching inside a comment is a test that passes after
    * the rule has been deleted — and the comments above `button.quiet` quote the
    * old declarations verbatim, so this is load-bearing here in particular. */
-  const CSS = readFileSync(
-    fileURLToPath(new URL('./app.css', import.meta.url)),
-    'utf8',
-  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  const CSS = readFileSync(fileURLToPath(new URL('./app.css', import.meta.url)), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    ''
+  );
 
   /** The declarations of the rule whose selector is EXACTLY `selector`. The
    * bodies here contain no nested braces, so the scan is a scan and not a
@@ -50,15 +50,14 @@ describe('§1 — a quiet button carries its affordance with no pointer on it', 
     return body ?? '';
   };
 
-  it('THE DEFECT, PINNED: the resting rule sets a border-color, and it is not transparent',
-    () => {
-      const resting = rule('button.quiet');
-      /* What was there before was `border-color: transparent;` — this
-       * assertion is the one that goes red if it comes back. */
-      /* The control's border colour, from the kit's theme: `--input`. */
-      expect(resting).toMatch(/border-color:\s*var\(--input\)/);
-      expect(resting).not.toMatch(/border-color:\s*transparent/);
-    });
+  it('THE DEFECT, PINNED: the resting rule sets a border-color, and it is not transparent', () => {
+    const resting = rule('button.quiet');
+    /* What was there before was `border-color: transparent;` — this
+     * assertion is the one that goes red if it comes back. */
+    /* The control's border colour, from the kit's theme: `--input`. */
+    expect(resting).toMatch(/border-color:\s*var\(--input\)/);
+    expect(resting).not.toMatch(/border-color:\s*transparent/);
+  });
 
   it('and the hover rule is a CHANGE to that affordance, never the whole of it', () => {
     const resting = rule('button.quiet');

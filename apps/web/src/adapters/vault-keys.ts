@@ -11,10 +11,14 @@ import type { CompanyKeys } from '../../../../src/core/company-key.js';
  * is, and whether its seat is believed, are for the reader to check.
  */
 export function offersOpenHere(
-  companyId: string, served: unknown, viewingKey: CompanyKeys, label: CompanyLabel, account: AccountAddress,
+  companyId: string,
+  served: unknown,
+  viewingKey: CompanyKeys,
+  label: CompanyLabel,
+  account: AccountAddress
 ): ReadonlyMap<string, OpenedVaultKeysOffer> {
   const offers = (served as { offers?: unknown } | null)?.offers;
-  const kept = Array.isArray(offers) ? offers as VaultKeysOffer[] : [];
+  const kept = Array.isArray(offers) ? (offers as VaultKeysOffer[]) : [];
   const open = new Map<string, OpenedVaultKeysOffer>();
   for (const offer of kept) {
     const seat = (offer?.seat ?? '').toLowerCase();

@@ -1,6 +1,15 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Activity01Icon, Add01Icon, ArrowDown01Icon, ArrowUp01Icon, CheckListIcon, Invoice01Icon, SafeIcon, UserAdd01Icon } from '@hugeicons/core-free-icons';
+import {
+  Activity01Icon,
+  Add01Icon,
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  CheckListIcon,
+  Invoice01Icon,
+  SafeIcon,
+  UserAdd01Icon
+} from '@hugeicons/core-free-icons';
 import { Badge, Button, ComingSoon, EmptyState, PageHeader, Progress, Section, SectionRow, useText } from 'vaults-ui';
 import { DataTable, type DataTableColumn, type DataTableFilter } from 'vaults-ui/data-table';
 import { READ, type CompanyRecords, type Read } from '../adapters/company-records.js';
@@ -13,19 +22,49 @@ import { RaiseRun } from '../actions/raise-run.js';
 import { CreateMenu } from '../shell/create-menu.js';
 import { usePanel } from '../shell/right-panel.js';
 import { InvitePeople } from '../actions/invite.js';
-import { blockedBy, skippedFor, someoneInvited, STANDING, standingOf, stepsLeft, useCreationFact } from '../setup/standing.js';
+import {
+  blockedBy,
+  skippedFor,
+  someoneInvited,
+  STANDING,
+  standingOf,
+  stepsLeft,
+  useCreationFact
+} from '../setup/standing.js';
 import { startSetupAt } from '../setup/asked.js';
 import { useSession } from '../session.js';
 import { useCompanyName } from '../shell/company-facts.js';
 import { EVERY_STEP, type SetupFacts } from '../setup/steps.js';
 import type { StepId } from '../setup/step-ids.js';
-import { Approvals, CheckFingerprint, Day, ProposalStatus, ProposalWhat, ReadOf, RunMoney, RunStatus, useMonth, VaultTiles, WaitingName, waitingRead, WithRecords } from '../records/parts.js';
+import {
+  Approvals,
+  CheckFingerprint,
+  Day,
+  ProposalStatus,
+  ProposalWhat,
+  ReadOf,
+  RunMoney,
+  RunStatus,
+  useMonth,
+  VaultTiles,
+  WaitingName,
+  waitingRead,
+  WithRecords
+} from '../records/parts.js';
 
 /** How many rows of a list Home shows before "View all". */
 const SHOWN = 3;
 
 /** The ids of the recently passed table's columns and filters, and the two statuses it keeps, compared by the code and never shown; the words shown come from the language file. */
-const PASSED = { what: 'what', approvals: 'approvals', status: 'status', raised: 'raised', all: 'all', approved: 'approved', executed: 'executed' } as const;
+const PASSED = {
+  what: 'what',
+  approvals: 'approvals',
+  status: 'status',
+  raised: 'raised',
+  all: 'all',
+  approved: 'approved',
+  executed: 'executed'
+} as const;
 
 /**
  * HOME: WHAT IS WAITING ON THIS PERSON ON TOP, MONEY IN THE MIDDLE, THE REST
@@ -47,7 +86,11 @@ export function Home() {
       <WithRecords>
         {(records) => (
           <>
-            <PageHeader title={<span data-company-name>{nameOf(companies.find((c) => c.id === records.id) ?? {}, records.name)}</span>} />
+            <PageHeader
+              title={
+                <span data-company-name>{nameOf(companies.find((c) => c.id === records.id) ?? {}, records.name)}</span>
+              }
+            />
             <SetupCard company={records.id} vaults={records.vaults} invited={someoneInvited(records)} />
             <div className="flex flex-col gap-3" data-part="pending-approval">
               <h2 className="text-sm font-medium text-muted-foreground">{t('home.pendingApproval')}</h2>
@@ -59,10 +102,17 @@ export function Home() {
             <Vaults records={records} />
             <div className="grid items-start gap-4 xl:grid-cols-3">
               <LatestRun records={records} />
-              <div className="min-w-0 xl:col-span-2"><RecentlyPassed records={records} /></div>
+              <div className="min-w-0 xl:col-span-2">
+                <RecentlyPassed records={records} />
+              </div>
             </div>
             <Section
-              title={<span className="flex items-center gap-2">{t('home.recentActivity')}<ComingSoon explanation={t('home.recentActivity.soon')} /></span>}
+              title={
+                <span className="flex items-center gap-2">
+                  {t('home.recentActivity')}
+                  <ComingSoon explanation={t('home.recentActivity.soon')} />
+                </span>
+              }
               empty={<EmptyState icon={Activity01Icon}>{t('home.recentActivity.none')}</EmptyState>}
               data-part="recent-activity"
             />
@@ -79,8 +129,25 @@ export function Home() {
  * the part's actions still beside it, that says it could not be read, so a part not read is never shown as a part
  * with nothing in it.
  */
-function Part<T>({ read, title, actions, children, ...marks }: { read: Read<T>; title: ReactNode; actions?: ReactNode; children: (value: T) => ReactNode; 'data-part': string }) {
-  if (read.of === READ.unreadable) return <Section title={title} actions={actions} list={false} {...marks}><ReadOf read={read}>{() => null}</ReadOf></Section>;
+function Part<T>({
+  read,
+  title,
+  actions,
+  children,
+  ...marks
+}: {
+  read: Read<T>;
+  title: ReactNode;
+  actions?: ReactNode;
+  children: (value: T) => ReactNode;
+  'data-part': string;
+}) {
+  if (read.of === READ.unreadable)
+    return (
+      <Section title={title} actions={actions} list={false} {...marks}>
+        <ReadOf read={read}>{() => null}</ReadOf>
+      </Section>
+    );
   return <>{children(read.value)}</>;
 }
 
@@ -96,11 +163,21 @@ function Part<T>({ read, title, actions, children, ...marks }: { read: Read<T>; 
  * invited, which makes People done, comes from the same records, by the same
  * function, as the wizard's.
  */
-function SetupCard({ company, vaults, invited }: { company: string; vaults: CompanyRecords['vaults']; invited: boolean }) {
+function SetupCard({
+  company,
+  vaults,
+  invited
+}: {
+  company: string;
+  vaults: CompanyRecords['vaults'];
+  invited: boolean;
+}) {
   const t = useText();
   const [folded, fold] = useState(() => readFolds(browserKeep()).has(company));
   const { creation } = useCreationFact(company);
-  useEffect(() => { fold(readFolds(browserKeep()).has(company)); }, [company]);
+  useEffect(() => {
+    fold(readFolds(browserKeep()).has(company));
+  }, [company]);
   /* Vaults that could not be read are read as none created, so the step is never shown done on a guess. */
   if (creation === null) return null;
   const facts = { company, vaults: vaults.of === READ.read ? vaults.value : [], creation, invited };
@@ -110,59 +187,106 @@ function SetupCard({ company, vaults, invited }: { company: string; vaults: Comp
   const standings = EVERY_STEP.map((s) => standingOf(s, facts, skipped));
   const done = standings.filter((s) => s === STANDING.done).length;
   const progress = t('setup.progress', { done, count: EVERY_STEP.length });
-  const toggle = (): void => { keepFold(browserKeep(), company, !folded); fold(!folded); };
+  const toggle = (): void => {
+    keepFold(browserKeep(), company, !folded);
+    fold(!folded);
+  };
   const header = {
     title: t('home.setup.title'),
     description: (
       <div className="flex max-w-md flex-col gap-2 pt-1">
-        <Progress steps={EVERY_STEP.map((s, i) => ({ id: s.id, done: standings[i] === STANDING.done }))} getValueLabel={() => progress} data-setup-progress />
-        <span data-steps-left={left.length} data-steps-done={done}>{progress}</span>
+        <Progress
+          steps={EVERY_STEP.map((s, i) => ({ id: s.id, done: standings[i] === STANDING.done }))}
+          getValueLabel={() => progress}
+          data-setup-progress
+        />
+        <span data-steps-left={left.length} data-steps-done={done}>
+          {progress}
+        </span>
       </div>
     ),
     actions: (
-      <Button variant="ghost" size="icon-sm" onClick={toggle} aria-expanded={!folded} aria-label={folded ? t('home.setup.unfold') : t('home.setup.fold')} data-action="fold-setup">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={toggle}
+        aria-expanded={!folded}
+        aria-label={folded ? t('home.setup.unfold') : t('home.setup.fold')}
+        data-action="fold-setup"
+      >
         <HugeiconsIcon icon={folded ? ArrowDown01Icon : ArrowUp01Icon} strokeWidth={2} />
       </Button>
-    ),
+    )
   };
-  if (folded) return <Section {...header} list={false} data-part="setup-card" data-folded>{null}</Section>;
+  if (folded)
+    return (
+      <Section {...header} list={false} data-part="setup-card" data-folded>
+        {null}
+      </Section>
+    );
   return (
     <Section {...header} empty={null} data-part="setup-card">
-      {left.map((s) => <SetupRow key={s.id} step={s} facts={facts} skipped={skipped} />)}
+      {left.map((s) => (
+        <SetupRow key={s.id} step={s} facts={facts} skipped={skipped} />
+      ))}
     </Section>
   );
 }
-
 
 /**
  * One step still to do. A step that an unfinished step blocks has its Open shut, with the reason beside it tied to
  * it and a button that leads to the step that blocks it, as the wizard does.
  */
-function SetupRow({ step, facts, skipped }: { step: (typeof EVERY_STEP)[number]; facts: SetupFacts; skipped: ReadonlySet<StepId> }) {
+function SetupRow({
+  step,
+  facts,
+  skipped
+}: {
+  step: (typeof EVERY_STEP)[number];
+  facts: SetupFacts;
+  skipped: ReadonlySet<StepId>;
+}) {
   const t = useText();
   const whyId = useId();
   const blocker = blockedBy(EVERY_STEP.indexOf(step), facts);
   const blockedStep = blocker === null ? null : EVERY_STEP.find((s) => s.id === blocker)!;
-  const open = (id: StepId): void => { startSetupAt(id); go(HOME.setup); };
+  const open = (id: StepId): void => {
+    startSetupAt(id);
+    go(HOME.setup);
+  };
   return (
     <SectionRow
       data-step={step.id}
       data-standing={standingOf(step, facts, skipped)}
-      actions={blockedStep === null
-        ? <Button variant="outline" size="sm" onClick={() => open(step.id)} data-action="open-step">{t('home.setup.open')}</Button>
-        : (
+      actions={
+        blockedStep === null ? (
+          <Button variant="outline" size="sm" onClick={() => open(step.id)} data-action="open-step">
+            {t('home.setup.open')}
+          </Button>
+        ) : (
           <>
-            <Button variant="outline" size="sm" disabled aria-describedby={whyId} data-action="open-step">{t('home.setup.open')}</Button>
+            <Button variant="outline" size="sm" disabled aria-describedby={whyId} data-action="open-step">
+              {t('home.setup.open')}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => open(blockedStep.id)} data-lead-to={blockedStep.id}>
               {t('setup.blocked.go', { step: blockedStep.name(t) })}
             </Button>
           </>
-        )}
+        )
+      }
     >
       <HugeiconsIcon icon={step.icon} strokeWidth={2} className="size-4 text-muted-foreground" />
       <span>{step.name(t)}</span>
-      {standingOf(step, facts, skipped) === STANDING.skipped ? <Badge variant="outline" data-skipped>{t('setup.skipped')}</Badge> : null}
-      {blockedStep === null ? null : <span id={whyId} className="basis-full text-xs text-muted-foreground" data-why-disabled>{t('setup.blocked', { step: blockedStep.name(t) })}</span>}
+      {standingOf(step, facts, skipped) === STANDING.skipped ? (
+        <Badge variant="outline" data-skipped>
+          {t('setup.skipped')}
+        </Badge>
+      ) : null}
+      {blockedStep === null ? null : (
+        <span id={whyId} className="basis-full text-xs text-muted-foreground" data-why-disabled>
+          {t('setup.blocked', { step: blockedStep.name(t) })}
+        </span>
+      )}
     </SectionRow>
   );
 }
@@ -178,14 +302,27 @@ function ProposalsWaiting({ records }: { records: CompanyRecords }) {
           <Section
             title={t('page.proposals.name')}
             count={waiting.length}
-            actions={<><CreateMenu /><Button variant="outline" asChild><PageLink to={PAGE.proposals} data-action="view-all-proposals">{t('home.viewAll')}</PageLink></Button></>}
+            actions={
+              <>
+                <CreateMenu />
+                <Button variant="outline" asChild>
+                  <PageLink to={PAGE.proposals} data-action="view-all-proposals">
+                    {t('home.viewAll')}
+                  </PageLink>
+                </Button>
+              </>
+            }
             empty={<EmptyState icon={CheckListIcon}>{t('home.proposalsWaiting.none')}</EmptyState>}
             data-part="proposals-waiting"
           >
             {waiting.slice(0, SHOWN).map((r) => (
               <SectionRow key={r.id} data-proposal={r.id} actions={<Approve row={r} size="sm" />}>
-                <span className="font-medium"><ProposalWhat row={r} /></span>
-                <span className="text-muted-foreground"><Approvals row={r} /></span>
+                <span className="font-medium">
+                  <ProposalWhat row={r} />
+                </span>
+                <span className="text-muted-foreground">
+                  <Approvals row={r} />
+                </span>
               </SectionRow>
             ))}
           </Section>
@@ -201,7 +338,11 @@ function PeopleWaiting({ records }: { records: CompanyRecords }) {
   const actions = (
     <>
       <InvitePeople />
-      <Button variant="outline" asChild><PageLink to={PAGE.invitations} data-action="view-all-waiting">{t('home.viewAll')}</PageLink></Button>
+      <Button variant="outline" asChild>
+        <PageLink to={PAGE.invitations} data-action="view-all-waiting">
+          {t('home.viewAll')}
+        </PageLink>
+      </Button>
     </>
   );
   return (
@@ -225,18 +366,35 @@ function PeopleWaiting({ records }: { records: CompanyRecords }) {
   );
 }
 
-
 function Vaults({ records }: { records: CompanyRecords }) {
   const t = useText();
   /* Creating a vault is done on the Vaults page, from the one component the setup wizard's step shows too. */
-  const create = <Button variant="outline" asChild><PageLink to={PAGE.vaults} data-action="create-vault"><HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />{t('vaults.create')}</PageLink></Button>;
+  const create = (
+    <Button variant="outline" asChild>
+      <PageLink to={PAGE.vaults} data-action="create-vault">
+        <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+        {t('vaults.create')}
+      </PageLink>
+    </Button>
+  );
   return (
     <Part read={records.vaults} title={t('page.vaults.name')} data-part="vaults">
       {(rows) => (
-        <Section title={t('page.vaults.name')} count={rows.length} actions={rows.length === 0 ? undefined : create} list={false} box={false} data-part="vaults">
-          {rows.length === 0
-            ? <EmptyState icon={SafeIcon} action={create}>{t('vaults.none')}</EmptyState>
-            : <VaultTiles company={records.id} rows={rows} />}
+        <Section
+          title={t('page.vaults.name')}
+          count={rows.length}
+          actions={rows.length === 0 ? undefined : create}
+          list={false}
+          box={false}
+          data-part="vaults"
+        >
+          {rows.length === 0 ? (
+            <EmptyState icon={SafeIcon} action={create}>
+              {t('vaults.none')}
+            </EmptyState>
+          ) : (
+            <VaultTiles company={records.id} rows={rows} />
+          )}
         </Section>
       )}
     </Part>
@@ -248,7 +406,11 @@ function LatestRun({ records }: { records: CompanyRecords }) {
   const t = useText();
   const month = useMonth();
   const panel = usePanel();
-  const newRun = <Button data-action="new-run" onClick={() => panel.open({ title: t('raiseRun.title'), body: <RaiseRun /> })}>{t('payroll.newRun')}</Button>;
+  const newRun = (
+    <Button data-action="new-run" onClick={() => panel.open({ title: t('raiseRun.title'), body: <RaiseRun /> })}>
+      {t('payroll.newRun')}
+    </Button>
+  );
   return (
     <Part read={records.runs} title={t('home.nextRun')} data-part="next-run">
       {(runs) => {
@@ -256,14 +418,32 @@ function LatestRun({ records }: { records: CompanyRecords }) {
         return (
           <Section
             title={t('home.nextRun')}
-            actions={latest === undefined ? undefined : <Button variant="outline" asChild><PageLink to={PAGE.payroll} data-action="view-all-runs">{t('home.viewAll')}</PageLink></Button>}
-            empty={<EmptyState icon={Invoice01Icon} action={newRun}>{t('home.nextRun.none')}</EmptyState>}
+            actions={
+              latest === undefined ? undefined : (
+                <Button variant="outline" asChild>
+                  <PageLink to={PAGE.payroll} data-action="view-all-runs">
+                    {t('home.viewAll')}
+                  </PageLink>
+                </Button>
+              )
+            }
+            empty={
+              <EmptyState icon={Invoice01Icon} action={newRun}>
+                {t('home.nextRun.none')}
+              </EmptyState>
+            }
             data-part="next-run"
           >
             {latest === undefined ? null : (
               <SectionRow key={latest.id} data-run={latest.id}>
                 <div className="flex flex-col gap-1">
-                  <PageLink to={PAGE.run} params={{ run: latest.id }} className="font-medium underline-offset-4 hover:underline">{month(latest.period)}</PageLink>
+                  <PageLink
+                    to={PAGE.run}
+                    params={{ run: latest.id }}
+                    className="font-medium underline-offset-4 hover:underline"
+                  >
+                    {month(latest.period)}
+                  </PageLink>
                   <span className="text-muted-foreground">{t('payroll.people', { count: latest.payees.length })}</span>
                   <RunStatus run={latest} />
                   <RunMoney run={latest} />
@@ -284,17 +464,19 @@ function RecentlyPassed({ records }: { records: CompanyRecords }) {
     { id: PASSED.what, header: t('home.recentlyPassed.what'), cell: (r) => <ProposalWhat row={r} /> },
     { id: PASSED.approvals, header: t('home.recentlyPassed.approvals'), cell: (r) => <Approvals row={r} /> },
     { id: PASSED.status, header: t('home.recentlyPassed.status'), cell: (r) => <ProposalStatus row={r} /> },
-    { id: PASSED.raised, header: t('home.recentlyPassed.raised'), cell: (r) => <Day at={r.raisedAt} /> },
+    { id: PASSED.raised, header: t('home.recentlyPassed.raised'), cell: (r) => <Day at={r.raisedAt} /> }
   ];
   const filters: DataTableFilter<ProposalRow>[] = [
     { id: PASSED.all, label: t('home.recentlyPassed.all'), keeps: () => true },
     { id: PASSED.approved, label: t('proposals.status.approved'), keeps: (r) => r.status === PASSED.approved },
-    { id: PASSED.executed, label: t('proposals.status.executed'), keeps: (r) => r.status === PASSED.executed },
+    { id: PASSED.executed, label: t('proposals.status.executed'), keeps: (r) => r.status === PASSED.executed }
   ];
   return (
     <Part read={records.proposals} title={t('home.recentlyPassed')} data-part="recently-passed">
       {(rows) => {
-        const passed = rows.filter((r) => r.status === 'approved' || r.status === 'executed').sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
+        const passed = rows
+          .filter((r) => r.status === 'approved' || r.status === 'executed')
+          .sort((a, b) => b.raisedAt.localeCompare(a.raisedAt));
         return (
           <Section title={t('home.recentlyPassed')} list={false} data-part="recently-passed">
             <DataTable
@@ -303,7 +485,13 @@ function RecentlyPassed({ records }: { records: CompanyRecords }) {
               rowId={(r) => r.id}
               columns={columns}
               filters={filters}
-              rowActions={() => <Button variant="ghost" size="sm" asChild><PageLink to={PAGE.proposals} data-action="view-proposal">{t('home.recentlyPassed.view')}</PageLink></Button>}
+              rowActions={() => (
+                <Button variant="ghost" size="sm" asChild>
+                  <PageLink to={PAGE.proposals} data-action="view-proposal">
+                    {t('home.recentlyPassed.view')}
+                  </PageLink>
+                </Button>
+              )}
               pageSize={5}
               empty={<EmptyState icon={CheckListIcon}>{t('home.recentlyPassed.none')}</EmptyState>}
             />

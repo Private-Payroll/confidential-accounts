@@ -26,11 +26,14 @@ import { askWallet, type Openable, type WalletDialog } from './wallet-sign-in.js
 export const BALANCE_WINDOW_MS = 30 * 60_000;
 
 export const BALANCE_PURPOSE =
-  'So the money you chose goes from your own wallet into your company\'s vault. Your wallet shows '
-  + 'you exactly what leaves it. The network fee is paid by the company, not by you.';
+  "So the money you chose goes from your own wallet into your company's vault. Your wallet shows " +
+  'you exactly what leaves it. The network fee is paid by the company, not by you.';
 
 export class WalletDidNotPay extends Error {
-  constructor(readonly code: string, message: string) {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
     super(message);
     this.name = 'WalletDidNotPay';
   }
@@ -57,40 +60,60 @@ export interface BalanceAsked {
  * page as a wallet at work rather than as silence.
  */
 export const balanceAsk = (parts: {
-  name: string; rdns: string; purpose: string; nonce: string; expiresAt: number;
-  company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string;
-}) => Object.freeze({
-  schema: REQUEST_SCHEMA,
-  kind: 'balance' as const,
-  requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
-  purpose: parts.purpose,
-  nonce: parts.nonce,
-  expiresAt: parts.expiresAt,
-  progress: PROGRESS_SCHEMA,
-  company: parts.company,
-  account: parts.account,
-  vault: parts.vault,
-  transaction: parts.transaction,
-});
+  name: string;
+  rdns: string;
+  purpose: string;
+  nonce: string;
+  expiresAt: number;
+  company: CompanyLabel;
+  account: AccountAddress;
+  vault: VaultAddress;
+  transaction: string;
+}) =>
+  Object.freeze({
+    schema: REQUEST_SCHEMA,
+    kind: 'balance' as const,
+    requester: Object.freeze({ name: parts.name, rdns: parts.rdns }),
+    purpose: parts.purpose,
+    nonce: parts.nonce,
+    expiresAt: parts.expiresAt,
+    progress: PROGRESS_SCHEMA,
+    company: parts.company,
+    account: parts.account,
+    vault: parts.vault,
+    transaction: parts.transaction
+  });
 
 export async function askWalletToPay(
-  view: Openable, walletOrigin: string, ask: BalanceAsked, dialog?: WalletDialog,
+  view: Openable,
+  walletOrigin: string,
+  ask: BalanceAsked,
+  dialog?: WalletDialog
 ): Promise<{ transaction: string; leaves: readonly LeavesTheWallet[] }> {
   const now = ask.now ?? (() => Date.now());
   const nonce = ask.nonce ?? toHex(randomBytes(16));
-  const answer = await askWallet(view, walletOrigin, balanceAsk({
-    name: ask.name,
-    rdns: ask.rdns,
-    purpose: BALANCE_PURPOSE,
-    nonce,
-    expiresAt: now() + BALANCE_WINDOW_MS,
+  const answer = await askWallet(
+    view,
+    walletOrigin,
+    balanceAsk({
+      name: ask.name,
+      rdns: ask.rdns,
+      purpose: BALANCE_PURPOSE,
+      nonce,
+      expiresAt: now() + BALANCE_WINDOW_MS,
+      company: ask.company,
+      account: ask.account,
+      vault: ask.vault,
+      transaction: ask.transaction
+    }),
+    dialog
+  );
+  const read = readBalancedAnswer(answer, {
+    atOrigin: ask.atOrigin,
+    expectingNonce: nonce,
     company: ask.company,
     account: ask.account,
-    vault: ask.vault,
-    transaction: ask.transaction,
-  }), dialog);
-  const read = readBalancedAnswer(answer, {
-    atOrigin: ask.atOrigin, expectingNonce: nonce, company: ask.company, account: ask.account, vault: ask.vault,
+    vault: ask.vault
   });
   if (read.ok === false) throw new WalletDidNotPay(read.code, read.says);
   return { transaction: read.transaction, leaves: read.leaves };

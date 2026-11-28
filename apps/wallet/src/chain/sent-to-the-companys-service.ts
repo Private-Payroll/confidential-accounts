@@ -24,22 +24,31 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(
  * and the call is never sent again; one that gave no answer at all is `ServiceNotReached`, which may have taken the
  * call, so the wallet reads the chain for it before it sends that same call to the network itself.
  */
-export const toTheCompanysService = (
-  at: string, send: typeof fetch = (...a) => fetch(...a),
-) => async (finished: string): Promise<void> => {
-  const bad = serviceAddressRefusal(at);
-  if (bad !== null) throw new NotHandedOver(`${bad}. Nothing was sent.`);
-  let answered: Response;
-  try {
-    answered = await send(`${at}${COMPANY_SERVICE_ROUTE}`, {
-      method: 'POST', credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error',
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ transaction: finished }),
-    });
-  } catch (e) {
-    throw new ServiceNotReached(`the company's own service at ${at} did not answer (${said(e)}); the call may have reached it`, false);
-  }
-  if (!answered.ok) {
-    throw new Error(`the company's own service at ${at} answered ${answered.status}; the call may have reached it. `
-      + 'Do not send it again: open it later, and it will say where it stands on the chain.');
-  }
-};
+export const toTheCompanysService =
+  (at: string, send: typeof fetch = (...a) => fetch(...a)) =>
+  async (finished: string): Promise<void> => {
+    const bad = serviceAddressRefusal(at);
+    if (bad !== null) throw new NotHandedOver(`${bad}. Nothing was sent.`);
+    let answered: Response;
+    try {
+      answered = await send(`${at}${COMPANY_SERVICE_ROUTE}`, {
+        method: 'POST',
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+        redirect: 'error',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ transaction: finished })
+      });
+    } catch (e) {
+      throw new ServiceNotReached(
+        `the company's own service at ${at} did not answer (${said(e)}); the call may have reached it`,
+        false
+      );
+    }
+    if (!answered.ok) {
+      throw new Error(
+        `the company's own service at ${at} answered ${answered.status}; the call may have reached it. ` +
+          'Do not send it again: open it later, and it will say where it stands on the chain.'
+      );
+    }
+  };

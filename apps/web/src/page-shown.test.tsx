@@ -17,7 +17,7 @@ import { ENGLISH } from './english.test-support.js';
  */
 vi.mock('./adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('./adapters/company-records.js')>()),
-  readCompany: async () => ({ of: 'locked' }),
+  readCompany: async () => ({ of: 'locked' })
 }));
 
 const { PageView } = await import('./app.js');
@@ -26,18 +26,33 @@ const { SessionProvider } = await import('./session.js');
 const { DEFAULT_PREFERENCES } = await import('./preferences.js');
 const { VIEWS } = await import('./pages.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 const SRC = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SRC, '../../..');
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
-const walk = (dir: string): { path: string; text: string }[] => readdirSync(`${ROOT}/${dir}`, { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.test\.tsx?$/.test(e.name) ? [{ path: `${dir}/${e.name}`, text: readFileSync(`${ROOT}/${dir}/${e.name}`, 'utf8') }] : []);
+const walk = (dir: string): { path: string; text: string }[] =>
+  readdirSync(`${ROOT}/${dir}`, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? walk(`${dir}/${e.name}`)
+      : /\.test\.tsx?$/.test(e.name)
+        ? [{ path: `${dir}/${e.name}`, text: readFileSync(`${ROOT}/${dir}/${e.name}`, 'utf8') }]
+        : []
+  );
 const TESTS = walk('apps/web/src');
 const HERE = 'apps/web/src/page-shown.test.tsx';
 
-beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('a test waits for a page through the one helper', () => {
   /*
@@ -47,11 +62,27 @@ describe('a test waits for a page through the one helper', () => {
    */
   it('finds a page on screen only once it has loaded and been read', async () => {
     const session = {
-      person: { id: 'u1', name: 'Priya' }, companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }], company: 'c-1',
-      chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-      choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+      person: { id: 'u1', name: 'Priya' },
+      companies: [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }],
+      company: 'c-1',
+      chooseCompany: vi.fn(),
+      viewer: { signedIn: true, view: VIEWS.company, signs: true },
+      chooseView: vi.fn(),
+      preferences: DEFAULT_PREFERENCES,
+      choose: vi.fn(),
+      signOut: vi.fn(),
+      mac: true,
+      companiesChanged: vi.fn(async () => {})
     };
-    const { container } = render(<KitProvider languages={LANGUAGES} pick="en"><SessionProvider session={session}><Shell current="payroll"><PageView id="payroll" /></Shell></SessionProvider></KitProvider>);
+    const { container } = render(
+      <KitProvider languages={LANGUAGES} pick="en">
+        <SessionProvider session={session}>
+          <Shell current="payroll">
+            <PageView id="payroll" />
+          </Shell>
+        </SessionProvider>
+      </KitProvider>
+    );
     expect(container.querySelector('[data-screen]')).toBeNull();
     expect(container.querySelector('[data-loading]')).not.toBeNull();
     const screen = await untilPageShown(container);
@@ -61,7 +92,9 @@ describe('a test waits for a page through the one helper', () => {
 
   /* RED WHEN: a read of a page that never comes on screen, or never finishes reading, passes, silently or with nothing said about what was waited for. */
   it('fails, naming what it waited for, when it does not come', async () => {
-    await expect(untilShown(() => null, 'a thing never drawn', 50)).rejects.toThrow('not on screen after 50 ms: a thing never drawn');
+    await expect(untilShown(() => null, 'a thing never drawn', 50)).rejects.toThrow(
+      'not on screen after 50 ms: a thing never drawn'
+    );
     const view = render(<div data-screen="x" data-reading="" />);
     await expect(untilPageShown(view.container, 50)).rejects.toThrow(/not on screen/);
   });
@@ -75,12 +108,26 @@ describe('a test waits for a page through the one helper', () => {
    * purpose, and is the one named.
    */
   it('is the only way a test waits for a page', () => {
-    const OPENS = /<(PageView|Root|Setup)\b|^import\b[^;]*from '(?:\.\.?\/)+screens\/|\bawait import\('(?:\.\.?\/)+screens\//m;
+    const OPENS =
+      /<(PageView|Root|Setup)\b|^import\b[^;]*from '(?:\.\.?\/)+screens\/|\bawait import\('(?:\.\.?\/)+screens\//m;
     const NAMED = ['apps/web/src/records/page-loading.test.tsx', HERE];
     const opening = TESTS.filter((f) => OPENS.test(f.text) && !NAMED.includes(f.path));
     expect(opening.map((f) => f.path).sort()).toEqual([
-      'apps/web/src/actions/one-off.test.tsx', 'apps/web/src/actions/person-panel.test.tsx', 'apps/web/src/actions/raise-run.test.tsx', 'apps/web/src/actions/vendor-panel.test.tsx', 'apps/web/src/app.test.tsx', 'apps/web/src/foundation-look.test.tsx', 'apps/web/src/join-link.test.tsx', 'apps/web/src/one-menu.test.tsx', 'apps/web/src/records/pages-that-read.test.tsx', 'apps/web/src/screens/landing-not-opened.test.tsx', 'apps/web/src/screens/vault-deposit.test.tsx', 'apps/web/src/screens/vault-retire.test.tsx', 'apps/web/src/screens/waiting-admit.test.tsx', 'apps/web/src/setup/wizard.test.tsx',
-      'apps/web/src/shell/shell.test.tsx',
+      'apps/web/src/actions/one-off.test.tsx',
+      'apps/web/src/actions/person-panel.test.tsx',
+      'apps/web/src/actions/raise-run.test.tsx',
+      'apps/web/src/actions/vendor-panel.test.tsx',
+      'apps/web/src/app.test.tsx',
+      'apps/web/src/foundation-look.test.tsx',
+      'apps/web/src/join-link.test.tsx',
+      'apps/web/src/one-menu.test.tsx',
+      'apps/web/src/records/pages-that-read.test.tsx',
+      'apps/web/src/screens/landing-not-opened.test.tsx',
+      'apps/web/src/screens/vault-deposit.test.tsx',
+      'apps/web/src/screens/vault-retire.test.tsx',
+      'apps/web/src/screens/waiting-admit.test.tsx',
+      'apps/web/src/setup/wizard.test.tsx',
+      'apps/web/src/shell/shell.test.tsx'
     ]);
     for (const f of opening) {
       expect(f.text, f.path).toMatch(/from '(\.\.?\/)+page-shown\.test-support\.js'/);
@@ -89,14 +136,24 @@ describe('a test waits for a page through the one helper', () => {
     const OWN_WAIT = [
       /\b(const|function|let)\s+until[A-Z]\w*/,
       /for\s*\(\s*let\b[^;]*;[^;]*;[^)]*\)[^\n]*\bawait\b/,
-      /\bsettle\b[^\n;]*;\s*(?:await\s+)?(?:act\()?settle\b/,
+      /\bsettle\b[^\n;]*;\s*(?:await\s+)?(?:act\()?settle\b/
     ];
     const waits = (text: string) => OWN_WAIT.some((r) => r.test(text));
     for (const probe of [
-      'const untilShown = async', 'function untilLoaded(', 'for (let i = 0; i < 50 && x; i += 1) await act(async () => {});',
-      'for (let i = 0; i < 5; i += 1) await act(async () => {});', 'await settle(); await settle();', 'await act(settle);\n  await act(settle);',
-    ]) expect(waits(probe), probe).toBe(true);
-    for (const probe of ['for (let i = 0; i < 3; i += 1) expect(x[i]).toBe(1);', 'await act(settle);\n  expect(a).toBe(1);', 'const until = 3;']) expect(waits(probe), probe).toBe(false);
+      'const untilShown = async',
+      'function untilLoaded(',
+      'for (let i = 0; i < 50 && x; i += 1) await act(async () => {});',
+      'for (let i = 0; i < 5; i += 1) await act(async () => {});',
+      'await settle(); await settle();',
+      'await act(settle);\n  await act(settle);'
+    ])
+      expect(waits(probe), probe).toBe(true);
+    for (const probe of [
+      'for (let i = 0; i < 3; i += 1) expect(x[i]).toBe(1);',
+      'await act(settle);\n  expect(a).toBe(1);',
+      'const until = 3;'
+    ])
+      expect(waits(probe), probe).toBe(false);
     expect(TESTS.filter((f) => f.path !== HERE && waits(f.text)).map((f) => f.path)).toEqual([]);
   });
 });

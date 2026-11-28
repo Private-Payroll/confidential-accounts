@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
 
-export function Chapter({ id, title, says, children }: {
+export function Chapter({
+  id,
+  title,
+  says,
+  children
+}: {
   readonly id: string;
   readonly title: string;
   readonly says?: string;
@@ -20,7 +25,12 @@ export function Chapter({ id, title, says, children }: {
 /** A labelled cell, so every specimen on the page says what it is. The optional
  * badge is how a variant carries a RULE beside its name rather than in a
  * paragraph somebody scrolls past. */
-export function Spec({ label, children, className, badge }: {
+export function Spec({
+  label,
+  children,
+  className,
+  badge
+}: {
   readonly label: string;
   readonly children: ReactNode;
   readonly className?: string;
@@ -37,7 +47,11 @@ export function Spec({ label, children, className, badge }: {
   );
 }
 
-export function Swatch({ token, name, note }: {
+export function Swatch({
+  token,
+  name,
+  note
+}: {
   readonly token: string;
   readonly name: string;
   readonly note?: string;

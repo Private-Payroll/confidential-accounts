@@ -27,7 +27,7 @@ let heldFor: { readonly person: string; readonly byCompany: Map<string, PurposeW
 
 /** What is held, only while the person it was given to is signed in; anything held for another is let go first. */
 const heldNow = (): Map<string, PurposeWrapsHeld> | null => {
-  const person = isSignedIn() ? currentUser()?.id ?? null : null;
+  const person = isSignedIn() ? (currentUser()?.id ?? null) : null;
   if (heldFor !== null && heldFor.person !== person) heldFor = null;
   return person === null ? null : (heldFor ??= { person, byCompany: new Map() }).byCompany;
 };
@@ -62,17 +62,25 @@ export type ReaderKeysAsked =
  */
 export async function readerKeysFromTheWallet(company: ReadCompany, walletOrigin: string): Promise<ReaderKeysAsked> {
   const ended = await actOnACompanyInTheWallet(
-    { name: 'reader-keys', record: company.accountId, company: company.label, account: company.account }, walletOrigin,
+    { name: 'reader-keys', record: company.accountId, company: company.label, account: company.account },
+    walletOrigin
   );
-  const held = ended.of === 'done' && ended.readKeys !== undefined ? heldFromRelease(ended.readKeys, company.accountId) : null;
-  const none: ReaderKeysAsked = { of: 'none', refused: ended.of === 'stopped' ? ended.refused ?? null : null, code: ended.of === 'stopped' ? ended.code ?? null : null };
+  const held =
+    ended.of === 'done' && ended.readKeys !== undefined ? heldFromRelease(ended.readKeys, company.accountId) : null;
+  const none: ReaderKeysAsked = {
+    of: 'none',
+    refused: ended.of === 'stopped' ? (ended.refused ?? null) : null,
+    code: ended.of === 'stopped' ? (ended.code ?? null) : null
+  };
   const slot = heldNow();
   if (slot === null) return none;
-  if (held === null) { slot.delete(company.accountId); return none; }
+  if (held === null) {
+    slot.delete(company.accountId);
+    return none;
+  }
   slot.set(company.accountId, held);
   return { of: 'held', held };
 }
-
 
 export const readerKeysReleasedFor = (accountId: string): PurposeWrapsHeld | null => heldNow()?.get(accountId) ?? null;
 

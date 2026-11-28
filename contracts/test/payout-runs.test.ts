@@ -12,7 +12,14 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf, invitePayloadFor,
+  AccountSimulator,
+  privateStateFor,
+  change,
+  type Change,
+  payoutTreeOf,
+  rootOfTestLeaves,
+  sumArgsOf,
+  invitePayloadFor
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { buildPayoutTree, payoutLeafOf, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
@@ -29,8 +36,7 @@ const PAYROLL = new Uint8Array(32).fill(0xa1);
 const TREASURY = new Uint8Array(32).fill(0xb2);
 
 const govChange = (seed: number): Change => change(0n, seed);
-const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
-  sim.applying(d, c);
+const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) => sim.applying(d, c);
 
 /**
  * A run of `n` payees.
@@ -42,7 +48,7 @@ const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, 
 const runOf = (n: number, seed = 0): PayoutLeafInput[] =>
   Array.from({ length: n }, (_, i) => ({
     details: toHex(bytes(seed + i + 1)),
-    nonce: toHex(bytes(seed + i + 101)),
+    nonce: toHex(bytes(seed + i + 101))
   }));
 
 /*
@@ -66,16 +72,21 @@ const liveAccount = async (threshold = 2n) => {
 
 /** Raises and approves a run for `vault`, and hands back everything a payer needs. */
 const approvedRun = async (
-  sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], c: Change,
-  window: { from: bigint; until: bigint } = { from: OPENS, until: CLOSES },
+  sim: AccountSimulator,
+  vault: Uint8Array,
+  payments: PayoutLeafInput[],
+  c: Change,
+  window: { from: bigint; until: bigint } = { from: OPENS, until: CLOSES }
 ) => {
   await sim.adoptVault(vault, [A, B]);
   const tree = payoutTreeOf(payments);
-  const payload = pureCircuits.runPayload(
-    fromHex(tree.root), tree.payees, window.from, window.until, 0n);
+  const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, window.from, window.until, 0n);
   await sim.as(carrying(sim, A, c)).proposeRun({
-    root: fromHex(tree.root), payees: tree.payees,
-    from: window.from, until: window.until, vault,
+    root: fromHex(tree.root),
+    payees: tree.payees,
+    from: window.from,
+    until: window.until,
+    vault
   });
   const id = sim.proposalId(payload, c.salt, vault);
   await sim.as(carrying(sim, B, c)).approve(id);
@@ -89,7 +100,10 @@ const claimFor = (
     id: Uint8Array;
     window?: { from: bigint; until: bigint };
   },
-  payments: PayoutLeafInput[], vault: Uint8Array, c: Change, i: number,
+  payments: PayoutLeafInput[],
+  vault: Uint8Array,
+  c: Change,
+  i: number
 ) => ({
   proposal: run.id,
   vault,
@@ -100,12 +114,14 @@ const claimFor = (
   salt: c.salt,
   details: fromHex(payments[i].details),
   nonce: fromHex(payments[i].nonce),
-  ...sumArgsOf(run.tree, i),
+  ...sumArgsOf(run.tree, i)
 });
 
 describe('a run is paid one payee at a time', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(); });
+  beforeEach(async () => {
+    sim = await liveAccount();
+  });
 
   it('THE HEADLINE: a five-payee run takes five payments, and nothing ends it but time', async () => {
     const c = govChange(11);
@@ -136,9 +152,16 @@ describe('a run is paid one payee at a time', () => {
     }
 
     // And the row is swept once the window has passed — by anyone, signer or not.
-    await expect(sim.at(NOW).as(carrying(sim, A, c)).closeExpiredRun(run.id))
-      .rejects.toThrow(/window for this run has not closed yet/i);
-    await sim.at(Number(CLOSES)).as(carrying(sim, A, c)).closeExpiredRun(run.id);
+    await expect(
+      sim
+        .at(NOW)
+        .as(carrying(sim, A, c))
+        .closeExpiredRun(run.id)
+    ).rejects.toThrow(/window for this run has not closed yet/i);
+    await sim
+      .at(Number(CLOSES))
+      .as(carrying(sim, A, c))
+      .closeExpiredRun(run.id);
     expect(sim.isOpen(run.id)).toBe(false);
     expect(sim.runWindow(run.id)).toBeUndefined();
     sim.at(NOW);
@@ -154,10 +177,13 @@ describe('a run is paid one payee at a time', () => {
     const future = { from: BigInt(NOW + 86_400), until: BigInt(NOW + 172_800) };
     const run = await approvedRun(sim, PAYROLL, payments, c, future);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0)))
-      .rejects.toThrow(/has not started/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0))
+    ).rejects.toThrow(/has not started/i);
 
-    await sim.at(NOW + 86_400).as(carrying(sim, A, c))
+    await sim
+      .at(NOW + 86_400)
+      .as(carrying(sim, A, c))
       .recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
     sim.at(NOW);
   });
@@ -176,19 +202,18 @@ describe('a run is paid one payee at a time', () => {
     }
 
     sim.at(Number(CLOSES));
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 3)))
-      .rejects.toThrow(/window for this run has closed/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 3))
+    ).rejects.toThrow(/window for this run has closed/i);
 
     // The three that landed stay landed. Nothing is unwound by expiry.
     for (let i = 0; i < 3; i++) {
-      expect(sim.ledger.movements.member(
-        pureCircuits.paidMovementOf(fromHex(run.tree.leaves[i])))).toBe(true);
+      expect(sim.ledger.movements.member(pureCircuits.paidMovementOf(fromHex(run.tree.leaves[i])))).toBe(true);
     }
     sim.at(NOW);
   });
 
-  it('A RETRY RUN CAN PAY A STRAGGLER WHILE THE ORIGINAL IS STILL OPEN, AND CANNOT DOUBLE-PAY',
-    async () => {
+  it('A RETRY RUN CAN PAY A STRAGGLER WHILE THE ORIGINAL IS STILL OPEN, AND CANNOT DOUBLE-PAY', async () => {
     /*
      * The reason a payment's record is its leaf rather than the leaf and the
      * proposal together. Without this, the same person exists twice — once
@@ -211,13 +236,15 @@ describe('a run is paid one payee at a time', () => {
     // Now the ORIGINAL run tries the same person. Both proposals are open.
     expect(sim.isOpen(run.id)).toBe(true);
     expect(sim.isOpen(retry.id)).toBe(true);
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 2)))
-      .rejects.toThrow(/already been made/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 2))
+    ).rejects.toThrow(/already been made/i);
 
     // And the one nobody has paid yet still goes through, from either run.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 3));
-    await expect(sim.as(carrying(sim, A, c2)).recordPaymentFromVault(claimFor(retry, outstanding, PAYROLL, c2, 1)))
-      .rejects.toThrow(/already been made/i);
+    await expect(
+      sim.as(carrying(sim, A, c2)).recordPaymentFromVault(claimFor(retry, outstanding, PAYROLL, c2, 1))
+    ).rejects.toThrow(/already been made/i);
   });
 
   it('a one-payee run is the same mechanism, not a special case', async () => {
@@ -236,8 +263,9 @@ describe('a run is paid one payee at a time', () => {
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1)))
-      .rejects.toThrow(/already been made/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1))
+    ).rejects.toThrow(/already been made/i);
 
     // And the run is still payable for everybody else.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
@@ -262,7 +290,9 @@ describe('a run is paid one payee at a time', () => {
       try {
         await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, i));
         outcomes.push('paid');
-      } catch { outcomes.push('refused'); }
+      } catch {
+        outcomes.push('refused');
+      }
     }
     expect(outcomes).toEqual(['refused', 'refused', 'paid', 'paid']);
     expect(sim.isOpen(run.id)).toBe(true);
@@ -277,12 +307,14 @@ describe('a run is paid one payee at a time', () => {
     const stranger = runOf(1, 900);
     const strangerTree = payoutTreeOf(stranger);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 0),
-      details: fromHex(stranger[0].details),
-      nonce: fromHex(stranger[0].nonce),
-      ...sumArgsOf(strangerTree, 0),
-    })).rejects.toThrow(/not for this payee|not in the approved run/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 0),
+        details: fromHex(stranger[0].details),
+        nonce: fromHex(stranger[0].nonce),
+        ...sumArgsOf(strangerTree, 0)
+      })
+    ).rejects.toThrow(/not for this payee|not in the approved run/i);
   });
 
   it('a started run cannot be cancelled, so nobody strands the unpaid', async () => {
@@ -297,16 +329,14 @@ describe('a run is paid one payee at a time', () => {
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 0));
-    await expect(sim.as(carrying(sim, A, c)).cancel(run.id))
-      .rejects.toThrow(/already started/i);
+    await expect(sim.as(carrying(sim, A, c)).cancel(run.id)).rejects.toThrow(/already started/i);
     expect(sim.isOpen(run.id)).toBe(true);
 
     // The other two are still payable, which is the whole point.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
   });
 
-  it('a run whose window has NOT opened can still be cancelled, which is what makes a schedule changeable',
-    async () => {
+  it('a run whose window has NOT opened can still be cancelled, which is what makes a schedule changeable', async () => {
     /*
      * Six months approved in one sitting; two people leave; month four has to be
      * stoppable right up to the moment it could start paying.
@@ -348,10 +378,13 @@ describe('a run is paid one payee at a time', () => {
     expect(sim.runWindow(id)).toBeUndefined();
 
     // Now, and long after any run's window could have closed. Neither is a run.
-    await expect(sim.as(carrying(sim, A, c)).closeExpiredRun(id))
-      .rejects.toThrow(/that is not a run/i);
-    await expect(sim.at(NOW + 10_000_000).as(carrying(sim, A, c)).closeExpiredRun(id))
-      .rejects.toThrow(/that is not a run/i);
+    await expect(sim.as(carrying(sim, A, c)).closeExpiredRun(id)).rejects.toThrow(/that is not a run/i);
+    await expect(
+      sim
+        .at(NOW + 10_000_000)
+        .as(carrying(sim, A, c))
+        .closeExpiredRun(id)
+    ).rejects.toThrow(/that is not a run/i);
     sim.at(NOW);
 
     // Still there to be approved, which is the thing that had to survive.
@@ -361,19 +394,29 @@ describe('a run is paid one payee at a time', () => {
   it('refuses a run whose window ends before it opens', async () => {
     const c = govChange(37);
     const tree = payoutTreeOf(runOf(2));
-    await expect(sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: CLOSES, until: OPENS, vault: PAYROLL,
-    })).rejects.toThrow(/the time to carry out this proposal ends before it starts/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: CLOSES,
+        until: OPENS,
+        vault: PAYROLL
+      })
+    ).rejects.toThrow(/the time to carry out this proposal ends before it starts/i);
   });
 
   it('refuses a run with nobody in it, on chain as well as in the client', async () => {
     const c = govChange(38);
     const tree = payoutTreeOf(runOf(1));
-    await expect(sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: 0n,
-      from: OPENS, until: CLOSES, vault: PAYROLL,
-    })).rejects.toThrow(/this proposal names nobody to pay and nothing to set up/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: 0n,
+        from: OPENS,
+        until: CLOSES,
+        vault: PAYROLL
+      })
+    ).rejects.toThrow(/this proposal names nobody to pay and nothing to set up/i);
   });
 
   it('refuses a claim before the run has enough approvals', async () => {
@@ -383,17 +426,29 @@ describe('a run is paid one payee at a time', () => {
     const tree = payoutTreeOf(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: OPENS, until: CLOSES, vault: PAYROLL });
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      vault: PAYROLL
+    });
     const id = sim.proposalId(payload, c.salt, PAYROLL);
     /* A's raise counted A: one approval of two. */
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
-      from: OPENS, until: CLOSES,
-      salt: c.salt, details: fromHex(payments[0].details),
-      nonce: fromHex(payments[0].nonce), ...sumArgsOf(tree, 0),
-    })).rejects.toThrow(/not enough approvals/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        proposal: id,
+        vault: PAYROLL,
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: OPENS,
+        until: CLOSES,
+        salt: c.salt,
+        details: fromHex(payments[0].details),
+        nonce: fromHex(payments[0].nonce),
+        ...sumArgsOf(tree, 0)
+      })
+    ).rejects.toThrow(/not enough approvals/i);
   });
 
   it('a run approved for payroll is MEANINGLESS at the treasury', async () => {
@@ -403,15 +458,17 @@ describe('a run is paid one payee at a time', () => {
     /* Both are the company's vaults, so what refuses is the run, not the adoption. */
     await sim.adoptVault(TREASURY, [A, B], 393);
 
-    await expect(sim.as(carrying(sim, A, c))
-      .recordPaymentFromVault(claimFor(run, payments, TREASURY, c, 0)))
-      .rejects.toThrow(/not this proposal|were not given it/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, TREASURY, c, 0))
+    ).rejects.toThrow(/not this proposal|were not given it/i);
   });
 });
 
 describe('what a watcher learns from one payment', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(); });
+  beforeEach(async () => {
+    sim = await liveAccount();
+  });
 
   it('THE ATTACK: reading one payment off the chain does not let you claim the next payee', async () => {
     /*
@@ -439,11 +496,13 @@ describe('what a watcher learns from one payment', () => {
      * (details, nonce) pair behind it, so every claim they can construct is a
      * claim for a leaf that is not in the run.
      */
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 1),
-      details: bytes(200),
-      nonce: bytes(201),
-    })).rejects.toThrow(/that payee is not in the approved run/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 1),
+        details: bytes(200),
+        nonce: bytes(201)
+      })
+    ).rejects.toThrow(/that payee is not in the approved run/i);
 
     // The real payee is still payable, which is the point: no denial of service.
     await sim.as(carrying(sim, A, c)).recordPaymentFromVault(claimFor(run, payments, PAYROLL, c, 1));
@@ -455,10 +514,12 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 0),
-      nonce: bytes(250),
-    })).rejects.toThrow(/that payee is not in the approved run/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 0),
+        nonce: bytes(250)
+      })
+    ).rejects.toThrow(/that payee is not in the approved run/i);
   });
 
   it('the run root cannot be swapped for one the claimant prefers', async () => {
@@ -469,14 +530,16 @@ describe('what a watcher learns from one payment', () => {
     const mine = runOf(1, 700);
     const myTree = payoutTreeOf(mine);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 0),
-      root: fromHex(myTree.root),
-      payees: myTree.payees,
-      details: fromHex(mine[0].details),
-      nonce: fromHex(mine[0].nonce),
-      ...sumArgsOf(myTree, 0),
-    })).rejects.toThrow(/not this proposal|were not given it/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 0),
+        root: fromHex(myTree.root),
+        payees: myTree.payees,
+        details: fromHex(mine[0].details),
+        nonce: fromHex(mine[0].nonce),
+        ...sumArgsOf(myTree, 0)
+      })
+    ).rejects.toThrow(/not this proposal|were not given it/i);
   });
 
   it('the payee COUNT cannot be swapped either, so a run cannot be misreported', async () => {
@@ -490,10 +553,12 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(4);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 0),
-      payees: 1n,
-    })).rejects.toThrow(/not this proposal|were not given it/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 0),
+        payees: 1n
+      })
+    ).rejects.toThrow(/not this proposal|were not given it/i);
   });
 
   it('refuses a claim from someone who has the id but not the salt', async () => {
@@ -501,10 +566,12 @@ describe('what a watcher learns from one payment', () => {
     const payments = runOf(2);
     const run = await approvedRun(sim, PAYROLL, payments, c);
 
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-      ...claimFor(run, payments, PAYROLL, c, 0),
-      salt: govChange(99).salt,
-    })).rejects.toThrow(/not this proposal|were not given it/i);
+    await expect(
+      sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+        ...claimFor(run, payments, PAYROLL, c, 0),
+        salt: govChange(99).salt
+      })
+    ).rejects.toThrow(/not this proposal|were not given it/i);
   });
 });
 
@@ -516,8 +583,7 @@ describe('the tree the client builds', () => {
      * failure here, so this pins that there is only one.
      */
     const p = runOf(1, 300)[0];
-    expect(payoutLeafOf(p)).toBe(
-      hex(pureCircuits.payoutLeaf(fromHex(p.details), fromHex(p.nonce))));
+    expect(payoutLeafOf(p)).toBe(hex(pureCircuits.payoutLeaf(fromHex(p.details), fromHex(p.nonce))));
   });
 
   it('refuses a run where two payees share a leaf, which is a reused nonce', () => {
@@ -593,14 +659,15 @@ describe('the tree the client builds', () => {
  */
 describe('a run cannot be raised through the governance branch', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(); });
+  beforeEach(async () => {
+    sim = await liveAccount();
+  });
 
   const runPayloadFor = (payments: PayoutLeafInput[]) => {
     const tree = payoutTreeOf(payments);
     return {
       tree,
-      payload: pureCircuits.runPayload(
-        fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n),
+      payload: pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n)
     };
   };
 
@@ -616,8 +683,9 @@ describe('a run cannot be raised through the governance branch', () => {
      */
     const { payload } = runPayloadFor(runOf(3, 40));
     const c = govChange(140);
-    await expect(sim.as(carrying(sim, A, c)).propose(payload, PAYROLL))
-      .rejects.toThrow(/a change to the company cannot name a vault/);
+    await expect(sim.as(carrying(sim, A, c)).propose(payload, PAYROLL)).rejects.toThrow(
+      /a change to the company cannot name a vault/
+    );
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 
@@ -626,8 +694,9 @@ describe('a run cannot be raised through the governance branch', () => {
      * different id and would be a second, equally payable route. */
     const { payload } = runPayloadFor(runOf(3, 50));
     const c = govChange(141);
-    await expect(sim.as(carrying(sim, A, c)).propose(payload, TREASURY))
-      .rejects.toThrow(/a change to the company cannot name a vault/);
+    await expect(sim.as(carrying(sim, A, c)).propose(payload, TREASURY)).rejects.toThrow(
+      /a change to the company cannot name a vault/
+    );
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 
@@ -676,7 +745,9 @@ describe('a run cannot be raised through the governance branch', () => {
  */
 describe('a run cannot be raised at the no-vault sentinel', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(); });
+  beforeEach(async () => {
+    sim = await liveAccount();
+  });
 
   const NO_VAULT = pureCircuits.noVault();
 
@@ -688,14 +759,21 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
      */
     const tree = payoutTreeOf(runOf(3, 70));
     const c = govChange(150);
-    await expect(sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: OPENS, until: CLOSES, vault: NO_VAULT,
-    })).rejects.toThrow(/this proposal must name the vault it is for/);
+    await expect(
+      sim.as(carrying(sim, A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: OPENS,
+        until: CLOSES,
+        vault: NO_VAULT
+      })
+    ).rejects.toThrow(/this proposal must name the vault it is for/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
-    expect(sim.runWindow(sim.proposalId(
-      pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n),
-      c.salt, NO_VAULT))).toBeUndefined();
+    expect(
+      sim.runWindow(
+        sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, NO_VAULT)
+      )
+    ).toBeUndefined();
   });
 
   it('and the harness default is the same call: an OMITTED vault is refused too', async () => {
@@ -708,9 +786,14 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
      */
     const tree = payoutTreeOf(runOf(2, 80));
     const c = govChange(151);
-    await expect(sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES,
-    })).rejects.toThrow(/this proposal must name the vault it is for/);
+    await expect(
+      sim.as(carrying(sim, A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: OPENS,
+        until: CLOSES
+      })
+    ).rejects.toThrow(/this proposal must name the vault it is for/);
     expect(sim.ledger.openProposals.size()).toBe(0n);
   });
 
@@ -783,7 +866,9 @@ describe('a run cannot be raised at the no-vault sentinel', () => {
  */
 describe('a run whose root has a zero top byte', () => {
   let sim: AccountSimulator;
-  beforeEach(async () => { sim = await liveAccount(); });
+  beforeEach(async () => {
+    sim = await liveAccount();
+  });
 
   /**
    * **PINNED BY VALUE, AND HERE IS HOW IT WAS FOUND**, so the next person can
@@ -808,16 +893,16 @@ describe('a run whose root has a zero top byte', () => {
   const ZERO_TOP_BYTE: PayoutLeafInput[] = [
     {
       details: '0000000000000000000000000000000000000000000000000000000000000006',
-      nonce: '00000000000000000000000000000000000000000000000000000000000f4246',
+      nonce: '00000000000000000000000000000000000000000000000000000000000f4246'
     },
     {
       details: '0000000000000000000000000000000000000000000000000000000000000007',
-      nonce: '00000000000000000000000000000000000000000000000000000000001e8486',
+      nonce: '00000000000000000000000000000000000000000000000000000000001e8486'
     },
     {
       details: '0000000000000000000000000000000000000000000000000000000000000008',
-      nonce: '00000000000000000000000000000000000000000000000000000000002dc6c6',
-    },
+      nonce: '00000000000000000000000000000000000000000000000000000000002dc6c6'
+    }
   ];
 
   /**
@@ -829,16 +914,16 @@ describe('a run whose root has a zero top byte', () => {
   const ORDINARY: PayoutLeafInput[] = [
     {
       details: '0000000000000000000000000000000000000000000000000000000000000007',
-      nonce: '00000000000000000000000000000000000000000000000000000000000f4247',
+      nonce: '00000000000000000000000000000000000000000000000000000000000f4247'
     },
     {
       details: '0000000000000000000000000000000000000000000000000000000000000008',
-      nonce: '00000000000000000000000000000000000000000000000000000000001e8487',
+      nonce: '00000000000000000000000000000000000000000000000000000000001e8487'
     },
     {
       details: '0000000000000000000000000000000000000000000000000000000000000009',
-      nonce: '00000000000000000000000000000000000000000000000000000000002dc6c7',
-    },
+      nonce: '00000000000000000000000000000000000000000000000000000000002dc6c7'
+    }
   ];
 
   it('THE DEFECT: the root is thirty-two bytes, and the input still has a zero top byte', () => {
@@ -936,10 +1021,11 @@ describe('a run whose root has a zero top byte', () => {
     const short = fromHex(run.tree.root).slice(0, 31);
     expect(short).toHaveLength(31);
 
-    expect(() => pureCircuits.runPayload(short, run.tree.payees, OPENS, CLOSES, 0n))
-      .toThrow(/Bytes<32>/);
-    await expect(sim.as(carrying(sim, A, c)).recordPaymentFromVault(
-      { ...claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, 0), root: short },
-    )).rejects.toThrow(/Bytes<32>/);
+    expect(() => pureCircuits.runPayload(short, run.tree.payees, OPENS, CLOSES, 0n)).toThrow(/Bytes<32>/);
+    await expect(
+      sim
+        .as(carrying(sim, A, c))
+        .recordPaymentFromVault({ ...claimFor(run, ZERO_TOP_BYTE, PAYROLL, c, 0), root: short })
+    ).rejects.toThrow(/Bytes<32>/);
   });
 });

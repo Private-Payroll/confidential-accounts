@@ -31,7 +31,7 @@ const PENDING: Partial<Record<VaultStanding, Does>> = {
   [VAULT.accountNotHandedOver]: DOES.committee,
   [VAULT.notFundable]: DOES.explain,
   [VAULT.accountNotFundable]: DOES.explain,
-  [VAULT.heldByOtherKeys]: DOES.explain,
+  [VAULT.heldByOtherKeys]: DOES.explain
 };
 
 /** Whether a vault in `standing` is pending. */
@@ -48,7 +48,7 @@ export function useStandingSays(): (standing: VaultStanding) => string {
     [VAULT.accountNotHandedOver]: t('vaults.standing.accountNotHandedOver'),
     [VAULT.accountNotFundable]: t('vaults.standing.accountNotFundable'),
     [VAULT.heldByOtherKeys]: t('vaults.standing.heldByOtherKeys'),
-    [VAULT.unknown]: t('vaults.standing.unknown'),
+    [VAULT.unknown]: t('vaults.standing.unknown')
   };
   return (standing) => says[standing];
 }
@@ -63,14 +63,22 @@ export function useVaultActions() {
   const panel = usePanel();
   const { reload } = useCompanyRecords();
   /* A step that makes an action possible is taken in the setup wizard, open at that step. */
-  const leadTo = (step: StepId): void => { panel.close(); startSetupAt(step); go(HOME.setup); };
-  const inPanel = (title: string, body: (props: StepProps) => ReactNode): void => panel.open({ title, body: body({ leadTo, onChanged: reload }) });
+  const leadTo = (step: StepId): void => {
+    panel.close();
+    startSetupAt(step);
+    go(HOME.setup);
+  };
+  const inPanel = (title: string, body: (props: StepProps) => ReactNode): void =>
+    panel.open({ title, body: body({ leadTo, onChanged: reload }) });
   return {
     inPanel,
-    start: (vault: string): void => inPanel(t('createVault.finishStart'), (props) => <CreateVault {...props} starting={vault} />),
+    start: (vault: string): void =>
+      inPanel(t('createVault.finishStart'), (props) => <CreateVault {...props} starting={vault} />),
     /* A retired vault holding money, adopted again under the company's record of the retire that retired it. */
-    adoptAgain: (vault: string, retired: string): void => inPanel(t('vault.adoptAgain'), (props) => <CreateVault {...props} starting={vault} retired={retired} />),
-    committeeChange: (): void => inPanel(t('committeeChange.name'), (props) => <CommitteeChange onChanged={props.onChanged} />),
+    adoptAgain: (vault: string, retired: string): void =>
+      inPanel(t('vault.adoptAgain'), (props) => <CreateVault {...props} starting={vault} retired={retired} />),
+    committeeChange: (): void =>
+      inPanel(t('committeeChange.name'), (props) => <CommitteeChange onChanged={props.onChanged} />)
   };
 }
 
@@ -97,14 +105,18 @@ export function PendingPill({ vault }: { vault: Pick<VaultRow, 'vault' | 'standi
   if (does === undefined) return null;
   const run = actionOf(does, actions, vault.vault);
   const press = (e: { preventDefault: () => void; stopPropagation: () => void }): void => {
-    e.preventDefault(); e.stopPropagation();
-    if (run === null) setOpen((o) => !o); else run();
+    e.preventDefault();
+    e.stopPropagation();
+    if (run === null) setOpen((o) => !o);
+    else run();
   };
   return (
     <Tooltip open={open} onOpenChange={setOpen}>
       <TooltipTrigger asChild>
         <Badge asChild variant="destructive">
-          <button type="button" onClick={press} data-pending={vault.standing} data-does={does}>{t('vaults.pending')}</button>
+          <button type="button" onClick={press} data-pending={vault.standing} data-does={does}>
+            {t('vaults.pending')}
+          </button>
         </Badge>
       </TooltipTrigger>
       <TooltipContent>{says(vault.standing)}</TooltipContent>
@@ -118,7 +130,15 @@ export function PendingPill({ vault }: { vault: Pick<VaultRow, 'vault' | 'standi
  * list) for any other vault, for one filed with no name, and while the name is
  * being read. A name that cannot be read or believed is never guessed at.
  */
-export function VaultName({ company, vault, number }: { company: string | null; vault: Pick<VaultRow, 'vault' | 'adopted'>; number: number }) {
+export function VaultName({
+  company,
+  vault,
+  number
+}: {
+  company: string | null;
+  vault: Pick<VaultRow, 'vault' | 'adopted'>;
+  number: number;
+}) {
   const t = useText();
   const { person } = useSession();
   const view = useCompanyView();
@@ -127,8 +147,13 @@ export function VaultName({ company, vault, number }: { company: string | null; 
   useEffect(() => {
     let alive = true;
     setName(null);
-    if (adopted && view !== null && view.company === company) void readVaultName(person.id, view, vault.vault).then((n) => { if (alive) setName(n); });
-    return () => { alive = false; };
+    if (adopted && view !== null && view.company === company)
+      void readVaultName(person.id, view, vault.vault).then((n) => {
+        if (alive) setName(n);
+      });
+    return () => {
+      alive = false;
+    };
   }, [person.id, company, view, vault.vault, adopted]);
   return <>{name ?? t('vaults.tile.name', { number })}</>;
 }
@@ -154,13 +179,22 @@ export function VaultsPending({ rows }: { rows: readonly VaultRow[] }) {
           <SectionRow
             key={v.vault}
             data-pending-vault={v.vault}
-            actions={run === null ? undefined : (
-              <Button variant="outline" size="sm" onClick={run} data-action={does === DOES.start ? 'finish-start' : 'committee-change'}>
-                {does === DOES.start ? t('createVault.finishStart') : t('committeeChange.button')}
-              </Button>
-            )}
+            actions={
+              run === null ? undefined : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={run}
+                  data-action={does === DOES.start ? 'finish-start' : 'committee-change'}
+                >
+                  {does === DOES.start ? t('createVault.finishStart') : t('committeeChange.button')}
+                </Button>
+              )
+            }
           >
-            <span className="font-medium"><VaultName company={company} vault={v} number={number} /></span>
+            <span className="font-medium">
+              <VaultName company={company} vault={v} number={number} />
+            </span>
             <span className="text-muted-foreground">{says(v.standing)}</span>
           </SectionRow>
         );

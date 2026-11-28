@@ -15,14 +15,26 @@ const headsInTurn = (...heads: string[]) => {
   let reads = 0;
   const waited: number[] = [];
   const doors = {
-    onChain: async () => { const head = heads[Math.min(reads, heads.length - 1)]!; reads += 1; return { landed: [{ head }] } as never; },
-    watch: { everyMs: 1234, sleep: async (ms: number) => { waited.push(ms); await new Promise((r) => { setTimeout(r, 0); }); } },
+    onChain: async () => {
+      const head = heads[Math.min(reads, heads.length - 1)]!;
+      reads += 1;
+      return { landed: [{ head }] } as never;
+    },
+    watch: {
+      everyMs: 1234,
+      sleep: async (ms: number) => {
+        waited.push(ms);
+        await new Promise((r) => {
+          setTimeout(r, 0);
+        });
+      }
+    }
   };
   return { doors, reads: () => reads, waited };
 };
 
 describe('a sent anchor watched while its send has not answered', () => {
-  it('is landed once the head is the one the batch makes, read at the watch\'s interval until then', async () => {
+  it("is landed once the head is the one the batch makes, read at the watch's interval until then", async () => {
     const chain = headsInTurn(FROM, FROM, TO);
     /* RED WHEN: the head the batch makes is not taken as landed, or is compared in another letter case. */
     await expect(whereTheSendWent(chain.doors, FROM, TO.toUpperCase(), { done: false })).resolves.toBe('landed');
@@ -41,16 +53,24 @@ describe('a sent anchor watched while its send has not answered', () => {
     const chain = headsInTurn(FROM);
     const settled = { done: false };
     let answered = false;
-    void whereTheSendWent(chain.doors, FROM, TO, settled).then(() => { answered = true; });
-    await new Promise((r) => { setTimeout(r, 5); });
+    void whereTheSendWent(chain.doors, FROM, TO, settled).then(() => {
+      answered = true;
+    });
+    await new Promise((r) => {
+      setTimeout(r, 5);
+    });
     const read = chain.reads();
     expect(read).toBeGreaterThan(0);
     settled.done = true;
-    await new Promise((r) => { setTimeout(r, 5); });
+    await new Promise((r) => {
+      setTimeout(r, 5);
+    });
     /* RED WHEN: the watch goes on reading the chain after the send answered, or answers a race already settled. */
     expect(chain.reads()).toBeLessThanOrEqual(read + 1);
     const after = chain.reads();
-    await new Promise((r) => { setTimeout(r, 5); });
+    await new Promise((r) => {
+      setTimeout(r, 5);
+    });
     expect(chain.reads()).toBe(after);
     expect(answered).toBe(false);
   });

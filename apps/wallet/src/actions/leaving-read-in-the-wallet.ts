@@ -7,7 +7,11 @@
  */
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
-import { leavingBoundariesHere, LeavingNotRead, type LeavingReads } from '../../../../packages/web-shared/src/seats-leaving-here.js';
+import {
+  leavingBoundariesHere,
+  LeavingNotRead,
+  type LeavingReads
+} from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import { RosterNotBelieved } from '../../../../packages/web-shared/src/roster-here.js';
 import type { LeavingBoundaries } from '../../../../packages/web-shared/src/vault-page-doors.js';
@@ -21,14 +25,16 @@ type KeysHeld = Parameters<typeof leavingBoundariesHere>[1];
  * roster it was given: who is leaving is read from the seats, their retirements and the chain, which the roster does not
  * change, and a roster filed and not yet entered must not stop its own entry by stopping this read.
  */
-const rosterOrNoneFor = (r: CompanyReach) => async (): Promise<{ readonly signers: Awaited<ReturnType<CompanyReach['roster']>>['signers'] }> => {
-  try {
-    return await r.roster();
-  } catch (e) {
-    if (e instanceof RosterNotBelieved) return { signers: [] };
-    throw e;
-  }
-};
+const rosterOrNoneFor =
+  (r: CompanyReach) =>
+  async (): Promise<{ readonly signers: Awaited<ReturnType<CompanyReach['roster']>>['signers'] }> => {
+    try {
+      return await r.roster();
+    } catch (e) {
+      if (e instanceof RosterNotBelieved) return { signers: [] };
+      throw e;
+    }
+  };
 
 /**
  * The reads who is leaving is worked out from: the company's proposals, its directory, and the chain's rounds. A
@@ -43,12 +49,16 @@ export const leavingReadsOf = (r: CompanyReach): LeavingReads => {
     service: governedCallServiceThrough(r.stepView),
     accountId: r.accountId,
     records: {
-      directory: async (asked) => ({ ...await directory(asked), another: new Set<string>() }),
-      roundsOnChain: async (chainIds: readonly string[]) => r.builder.roundsOnChain({
-        account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret,
-      }),
+      directory: async (asked) => ({ ...(await directory(asked)), another: new Set<string>() }),
+      roundsOnChain: async (chainIds: readonly string[]) =>
+        r.builder.roundsOnChain({
+          account: r.account,
+          indexer: r.chain.indexer,
+          chainIds,
+          seat: r.seat.signingSecret
+        })
     },
-    leaves: r.judges.leavesFor(r.account),
+    leaves: r.judges.leavesFor(r.account)
   };
 };
 
@@ -71,17 +81,20 @@ export async function leavingBoundariesRead(reads: LeavingReads, companyKeys: Ke
   } catch (e) {
     if (!(e instanceof LeavingNotRead) || !e.blocking) throw e;
     const bar = reads.records === undefined ? undefined : (await reads.records.directory()).holders?.seatBar;
-    if (!Number.isSafeInteger(bar) || (bar as number) < 1) throw new LeavingNotRead('the seat bar of the company was not read');
+    if (!Number.isSafeInteger(bar) || (bar as number) < 1)
+      throw new LeavingNotRead('the seat bar of the company was not read');
     return { boundaries: await leavingBoundariesHere(reads, companyKeys, false), passedOver: e.message };
   }
 }
 
 /** What a seat whose own removal is approved is told when it would enter one more record. */
-export const LEAVING_SEAT_STOPPED = 'a removal of this signer\'s seat is approved, so this wallet enters nothing more for the '
-  + 'company: a signer who stays files it instead';
+export const LEAVING_SEAT_STOPPED =
+  "a removal of this signer's seat is approved, so this wallet enters nothing more for the " +
+  'company: a signer who stays files it instead';
 
-const READ_AGAIN = 'Read the chain again and do this again: once this wallet has read who is leaving the company, '
-  + 'what is filed again is entered, unless your own seat is among those leaving.';
+const READ_AGAIN =
+  'Read the chain again and do this again: once this wallet has read who is leaving the company, ' +
+  'what is filed again is entered, unless your own seat is among those leaving.';
 
 const stopsRead = new WeakMap<CompanyReach, Promise<string | null>>();
 
@@ -96,17 +109,25 @@ export const stopsFor = (r: CompanyReach) => async (): Promise<string | null> =>
   if (read === undefined) {
     read = (async () => {
       const mine = signingPublicKeyOf(r.seat.signingSecret as Hex).toLowerCase();
-      return (await leavingBoundariesRead(leavingReadsOf(r), r.companyKeys)).boundaries.has(mine) ? LEAVING_SEAT_STOPPED : null;
+      return (await leavingBoundariesRead(leavingReadsOf(r), r.companyKeys)).boundaries.has(mine)
+        ? LEAVING_SEAT_STOPPED
+        : null;
     })();
     stopsRead.set(r, read);
-    read.catch(() => { stopsRead.delete(r); });
+    read.catch(() => {
+      stopsRead.delete(r);
+    });
   }
   try {
     return await read;
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
-    throw new FiledNotEntered(e instanceof LeavingNotRead ? e.message : `who is leaving the company could not be read: ${String((e as Error)?.message ?? e)}`,
-      { cause: e, again: READ_AGAIN });
+    throw new FiledNotEntered(
+      e instanceof LeavingNotRead
+        ? e.message
+        : `who is leaving the company could not be read: ${String((e as Error)?.message ?? e)}`,
+      { cause: e, again: READ_AGAIN }
+    );
   }
 };
 
@@ -116,16 +137,15 @@ export const stopsFor = (r: CompanyReach) => async (): Promise<string | null> =>
  * cannot open was passed over, it answers the seats it did read and calls `unread` with why. The anchor is never held
  * up by a proposal this wallet cannot read, and never reads as complete over one.
  */
-export const leavingForTheAnchor = (
-  r: CompanyReach, companyKeys: KeysHeld, unread?: (why: string) => void,
-) => async (): Promise<LeavingBoundaries> => {
-  try {
-    const read = await leavingBoundariesRead(leavingReadsOf(r), companyKeys);
-    if (read.passedOver !== null) unread?.(read.passedOver);
-    return read.boundaries;
-  } catch (e) {
-    if (!(e instanceof LeavingNotRead)) throw e;
-    unread?.(e.message);
-    return new Map();
-  }
-};
+export const leavingForTheAnchor =
+  (r: CompanyReach, companyKeys: KeysHeld, unread?: (why: string) => void) => async (): Promise<LeavingBoundaries> => {
+    try {
+      const read = await leavingBoundariesRead(leavingReadsOf(r), companyKeys);
+      if (read.passedOver !== null) unread?.(read.passedOver);
+      return read.boundaries;
+    } catch (e) {
+      if (!(e instanceof LeavingNotRead)) throw e;
+      unread?.(e.message);
+      return new Map();
+    }
+  };

@@ -53,16 +53,15 @@ export function assertPreviewAccountId(accountId: string): string {
       `"${String(accountId)}" is not a usable account id for a signer file. It becomes a ` +
         'FILENAME under .midnight/, so it is lowercase letters, digits and single hyphens, ' +
         '2 to 48 characters, starting and ending with a letter or digit — an id carrying a ' +
-        'slash or a dot is one that can escape the directory or shadow another account.',
+        'slash or a dot is one that can escape the directory or shadow another account.'
     );
   }
   return accountId;
 }
 
 /** Where one account's demo signer material lives. Per network AND per account. */
-export const previewSignersFile = (
-  stateDir: string, network: string, accountId: string,
-): string => join(stateDir, `${network}-preview-signers-${assertPreviewAccountId(accountId)}.json`);
+export const previewSignersFile = (stateDir: string, network: string, accountId: string): string =>
+  join(stateDir, `${network}-preview-signers-${assertPreviewAccountId(accountId)}.json`);
 
 /** One device's identity: the two values its leaf is committed from. */
 export interface PreviewSigner {
@@ -112,7 +111,7 @@ export function parsePreviewSigners(raw: unknown, file: string): PreviewSigners 
         `${file} does not carry usable material for signer ${id}. Each of the five signers ` +
           'needs a `signingSecret` and a `blinding` of 64 hex characters. Delete the file to ' +
           'have a new set generated — every signer already seated on chain under the old ' +
-          'material becomes unreachable when you do, so a redeploy comes with it.',
+          'material becomes unreachable when you do, so a redeploy comes with it.'
       );
     }
     out[id] = { signingSecret: s.signingSecret, blinding: s.blinding };
@@ -138,7 +137,9 @@ export function parsePreviewSigners(raw: unknown, file: string): PreviewSigners 
  * identities.**
  */
 export function readOrCreatePreviewSigners(
-  stateDir: string, network: string, accountId: string,
+  stateDir: string,
+  network: string,
+  accountId: string
 ): { signers: PreviewSigners; file: string; created: boolean } {
   const file = previewSignersFile(stateDir, network, accountId);
   if (existsSync(file)) {
@@ -156,7 +157,7 @@ export function readOrCreatePreviewSigners(
     network,
     accountId,
     createdAt: new Date().toISOString(),
-    signers,
+    signers
   };
   if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
   // 0o600, as the wallet seed is written: this is key material on a shared disk.
@@ -167,5 +168,5 @@ export function readOrCreatePreviewSigners(
 /** The two values as the private state and the leaf circuits want them. */
 export const signerBytes = (s: PreviewSigner): { secretKey: Uint8Array; blinding: Uint8Array } => ({
   secretKey: fromHex(s.signingSecret),
-  blinding: fromHex(s.blinding),
+  blinding: fromHex(s.blinding)
 });

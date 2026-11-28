@@ -4,9 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '../testing/render.j
 import { IDBFactory } from 'fake-indexeddb';
 import { Buffer as PolyfillBuffer } from 'buffer/';
 import { ZswapSecretKeys } from '@midnightntwrk/ledger-v9';
-import {
-  MidnightBech32m, ShieldedAddress, UnshieldedAddress,
-} from '@midnightntwrk/wallet-sdk-address-format';
+import { MidnightBech32m, ShieldedAddress, UnshieldedAddress } from '@midnightntwrk/wallet-sdk-address-format';
 import { identityFromSecret, newSecret } from 'midnight-identity';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { MAIN_ACCOUNT } from '../accounts/subwallets.js';
@@ -40,7 +38,11 @@ beforeEach(() => {
   clipboard = [];
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
-    value: { writeText: async (text: string) => { clipboard.push(text); } },
+    value: {
+      writeText: async (text: string) => {
+        clipboard.push(text);
+      }
+    }
   });
 });
 
@@ -100,7 +102,7 @@ describe('the shielded receiving address a wallet shows and copies', () => {
     expect(says).not.toMatch(/Amounts and parties stay hidden on the chain/u);
   });
 
-  it('in a subwallet, is that subwallet\'s own address, not the main wallet\'s', async () => {
+  it("in a subwallet, is that subwallet's own address, not the main wallet's", async () => {
     /* RED WHEN Receive shows one slot's address whatever slot is open: coins
      * would land in a wallet the person is not looking at. "Subwallet 1" is
      * account 2 (`accounts/subwallets.ts`). */
@@ -108,8 +110,9 @@ describe('the shielded receiving address a wallet shows and copies', () => {
     const identity = identityFromSecret(secret);
     render(<Home identity={identity} secret={secret} />);
     fireEvent.click(screen.getByText('Switch wallet'));
-    const row = [...document.querySelectorAll<HTMLElement>('[data-wallet-row]')]
-      .find((r) => r.textContent?.includes('Subwallet 1'));
+    const row = [...document.querySelectorAll<HTMLElement>('[data-wallet-row]')].find((r) =>
+      r.textContent?.includes('Subwallet 1')
+    );
     expect(row).toBeTruthy();
     fireEvent.click(row!);
     fireEvent.click(screen.getByText('Receive'));
@@ -139,7 +142,8 @@ describe('the shielded receiving address a wallet shows and copies', () => {
 
     expect(a).not.toBe(b);
     const keysB = ZswapSecretKeys.fromSeed(identityFromSecret(second).moneyAt(MAIN_ACCOUNT).zswap);
-    expect(MidnightBech32m.parse(b).decode(ShieldedAddress, NETWORK).coinPublicKey.toHexString())
-      .toBe(keysB.coinPublicKey);
+    expect(MidnightBech32m.parse(b).decode(ShieldedAddress, NETWORK).coinPublicKey.toHexString()).toBe(
+      keysB.coinPublicKey
+    );
   });
 });

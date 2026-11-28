@@ -14,12 +14,22 @@ const encode = (type: 'shield-addr' | 'addr', bytes: Uint8Array): string =>
 
 /** A private address whose two keys are filled with `fill` and with `fill` xor 0x5a. */
 export const privateAddressHere = (fill: number): string =>
-  encode('shield-addr', Uint8Array.from({ length: 64 }, (_, i) => (i < 32 ? fill : fill ^ 0x5a) & 0xff));
+  encode(
+    'shield-addr',
+    Uint8Array.from({ length: 64 }, (_, i) => (i < 32 ? fill : fill ^ 0x5a) & 0xff)
+  );
 
 /** A public address whose 32 bytes are all `fill`. */
 export const publicAddressHere = (fill: number): string =>
-  encode('addr', Uint8Array.from({ length: 32 }, () => fill & 0xff));
+  encode(
+    'addr',
+    Uint8Array.from({ length: 32 }, () => fill & 0xff)
+  );
 
 /** A public address on a network other than the compiled one, whose bytes are all `fill`. */
 export const publicAddressElsewhere = (fill: number): string =>
-  bech32m.encode(`mn_addr_${NETWORK === 'preview' ? 'preprod' : 'preview'}`, bech32m.toWords(Uint8Array.from({ length: 32 }, () => fill & 0xff)), false);
+  bech32m.encode(
+    `mn_addr_${NETWORK === 'preview' ? 'preprod' : 'preview'}`,
+    bech32m.toWords(Uint8Array.from({ length: 32 }, () => fill & 0xff)),
+    false
+  );

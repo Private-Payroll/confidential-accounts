@@ -6,8 +6,12 @@ import { readAccountAddress, readCompanyLabel } from './company-label.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 import type { CommitteeKeyOnTheWire, CreationRequest } from './request.js';
 import {
-  buildCreationInsert, operationOfKeyFile, operationsFromContractState, verifierKeysMatch,
-  type CreationInsertPrimitives, type OnChainOperation,
+  buildCreationInsert,
+  operationOfKeyFile,
+  operationsFromContractState,
+  verifierKeysMatch,
+  type CreationInsertPrimitives,
+  type OnChainOperation
 } from './contract-keys.js';
 
 /**
@@ -88,7 +92,9 @@ export interface CreationShown {
 }
 
 const NOTHING = 'Nothing has been signed.';
-const refuse = (why: string): never => { throw new CreationSignError(`${why} ${NOTHING}`); };
+const refuse = (why: string): never => {
+  throw new CreationSignError(`${why} ${NOTHING}`);
+};
 
 interface DeployShape {
   intents?: unknown;
@@ -129,13 +135,16 @@ function theOneDeploy(L: CreationLedger, deploy: string): DeployAction {
  * this build's key and nothing else, in either of its two key slots.
  */
 function keysAreThisBuilds(
-  operations: readonly OnChainOperation[], expected: ReadonlyMap<string, Uint8Array>, digest: (b: Uint8Array) => Uint8Array,
-  address: string, what: string,
+  operations: readonly OnChainOperation[],
+  expected: ReadonlyMap<string, Uint8Array>,
+  digest: (b: Uint8Array) => Uint8Array,
+  address: string,
+  what: string
 ): void {
   const verdict = verifierKeysMatch(
     { state: 'read', address, operations: [...operations] },
     new Map([...expected].map(([circuit, d]) => [circuit, [d]])),
-    digest,
+    digest
   );
   if (verdict.verdict !== 'agree') refuse(`${what} are not this build's: ${verdict.why}`);
 }
@@ -145,8 +154,12 @@ function keysAreThisBuilds(
  * refusal naming the first thing wrong with what the page sent.
  */
 export function creationShown(
-  L: CreationLedger, identity: Identity, request: CreationRequest, build: ThisBuildsAccountKeys,
-  digest: (b: Uint8Array) => Uint8Array, labelIn: (serializedState: Uint8Array) => CompanyLabel | null,
+  L: CreationLedger,
+  identity: Identity,
+  request: CreationRequest,
+  build: ThisBuildsAccountKeys,
+  digest: (b: Uint8Array) => Uint8Array,
+  labelIn: (serializedState: Uint8Array) => CompanyLabel | null
 ): CreationShown {
   const action = theOneDeploy(L, request.deploy);
   const account = readAccountAddress(String(action.address).toLowerCase());
@@ -156,8 +169,13 @@ export function creationShown(
   const mine = committeeKeyFor(identity, request.company) as unknown as CommitteeKeyOnTheWire;
   const authority = action.initialState!.maintenanceAuthority;
   const keys = authority?.committee ?? [];
-  if (keys.length !== 1 || String(keys[0]!.tag) !== 'schnorr' || String(keys[0]!.value).toLowerCase() !== mine.value
-    || authority?.threshold !== 1 || authority?.counter !== 0n) {
+  if (
+    keys.length !== 1 ||
+    String(keys[0]!.tag) !== 'schnorr' ||
+    String(keys[0]!.value).toLowerCase() !== mine.value ||
+    authority?.threshold !== 1 ||
+    authority?.counter !== 0n
+  ) {
     return refuse('The deploy is not held by your own key for this company alone, from its first transaction.');
   }
   let label: CompanyLabel | null;
@@ -174,14 +192,15 @@ export function creationShown(
   keysAreThisBuilds(deployed.operations, build.first, digest, account, 'The circuits the deploy runs');
   const asked = request.insert.map((k) => operationOfKeyFile(k.circuit, base64.decode(k.key)));
   const inserted = asked.filter((o): o is OnChainOperation => o !== null);
-  if (inserted.length !== asked.length) refuse('A key the page asks to add is not a compiled verifier key of a version the ledger takes.');
+  if (inserted.length !== asked.length)
+    refuse('A key the page asks to add is not a compiled verifier key of a version the ledger takes.');
   keysAreThisBuilds(inserted, build.second, digest, account, 'The keys the page asks to add');
   return Object.freeze({
     company: request.company,
     account,
     mine,
     deployed: Object.freeze([...build.first.keys()]),
-    inserted: Object.freeze([...build.second.keys()]),
+    inserted: Object.freeze([...build.second.keys()])
   });
 }
 
@@ -190,8 +209,13 @@ export function creationShown(
  * The signing key is worked out here, used, and not kept or returned.
  */
 export function creationSignatureFor(
-  L: CreationLedger, identity: Identity, request: CreationRequest, at: number, build: ThisBuildsAccountKeys,
-  digest: (b: Uint8Array) => Uint8Array, labelIn: (serializedState: Uint8Array) => CompanyLabel | null,
+  L: CreationLedger,
+  identity: Identity,
+  request: CreationRequest,
+  at: number,
+  build: ThisBuildsAccountKeys,
+  digest: (b: Uint8Array) => Uint8Array,
+  labelIn: (serializedState: Uint8Array) => CompanyLabel | null
 ): CreationSignature {
   if (!usableOrigin(request.requester.origin)) {
     throw new CreationSignError(`This wallet could not tell who asked. ${NOTHING}`);
@@ -199,8 +223,11 @@ export function creationSignatureFor(
   const shown = creationShown(L, identity, request, build, digest, labelIn);
   const keys = new Map(request.insert.map((k) => [k.circuit, base64.decode(k.key)] as [string, Uint8Array]));
   const built = buildCreationInsert(L, {
-    address: shown.account, counter: 0n, onChain: shown.deployed, keys,
-    steps: { first: shown.deployed, second: shown.inserted },
+    address: shown.account,
+    counter: 0n,
+    onChain: shown.deployed,
+    keys,
+    steps: { first: shown.deployed, second: shown.inserted }
   });
   const signature = L.signData(committeeSigningKeyFor(identity, request.company) as never, built.update.dataToSign);
   return Object.freeze({
@@ -211,13 +238,21 @@ export function creationSignatureFor(
     nonce: request.nonce,
     at,
     signer: shown.mine,
-    signature: Object.freeze({ tag: signature.tag, value: signature.value }),
+    signature: Object.freeze({ tag: signature.tag, value: signature.value })
   });
 }
 
 export type CreationSignatureRead =
-  | { readonly ok: true; readonly signer: CommitteeKeyOnTheWire; readonly signature: { readonly tag: string; readonly value: string } }
-  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company'; readonly says: string };
+  | {
+      readonly ok: true;
+      readonly signer: CommitteeKeyOnTheWire;
+      readonly signature: { readonly tag: string; readonly value: string };
+    }
+  | {
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company';
+      readonly says: string;
+    };
 
 const HEX64 = /^[0-9a-f]{64}$/u;
 const HEX = /^[0-9a-f]+$/u;
@@ -236,29 +271,52 @@ export function readCreationSignature(
     readonly company: CompanyLabel;
     readonly account: AccountAddress;
     readonly signer: CommitteeKeyOnTheWire;
-  },
+  }
 ): CreationSignatureRead {
   const body = message as Partial<CreationSignature> | null;
   if (typeof body !== 'object' || body === null || body.schema !== CREATION_SIGNATURE_SCHEMA) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed creation.' };
   }
   if (body.origin !== expecting.atOrigin) {
-    return { ok: false, code: 'origin-mismatch', says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
+    };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
   if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
-    return { ok: false, code: 'other-company', says: 'this signs the creation of a different company or account from the one asked about. It is refused.' };
+    return {
+      ok: false,
+      code: 'other-company',
+      says: 'this signs the creation of a different company or account from the one asked about. It is refused.'
+    };
   }
   const signer = body.signer;
-  if (typeof signer !== 'object' || signer === null || signer.tag !== 'schnorr' || !HEX64.test(String(signer.value))
-    || signer.value !== expecting.signer.value) {
-    return { ok: false, code: 'other-company', says: 'this was signed by a key other than the one your wallet gave for this company. It is refused.' };
+  if (
+    typeof signer !== 'object' ||
+    signer === null ||
+    signer.tag !== 'schnorr' ||
+    !HEX64.test(String(signer.value)) ||
+    signer.value !== expecting.signer.value
+  ) {
+    return {
+      ok: false,
+      code: 'other-company',
+      says: 'this was signed by a key other than the one your wallet gave for this company. It is refused.'
+    };
   }
   const sig = body.signature;
-  if (typeof sig !== 'object' || sig === null || typeof sig.tag !== 'string' || !HEX.test(String(sig.value))
-    || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
+  if (
+    typeof sig !== 'object' ||
+    sig === null ||
+    typeof sig.tag !== 'string' ||
+    !HEX.test(String(sig.value)) ||
+    typeof body.at !== 'number' ||
+    !Number.isSafeInteger(body.at)
+  ) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed creation.' };
   }
   return { ok: true, signer: { tag: 'schnorr', value: signer.value }, signature: { tag: sig.tag, value: sig.value } };

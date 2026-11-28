@@ -16,8 +16,15 @@ import { openAccount as openSealedAccount } from '../../../src/core/account.js';
 import type { SealedAccount } from '../../../src/core/types.js';
 
 /** Only what these two decisions read. */
-export interface HeldKeys { signerId: string; signingSecret: Hex }
-export interface SealedSeat { signingPublicKey: Hex; signingSecret: Hex; wrappingSecret: Hex }
+export interface HeldKeys {
+  signerId: string;
+  signingSecret: Hex;
+}
+export interface SealedSeat {
+  signingPublicKey: Hex;
+  signingSecret: Hex;
+  wrappingSecret: Hex;
+}
 
 /**
  * **WOULD WRITING THIS DESTROY KEY MATERIAL THAT IS ALREADY HERE?** Returns the
@@ -33,24 +40,23 @@ export interface SealedSeat { signingPublicKey: Hex; signingSecret: Hex; wrappin
  *
  * The same material written twice is not a clobber. A retry must cost nothing.
  */
-export function clobberRefusal(
-  held: HeldKeys | undefined | null,
-  incoming: HeldKeys,
-): string | null {
+export function clobberRefusal(held: HeldKeys | undefined | null, incoming: HeldKeys): string | null {
   if (!held) return null;
   if (held.signingSecret.toLowerCase() === incoming.signingSecret.toLowerCase()) return null;
-  return 'THIS DEVICE ALREADY HOLDS KEY MATERIAL FOR THIS COMPANY, AND WRITING THIS WOULD '
-    + 'DESTROY IT.\n'
-    + `  seat held here   ${held.signerId}\n`
-    + `  seat offered     ${incoming.signerId}\n`
-    + 'WHAT IT MEANS. A blinding lives on one device and nowhere else (decision 0003). '
-    + 'Replacing the entry would leave the seat held here on the account\x27s roster, '
-    + 'counting towards the threshold, with nobody able to reproduce its leaf — and nothing '
-    + 'would look wrong afterwards, because the new material matches the new seat.\n'
-    + 'WHAT RESOLVES IT. Accept the second seat on a different device or in a different '
-    + 'browser profile, or have the seat held here replaced by an approved round from '
-    + 'another signer first.\n'
-    + 'NOTHING WAS PROVED, NOTHING WAS SUBMITTED AND NOTHING WAS WRITTEN.';
+  return (
+    'THIS DEVICE ALREADY HOLDS KEY MATERIAL FOR THIS COMPANY, AND WRITING THIS WOULD ' +
+    'DESTROY IT.\n' +
+    `  seat held here   ${held.signerId}\n` +
+    `  seat offered     ${incoming.signerId}\n` +
+    'WHAT IT MEANS. A blinding lives on one device and nowhere else (decision 0003). ' +
+    'Replacing the entry would leave the seat held here on the account\x27s roster, ' +
+    'counting towards the threshold, with nobody able to reproduce its leaf — and nothing ' +
+    'would look wrong afterwards, because the new material matches the new seat.\n' +
+    'WHAT RESOLVES IT. Accept the second seat on a different device or in a different ' +
+    'browser profile, or have the seat held here replaced by an approved round from ' +
+    'another signer first.\n' +
+    'NOTHING WAS PROVED, NOTHING WAS SUBMITTED AND NOTHING WAS WRITTEN.'
+  );
 }
 
 /**
@@ -84,7 +90,7 @@ export function clobberRefusal(
  */
 export function seatToPromote(
   seats: SealedSeat[],
-  sealed: SealedAccount,
+  sealed: SealedAccount
 ): { signingPublicKey: Hex; signerId: string } | null {
   for (const seat of seats) {
     for (const w of sealed.wrappedKeys as Array<{ signerId: string } & { ephemeral: Hex } & Sealed>) {
@@ -97,7 +103,7 @@ export function seatToPromote(
       }
       let mine;
       try {
-        mine = openSealedAccount(sealed, viewingKey).signers.find(x => x.id === w.signerId);
+        mine = openSealedAccount(sealed, viewingKey).signers.find((x) => x.id === w.signerId);
       } catch {
         /* A ciphertext that opened but is not this account's viewing key. That
          * is a forgery or a corrupt record, and it is not a match. */
@@ -112,8 +118,7 @@ export function seatToPromote(
        * everything else this device holds. The one value here that nothing else
        * can produce is the curve's answer to this device's own signing secret.
        */
-      if (mine.signingPublicKey?.toLowerCase()
-          !== signingPublicKeyOf(seat.signingSecret).toLowerCase()) continue;
+      if (mine.signingPublicKey?.toLowerCase() !== signingPublicKeyOf(seat.signingSecret).toLowerCase()) continue;
       return { signingPublicKey: seat.signingPublicKey, signerId: w.signerId };
     }
   }

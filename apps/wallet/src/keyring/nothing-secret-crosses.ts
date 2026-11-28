@@ -19,8 +19,10 @@ import type { Keyring } from '../../../../packages/web-shared/src/keyring-blob.j
 /** A message this wallet was about to hand the page held a secret, and was not sent. */
 export class SecretWouldCross extends Error {
   constructor() {
-    super('this wallet was about to hand the page a secret of your saved keys, and did not: nothing was handed over, '
-      + 'and the action has stopped. This is a fault in this wallet, not in anything you did.');
+    super(
+      'this wallet was about to hand the page a secret of your saved keys, and did not: nothing was handed over, ' +
+        'and the action has stopped. This is a fault in this wallet, not in anything you did.'
+    );
     this.name = 'SecretWouldCross';
   }
 }
@@ -56,13 +58,28 @@ export function watchFor(secret: Uint8Array | string): void {
   watchedBase64.add(b64.replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, ''));
 }
 
-type SeatLike = { signingSecret?: unknown; wrappingSecret?: unknown; blinding?: unknown; opening?: { blinding?: unknown; salt?: unknown } };
+type SeatLike = {
+  signingSecret?: unknown;
+  wrappingSecret?: unknown;
+  blinding?: unknown;
+  opening?: { blinding?: unknown; salt?: unknown };
+};
 
 /** Watches every seat's secrets in saved keys (the seats held, the seats sealed before their leaf and the seats set aside) and every invitation token kept there. */
 export function watchTheSavedKeys(k: Keyring): void {
-  const seats = [...Object.values(k.accounts ?? {}), ...Object.values(k.pendingSeats ?? {}), ...Object.values(k.formerSeats ?? {})] as SeatLike[];
+  const seats = [
+    ...Object.values(k.accounts ?? {}),
+    ...Object.values(k.pendingSeats ?? {}),
+    ...Object.values(k.formerSeats ?? {})
+  ] as SeatLike[];
   for (const seat of seats) {
-    for (const v of [seat.signingSecret, seat.wrappingSecret, seat.blinding, seat.opening?.blinding, seat.opening?.salt]) {
+    for (const v of [
+      seat.signingSecret,
+      seat.wrappingSecret,
+      seat.blinding,
+      seat.opening?.blinding,
+      seat.opening?.salt
+    ]) {
       if (typeof v === 'string') watchFor(v);
     }
   }
@@ -79,12 +96,13 @@ export function forgetWatched(): void {
 }
 
 /* Bytes are written out as hex, so a secret handed over as bytes is seen as one handed over as hex. */
-const serialised = (message: unknown): string => JSON.stringify(message, (_key, value: unknown) => {
-  if (ArrayBuffer.isView(value)) return bytesToHex(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
-  if (value instanceof ArrayBuffer) return bytesToHex(new Uint8Array(value));
-  if (typeof value === 'bigint') return value.toString(16);
-  return value;
-}) ?? '';
+const serialised = (message: unknown): string =>
+  JSON.stringify(message, (_key, value: unknown) => {
+    if (ArrayBuffer.isView(value)) return bytesToHex(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+    if (value instanceof ArrayBuffer) return bytesToHex(new Uint8Array(value));
+    if (typeof value === 'bigint') return value.toString(16);
+    return value;
+  }) ?? '';
 
 /** Whether a message holds any watched secret, in any of the spellings above. */
 export function carriesASecret(message: unknown): boolean {
@@ -109,19 +127,35 @@ const CHECKED: unique symbol = Symbol('checked for secrets');
  */
 export function checkedChannel(channel: ActingChannel): ActingChannel {
   if ((channel as { [CHECKED]?: true })[CHECKED] === true) return channel;
-  const ended = (sent: boolean): boolean => { if (sent) forgetWatched(); return sent; };
+  const ended = (sent: boolean): boolean => {
+    if (sent) forgetWatched();
+    return sent;
+  };
   const checked: ActingChannel & { readonly [CHECKED]: true } = {
     [CHECKED]: true,
-    answer: (answer) => { refuseIfItCarriesASecret(answer); return ended(channel.answer(answer)); },
-    refuse: ((...args: unknown[]) => ended((channel.refuse as (...a: unknown[]) => boolean).apply(channel, args))) as ActingChannel['refuse'],
+    answer: (answer) => {
+      refuseIfItCarriesASecret(answer);
+      return ended(channel.answer(answer));
+    },
+    refuse: ((...args: unknown[]) =>
+      ended((channel.refuse as (...a: unknown[]) => boolean).apply(channel, args))) as ActingChannel['refuse'],
     progress: (stage) => channel.progress(stage),
     over: () => channel.over(),
     stop: () => channel.stop(),
     /* A step's place is two numbers and carries nothing; it is sent on a timer, where a throw would be heard by nobody. */
     step: (at) => channel.step(at),
-    relay: (at, transaction, label) => { refuseIfItCarriesASecret({ at, transaction, label }); return channel.relay(at, transaction, label); },
-    keep: (at, sealed, ifVersion) => { refuseIfItCarriesASecret({ at, sealed, ifVersion }); return channel.keep(at, sealed, ifVersion); },
-    call: (at, method, path, body) => { refuseIfItCarriesASecret({ at, method, path, body }); return channel.call(at, method, path, body); },
+    relay: (at, transaction, label) => {
+      refuseIfItCarriesASecret({ at, transaction, label });
+      return channel.relay(at, transaction, label);
+    },
+    keep: (at, sealed, ifVersion) => {
+      refuseIfItCarriesASecret({ at, sealed, ifVersion });
+      return channel.keep(at, sealed, ifVersion);
+    },
+    call: (at, method, path, body) => {
+      refuseIfItCarriesASecret({ at, method, path, body });
+      return channel.call(at, method, path, body);
+    }
   };
   return Object.freeze(checked);
 }

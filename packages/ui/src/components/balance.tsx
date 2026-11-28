@@ -32,9 +32,15 @@ export function Balance({ private: held, public: shown }: BalanceProps) {
   return (
     <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1 text-sm" data-slot="balance">
       <dt className="text-muted-foreground">{t('kit.balance.private')}</dt>
-      <dd className="text-end"><Amount value={held} kind="balance" /></dd>
-      <dt><PublicPill kind="balance" /></dt>
-      <dd className="text-end" data-slot="amount" data-visibility="public"><AmountFigure value={shown} /></dd>
+      <dd className="text-end">
+        <Amount value={held} kind="balance" />
+      </dd>
+      <dt>
+        <PublicPill kind="balance" />
+      </dt>
+      <dd className="text-end" data-slot="amount" data-visibility="public">
+        <AmountFigure value={shown} />
+      </dd>
     </dl>
   );
 }
@@ -43,8 +49,10 @@ export function Balance({ private: held, public: shown }: BalanceProps) {
 export function BalanceLoading() {
   return (
     <div data-slot="balance-loading" aria-busy={true} className="grid grid-cols-2 items-center gap-x-4 gap-y-2">
-      <Skeleton data-bar="label" className="h-4 w-16" /><Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
-      <Skeleton data-bar="label" className="h-4 w-16" /><Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
+      <Skeleton data-bar="label" className="h-4 w-16" />
+      <Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
+      <Skeleton data-bar="label" className="h-4 w-16" />
+      <Skeleton data-bar="figure" className="h-4 w-24 justify-self-end" />
     </div>
   );
 }

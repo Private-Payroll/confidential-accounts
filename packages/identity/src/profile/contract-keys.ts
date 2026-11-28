@@ -14,7 +14,11 @@
  */
 import { sha256 } from '@noble/hashes/sha2.js';
 import {
-  RELEASED_VERSIONS, expectedKeysOf, type KeySlot, type ReleasedContract, type ReleasedVersion,
+  RELEASED_VERSIONS,
+  expectedKeysOf,
+  type KeySlot,
+  type ReleasedContract,
+  type ReleasedVersion
 } from '../wallet/released-versions.js';
 
 /** One reason a verifier-key write may not be built. Machine-readable, so a door prints it and a test names it. */
@@ -42,34 +46,35 @@ export interface VerifierKeyWrite {
  * unnamed entry point, empty bytes, and a version the ledger does not have.
  * Whether the bytes are this build's is `verifierKeysMatch`'s question.
  */
-export function verifierKeyRefusals(
-  writes: readonly VerifierKeyWrite[],
-): VerifierKeyRefusal[] {
+export function verifierKeyRefusals(writes: readonly VerifierKeyWrite[]): VerifierKeyRefusal[] {
   const out: VerifierKeyRefusal[] = [];
   for (const [i, w] of writes.entries()) {
     if (typeof w?.operation !== 'string' || w.operation.trim() === '') {
       out.push({
         code: 'unnamed-verifier-key-operation',
-        why: `verifier-key write [${i}] names no entry point. A key written at an entry point ` +
-          'nobody named is a key nothing can read back or compare.',
+        why:
+          `verifier-key write [${i}] names no entry point. A key written at an entry point ` +
+          'nobody named is a key nothing can read back or compare.'
       });
     }
     if (!(w?.verifierKey instanceof Uint8Array) || w.verifierKey.length === 0) {
       out.push({
         code: 'empty-verifier-key',
-        why: `verifier-key write [${i}] ("${String(w?.operation)}") carries no key bytes. This ` +
+        why:
+          `verifier-key write [${i}] ("${String(w?.operation)}") carries no key bytes. This ` +
           'must be the `.verifier` artefact EXACTLY as it sits on disk, header and all — ' +
           'measured: that is what the chain hands back, not the header-stripped form the ' +
-          'runtime constructor is handed.',
+          'runtime constructor is handed.'
       });
     }
     if (w?.version !== 'v3' && w?.version !== 'v4') {
       out.push({
         code: 'unknown-verifier-key-version',
-        why: `verifier-key write [${i}] ("${String(w?.operation)}") names version ` +
+        why:
+          `verifier-key write [${i}] ("${String(w?.operation)}") names version ` +
           `"${String(w?.version)}", and the runtime has exactly two: "v3" and "v4". They are ` +
           'not labels — each one requires its own header tag on the bytes and the constructor ' +
-          'throws on a mismatch.',
+          'throws on a mismatch.'
       });
     }
   }
@@ -108,7 +113,7 @@ export type OperationsRead =
 const OPERATION_HEADER = new TextEncoder().encode('midnight:contract-operation[v6]:');
 const SLOT_HEADER: Readonly<Record<KeySlot, Uint8Array>> = {
   v2: new TextEncoder().encode('midnight:verifier-key[v6]:'),
-  v3: new TextEncoder().encode('midnight:verifier-key[v7]:'),
+  v3: new TextEncoder().encode('midnight:verifier-key[v7]:')
 };
 const SLOT_ORDER: readonly KeySlot[] = ['v2', 'v3'];
 
@@ -174,7 +179,9 @@ function slotsOf(op: unknown, shown: Uint8Array, name: string): SlotKey[] | stri
     return `entry point "${name}" carries no serialized form, so its other key slot cannot be read.`;
   }
   let bytes: unknown;
-  try { bytes = serialize.call(op); } catch (e) {
+  try {
+    bytes = serialize.call(op);
+  } catch (e) {
     return `serializing entry point "${name}" threw: ${e instanceof Error ? e.message : String(e)}`;
   }
   const slots = bytes instanceof Uint8Array ? slotsOfOperationBytes(bytes) : null;
@@ -190,9 +197,7 @@ function slotsOf(op: unknown, shown: Uint8Array, name: string): SlotKey[] | stri
  * they cannot be read. Structural rather than typed against the ledger's class,
  * so this boundary states what it relies on.
  */
-export function operationsFromContractState(
-  state: unknown, address: string,
-): OperationsRead {
+export function operationsFromContractState(state: unknown, address: string): OperationsRead {
   if (!state || typeof state !== 'object') {
     return { state: 'unreadable', address, why: 'contract state was not an object' };
   }
@@ -202,16 +207,21 @@ export function operationsFromContractState(
   };
   if (typeof s.operations !== 'function' || typeof s.operation !== 'function') {
     return {
-      state: 'unreadable', address,
-      why: 'contract state does not expose `operations()` and `operation(name)`, so its verifier ' +
-        'keys cannot be read. NOTHING may be concluded about them from this.',
+      state: 'unreadable',
+      address,
+      why:
+        'contract state does not expose `operations()` and `operation(name)`, so its verifier ' +
+        'keys cannot be read. NOTHING may be concluded about them from this.'
     };
   }
   let names: unknown;
-  try { names = s.operations(); } catch (e) {
+  try {
+    names = s.operations();
+  } catch (e) {
     return {
-      state: 'unreadable', address,
-      why: `listing this contract's entry points threw: ${e instanceof Error ? e.message : String(e)}`,
+      state: 'unreadable',
+      address,
+      why: `listing this contract's entry points threw: ${e instanceof Error ? e.message : String(e)}`
     };
   }
   if (!Array.isArray(names)) {
@@ -221,18 +231,25 @@ export function operationsFromContractState(
   for (const raw of names) {
     const name = raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw);
     let op: unknown;
-    try { op = s.operation(raw); } catch (e) {
+    try {
+      op = s.operation(raw);
+    } catch (e) {
       return {
-        state: 'unreadable', address, entryPoint: name,
-        why: `reading entry point "${name}" threw: ${e instanceof Error ? e.message : String(e)}`,
+        state: 'unreadable',
+        address,
+        entryPoint: name,
+        why: `reading entry point "${name}" threw: ${e instanceof Error ? e.message : String(e)}`
       };
     }
     const vk = (op as { verifierKey?: unknown } | undefined)?.verifierKey;
     if (!(vk instanceof Uint8Array)) {
       return {
-        state: 'unreadable', address, entryPoint: name,
-        why: `entry point "${name}" carries no readable \`verifierKey\`. A partial answer here is ` +
-          'worse than none: it would let a swapped key hide behind an unreadable one.',
+        state: 'unreadable',
+        address,
+        entryPoint: name,
+        why:
+          `entry point "${name}" carries no readable \`verifierKey\`. A partial answer here is ` +
+          'worse than none: it would let a swapped key hide behind an unreadable one.'
       };
     }
     const slots = slotsOf(op, vk, name);
@@ -278,14 +295,22 @@ const asIs = (b: Uint8Array): Uint8Array => b;
 
 /** Entry points that carry exactly the expected keys, those that do not, and a fingerprint of each that does not. */
 function sortedByMatch(
-  operations: readonly OnChainOperation[], expected: ReadonlyMap<string, readonly Uint8Array[]>,
-  digest: (b: Uint8Array) => Uint8Array,
+  operations: readonly OnChainOperation[],
+  expected: ReadonlyMap<string, readonly Uint8Array[]>,
+  digest: (b: Uint8Array) => Uint8Array
 ): Pick<VerifierKeyComparison, 'matched' | 'mismatched' | 'onChainOnly' | 'fingerprints'> {
-  const fp = (keys: readonly Uint8Array[]) => keys.map((b) => hex(b.slice(0, 8))).sort().join('+') || '-';
+  const fp = (keys: readonly Uint8Array[]) =>
+    keys
+      .map((b) => hex(b.slice(0, 8)))
+      .sort()
+      .join('+') || '-';
   const out: ReturnType<typeof sortedByMatch> = { matched: [], mismatched: [], onChainOnly: [], fingerprints: [] };
   for (const op of operations) {
     const want = expected.get(op.name);
-    if (!want) { out.onChainOnly.push(op.name); continue; }
+    if (!want) {
+      out.onChainOnly.push(op.name);
+      continue;
+    }
     const got = op.slots.map((s) => digest(s.key));
     const [gotHex, wantHex] = [got.map(hex).sort(), want.map(hex).sort()];
     const same = gotHex.length === wantHex.length && gotHex.every((h, i) => h === wantHex[i]);
@@ -310,14 +335,17 @@ function sortedByMatch(
 export function verifierKeysMatch(
   read: OperationsRead,
   expected: ReadonlyMap<string, readonly Uint8Array[]>,
-  digest: (b: Uint8Array) => Uint8Array = asIs,
+  digest: (b: Uint8Array) => Uint8Array = asIs
 ): VerifierKeyComparison {
   const empty = { matched: [], mismatched: [], onChainOnly: [], missingOnChain: [], fingerprints: [] };
   if (read.state !== 'read') {
     return {
-      ...empty, verdict: 'unknown', address: read.address,
-      why: `this contract's verifier keys could not be read — ${read.why}. NOTHING may be ` +
-        'concluded: an unreadable state is not a clean one.',
+      ...empty,
+      verdict: 'unknown',
+      address: read.address,
+      why:
+        `this contract's verifier keys could not be read — ${read.why}. NOTHING may be ` +
+        'concluded: an unreadable state is not a clean one.'
     };
   }
   const sorted = sortedByMatch(read.operations, expected, digest);
@@ -328,37 +356,45 @@ export function verifierKeysMatch(
 
   if (mismatched.length > 0) {
     return {
-      ...lists, verdict: 'disagree',
-      why: `${mismatched.length} entry point(s) hold a verifier key this build did not produce, in one ` +
+      ...lists,
+      verdict: 'disagree',
+      why:
+        `${mismatched.length} entry point(s) hold a verifier key this build did not produce, in one ` +
         `of their two key slots: ${mismatched.join(', ')}. **THIS IS WHAT A SWAPPED KEY LOOKS LIKE FROM ` +
-        'OUTSIDE.** Whoever holds the maintenance authority can put a key into an entry point\'s empty ' +
+        "OUTSIDE.** Whoever holds the maintenance authority can put a key into an entry point's empty " +
         'slot or replace one, and the contract then accepts proofs of a DIFFERENT statement under the ' +
-        'same name, with the operations map unchanged. Do not submit anything against this contract.',
+        'same name, with the operations map unchanged. Do not submit anything against this contract.'
     };
   }
   if (onChainOnly.length > 0 || missingOnChain.length > 0) {
     return {
-      ...lists, verdict: 'disagree',
-      why: 'every key this build knows about matches, and the ENTRY POINT SETS DIFFER: ' +
+      ...lists,
+      verdict: 'disagree',
+      why:
+        'every key this build knows about matches, and the ENTRY POINT SETS DIFFER: ' +
         `${onChainOnly.length} on chain that this build does not know (${onChainOnly.join(', ') || '-'}) ` +
         `and ${missingOnChain.length} in this build that the chain does not carry ` +
         `(${missingOnChain.join(', ') || '-'}). A key this build cannot name is a key nothing here ` +
-        'can check, which is a disagreement rather than a silence.',
+        'can check, which is a disagreement rather than a silence.'
     };
   }
   if (matched.length === 0) {
     return {
-      ...lists, verdict: 'unknown',
-      why: 'there was nothing to compare: the chain carries no entry points this build knows ' +
+      ...lists,
+      verdict: 'unknown',
+      why:
+        'there was nothing to compare: the chain carries no entry points this build knows ' +
         'about and this build named none. NOTHING may be concluded — a pass over an empty set ' +
-        'is an absence where evidence should be, not evidence of absence.',
+        'is an absence where evidence should be, not evidence of absence.'
     };
   }
   return {
-    ...lists, verdict: 'agree',
-    why: `all ${matched.length} deployed entry point(s) hold exactly the verifier keys this build ` +
+    ...lists,
+    verdict: 'agree',
+    why:
+      `all ${matched.length} deployed entry point(s) hold exactly the verifier keys this build ` +
       'produces, in BOTH key slots the ledger keeps for each, compared over full bytes against the ' +
-      'key files.',
+      'key files.'
   };
 }
 
@@ -368,7 +404,7 @@ export function verifierKeysMatch(
  */
 export function compareVerifierKeys(
   read: OperationsRead,
-  expected: ReadonlyMap<string, Uint8Array>,
+  expected: ReadonlyMap<string, Uint8Array>
 ): VerifierKeyComparison {
   return verifierKeysMatch(read, new Map([...expected].map(([name, key]) => [name, [key]])));
 }
@@ -386,7 +422,9 @@ export type ReleasedKeysAnswer =
  * withdrawn is named and refused.
  */
 export function releasedVersionOf(
-  read: OperationsRead, contract: ReleasedContract, versions: readonly ReleasedVersion[] = RELEASED_VERSIONS,
+  read: OperationsRead,
+  contract: ReleasedContract,
+  versions: readonly ReleasedVersion[] = RELEASED_VERSIONS
 ): ReleasedKeysAnswer {
   if (read.state !== 'read') return { released: false, why: verifierKeysMatch(read, new Map()).why };
   for (const v of versions) {
@@ -396,8 +434,9 @@ export function releasedVersionOf(
   }
   return {
     released: false,
-    why: `these keys are not a released version of the ${contract}: no version holds exactly them, ` +
-      'circuit by circuit and slot by slot.',
+    why:
+      `these keys are not a released version of the ${contract}: no version holds exactly them, ` +
+      'circuit by circuit and slot by slot.'
   };
 }
 
@@ -407,7 +446,11 @@ export function releasedVersionOf(
 export interface CreationInsertPrimitives {
   VerifierKeyInsert: new (operation: string, vk: object) => object;
   ContractOperationVersionedVerifierKey: new (version: 'v3' | 'v4', rawVk: Uint8Array) => object;
-  MaintenanceUpdate: new (address: string, updates: object[], counter: bigint) => {
+  MaintenanceUpdate: new (
+    address: string,
+    updates: object[],
+    counter: bigint
+  ) => {
     readonly dataToSign: Uint8Array;
     addSignature(idx: bigint, signature: { tag: string; value: string }): unknown;
   };
@@ -450,28 +493,28 @@ export function buildCreationInsert<P extends CreationInsertPrimitives>(
     onChain: readonly string[];
     keys: ReadonlyMap<string, Uint8Array>;
     steps: CreationSteps;
-  },
+  }
 ): { update: InstanceType<P['MaintenanceUpdate']>; inserted: string[] } {
   const wanted = [...args.steps.second];
   const given = [...args.keys.keys()].sort();
   if (given.length !== wanted.length || [...wanted].sort().some((n, i) => n !== given[i])) {
     throw new Error(
-      `the second step inserts exactly ${wanted.join(', ')}, and was handed keys for ${given.join(', ') || 'nothing'}. `
-        + 'Nothing was built.',
+      `the second step inserts exactly ${wanted.join(', ')}, and was handed keys for ${given.join(', ') || 'nothing'}. ` +
+        'Nothing was built.'
     );
   }
   const already = wanted.filter((n) => args.onChain.includes(n));
   if (already.length > 0) {
     throw new Error(
-      `the account at ${args.address} already carries ${already.join(', ')}, so its second step has already landed, or `
-        + 'somebody else changed it. Read the account again before doing anything; nothing was built.',
+      `the account at ${args.address} already carries ${already.join(', ')}, so its second step has already landed, or ` +
+        'somebody else changed it. Read the account again before doing anything; nothing was built.'
     );
   }
   const missingFirst = args.steps.first.filter((n) => !args.onChain.includes(n));
   if (missingFirst.length > 0) {
     throw new Error(
-      `the account at ${args.address} does not carry ${missingFirst.join(', ')}, which its deploy should have. It is `
-        + 'not an account this product created; nothing was built.',
+      `the account at ${args.address} does not carry ${missingFirst.join(', ')}, which its deploy should have. It is ` +
+        'not an account this product created; nothing was built.'
     );
   }
   const writes: VerifierKeyWrite[] = wanted.map((name) => {
@@ -479,17 +522,19 @@ export function buildCreationInsert<P extends CreationInsertPrimitives>(
     const version = operationVersionOfKeyFile(vk);
     if (version === null) {
       throw new Error(
-        `the key handed in for ${name} is not a compiled verifier key of a version the ledger takes. Rebuild the keys; `
-          + 'nothing was built.',
+        `the key handed in for ${name} is not a compiled verifier key of a version the ledger takes. Rebuild the keys; ` +
+          'nothing was built.'
       );
     }
     return { operation: name, version, verifierKey: vk };
   });
   const refused = verifierKeyRefusals(writes);
   if (refused.length > 0) throw new Error(`the second step will not be built: ${refused.map((r) => r.why).join(' ')}`);
-  const updates = writes.map((w) => new P.VerifierKeyInsert(w.operation, new P.ContractOperationVersionedVerifierKey(w.version, w.verifierKey)));
+  const updates = writes.map(
+    (w) => new P.VerifierKeyInsert(w.operation, new P.ContractOperationVersionedVerifierKey(w.version, w.verifierKey))
+  );
   return {
     update: new P.MaintenanceUpdate(args.address, updates, args.counter) as InstanceType<P['MaintenanceUpdate']>,
-    inserted: wanted,
+    inserted: wanted
   };
 }

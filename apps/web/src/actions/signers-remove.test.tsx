@@ -10,35 +10,52 @@ import { ENGLISH } from '../english.test-support.js';
  * THE SIGNERS PAGE'S TWO PRESSES OF THE SWITCH, DRAWN over the real adapters and the real wallet wrappers, with only the call to the
  * wallet and the company's records stood in for: Remove on a seated signer, and Change vault secrets for a signer who stays.
  */
-vi.hoisted(() => { vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180'); });
+vi.hoisted(() => {
+  vi.stubEnv('VITE_WALLET_ORIGIN', 'http://wallet.localhost:5180');
+});
 const kr = vi.hoisted(() => ({
-  acts: [] as Record<string, string>[], ended: { of: 'done', steps: 1, relayed: 0 } as unknown, steps: [] as { step: number; steps: number }[],
-  hold: null as Promise<void> | null, company: null as unknown, reads: 0, reloads: 0, user: { id: 'u1' } as { id: string } | null,
+  acts: [] as Record<string, string>[],
+  ended: { of: 'done', steps: 1, relayed: 0 } as unknown,
+  steps: [] as { step: number; steps: number }[],
+  hold: null as Promise<void> | null,
+  company: null as unknown,
+  reads: 0,
+  reloads: 0,
+  user: { id: 'u1' } as { id: string } | null,
   /** Where the company stands, as the committee change reads it, and what signing a change comes to. */
-  handover: { of: 'held' } as Record<string, unknown>, signed: { of: 'done' } as Record<string, unknown>, signs: 0,
+  handover: { of: 'held' } as Record<string, unknown>,
+  signed: { of: 'done' } as Record<string, unknown>,
+  signs: 0,
   /** Which vaults the page's read on load finds owing a new secret, and those it could not read. */
-  owed: { of: 'read', owed: [], unread: [] } as unknown, owedReads: 0,
+  owed: { of: 'read', owed: [], unread: [] } as unknown,
+  owedReads: 0
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.user,
   forgetLocally: () => {},
   resumeSession: async () => null,
-  actOnACompanyInTheWallet: async (intent: Record<string, string>, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
+  actOnACompanyInTheWallet: async (
+    intent: Record<string, string>,
+    _origin: string,
+    opts?: { onStep?: (at: { step: number; steps: number }) => void }
+  ) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.hold !== null) await kr.hold;
     return kr.ended;
-  },
+  }
 }));
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('../adapters/service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('../adapters/service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async () => ({ companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) })
+  })
+);
 vi.mock('../records/company-records.js', async (real) => {
   const actual = await real<typeof import('../records/company-records.js')>();
   const { useMemo } = await import('react');
@@ -46,27 +63,45 @@ vi.mock('../records/company-records.js', async (real) => {
     ...actual,
     useCompanyRecords: () => {
       const records = actual.useCompanyRecords();
-      return useMemo(() => ({ ...records, reload: () => { kr.reloads += 1; records.reload(); } }), [records]);
-    },
+      return useMemo(
+        () => ({
+          ...records,
+          reload: () => {
+            kr.reloads += 1;
+            records.reload();
+          }
+        }),
+        [records]
+      );
+    }
   };
 });
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
-  readCompany: async () => { kr.reads += 1; return kr.company; },
+  readCompany: async () => {
+    kr.reads += 1;
+    return kr.company;
+  }
 }));
 vi.mock('../adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('../adapters/handover-state.js')>()),
-  readHandover: vi.fn(async () => kr.handover),
+  readHandover: vi.fn(async () => kr.handover)
 }));
 vi.mock('../adapters/committee-change.js', () => ({
-  signChange: vi.fn(async () => { kr.signs += 1; return kr.signed; }),
+  signChange: vi.fn(async () => {
+    kr.signs += 1;
+    return kr.signed;
+  })
 }));
 vi.mock('../adapters/vault-secrets-owed.js', () => ({
-  vaultSecretsOwed: async () => { kr.owedReads += 1; return kr.owed; },
+  vaultSecretsOwed: async () => {
+    kr.owedReads += 1;
+    return kr.owed;
+  }
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
-  companyNamesFor: async () => new Map(),
+  companyNamesFor: async () => new Map()
 }));
 
 const { Signers } = await import('./signers.js');
@@ -74,42 +109,109 @@ const { SessionProvider } = await import('../session.js');
 const { PanelProvider, RightPanel } = await import('../shell/right-panel.js');
 const { CompanyRecordsProvider } = await import('../records/company-records.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const en = (key: string): string => EN[key] ?? key;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const LEAF = (n: number): string => n.toString(16).padStart(2, '0').repeat(32);
 const read = (value: unknown) => ({ of: 'read', value });
-const seat = (id: string, name: string, over: Record<string, unknown> = {}) => ({ id, name, accepted: false, seatOnChain: true, you: false, entryFiled: true, leaf: LEAF(Number(id.slice(1))), ...over });
+const seat = (id: string, name: string, over: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  accepted: false,
+  seatOnChain: true,
+  you: false,
+  entryFiled: true,
+  leaf: LEAF(Number(id.slice(1))),
+  ...over
+});
 const records = (over: Record<string, unknown> = {}) => ({
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }, { id: 's2', name: 'Raj' }],
-  approvalsNeeded: read(2), proposals: read([]),
+  of: 'open',
+  id: 'c-1',
+  name: 'Northwind',
+  signers: [
+    { id: 's1', name: 'Priya' },
+    { id: 's2', name: 'Raj' }
+  ],
+  approvalsNeeded: read(2),
+  proposals: read([]),
   approvalsForSigners: read({ count: 3, raisedAboveTheAccount: true, vaultsAtThatNumber: [], seated: 4 }),
-  signerStandings: read([seat('s1', 'Priya', { you: true }), seat('s2', 'Raj'), seat('s3', 'Tia', { seatOnChain: false, accepted: true }), seat('s4', 'Uma', { leaf: null })]),
+  signerStandings: read([
+    seat('s1', 'Priya', { you: true }),
+    seat('s2', 'Raj'),
+    seat('s3', 'Tia', { seatOnChain: false, accepted: true }),
+    seat('s4', 'Uma', { leaf: null })
+  ]),
   signersInvited: read([]),
-  ...over,
+  ...over
 });
 
 const session = () => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true },
-  chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.company, signs: true },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {})
 });
-const inPage = (node: React.ReactNode) => render(
-  <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={session()}><PanelProvider><CompanyRecordsProvider>{node}<RightPanel /></CompanyRecordsProvider></PanelProvider></SessionProvider>
-  </KitProvider>,
-);
-const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0)); }); };
+const inPage = (node: React.ReactNode) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <SessionProvider session={session()}>
+        <PanelProvider>
+          <CompanyRecordsProvider>
+            {node}
+            <RightPanel />
+          </CompanyRecordsProvider>
+        </PanelProvider>
+      </SessionProvider>
+    </KitProvider>
+  );
+const settle = async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+};
 const q = (s: string): HTMLElement | null => document.body.querySelector(s);
 const qa = (s: string): HTMLElement[] => [...document.body.querySelectorAll<HTMLElement>(s)];
-const press = async (selector: string) => { fireEvent.click(q(selector)!); await settle(); };
-const draw = async (node: React.ReactNode = <Signers />) => { inPage(node); await settle(); };
+const press = async (selector: string) => {
+  fireEvent.click(q(selector)!);
+  await settle();
+};
+const draw = async (node: React.ReactNode = <Signers />) => {
+  inPage(node);
+  await settle();
+};
 
 beforeEach(() => {
-  kr.acts = []; kr.steps = []; kr.hold = null; kr.reads = 0; kr.reloads = 0; kr.user = { id: 'u1' }; kr.company = records();
-  kr.handover = { of: 'held' }; kr.signed = { of: 'done' }; kr.signs = 0; kr.owed = { of: 'read', owed: [], unread: [] }; kr.owedReads = 0;
+  kr.acts = [];
+  kr.steps = [];
+  kr.hold = null;
+  kr.reads = 0;
+  kr.reloads = 0;
+  kr.user = { id: 'u1' };
+  kr.company = records();
+  kr.handover = { of: 'held' };
+  kr.signed = { of: 'done' };
+  kr.signs = 0;
+  kr.owed = { of: 'read', owed: [], unread: [] };
+  kr.owedReads = 0;
   kr.ended = { of: 'done', steps: 5, relayed: 1, outcome: { state: 'waiting-for-approvals', approvals: 1, needed: 2 } };
 });
 afterEach(cleanup);
@@ -119,15 +221,34 @@ const FEWER = '[data-signer=s2] [data-action=remove-threshold-fewer]';
 const MORE = '[data-signer=s2] [data-action=remove-threshold-more]';
 const KEEP = '[data-signer=s2] [data-action=remove-threshold-keep]';
 const SHOWN = '[data-signer=s2] [data-remove-threshold-value]';
-const stoppedWith = (refused: string, over: Record<string, unknown> = {}) => ({ of: 'stopped', step: 2, steps: 5, relayed: 0, unconfirmed: 0, why: 'check-failed', refused, ...over });
+const stoppedWith = (refused: string, over: Record<string, unknown> = {}) => ({
+  of: 'stopped',
+  step: 2,
+  steps: 5,
+  relayed: 0,
+  unconfirmed: 0,
+  why: 'check-failed',
+  refused,
+  ...over
+});
 const text = (selector: string): string => q(selector)?.textContent ?? '';
 
 describe('Remove on a seated signer', () => {
   /* RED WHEN: a seated signer's row has no Remove that can be pressed, or a seat the chain does not hold, one whose leaf the roster does not name, or one waiting for its request is offered it. */
   it('is offered on a seated signer whose leaf is named, and on no other', async () => {
-    kr.company = records({ signerStandings: read([seat('s1', 'Priya', { you: true }), seat('s2', 'Raj'), seat('s3', 'Tia', { seatOnChain: false, accepted: true }), seat('s4', 'Uma', { leaf: null }), seat(LEAF(5), '', { waiting: true, id: LEAF(5) })]) });
+    kr.company = records({
+      signerStandings: read([
+        seat('s1', 'Priya', { you: true }),
+        seat('s2', 'Raj'),
+        seat('s3', 'Tia', { seatOnChain: false, accepted: true }),
+        seat('s4', 'Uma', { leaf: null }),
+        seat(LEAF(5), '', { waiting: true, id: LEAF(5) })
+      ])
+    });
     await draw();
-    expect(qa('[data-action=remove-signer]').map((b) => b.closest('[data-signer]')!.getAttribute('data-signer'))).toEqual(['s1', 's2']);
+    expect(
+      qa('[data-action=remove-signer]').map((b) => b.closest('[data-signer]')!.getAttribute('data-signer'))
+    ).toEqual(['s1', 's2']);
     expect(q(REMOVE)!.textContent).toBe(en('signers.remove'));
     expect(q(REMOVE)!.hasAttribute('disabled')).toBe(false);
     expect(q('[data-signer=s2] [data-slot="soon-action"]')).toBeNull();
@@ -139,9 +260,13 @@ describe('Remove on a seated signer', () => {
     await draw();
     const reads = kr.reads;
     await press(REMOVE);
-    expect(kr.acts).toEqual([{ name: 'remove-signer', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), leaf: LEAF(2) }]);
+    expect(kr.acts).toEqual([
+      { name: 'remove-signer', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32), leaf: LEAF(2) }
+    ]);
     expect(kr.reads).toBe(reads + 1);
-    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(en('signers.removal.waiting').replace('{name}', 'Raj'));
+    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(
+      en('signers.removal.waiting').replace('{name}', 'Raj')
+    );
   });
 
   /* RED WHEN: the number of approvals stepped to is not handed to the wallet as chosen, or Remove with none chosen hands it a number. */
@@ -152,7 +277,8 @@ describe('Remove on a seated signer', () => {
     expect(text(SHOWN)).toBe(en('changeThreshold.value_one').replace('{count}', '1'));
     await press(REMOVE);
     expect(kr.acts.map((a) => a['threshold'])).toEqual(['1']);
-    cleanup(); kr.acts = [];
+    cleanup();
+    kr.acts = [];
     await draw();
     await press(MORE);
     await press(KEEP);
@@ -168,7 +294,8 @@ describe('Remove on a seated signer', () => {
     await press(MORE);
     expect(text(SHOWN)).toBe(en('changeThreshold.value_other').replace('{count}', '3'));
     expect(q(MORE)!.hasAttribute('disabled')).toBe(true);
-    await press(FEWER); await press(FEWER);
+    await press(FEWER);
+    await press(FEWER);
     expect(q(FEWER)!.hasAttribute('disabled')).toBe(true);
     cleanup();
     kr.company = records({ approvalsNeeded: { of: 'unreadable' } });
@@ -181,7 +308,9 @@ describe('Remove on a seated signer', () => {
   /* RED WHEN: a signer being removed can be removed twice at once, or another act can be started while the wallet works. */
   it('disables every press while the wallet works', async () => {
     let release = (): void => {};
-    kr.hold = new Promise<void>((r) => { release = r; });
+    kr.hold = new Promise<void>((r) => {
+      release = r;
+    });
     await draw();
     fireEvent.click(q(REMOVE)!);
     await settle();
@@ -194,14 +323,18 @@ describe('Remove on a seated signer', () => {
 });
 
 describe('where a removal got to', () => {
-  const ended = (outcome: Record<string, unknown>) => { kr.ended = { of: 'done', steps: 5, relayed: 2, outcome }; };
+  const ended = (outcome: Record<string, unknown>) => {
+    kr.ended = { of: 'done', steps: 5, relayed: 2, outcome };
+  };
   /* RED WHEN: a removal still waiting for approvals is told as removed, or its approvals so far and the number it needs are lost. */
   it('tells a removal waiting for approvals with the count the network showed', async () => {
     ended({ state: 'waiting-for-approvals', approvals: 1, needed: 2 });
     await draw();
     await press(REMOVE);
     expect(text('[data-signer=s2]')).toContain(en('signers.removal.waiting').replace('{name}', 'Raj'));
-    expect(text('[data-signer=s2] [data-removal-approvals]')).toBe(en('signers.removal.counted').replace('{approvals}', '1').replace('{needed}', '2'));
+    expect(text('[data-signer=s2] [data-removal-approvals]')).toBe(
+      en('signers.removal.counted').replace('{approvals}', '1').replace('{needed}', '2')
+    );
     expect(q('[data-signer=s2] [data-removal-rotation]')).toBeNull();
   });
 
@@ -210,11 +343,16 @@ describe('where a removal got to', () => {
     ended({ state: 'waiting-for-the-retirement' });
     await draw();
     await press(REMOVE);
-    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(en('signers.removal.retirement').replaceAll('{name}', 'Raj'));
-    cleanup(); ended({ state: 'ready-to-carry' });
+    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(
+      en('signers.removal.retirement').replaceAll('{name}', 'Raj')
+    );
+    cleanup();
+    ended({ state: 'ready-to-carry' });
     await draw();
     await press(REMOVE);
-    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(en('signers.removal.ready').replace('{name}', 'Raj'));
+    expect(text('[data-signer=s2] [data-acted=remove-signer]')).toBe(
+      en('signers.removal.ready').replace('{name}', 'Raj')
+    );
   });
 
   /* RED WHEN: a retirement still short of signatures is told without how many it has and needs, or a count the wallet did not tell is shown. */
@@ -222,8 +360,11 @@ describe('where a removal got to', () => {
     ended({ state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 3 });
     await draw();
     await press(REMOVE);
-    expect(text('[data-signer=s2] [data-removal-retirement-signed]')).toBe(en('signers.removal.retirementCounted').replace('{name}', 'Raj').replace('{signed}', '1').replace('{needed}', '3'));
-    cleanup(); ended({ state: 'waiting-for-the-retirement' });
+    expect(text('[data-signer=s2] [data-removal-retirement-signed]')).toBe(
+      en('signers.removal.retirementCounted').replace('{name}', 'Raj').replace('{signed}', '1').replace('{needed}', '3')
+    );
+    cleanup();
+    ended({ state: 'waiting-for-the-retirement' });
     await draw();
     await press(REMOVE);
     expect(q('[data-signer=s2] [data-removal-retirement-signed]')).toBeNull();
@@ -244,22 +385,38 @@ describe('where a removal got to', () => {
     const V1 = 'aa'.repeat(32);
     const wording = async (count: number, raised: boolean, vaults: string[], needed: number): Promise<string> => {
       cleanup();
-      kr.company = records({ approvalsForSigners: read({ count, raisedAboveTheAccount: raised, vaultsAtThatNumber: vaults, seated: 4 }), vaults: read([{ vault: 'bb'.repeat(32) }, { vault: V1 }]) });
+      kr.company = records({
+        approvalsForSigners: read({ count, raisedAboveTheAccount: raised, vaultsAtThatNumber: vaults, seated: 4 }),
+        vaults: read([{ vault: 'bb'.repeat(32) }, { vault: V1 }])
+      });
       ended({ state: 'waiting-for-approvals', approvals: 1, needed });
       await draw();
       await press(REMOVE);
       return text('[data-signer=s2] [data-removal-approvals]');
     };
-    const fill = (key: string, over: Record<string, string>): string => Object.entries({ '{approvals}': '1', '{needed}': '2', ...over }).reduce((w, [k, v]) => w.replace(k, v), en(key));
+    const fill = (key: string, over: Record<string, string>): string =>
+      Object.entries({ '{approvals}': '1', '{needed}': '2', ...over }).reduce((w, [k, v]) => w.replace(k, v), en(key));
     expect(await wording(2, false, [], 2)).toBe(fill('signers.removal.counted.account', {}));
-    expect(await wording(3, true, [V1], 3)).toBe(fill('signers.removal.counted.vault', { '{needed}': '3', '{vaults}': 'Vault 2' }));
+    expect(await wording(3, true, [V1], 3)).toBe(
+      fill('signers.removal.counted.vault', { '{needed}': '3', '{vaults}': 'Vault 2' })
+    );
     expect(await wording(3, true, [], 3)).toBe(fill('signers.removal.counted.bar', { '{needed}': '3' }));
     expect(await wording(3, true, [V1], 2)).toBe(fill('signers.removal.counted', {}));
   });
 
   /* RED WHEN: a removal the network carried out is not told so, or the company key's change and each count of the vaults are not told, or a count the wallet did not give is shown. */
-  it('tells a removal carried out, the company key\'s change, and how many vaults ended in each state', async () => {
-    ended({ state: 'carried-out', approvals: 2, needed: 2, rotation: 'rotated', vaultsRotated: 2, vaultsAwaiting: 1, vaultsOwed: 0, vaultsWaiting: 1, vaultsNotChanged: 0 });
+  it("tells a removal carried out, the company key's change, and how many vaults ended in each state", async () => {
+    ended({
+      state: 'carried-out',
+      approvals: 2,
+      needed: 2,
+      rotation: 'rotated',
+      vaultsRotated: 2,
+      vaultsAwaiting: 1,
+      vaultsOwed: 0,
+      vaultsWaiting: 1,
+      vaultsNotChanged: 0
+    });
     await draw();
     await press(REMOVE);
     const row = '[data-signer=s2] ';
@@ -283,19 +440,36 @@ describe('where a removal got to', () => {
   });
 
   /* RED WHEN: the page is told what stopped the vault secrets' change and does not say it, so the signer sees that it did not start and never why. */
-  it('says what stopped the vault secrets\' change where the wallet told it', async () => {
-    ended({ state: 'carried-out', rotation: 'not-tried', vaultSecrets: 'not-started', vaultSecretsWhy: 'vault-records-not-read' });
+  it("says what stopped the vault secrets' change where the wallet told it", async () => {
+    ended({
+      state: 'carried-out',
+      rotation: 'not-tried',
+      vaultSecrets: 'not-started',
+      vaultSecretsWhy: 'vault-records-not-read'
+    });
     await draw();
     await press(REMOVE);
-    expect(text('[data-signer=s2] [data-removal-vaults-not-started-why]')).toBe(en('signers.removal.vaultsNotStartedWhy').replace('{why}', 'vault records not read'));
+    expect(text('[data-signer=s2] [data-removal-vaults-not-started-why]')).toBe(
+      en('signers.removal.vaultsNotStartedWhy').replace('{why}', 'vault records not read')
+    );
   });
 
   /* RED WHEN: a code the wallet gives for the company key's change has no words on the page, or is worded as another. */
-  it('has its own words for every state of the company key\'s change', async () => {
-    const codes = ['rotated', 'filed-not-anchored', 'rotated-elsewhere', 'not-needed', 'waits', 'not-this-seat', 'not-rotated', 'not-tried'];
+  it("has its own words for every state of the company key's change", async () => {
+    const codes = [
+      'rotated',
+      'filed-not-anchored',
+      'rotated-elsewhere',
+      'not-needed',
+      'waits',
+      'not-this-seat',
+      'not-rotated',
+      'not-tried'
+    ];
     const seen = new Set<string>();
     for (const code of codes) {
-      cleanup(); ended({ state: 'carried-out', rotation: code });
+      cleanup();
+      ended({ state: 'carried-out', rotation: code });
       await draw();
       await press(REMOVE);
       const words = text(`[data-signer=s2] [data-removal-rotation=${code}]`);
@@ -309,9 +483,28 @@ describe('where a removal got to', () => {
 
 describe('every reason the wallet gives for stopping a removal', () => {
   const REASONS = [
-    'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened', 'not-a-removal', 'refused', 'not-raised', 'not-approved',
-    'not-carried', 'may-be-sent', 'not-as-shown', 'not-read', 'not-read-to-raise', 'no-such-seat', 'no-such-seat-to-raise', 'unread-seat-first', 'withdrawn',
-    'carried-out', 'already-counted', 'outrun',
+    'not-a-company',
+    'no-saved-keys',
+    'no-seat',
+    'seat-not-held',
+    'not-on-chain',
+    'roster-not-opened',
+    'not-a-removal',
+    'refused',
+    'not-raised',
+    'not-approved',
+    'not-carried',
+    'may-be-sent',
+    'not-as-shown',
+    'not-read',
+    'not-read-to-raise',
+    'no-such-seat',
+    'no-such-seat-to-raise',
+    'unread-seat-first',
+    'withdrawn',
+    'carried-out',
+    'already-counted',
+    'outrun'
   ];
   /* RED WHEN: a reason the wallet gives for stopping a removal is shown as the page's words for one it does not know, or as no words at all. */
   it('has words of its own on the page, none of them the words for a reason the page does not know', async () => {
@@ -320,7 +513,9 @@ describe('every reason the wallet gives for stopping a removal', () => {
     for (const code of REASONS) {
       kr.ended = stoppedWith(`act.remove-signer.why.${code}`);
       await press(REMOVE);
-      const shown = qa('[data-signer=s2] [data-signer-stopped] [role=alert], [data-signer=s2] [data-signer-stopped]').map((n) => n.textContent).join(' ');
+      const shown = qa('[data-signer=s2] [data-signer-stopped] [role=alert], [data-signer=s2] [data-signer-stopped]')
+        .map((n) => n.textContent)
+        .join(' ');
       expect(q('[data-signer=s2] [data-signer-stopped]')?.getAttribute('data-signer-stopped'), code).toBe(code);
       expect(shown, code).not.toMatch(/signers\.[a-z]/u);
       expect(shown, code).not.toContain(other);
@@ -356,7 +551,11 @@ describe('every reason the wallet gives for stopping a removal', () => {
     await draw();
     await press(REMOVE);
     expect(kr.acts).toEqual([]);
-    expect(qa('[data-signer=s2] [data-act-outcome]').map((n) => n.textContent).join(' ')).toContain(en('act.refused.notSignedIn'));
+    expect(
+      qa('[data-signer=s2] [data-act-outcome]')
+        .map((n) => n.textContent)
+        .join(' ')
+    ).toContain(en('act.refused.notSignedIn'));
   });
 });
 
@@ -369,22 +568,46 @@ describe('Change vault secrets', () => {
     expect(text('[data-vault-secrets]')).toContain(en('signers.vaults.description'));
     expect(text('[data-vault-secrets]')).toContain(en('signers.vaults.promise'));
     expect(en('signers.vaults.promise')).toMatch(/payments go on as before until a vault's new secret is set/u);
-    expect(en('signers.vaults.promise')).toMatch(/Deposits made from this app wait until the new secret is set and filed/u);
-    expect(en('signers.vaults.promise')).toMatch(/until every signer who stays has a sealed copy of it on the network, the vault takes no deposits and makes no payments/u);
+    expect(en('signers.vaults.promise')).toMatch(
+      /Deposits made from this app wait until the new secret is set and filed/u
+    );
+    expect(en('signers.vaults.promise')).toMatch(
+      /until every signer who stays has a sealed copy of it on the network, the vault takes no deposits and makes no payments/u
+    );
     expect(en('signers.vaults.promise')).toMatch(/can still read what they could read before the change/u);
     expect(q(PRESS)!.textContent).toBe(en('signers.vaults.change'));
   });
 
   /* RED WHEN: the press asks for a change of anything but the company's vaults, or its counts are lost or a count the wallet did not give is shown. */
   it('asks the wallet to change the vault secrets and tells how many vaults ended in each state', async () => {
-    kr.ended = { of: 'done', steps: 3, relayed: 1, outcome: { state: 'partial', vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 2, vaultsWaiting: 0, vaultsNotChanged: 1 } };
+    kr.ended = {
+      of: 'done',
+      steps: 3,
+      relayed: 1,
+      outcome: {
+        state: 'partial',
+        vaultsRotated: 1,
+        vaultsAwaiting: 0,
+        vaultsOwed: 2,
+        vaultsWaiting: 0,
+        vaultsNotChanged: 1
+      }
+    };
     await draw();
     const reads = kr.reads;
     await press(PRESS);
-    expect(kr.acts).toEqual([{ name: 'rotate-vault-secrets', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32) }]);
-    expect(text('[data-vault-secrets] [data-vaults-count=rotated]')).toBe(en('signers.vaults.rotated_one').replace('{count}', '1'));
-    expect(text('[data-vault-secrets] [data-vaults-count=owed]')).toBe(en('signers.vaults.owed_other').replace('{count}', '2'));
-    expect(text('[data-vault-secrets] [data-vaults-count=notChanged]')).toBe(en('signers.vaults.notChanged_one').replace('{count}', '1'));
+    expect(kr.acts).toEqual([
+      { name: 'rotate-vault-secrets', record: 'c-1', company: 'label-1', account: 'c0'.repeat(32) }
+    ]);
+    expect(text('[data-vault-secrets] [data-vaults-count=rotated]')).toBe(
+      en('signers.vaults.rotated_one').replace('{count}', '1')
+    );
+    expect(text('[data-vault-secrets] [data-vaults-count=owed]')).toBe(
+      en('signers.vaults.owed_other').replace('{count}', '2')
+    );
+    expect(text('[data-vault-secrets] [data-vaults-count=notChanged]')).toBe(
+      en('signers.vaults.notChanged_one').replace('{count}', '1')
+    );
     expect(q('[data-vault-secrets] [data-vaults-count=awaiting]')).toBeNull();
     expect(text('[data-vault-secrets]')).toContain(en('signers.vaults.partial'));
     expect(kr.reads).toBe(reads + 1);
@@ -392,7 +615,19 @@ describe('Change vault secrets', () => {
 
   /* RED WHEN: a press that finds nothing owed is told as a failure or as nothing, or one that finished is told it still owes. */
   it('says nothing is owed when every count is zero, and nothing still owed when it is done', async () => {
-    kr.ended = { of: 'done', steps: 3, relayed: 0, outcome: { state: 'done', vaultsRotated: 0, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 } };
+    kr.ended = {
+      of: 'done',
+      steps: 3,
+      relayed: 0,
+      outcome: {
+        state: 'done',
+        vaultsRotated: 0,
+        vaultsAwaiting: 0,
+        vaultsOwed: 0,
+        vaultsWaiting: 0,
+        vaultsNotChanged: 0
+      }
+    };
     await draw();
     await press(PRESS);
     expect(q('[data-vault-secrets] [data-vaults-none]')?.textContent).toBe(en('signers.vaults.nothingOwed'));
@@ -412,7 +647,16 @@ describe('Change vault secrets', () => {
   it('has words for every reason the wallet gives for stopping it', async () => {
     await draw();
     const other = en('signers.why.other');
-    for (const code of ['not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened', 'not-a-vault', 'no-person']) {
+    for (const code of [
+      'not-a-company',
+      'no-saved-keys',
+      'no-seat',
+      'seat-not-held',
+      'not-on-chain',
+      'roster-not-opened',
+      'not-a-vault',
+      'no-person'
+    ]) {
       kr.ended = stoppedWith(`act.rotate-vault-secrets.why.${code}`);
       await press(PRESS);
       const shown = text('[data-vault-secrets] [data-signer-stopped]');
@@ -430,19 +674,25 @@ describe('a vault secret change left owed, shown when the page opens', () => {
   const withVaults = () => records({ vaults: read([{ vault: V1 }, { vault: V2 }]) });
 
   /* RED WHEN: after a reload the page does not name a vault whose secret a signer who left can still open, or names one the read did not find owing. */
-  it('names each vault the network shows set before a signer\'s removal, with the press that changes it', async () => {
-    kr.company = withVaults(); kr.owed = { of: 'read', owed: [V2], unread: [] };
+  it("names each vault the network shows set before a signer's removal, with the press that changes it", async () => {
+    kr.company = withVaults();
+    kr.owed = { of: 'read', owed: [V2], unread: [] };
     await draw();
     expect(kr.owedReads).toBeGreaterThan(0);
-    expect(text('[data-vault-secrets] [data-vaults-owed-now]')).toBe(en('signers.vaults.owedNow').replace('{vaults}', 'Vault 2'));
+    expect(text('[data-vault-secrets] [data-vaults-owed-now]')).toBe(
+      en('signers.vaults.owedNow').replace('{vaults}', 'Vault 2')
+    );
     expect(q('[data-vault-secrets] [data-vaults-owed-unread]')).toBeNull();
   });
 
   /* RED WHEN: a vault whose read failed is passed over in silence, or the page says no vault owes a change from a read that did not finish. */
   it('names a vault it could not read, and never says no vault owes a change from this read', async () => {
-    kr.company = withVaults(); kr.owed = { of: 'read', owed: [], unread: [V1] };
+    kr.company = withVaults();
+    kr.owed = { of: 'read', owed: [], unread: [V1] };
     await draw();
-    expect(text('[data-vault-secrets] [data-vaults-owed-unread]')).toBe(en('signers.vaults.owedUnread').replace('{vaults}', 'Vault 1'));
+    expect(text('[data-vault-secrets] [data-vaults-owed-unread]')).toBe(
+      en('signers.vaults.owedUnread').replace('{vaults}', 'Vault 1')
+    );
     expect(q('[data-vault-secrets] [data-vaults-none]')).toBeNull();
     kr.owed = { of: 'unread' };
     cleanup();
@@ -461,9 +711,11 @@ describe('a vault secret change left owed, shown when the page opens', () => {
   });
 
   /* RED WHEN: a vault the page's list does not name is dropped from the sentence instead of shown by its address. */
-  it('shows a vault the page\'s list does not name by its address', async () => {
+  it("shows a vault the page's list does not name by its address", async () => {
     kr.owed = { of: 'read', owed: [V1], unread: [] };
     await draw();
-    expect(text('[data-vault-secrets] [data-vaults-owed-now]')).toBe(en('signers.vaults.owedNow').replace('{vaults}', V1));
+    expect(text('[data-vault-secrets] [data-vaults-owed-now]')).toBe(
+      en('signers.vaults.owedNow').replace('{vaults}', V1)
+    );
   });
 });

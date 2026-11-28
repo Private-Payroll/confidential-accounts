@@ -14,10 +14,17 @@ export const SERVICE_READ_BOUND_SECONDS = '20';
  * nothing is written.
  */
 const readsAreNoted = (): boolean => import.meta.env?.DEV === true && import.meta.env.VITE_DEV_ERROR_SINK === '1';
-const noteRead = (line: string): void => { try { console.warn(`read ${line}`); } catch { /* a line that cannot be written never stops a read */ } };
+const noteRead = (line: string): void => {
+  try {
+    console.warn(`read ${line}`);
+  } catch {
+    /* a line that cannot be written never stops a read */
+  }
+};
 const statusOf = (v: unknown): string => {
   const o = (v ?? {}) as { status?: unknown; response?: { status?: unknown } };
-  const status = typeof o.status === 'number' ? o.status : typeof o.response?.status === 'number' ? o.response.status : null;
+  const status =
+    typeof o.status === 'number' ? o.status : typeof o.response?.status === 'number' ? o.response.status : null;
   return status === null ? '' : `${status} `;
 };
 const errorOf = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
@@ -37,10 +44,14 @@ export function notePreparing(line: string): void {
  */
 export class ReadRanOutOfTime extends Error {
   constructor(readonly what: string) {
-    super(`${what} did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so this page stopped waiting for it. Nothing was changed by this read.`);
+    super(
+      `${what} did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so this page stopped waiting for it. Nothing was changed by this read.`
+    );
     this.name = 'ReadRanOutOfTime';
     if (import.meta.env?.DEV && readsAreNoted()) {
-      noteRead(`${what}: did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so the page stopped waiting for it`);
+      noteRead(
+        `${what}: did not answer within ${SERVICE_READ_BOUND_SECONDS} seconds, so the page stopped waiting for it`
+      );
     }
   }
 }
@@ -57,14 +68,16 @@ export function boundedRead<T>(what: string, work: (signal: AbortSignal) => Prom
     work(stopper.signal).then(
       (v) => {
         clearTimeout(timer);
-        if (import.meta.env?.DEV && readsAreNoted()) noteRead(`${what}: answered ${statusOf(v)}in ${Date.now() - started} ms`);
+        if (import.meta.env?.DEV && readsAreNoted())
+          noteRead(`${what}: answered ${statusOf(v)}in ${Date.now() - started} ms`);
         answer(v);
       },
       (e: unknown) => {
         clearTimeout(timer);
-        if (import.meta.env?.DEV && readsAreNoted()) noteRead(`${what}: failed after ${Date.now() - started} ms: ${errorOf(e)}`);
+        if (import.meta.env?.DEV && readsAreNoted())
+          noteRead(`${what}: failed after ${Date.now() - started} ms: ${errorOf(e)}`);
         refuse(e);
-      },
+      }
     );
   });
 }
@@ -75,7 +88,9 @@ const ofTheService = new Set<Promise<unknown>>();
 export function serviceRead<T>(what: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const read = boundedRead(what, work);
   ofTheService.add(read);
-  const ended = (): void => { ofTheService.delete(read); };
+  const ended = (): void => {
+    ofTheService.delete(read);
+  };
   read.then(ended, ended);
   return read;
 }
@@ -89,9 +104,13 @@ export function readsAnswered(boundMs: number): Promise<void> {
   if (inFlight.length === 0) return Promise.resolve();
   return new Promise<void>((done) => {
     const timer = setTimeout(done, boundMs);
-    void Promise.allSettled(inFlight).then(() => { clearTimeout(timer); done(); });
+    void Promise.allSettled(inFlight).then(() => {
+      clearTimeout(timer);
+      done();
+    });
   });
 }
 
 /** A request with no method, or GET, is a read. */
-export const isReadMethod = (method: string | undefined): boolean => method === undefined || method.toUpperCase() === 'GET';
+export const isReadMethod = (method: string | undefined): boolean =>
+  method === undefined || method.toUpperCase() === 'GET';

@@ -65,7 +65,7 @@ export const RELEASED_VERSIONS: readonly ReleasedVersion[] = [
         setPolicy: { v3: 'ebd41775a67f4440e34e19656558d728d531e35fa9089fb02b8dab20e282fc75' },
         setPolicyBar: { v3: 'bbc873c2b27601c8bf27ede44bc7b8140a5517331ce7433741aaad5a6bf49b68' },
         setThreshold: { v3: 'd7f72c019c7996d6509a942ac1dd746fba1569e2bbf2de5789ded16c30ebddf8' },
-        setVaultThreshold: { v3: '6ed1104fe5e007166c7cf1e7d0da39ae659198a40635eb7ea87db222710ff54e' },
+        setVaultThreshold: { v3: '6ed1104fe5e007166c7cf1e7d0da39ae659198a40635eb7ea87db222710ff54e' }
       },
       vault: {
         batchPayout: { v3: '4f8fc8450b99eb66615a88fe0a8a6cbb29c0b7483fc8bf42082566ca6116d5df' },
@@ -78,23 +78,35 @@ export const RELEASED_VERSIONS: readonly ReleasedVersion[] = [
         retire: { v3: 'ea2af724a821a53e55eec4abd5515549fd7735d2b8fc8d56e3d61214e6f83904' },
         setNonceSecret: { v3: '93fa853ae4b424bfb10c8dc367417d33ff62318ac03f1402a82d9258b6d3d263' },
         splitNote: { v3: '74192378e5dc0a70a43d10ee203c34d6ec745f331ba9b688e75499806630522b' },
-        writeSecretCopy: { v3: '8a14bdfaccb660d5e15afd47be62031dc501527469eb2ad7a1e8dfb8ce3f1289' },
+        writeSecretCopy: { v3: '8a14bdfaccb660d5e15afd47be62031dc501527469eb2ad7a1e8dfb8ce3f1289' }
       },
       registry: {
-        put: { v3: 'd6f38bc381e79f5854d9058f01a30cb1e816dbdc1208878843c6df633d7fcd75' },
-      },
-    },
-  },
+        put: { v3: 'd6f38bc381e79f5854d9058f01a30cb1e816dbdc1208878843c6df633d7fcd75' }
+      }
+    }
+  }
 ];
 
 const SLOTS: readonly KeySlot[] = ['v2', 'v3'];
 const fromHex = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
 
 /** One version's keys for one contract, as the key matcher takes them: each circuit's digests, one per filled slot. */
-export function expectedKeysOf(version: ReleasedVersion, contract: ReleasedContract): ReadonlyMap<string, readonly Uint8Array[]> {
-  return new Map(Object.entries(version.keys[contract]).map(([circuit, slots]) => [
-    circuit, SLOTS.flatMap((s) => { const d = slots[s]; return d === undefined ? [] : [fromHex(d)]; }),
-  ] as [string, Uint8Array[]]));
+export function expectedKeysOf(
+  version: ReleasedVersion,
+  contract: ReleasedContract
+): ReadonlyMap<string, readonly Uint8Array[]> {
+  return new Map(
+    Object.entries(version.keys[contract]).map(
+      ([circuit, slots]) =>
+        [
+          circuit,
+          SLOTS.flatMap((s) => {
+            const d = slots[s];
+            return d === undefined ? [] : [fromHex(d)];
+          })
+        ] as [string, Uint8Array[]]
+    )
+  );
 }
 
 const DIGEST = /^[0-9a-f]{64}$/u;
@@ -110,15 +122,21 @@ export function releasedListRefusals(list: readonly ReleasedVersion[]): string[]
   list.forEach((v, i) => {
     const older = list.slice(i + 1).map((o) => o.version);
     if (list.findIndex((o) => o.version === v.version) !== i) out.push(`version ${v.version} is listed twice`);
-    if (i > 0 && v.version >= list[i - 1]!.version) out.push(`version ${v.version} is not older than the one before it`);
-    for (const from of v.reachedFrom) if (!older.includes(from)) out.push(`version ${v.version} is reached from ${from}, which is no older version`);
+    if (i > 0 && v.version >= list[i - 1]!.version)
+      out.push(`version ${v.version} is not older than the one before it`);
+    for (const from of v.reachedFrom)
+      if (!older.includes(from)) out.push(`version ${v.version} is reached from ${from}, which is no older version`);
     for (const contract of RELEASED_CONTRACTS) {
       const circuits = Object.entries(v.keys[contract] ?? {});
       if (circuits.length === 0) out.push(`version ${v.version} holds no keys for the ${contract}`);
       for (const [circuit, slots] of circuits) {
-        const filled = SLOTS.flatMap((s) => { const d = slots[s]; return d === undefined ? [] : [[s, d] as const]; });
+        const filled = SLOTS.flatMap((s) => {
+          const d = slots[s];
+          return d === undefined ? [] : [[s, d] as const];
+        });
         if (filled.length === 0) out.push(`version ${v.version}: ${contract} ${circuit} fills no slot`);
-        for (const [s, d] of filled) if (!DIGEST.test(d)) out.push(`version ${v.version}: ${contract} ${circuit} ${s} is not a digest`);
+        for (const [s, d] of filled)
+          if (!DIGEST.test(d)) out.push(`version ${v.version}: ${contract} ${circuit} ${s} is not a digest`);
       }
     }
   });

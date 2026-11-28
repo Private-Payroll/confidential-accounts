@@ -15,20 +15,42 @@ import type { ActOutcome } from './wallet-act.js';
 const TOKEN = /^[0-9a-f]{64}$/u;
 
 /** Who is invited, as the page asks: the company, the kind, and the person's details in the page's own words. */
-export type InviteAsk = { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress } & (
+export type InviteAsk = {
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+} & (
   | {
-    readonly kind: 'employee'; readonly name: string; readonly email?: string; readonly title: string; readonly asset: string;
-    readonly units: bigint; readonly startDate: string; readonly endDate?: string; readonly classification: string; readonly address?: string;
-  }
+      readonly kind: 'employee';
+      readonly name: string;
+      readonly email?: string;
+      readonly title: string;
+      readonly asset: string;
+      readonly units: bigint;
+      readonly startDate: string;
+      readonly endDate?: string;
+      readonly classification: string;
+      readonly address?: string;
+    }
   | {
-    readonly kind: 'vendor'; readonly name: string; readonly email?: string; readonly startDate: string; readonly endDate?: string;
-    readonly address?: string; readonly terms: { readonly kind: 'one-off' } | { readonly kind: 'monthly'; readonly asset: string; readonly units: bigint };
-  }
+      readonly kind: 'vendor';
+      readonly name: string;
+      readonly email?: string;
+      readonly startDate: string;
+      readonly endDate?: string;
+      readonly address?: string;
+      readonly terms:
+        { readonly kind: 'one-off' } | { readonly kind: 'monthly'; readonly asset: string; readonly units: bigint };
+    }
   | {
-    readonly kind: 'signer'; readonly name: string; readonly role: string; readonly address: string; readonly scope?: string;
-    /** The approvals the company needs once the seat is taken; left out, the number in force is kept. */
-    readonly threshold?: number;
-  }
+      readonly kind: 'signer';
+      readonly name: string;
+      readonly role: string;
+      readonly address: string;
+      readonly scope?: string;
+      /** The approvals the company needs once the seat is taken; left out, the number in force is kept. */
+      readonly threshold?: number;
+    }
 );
 
 /**
@@ -49,27 +71,59 @@ export async function inviteInTheWallet(
   ask: InviteAsk,
   walletOrigin: string,
   opts: { readonly onStep?: (at: StepAt) => void; readonly origin?: string; readonly token?: string } = {},
-  view: Openable = walletInThisPage(window),
+  view: Openable = walletInThisPage(window)
 ): Promise<{ readonly ended: ActOutcome; readonly link: string | null; readonly id: string | null }> {
   if (opts.token !== undefined && (ask.kind === 'signer' || !TOKEN.test(opts.token))) {
     throw new Error('that is not an invitation token this page may give, so nobody was invited.');
   }
-  const linkSecret: Hex | null = ask.kind === 'signer' ? null : opts.token ?? newInvitationToken();
-  const fields: Record<string, string> = { record: ask.record, company: ask.company, account: ask.account, kind: ask.kind, personName: ask.name };
+  const linkSecret: Hex | null = ask.kind === 'signer' ? null : (opts.token ?? newInvitationToken());
+  const fields: Record<string, string> = {
+    record: ask.record,
+    company: ask.company,
+    account: ask.account,
+    kind: ask.kind,
+    personName: ask.name
+  };
   if (linkSecret !== null) fields['token'] = linkSecret;
-  const put = (k: string, v: string | undefined): void => { if (v !== undefined && v !== '') fields[k] = v; };
+  const put = (k: string, v: string | undefined): void => {
+    if (v !== undefined && v !== '') fields[k] = v;
+  };
   if (ask.kind === 'employee') {
-    put('email', ask.email); put('title', ask.title); put('asset', ask.asset); put('amount', ask.units.toString());
-    put('startDate', ask.startDate); put('endDate', ask.endDate); put('classification', ask.classification); put('address', ask.address);
+    put('email', ask.email);
+    put('title', ask.title);
+    put('asset', ask.asset);
+    put('amount', ask.units.toString());
+    put('startDate', ask.startDate);
+    put('endDate', ask.endDate);
+    put('classification', ask.classification);
+    put('address', ask.address);
   } else if (ask.kind === 'vendor') {
-    put('email', ask.email); put('startDate', ask.startDate); put('endDate', ask.endDate); put('address', ask.address);
+    put('email', ask.email);
+    put('startDate', ask.startDate);
+    put('endDate', ask.endDate);
+    put('address', ask.address);
     put('terms', ask.terms.kind);
-    if (ask.terms.kind === 'monthly') { put('termsAsset', ask.terms.asset); put('termsAmount', ask.terms.units.toString()); }
+    if (ask.terms.kind === 'monthly') {
+      put('termsAsset', ask.terms.asset);
+      put('termsAmount', ask.terms.units.toString());
+    }
   } else {
-    put('role', ask.role); put('address', ask.address); put('scope', ask.scope);
+    put('role', ask.role);
+    put('address', ask.address);
+    put('scope', ask.scope);
     put('threshold', ask.threshold === undefined ? undefined : String(ask.threshold));
   }
-  const ended = await actOnACompanyInTheWallet({ name: 'invite', ...fields }, walletOrigin, { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) }, view);
-  return linkSecret === null ? { ended, link: null, id: null }
-    : { ended, link: invitationLink(opts.origin ?? window.location.origin, linkSecret), id: invitationIdOf(linkSecret) };
+  const ended = await actOnACompanyInTheWallet(
+    { name: 'invite', ...fields },
+    walletOrigin,
+    { ...(opts.onStep === undefined ? {} : { onStep: opts.onStep }) },
+    view
+  );
+  return linkSecret === null
+    ? { ended, link: null, id: null }
+    : {
+        ended,
+        link: invitationLink(opts.origin ?? window.location.origin, linkSecret),
+        id: invitationIdOf(linkSecret)
+      };
 }

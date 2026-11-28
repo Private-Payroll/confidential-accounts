@@ -11,17 +11,27 @@
  * what happened before the crash.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, rootOfTestLeaves, sumArgsOf } from './simulator.js';
+import {
+  AccountSimulator,
+  privateStateFor,
+  change,
+  type Change,
+  payoutTreeOf,
+  rootOfTestLeaves,
+  sumArgsOf
+} from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import {
-  runStatus, stillToPay, describeRun, runPayments,
-  type PayeeAttempts, type RunPayments,
+  runStatus,
+  stillToPay,
+  describeRun,
+  runPayments,
+  type PayeeAttempts,
+  type RunPayments
 } from '../../src/midnight/run-status.js';
 import type { PaymentsAmong } from '../../src/core/ledger.js';
-import {
-  emptyRegister, decide, skippedIndices, registerFor,
-} from '../../src/midnight/run-skips.js';
+import { emptyRegister, decide, skippedIndices, registerFor } from '../../src/midnight/run-skips.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
 const A = privateStateFor(1);
@@ -35,13 +45,12 @@ const govChange = (seed: number): Change => change(0n, seed);
 const NOW = 1_800_000_000;
 const OPENS = BigInt(NOW - 3_600);
 const CLOSES = BigInt(NOW + 3_600);
-const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) =>
-  sim.applying(d, c);
+const carrying = (sim: AccountSimulator, d: ReturnType<typeof privateStateFor>, c: Change) => sim.applying(d, c);
 
 const runOf = (n: number, seed = 0): PayoutLeafInput[] =>
   Array.from({ length: n }, (_, i) => ({
     details: toHex(bytes(seed + i + 1)),
-    nonce: toHex(bytes(seed + i + 101)),
+    nonce: toHex(bytes(seed + i + 101))
   }));
 
 describe('a run reports its progress from the chain', () => {
@@ -59,32 +68,48 @@ describe('a run reports its progress from the chain', () => {
    * are not this run's and it refuses to report on them at all.
    */
   const idFrom = (leaves: string[], window: { from: bigint; until: bigint }) => {
-    return toHex(sim.proposalId(
-      pureCircuits.runPayload(
-        fromHex(rootOfTestLeaves(leaves)), BigInt(leaves.length), window.from, window.until, 0n),
-      c.salt, PAYROLL));
+    return toHex(
+      sim.proposalId(
+        pureCircuits.runPayload(
+          fromHex(rootOfTestLeaves(leaves)),
+          BigInt(leaves.length),
+          window.from,
+          window.until,
+          0n
+        ),
+        c.salt,
+        PAYROLL
+      )
+    );
   };
 
   /** A register skipping the given payees, decided by a named person with a reason. */
-  const skipping = (indices: number[]) => indices.reduce(
-    (r, i) => decide(r, {
-      index: i, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'left the company',
-    }),
-    emptyRegister(toHex(id), 5));
+  const skipping = (indices: number[]) =>
+    indices.reduce(
+      (r, i) =>
+        decide(r, {
+          index: i,
+          skip: true,
+          by: 'kc',
+          at: '2026-09-01T09:00:00Z',
+          reason: 'left the company'
+        }),
+      emptyRegister(toHex(id), 5)
+    );
 
-  const status = (
-    skip?: number[],
-    now: number = NOW,
-    attempts?: Record<number, PayeeAttempts>,
-  ) => runStatus(
-    {
-      leaves: tree.leaves,
-      window: { from: OPENS, until: CLOSES },
-      skips: skip ? skipping(skip) : undefined,
-      attempts,
-      proposal: { id: toHex(id), idFrom },
-    },
-    sim.ledger as never, pureCircuits.paidMovementOf, now);
+  const status = (skip?: number[], now: number = NOW, attempts?: Record<number, PayeeAttempts>) =>
+    runStatus(
+      {
+        leaves: tree.leaves,
+        window: { from: OPENS, until: CLOSES },
+        skips: skip ? skipping(skip) : undefined,
+        attempts,
+        proposal: { id: toHex(id), idFrom }
+      },
+      sim.ledger as never,
+      pureCircuits.paidMovementOf,
+      now
+    );
 
   /*
    * THE SAME VIEW WITH NOTHING PROVING THE LEAVES ARE THIS RUN'S.
@@ -93,20 +118,31 @@ describe('a run reports its progress from the chain', () => {
    * it produces has to say so. The helper above passes a proposal and is
    * therefore always verified, so it cannot reach the branch below.
    */
-  const unverifiedStatus = (skip?: number[], now: number = NOW) => runStatus(
-    {
-      leaves: tree.leaves,
-      window: { from: OPENS, until: CLOSES },
-      skips: skip ? skipping(skip) : undefined,
-    },
-    sim.ledger as never, pureCircuits.paidMovementOf, now);
+  const unverifiedStatus = (skip?: number[], now: number = NOW) =>
+    runStatus(
+      {
+        leaves: tree.leaves,
+        window: { from: OPENS, until: CLOSES },
+        skips: skip ? skipping(skip) : undefined
+      },
+      sim.ledger as never,
+      pureCircuits.paidMovementOf,
+      now
+    );
 
-  const payOne = (i: number) => sim.as(carrying(sim, A, c)).recordPaymentFromVault({
-    proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
-    from: OPENS, until: CLOSES,
-    salt: c.salt, details: fromHex(payments[i].details),
-    nonce: fromHex(payments[i].nonce), ...sumArgsOf(tree, i),
-  });
+  const payOne = (i: number) =>
+    sim.as(carrying(sim, A, c)).recordPaymentFromVault({
+      proposal: id,
+      vault: PAYROLL,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      salt: c.salt,
+      details: fromHex(payments[i].details),
+      nonce: fromHex(payments[i].nonce),
+      ...sumArgsOf(tree, i)
+    });
 
   beforeEach(async () => {
     sim = await AccountSimulator.liveAccount([A, B], 2n);
@@ -117,8 +153,12 @@ describe('a run reports its progress from the chain', () => {
     tree = payoutTreeOf(payments);
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     await sim.as(carrying(sim, A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees,
-      from: OPENS, until: CLOSES, vault: PAYROLL });
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      vault: PAYROLL
+    });
     id = sim.proposalId(payload, c.salt, PAYROLL);
     await sim.as(carrying(sim, B, c)).approve(id);
   });
@@ -142,8 +182,7 @@ describe('a run reports its progress from the chain', () => {
     expect(describeRun(s)).toBe('2 of 5 paid, 3 outstanding');
   });
 
-  it('REFUSES TO REPORT ON LEAVES THAT ARE NOT THIS RUN\'S, rather than answering about another payroll',
-    async () => {
+  it("REFUSES TO REPORT ON LEAVES THAT ARE NOT THIS RUN'S, rather than answering about another payroll", async () => {
     /*
      * This replaces a weaker check that went with the unpaid counter.
      *
@@ -156,25 +195,32 @@ describe('a run reports its progress from the chain', () => {
     await payOne(0);
 
     const wrong = payoutTreeOf(runOf(5, 900));
-    expect(() => runStatus(
-      {
-        leaves: wrong.leaves,
-        window: { from: OPENS, until: CLOSES },
-        proposal: { id: toHex(id), idFrom },
-      },
-      sim.ledger as never, pureCircuits.paidMovementOf, NOW))
-      .toThrow(/not that run's payees/i);
+    expect(() =>
+      runStatus(
+        {
+          leaves: wrong.leaves,
+          window: { from: OPENS, until: CLOSES },
+          proposal: { id: toHex(id), idFrom }
+        },
+        sim.ledger as never,
+        pureCircuits.paidMovementOf,
+        NOW
+      )
+    ).toThrow(/not that run's payees/i);
   });
 
   it('an UNVERIFIED view says so in words, because a caller may genuinely have only leaves', () => {
     const s = runStatus(
       { leaves: tree.leaves, window: { from: OPENS, until: CLOSES } },
-      sim.ledger as never, pureCircuits.paidMovementOf, NOW);
+      sim.ledger as never,
+      pureCircuits.paidMovementOf,
+      NOW
+    );
     expect(s.verified).toBe(false);
     expect(describeRun(s)).toMatch(/^UNVERIFIED against the proposal — /);
   });
 
-  it('reports the wrong run\'s leaves as simply unpaid when nobody asked for a check', async () => {
+  it("reports the wrong run's leaves as simply unpaid when nobody asked for a check", async () => {
     /*
      * A stale payroll, or the wrong run.
      *
@@ -189,7 +235,10 @@ describe('a run reports its progress from the chain', () => {
     const wrong = payoutTreeOf(runOf(5, 900));
     const s = runStatus(
       { leaves: wrong.leaves, window: { from: OPENS, until: CLOSES } },
-      sim.ledger as never, pureCircuits.paidMovementOf, NOW);
+      sim.ledger as never,
+      pureCircuits.paidMovementOf,
+      NOW
+    );
     expect(s.verified).toBe(false);
     expect(s.paid).toHaveLength(0);
     expect(s.outstanding).toHaveLength(5);
@@ -233,7 +282,7 @@ describe('a run reports its progress from the chain', () => {
     await payOne(1);
 
     const s = status([2, 3], NOW, {
-      4: { tries: 4, lastError: 'insufficient DUST on the sponsor' },
+      4: { tries: 4, lastError: 'insufficient DUST on the sponsor' }
     });
 
     expect(s.paid.map((p) => p.index)).toEqual([0, 1]);
@@ -241,8 +290,7 @@ describe('a run reports its progress from the chain', () => {
     expect(s.failed.map((p) => p.index)).toEqual([4]);
     expect(s.failed[0].state).toBe('failed');
     expect(s.failed[0].attempts?.lastError).toMatch(/DUST/);
-    expect(describeRun(s)).toBe(
-      '2 of 5 paid, 2 skipped, 1 FAILED and needing attention, 1 outstanding');
+    expect(describeRun(s)).toBe('2 of 5 paid, 2 skipped, 1 FAILED and needing attention, 1 outstanding');
   });
 
   it('nobody has tried yet is UNSENT, not failed — the two are different problems', () => {
@@ -257,17 +305,25 @@ describe('a run reports its progress from the chain', () => {
      * deliberately unpaid — and they are then the people nobody looks at.
      */
     const foreign = decide(emptyRegister('00'.repeat(32), 5), {
-      index: 0, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'left',
+      index: 0,
+      skip: true,
+      by: 'kc',
+      at: '2026-09-01T09:00:00Z',
+      reason: 'left'
     });
-    expect(() => runStatus(
-      {
-        leaves: tree.leaves,
-        window: { from: OPENS, until: CLOSES },
-        skips: foreign,
-        proposal: { id: toHex(id), idFrom },
-      },
-      sim.ledger as never, pureCircuits.paidMovementOf, NOW))
-      .toThrow(/those skips are for run/i);
+    expect(() =>
+      runStatus(
+        {
+          leaves: tree.leaves,
+          window: { from: OPENS, until: CLOSES },
+          skips: foreign,
+          proposal: { id: toHex(id), idFrom }
+        },
+        sim.ledger as never,
+        pureCircuits.paidMovementOf,
+        NOW
+      )
+    ).toThrow(/those skips are for run/i);
   });
 
   it('a skip can be reversed, and the latest decision is the one in force', () => {
@@ -297,18 +353,20 @@ describe('a run reports its progress from the chain', () => {
     expect(() => emptyRegister('' as never, 5)).toThrow(/belongs to one particular run/i);
     expect(() => emptyRegister('   ' as never, 5)).toThrow(/belongs to one particular run/i);
     /* And the identity it refuses is exactly the one the apply side refuses. */
-    expect(() => registerFor(emptyRegister(toHex(id), 5), '', 5))
-      .toThrow(/nothing here says which run is being reported on/i);
+    expect(() => registerFor(emptyRegister(toHex(id), 5), '', 5)).toThrow(
+      /nothing here says which run is being reported on/i
+    );
   });
 
   it('refuses an unattributed skip, a blank reason, and a payee who is not in the run', () => {
     const r = emptyRegister(toHex(id), 5);
-    expect(() => decide(r, { index: 1, skip: true, by: '', at: '2026-09-01T09:00:00Z', reason: 'x' }))
-      .toThrow(/attributable/i);
-    expect(() => decide(r, { index: 1, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z' }))
-      .toThrow(/say why/i);
-    expect(() => decide(r, { index: 9, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'x' }))
-      .toThrow(/there is no payee 9/i);
+    expect(() => decide(r, { index: 1, skip: true, by: '', at: '2026-09-01T09:00:00Z', reason: 'x' })).toThrow(
+      /attributable/i
+    );
+    expect(() => decide(r, { index: 1, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z' })).toThrow(/say why/i);
+    expect(() => decide(r, { index: 9, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'x' })).toThrow(
+      /there is no payee 9/i
+    );
   });
 
   it('somebody already paid is never reported as skipped, because their money exists', async () => {
@@ -364,8 +422,7 @@ describe('a run reports its progress from the chain', () => {
    * RED WHEN the disclaimer is dropped from the no-skips completed branch:
    * this reads `all 5 paid` and nothing says the five may be somebody else's.
    */
-  it('says UNVERIFIED over a run where EVERYBODY has been paid, which is where it matters most',
-    async () => {
+  it('says UNVERIFIED over a run where EVERYBODY has been paid, which is where it matters most', async () => {
     for (let i = 0; i < 5; i++) await payOne(i);
 
     const s = unverifiedStatus();
@@ -413,8 +470,7 @@ describe('a run reports its progress from the chain', () => {
    *
    * RED WHEN the disclaimer is dropped from the stranded branch.
    */
-  it('says UNVERIFIED over the sentence that tells somebody to raise another proposal',
-    async () => {
+  it('says UNVERIFIED over the sentence that tells somebody to raise another proposal', async () => {
     await payOne(0);
     await payOne(1);
 
@@ -422,8 +478,9 @@ describe('a run reports its progress from the chain', () => {
     expect(s.phase).toBe('closed');
     expect(s.stranded.map((p) => p.index)).toEqual([2, 3, 4]);
     expect(describeRun(s)).toBe(
-      'UNVERIFIED against the proposal — 2 of 5 paid — the window has CLOSED with 3 still '
-      + 'owed. They need a new proposal; nothing can pay them from this run.');
+      'UNVERIFIED against the proposal — 2 of 5 paid — the window has CLOSED with 3 still ' +
+        'owed. They need a new proposal; nothing can pay them from this run.'
+    );
   });
 
   /*
@@ -435,8 +492,7 @@ describe('a run reports its progress from the chain', () => {
   it('and over a run whose window has not opened yet', () => {
     const s = unverifiedStatus(undefined, Number(OPENS) - 1);
     expect(s.phase).toBe('not started');
-    expect(describeRun(s)).toBe(
-      'UNVERIFIED against the proposal — not started — 5 payees, window opens later');
+    expect(describeRun(s)).toBe('UNVERIFIED against the proposal — not started — 5 payees, window opens later');
   });
 
   it('THE ONE THAT MATTERS: a stranger with only the chain can finish an interrupted run', async () => {
@@ -467,8 +523,12 @@ describe('a run reports its progress from the chain', () => {
 
     const outcomes: string[] = [];
     for (let i = 0; i < 5; i++) {
-      try { await payOne(i); outcomes.push('paid'); }
-      catch { outcomes.push('refused'); }
+      try {
+        await payOne(i);
+        outcomes.push('paid');
+      } catch {
+        outcomes.push('refused');
+      }
     }
     expect(outcomes).toEqual(['refused', 'refused', 'paid', 'paid', 'paid']);
     expect(status().complete).toBe(true);
@@ -495,7 +555,7 @@ describe('a run reports its progress from the chain', () => {
  * plain data on both sides. It lives here because this is the file that owns
  * the module.
  */
-describe('a run\'s payments, read from a ledger\'s answer rather than a set somebody assembled', () => {
+describe("a run's payments, read from a ledger's answer rather than a set somebody assembled", () => {
   const tree = payoutTreeOf(runOf(5, 400));
   const window = { from: OPENS, until: CLOSES };
   const inputs = () => ({ leaves: tree.leaves, window });
@@ -605,8 +665,7 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
    */
   it('refuses an answer naming somebody who is not in this run', () => {
     const stranger = payoutTreeOf(runOf(5, 900));
-    expect(() => runPayments(inputs(), holding([stranger.leaves[0]]), NOW))
-      .toThrow(/not one of this run's payees/);
+    expect(() => runPayments(inputs(), holding([stranger.leaves[0]]), NOW)).toThrow(/not one of this run's payees/);
   });
 
   /*
@@ -627,9 +686,13 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
    * id. The check is then a value against itself, cannot fire, and this
    * answers with payee 0 marked skipped instead of refusing.
    */
-  it('refuses another run\'s skip register rather than applying it to these payees', () => {
+  it("refuses another run's skip register rather than applying it to these payees", () => {
     const foreign = decide(emptyRegister('00'.repeat(32), 5), {
-      index: 0, skip: true, by: 'kc', at: '2026-09-01T09:00:00Z', reason: 'left the company',
+      index: 0,
+      skip: true,
+      by: 'kc',
+      at: '2026-09-01T09:00:00Z',
+      reason: 'left the company'
     });
     /*
      * Everybody but payee 0 is paid, so a run that applies these skips reports
@@ -639,11 +702,12 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
      * it cannot turn a miss into a pass.
      */
     const applied = () => {
-      const v = runPayments(
-        { ...inputs(), skips: foreign }, holding(tree.leaves.slice(1)), NOW);
-      throw new Error(isAnswered(v)
-        ? `applied another run's skips to these payees: "${v.sentence}"`
-        : `refused, but not over the identity: "${v.why}"`);
+      const v = runPayments({ ...inputs(), skips: foreign }, holding(tree.leaves.slice(1)), NOW);
+      throw new Error(
+        isAnswered(v)
+          ? `applied another run's skips to these payees: "${v.sentence}"`
+          : `refused, but not over the identity: "${v.why}"`
+      );
     };
     expect(applied).toThrow(/nothing here says which run is being reported on/);
 
@@ -668,10 +732,9 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
      * there is one. One value, two mutations, and the empty string is refused
      * by any guard that refuses this.
      */
-    expect(() => runPayments(
-      { ...inputs(), skips: foreign, proposal: { id: ' ', idFrom: () => ' ' } },
-      holding([]), NOW))
-      .toThrow(/nothing here says which run is being reported on/);
+    expect(() =>
+      runPayments({ ...inputs(), skips: foreign, proposal: { id: ' ', idFrom: () => ' ' } }, holding([]), NOW)
+    ).toThrow(/nothing here says which run is being reported on/);
   });
 
   /*
@@ -684,8 +747,7 @@ describe('a run\'s payments, read from a ledger\'s answer rather than a set some
    */
   it('matches a payment however the leaf is spelled, rather than reporting the paid as unpaid', () => {
     const shouted = tree.leaves.map((l) => l.toUpperCase());
-    const v = told(runPayments(
-      { leaves: shouted, window }, holding([shouted[1], shouted[3]]), NOW));
+    const v = told(runPayments({ leaves: shouted, window }, holding([shouted[1], shouted[3]]), NOW));
     expect(v.status.paid.map((p) => p.index)).toEqual([1, 3]);
     expect(v.status.outstanding.map((p) => p.index)).toEqual([0, 2, 4]);
   });

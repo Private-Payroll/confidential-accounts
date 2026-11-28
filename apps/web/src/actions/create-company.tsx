@@ -25,7 +25,10 @@ export function CreateCompany({ leadTo, onChanged }: StepProps) {
 
   const create = async (): Promise<void> => {
     setBusy(true);
-    const r = await createCompany(person.id, { name: name.trim(), firstSigner: person.name === '' ? t('setup.createCompany.you') : person.name });
+    const r = await createCompany(person.id, {
+      name: name.trim(),
+      firstSigner: person.name === '' ? t('setup.createCompany.you') : person.name
+    });
     setResult(r);
     if (r.of === ACTED.done) onChanged(r.companyId);
     setBusy(false);
@@ -42,15 +45,28 @@ export function CreateCompany({ leadTo, onChanged }: StepProps) {
         <p className="text-xs text-muted-foreground">{t('setup.createCompany.nameHint')}</p>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={busy || why !== null} aria-describedby={why === null ? undefined : whyId} onClick={() => { void create(); }} data-action="create">
+        <Button
+          disabled={busy || why !== null}
+          aria-describedby={why === null ? undefined : whyId}
+          onClick={() => {
+            void create();
+          }}
+          data-action="create"
+        >
           {t('setup.createCompany.create')}
         </Button>
-        {why === null ? null : <span id={whyId} className="text-sm text-muted-foreground" data-why-disabled>{why}</span>}
+        {why === null ? null : (
+          <span id={whyId} className="text-sm text-muted-foreground" data-why-disabled>
+            {why}
+          </span>
+        )}
       </div>
       <p className="text-xs text-muted-foreground">{t('setup.createCompany.how')}</p>
       {made ? (
         <div className="flex flex-col gap-2">
-          <p className="text-sm" data-created={result.companyId}>{t('setup.createCompany.started', { label: result.label })}</p>
+          <p className="text-sm" data-created={result.companyId}>
+            {t('setup.createCompany.started', { label: result.label })}
+          </p>
           <div>
             <Button variant="outline" onClick={() => leadTo(STEP.finishCompany)} data-lead-to={STEP.finishCompany}>
               {t('setup.blocked.go', { step: t('setup.step.finishCompany.name') })}
@@ -58,9 +74,7 @@ export function CreateCompany({ leadTo, onChanged }: StepProps) {
           </div>
         </div>
       ) : null}
-      {result?.of === ACTED.refused ? (
-        <ActRefused why={result.why} />
-      ) : null}
+      {result?.of === ACTED.refused ? <ActRefused why={result.why} /> : null}
     </div>
   );
 }

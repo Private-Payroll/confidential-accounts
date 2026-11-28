@@ -49,7 +49,10 @@ export class BalanceError extends Error {
 
 /** The message a person's press produces. The only thing that builds one. */
 export function balancedAnswerFor(
-  ask: BalanceRequest, transaction: string, leaves: readonly LeavesTheWallet[], at: number,
+  ask: BalanceRequest,
+  transaction: string,
+  leaves: readonly LeavesTheWallet[],
+  at: number
 ): BalancedAnswer {
   if (!usableOrigin(ask.requester.origin)) {
     throw new BalanceError('this wallet could not tell who asked, so nothing has been paid.');
@@ -63,17 +66,17 @@ export function balancedAnswerFor(
     nonce: ask.nonce,
     at,
     transaction,
-    leaves: Object.freeze(leaves.map((l) => Object.freeze({ ...l }))),
+    leaves: Object.freeze(leaves.map((l) => Object.freeze({ ...l })))
   });
 }
 
 export type BalancedRead =
   | { readonly ok: true; readonly transaction: string; readonly leaves: readonly LeavesTheWallet[] }
   | {
-    readonly ok: false;
-    readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-transaction';
-    readonly says: string;
-  };
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-transaction';
+      readonly says: string;
+    };
 
 const DIGITS = /^(0|[1-9][0-9]{0,38})$/u;
 const TOKEN = /^[0-9a-f]{64}$/u;
@@ -91,7 +94,7 @@ export function readBalancedAnswer(
     readonly company: CompanyLabel;
     readonly account: AccountAddress;
     readonly vault: VaultAddress;
-  },
+  }
 ): BalancedRead {
   const body = message as Partial<BalancedAnswer> | null;
   if (typeof body !== 'object' || body === null || body.schema !== BALANCED_SCHEMA) {
@@ -99,29 +102,44 @@ export function readBalancedAnswer(
   }
   if (body.origin !== expecting.atOrigin) {
     return {
-      ok: false, code: 'origin-mismatch',
-      says: `this was paid for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`,
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was paid for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
     };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
-  if (readCompanyLabel(body.company) !== expecting.company
-    || readAccountAddress(body.account) !== expecting.account
-    || readVaultAddress(body.vault) !== expecting.vault) {
+  if (
+    readCompanyLabel(body.company) !== expecting.company ||
+    readAccountAddress(body.account) !== expecting.account ||
+    readVaultAddress(body.vault) !== expecting.vault
+  ) {
     return {
-      ok: false, code: 'other-transaction',
-      says: 'this pays into a different company or vault from the one that was asked about. It is refused.',
+      ok: false,
+      code: 'other-transaction',
+      says: 'this pays into a different company or vault from the one that was asked about. It is refused.'
     };
   }
-  if (typeof body.transaction !== 'string' || body.transaction.length === 0
-    || body.transaction.length % 4 !== 0 || !BASE64.test(body.transaction)) {
+  if (
+    typeof body.transaction !== 'string' ||
+    body.transaction.length === 0 ||
+    body.transaction.length % 4 !== 0 ||
+    !BASE64.test(body.transaction)
+  ) {
     return { ok: false, code: 'not-an-answer', says: 'the paid transaction in this answer cannot be read.' };
   }
-  if (!Array.isArray(body.leaves) || !body.leaves.every((l) => typeof l === 'object' && l !== null
-    && TOKEN.test(String((l as LeavesTheWallet).token))
-    && DIGITS.test(String((l as LeavesTheWallet).amount))
-    && ((l as LeavesTheWallet).kind === 'shielded' || (l as LeavesTheWallet).kind === 'unshielded'))) {
+  if (
+    !Array.isArray(body.leaves) ||
+    !body.leaves.every(
+      (l) =>
+        typeof l === 'object' &&
+        l !== null &&
+        TOKEN.test(String((l as LeavesTheWallet).token)) &&
+        DIGITS.test(String((l as LeavesTheWallet).amount)) &&
+        ((l as LeavesTheWallet).kind === 'shielded' || (l as LeavesTheWallet).kind === 'unshielded')
+    )
+  ) {
     return { ok: false, code: 'not-an-answer', says: 'this answer does not say what left the wallet.' };
   }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
@@ -130,6 +148,6 @@ export function readBalancedAnswer(
   return {
     ok: true,
     transaction: body.transaction,
-    leaves: body.leaves.map((l) => ({ token: l.token, amount: l.amount, kind: l.kind })),
+    leaves: body.leaves.map((l) => ({ token: l.token, amount: l.amount, kind: l.kind }))
   };
 }

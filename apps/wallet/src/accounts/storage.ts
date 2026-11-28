@@ -11,9 +11,16 @@ import { snapshotFacts } from '../chain/snapshot.js';
 /* Which compartment a record is in. `wallets-held.ts` imports
  * nothing from this file, so this is acyclic, exactly as `subwallets.ts` is. */
 import {
-  checkpointKeyFor, forgetWallet, heldWallets, keyFor,
-  allocateWalletId, RECORD_KINDS,
-  openWallet, openWalletId, rememberWallet, sealKeyFor,
+  checkpointKeyFor,
+  forgetWallet,
+  heldWallets,
+  keyFor,
+  allocateWalletId,
+  RECORD_KINDS,
+  openWallet,
+  openWalletId,
+  rememberWallet,
+  sealKeyFor
 } from './wallets-held.js';
 /* Which compartment a secret's records are on. `record-shelf.ts` imports
  * nothing from this file, so this is acyclic. */
@@ -24,12 +31,16 @@ import { StorageError, isNamed, isRealNumber } from './record-checks.js';
 /* The error, and the records that moved to files of their own by job, read from here as before. */
 export { StorageError } from './record-checks.js';
 export type { StorageFailure } from './record-checks.js';
-export {
-  loadSubwallets, saveLastUsedWallet, saveSubwalletName,
-} from './subwallet-record.js';
+export { loadSubwallets, saveLastUsedWallet, saveSubwalletName } from './subwallet-record.js';
 export type { SubwalletRecord } from './subwallet-record.js';
 export {
-  allPasskeys, forgetAllPasskeys, forgetPasskey, passkeyById, resetPasskeyRecordTo, savePasskey, walletOfCredential,
+  allPasskeys,
+  forgetAllPasskeys,
+  forgetPasskey,
+  passkeyById,
+  resetPasskeyRecordTo,
+  savePasskey,
+  walletOfCredential
 } from './passkey-records.js';
 
 /**
@@ -64,7 +75,6 @@ const STORE = 'keys';
  * the compartment the original wallet is in still uses the very strings this
  * file used to hold — so nothing on any existing machine moves.
  */
-
 
 function idb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -118,22 +128,24 @@ async function sealingKey(walletId: string): Promise<CryptoKey> {
   } catch {
     throw new StorageError(
       'sealed-copy-unopenable',
-      'this browser is refusing access to the place the sealing key is kept — private '
-      + 'windows and some managed profiles do this. Nothing can be sealed or opened '
-      + 'here. Use a normal window, or recover from your pieces on another machine.');
+      'this browser is refusing access to the place the sealing key is kept — private ' +
+        'windows and some managed profiles do this. Nothing can be sealed or opened ' +
+        'here. Use a normal window, or recover from your pieces on another machine.'
+    );
   }
   if (existing) return existing as CryptoKey;
-  const key = await crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 },
-    /* extractable: */ false,
-    ['encrypt', 'decrypt']);
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, /* extractable: */ false, [
+    'encrypt',
+    'decrypt'
+  ]);
   try {
     await idbPut(sealKeyFor(walletId), key);
   } catch {
     throw new StorageError(
       'sealed-copy-unopenable',
-      'this browser is refusing to store the sealing key — private windows and some '
-      + 'managed profiles do this. Nothing can be sealed here. Use a normal window.');
+      'this browser is refusing to store the sealing key — private windows and some ' +
+        'managed profiles do this. Nothing can be sealed here. Use a normal window.'
+    );
   }
   return key;
 }
@@ -172,12 +184,11 @@ export async function saveSecret(secret: Uint8Array): Promise<string> {
   const walletId = await slotForLanding(secret);
   const key = await sealingKey(walletId);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, key, secret as BufferSource));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, secret as BufferSource));
   const account: StoredAccount = {
     sealed: toBase64Url(sealed),
     iv: toBase64Url(iv),
-    createdAt: Date.now(),
+    createdAt: Date.now()
   };
   localStorage.setItem(keyFor(walletId, 'keyring'), JSON.stringify(account));
   rememberWallet(walletId, toBase64Url(fingerprintOf(secret)), Date.now());
@@ -239,8 +250,9 @@ function parseKeyring(raw: string): { iv: Uint8Array; sealed: Uint8Array } {
   } catch {
     throw new StorageError(
       'record-damaged',
-      'there is an account stored in this browser and its record is damaged — it cannot '
-      + 'be read, let alone opened. Recover from your pieces, or start again.');
+      'there is an account stored in this browser and its record is damaged — it cannot ' +
+        'be read, let alone opened. Recover from your pieces, or start again.'
+    );
   }
 }
 
@@ -250,7 +262,9 @@ function parseKeyring(raw: string): { iv: Uint8Array; sealed: Uint8Array } {
  * unparseable text. The sealing key can only be checked by the async
  * open; `loadSecret` remains the authority on that.
  */
-export function readKeyringRecord(walletId: string):
+export function readKeyringRecord(
+  walletId: string
+):
   | { readonly state: 'absent' }
   | { readonly state: 'readable' }
   | { readonly state: 'damaged'; readonly error: StorageError } {
@@ -272,22 +286,20 @@ export async function loadSecret(walletId: string): Promise<Uint8Array | null> {
 
   const key = await sealingKey(walletId);
   try {
-    const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv as BufferSource },
-      key, sealed as BufferSource);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv as BufferSource }, key, sealed as BufferSource);
     return new Uint8Array(plain);
   } catch {
     /* The sealing key is gone — a cleared profile, another browser. The
      * ciphertext is unopenable and saying so is better than looking empty. */
     throw new StorageError(
       'sealed-copy-unopenable',
-      'there is an account stored in this browser and the key that opens it is gone. '
-      + 'Recover from your pieces, or start again.');
+      'there is an account stored in this browser and the key that opens it is gone. ' +
+        'Recover from your pieces, or start again.'
+    );
   }
 }
 
-export const hasAccount = (walletId: string): boolean =>
-  localStorage.getItem(keyFor(walletId, 'keyring')) !== null;
+export const hasAccount = (walletId: string): boolean => localStorage.getItem(keyFor(walletId, 'keyring')) !== null;
 
 /**
  * TAKES ONE WALLET OFF THIS BROWSER — every record it owns, its cached
@@ -315,7 +327,9 @@ export function forgetEverything(walletId: string): void {
  * still has pieces for.
  */
 export function forgetSealingKey(walletId: string): void {
-  void idbDelete(sealKeyFor(walletId)).catch(() => { /* nothing behind it */ });
+  void idbDelete(sealKeyFor(walletId)).catch(() => {
+    /* nothing behind it */
+  });
 }
 
 /* ---- balance checkpoints: the wallet's synced state, sealed, per account. ----
@@ -420,7 +434,9 @@ export interface SealedHere {
 export async function sealHere(plain: string, walletId: string = openWalletId()): Promise<SealedHere> {
   const key = await sealingKey(walletId);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain) as BufferSource));
+  const sealed = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain) as BufferSource)
+  );
   return { iv: toBase64Url(iv), sealed: toBase64Url(sealed) };
 }
 
@@ -429,37 +445,41 @@ export async function openHere(kept: SealedHere, walletId: string = openWalletId
   try {
     const key = await sealingKey(walletId);
     const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: fromBase64Url(kept.iv) as BufferSource }, key, fromBase64Url(kept.sealed) as BufferSource);
+      { name: 'AES-GCM', iv: fromBase64Url(kept.iv) as BufferSource },
+      key,
+      fromBase64Url(kept.sealed) as BufferSource
+    );
     return new TextDecoder().decode(plain);
   } catch {
     return null;
   }
 }
 
-
 export async function saveWalletCheckpoint(
-  coinPublicKey: string, account: number, checkpoint: WalletCheckpoint,
-  walletId: string,
+  coinPublicKey: string,
+  account: number,
+  checkpoint: WalletCheckpoint,
+  walletId: string
 ): Promise<boolean> {
   const facts = snapshotFacts(checkpoint.serialized);
   if (facts === null || facts.inFlight) return false;
   const key = await sealingKey(walletId);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plain = new TextEncoder().encode(JSON.stringify({
-    coinPublicKey,
-    serialized: checkpoint.serialized,
-    night: checkpoint.night.toString(),
-    ...(checkpoint.others === undefined ? {} : { others: otherTokensToStored(checkpoint.others) }),
-    asOf: checkpoint.asOf,
-  }));
-  const sealed = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv }, key, plain as BufferSource));
-  const record = ((await idbGet(checkpointKeyFor(walletId))) as StoredCheckpoints | undefined)
-    ?? { perAccount: {} };
+  const plain = new TextEncoder().encode(
+    JSON.stringify({
+      coinPublicKey,
+      serialized: checkpoint.serialized,
+      night: checkpoint.night.toString(),
+      ...(checkpoint.others === undefined ? {} : { others: otherTokensToStored(checkpoint.others) }),
+      asOf: checkpoint.asOf
+    })
+  );
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain as BufferSource));
+  const record = ((await idbGet(checkpointKeyFor(walletId))) as StoredCheckpoints | undefined) ?? { perAccount: {} };
   record.perAccount[String(account)] = {
     coinPublicKey,
     iv: toBase64Url(iv),
-    sealed: toBase64Url(sealed),
+    sealed: toBase64Url(sealed)
   };
   await idbPut(checkpointKeyFor(walletId), record);
   return true;
@@ -476,7 +496,9 @@ export async function saveWalletCheckpoint(
  * argument must be threaded either way, and one rule is cheaper to keep than
  * two. */
 export async function loadWalletCheckpoint(
-  coinPublicKey: string, account: number, walletId: string,
+  coinPublicKey: string,
+  account: number,
+  walletId: string
 ): Promise<WalletCheckpoint | null> {
   try {
     const record = (await idbGet(checkpointKeyFor(walletId))) as StoredCheckpoints | undefined;
@@ -486,9 +508,14 @@ export async function loadWalletCheckpoint(
     const key = await sealingKey(walletId);
     const plain = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: fromBase64Url(entry.iv) as BufferSource },
-      key, fromBase64Url(entry.sealed) as BufferSource);
+      key,
+      fromBase64Url(entry.sealed) as BufferSource
+    );
     const parsed = JSON.parse(new TextDecoder().decode(plain)) as {
-      coinPublicKey: string; serialized: string; night: string; asOf: number;
+      coinPublicKey: string;
+      serialized: string;
+      night: string;
+      asOf: number;
       others?: unknown;
     };
     /* The sealed copy names its wallet too; AES-GCM authenticated it, and
@@ -520,8 +547,9 @@ export async function loadWalletCheckpoint(
 
 /** Fire-and-forget: checkpoints are a cache, and forgetting must not wait. */
 export function forgetWalletCheckpoints(walletId: string): void {
-  void idbDelete(checkpointKeyFor(walletId))
-    .catch(() => { /* nothing behind it to lose */ });
+  void idbDelete(checkpointKeyFor(walletId)).catch(() => {
+    /* nothing behind it to lose */
+  });
 }
 
 /* ---- how this account got here, when it was not made here. ----
@@ -545,7 +573,7 @@ export interface ArrivalRecord {
 export function saveArrival(secret: Secret): void {
   const record: ArrivalRecord = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
-    at: Date.now(),
+    at: Date.now()
   };
   localStorage.setItem(keyFor(slotToWrite(secret), 'arrived'), JSON.stringify(record));
 }
@@ -599,10 +627,13 @@ interface KeyringMarksRecord {
 
 const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 const DIGEST = /^[0-9a-f]{64}$/u;
-const isMark = (m: unknown): m is KeyringMarkKept => typeof m === 'object' && m !== null
-  && isCount((m as KeyringMarkKept).counter) && typeof (m as KeyringMarkKept).digest === 'string'
-  && DIGEST.test((m as KeyringMarkKept).digest)
-  && ((m as KeyringMarkKept).under === undefined || (m as KeyringMarkKept).under === 2);
+const isMark = (m: unknown): m is KeyringMarkKept =>
+  typeof m === 'object' &&
+  m !== null &&
+  isCount((m as KeyringMarkKept).counter) &&
+  typeof (m as KeyringMarkKept).digest === 'string' &&
+  DIGEST.test((m as KeyringMarkKept).digest) &&
+  ((m as KeyringMarkKept).under === undefined || (m as KeyringMarkKept).under === 2);
 
 function keyringMarksOf(secret: Secret): Record<string, KeyringMarkKept> | null {
   const slot = slotOf(secret);
@@ -619,7 +650,8 @@ function keyringMarksOf(secret: Secret): Record<string, KeyringMarkKept> | null 
   if (typeof parsed.marks !== 'object' || parsed.marks === null) return {};
   const marks: Record<string, KeyringMarkKept> = {};
   for (const [person, m] of Object.entries(parsed.marks)) {
-    if (isMark(m)) marks[person] = { counter: m.counter, digest: m.digest, ...(m.under === 2 ? { under: 2 as const } : {}) };
+    if (isMark(m))
+      marks[person] = { counter: m.counter, digest: m.digest, ...(m.under === 2 ? { under: 2 as const } : {}) };
   }
   return marks;
 }
@@ -637,17 +669,26 @@ export function keyringMarkOf(secret: Secret, person: string): KeyringMarkKept |
  * same count, and never takes `under: 2` away once kept.
  */
 export function raiseKeyringMark(secret: Secret, person: string, mark: KeyringMarkKept): void {
-  if (!isMark(mark)) throw new Error('a mark of saved keys is a count from 0 and the hash of one sealed copy. Nothing was kept.');
+  if (!isMark(mark))
+    throw new Error('a mark of saved keys is a count from 0 and the hash of one sealed copy. Nothing was kept.');
   const slot = slotToWrite(secret);
   const marks = keyringMarksOf(secret) ?? {};
   const kept = marks[person];
   const higher = (kept?.counter ?? -1) < mark.counter;
-  const nowUnder = kept !== undefined && kept.counter === mark.counter && kept.digest === mark.digest && kept.under !== 2 && mark.under === 2;
+  const nowUnder =
+    kept !== undefined &&
+    kept.counter === mark.counter &&
+    kept.digest === mark.digest &&
+    kept.under !== 2 &&
+    mark.under === 2;
   if (!higher && !nowUnder) return;
   const under = mark.under === 2 || kept?.under === 2;
   const record: KeyringMarksRecord = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
-    marks: { ...marks, [person]: { counter: mark.counter, digest: mark.digest, ...(under ? { under: 2 as const } : {}) } },
+    marks: {
+      ...marks,
+      [person]: { counter: mark.counter, digest: mark.digest, ...(under ? { under: 2 as const } : {}) }
+    }
   };
   localStorage.setItem(keyFor(slot, 'keyring-marks'), JSON.stringify(record));
 }
@@ -693,7 +734,7 @@ export interface CreationRecord {
 export function saveCreation(secret: Secret): void {
   const record: CreationRecord = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
-    at: Date.now(),
+    at: Date.now()
   };
   localStorage.setItem(keyFor(slotToWrite(secret), 'created'), JSON.stringify(record));
 }
@@ -781,7 +822,7 @@ export function saveWalletName(secret: Secret, name: string): void {
   }
   const record: WalletNameRecord = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
-    name: trimmed,
+    name: trimmed
   };
   localStorage.setItem(key, JSON.stringify(record));
 }
@@ -833,7 +874,6 @@ export function walletNameOnRecord(walletId: string): string | null {
   if (!raw) return null;
   return parseWalletName(raw)?.name ?? null;
 }
-
 
 /**
  * Deletes ONLY the secured record — the map to the pieces. Exists for
@@ -929,8 +969,7 @@ export interface SecuredSetup {
   readonly superseded: readonly SupersededSet[];
 }
 
-const isVerification = (value: unknown): boolean =>
-  value === null || value === 'never' || isRealNumber(value);
+const isVerification = (value: unknown): boolean => value === null || value === 'never' || isRealNumber(value);
 
 /** Structure of one set's worth of pieces — shared by the live set and the
  * superseded ones, which were all live once. */
@@ -981,7 +1020,8 @@ function parseSecuredSetup(raw: string): SecuredSetup | null {
   try {
     checkPlan(
       parsed.pieces.map((p) => ({ label: p.label, holder: p.holder })),
-      parsed.threshold);
+      parsed.threshold
+    );
   } catch {
     return null;
   }
@@ -1043,14 +1083,15 @@ export async function saveSecuredSetup(
   secret: Secret,
   set: PieceSet,
   verification: Readonly<Record<string, number | 'never' | null>>,
-  options?: { readonly partial?: boolean },
+  options?: { readonly partial?: boolean }
 ): Promise<void> {
   for (const piece of set.pieces) {
     if (!(piece.placement.holder in verification)) {
       throw new Error(
-        `saveSecuredSetup: no verification state for holder "${piece.placement.holder}". `
-        + 'The writer does not guess whether a home can be asked — say null (cannot be), '
-        + "'never' (can be, has not been), or a timestamp.");
+        `saveSecuredSetup: no verification state for holder "${piece.placement.holder}". ` +
+          'The writer does not guess whether a home can be asked — say null (cannot be), ' +
+          "'never' (can be, has not been), or a timestamp."
+      );
     }
   }
 
@@ -1060,16 +1101,19 @@ export async function saveSecuredSetup(
 
   const slot = slotToWrite(secret);
   const previous = securedSetupOnRecord(slot);
-  const superseded: SupersededSet[] = previous === null ? [] : [
-    ...previous.superseded,
-    {
-      fingerprint: previous.fingerprint,
-      threshold: previous.threshold,
-      pieces: previous.pieces,
-      rebuiltAt: previous.rebuiltAt,
-      supersededAt: Date.now(),
-    },
-  ];
+  const superseded: SupersededSet[] =
+    previous === null
+      ? []
+      : [
+          ...previous.superseded,
+          {
+            fingerprint: previous.fingerprint,
+            threshold: previous.threshold,
+            pieces: previous.pieces,
+            rebuiltAt: previous.rebuiltAt,
+            supersededAt: Date.now()
+          }
+        ];
 
   const record: SecuredSetup = {
     fingerprint: toBase64Url(fingerprintOf(secret)),
@@ -1077,12 +1121,11 @@ export async function saveSecuredSetup(
     pieces: set.pieces.map((piece) => ({
       label: piece.placement.label,
       holder: piece.placement.holder,
-      lastVerified: verification[piece.placement.holder] ?? null,
+      lastVerified: verification[piece.placement.holder] ?? null
     })),
     rebuiltAt: Date.now(),
     partial: options?.partial === true,
-    superseded,
+    superseded
   };
   localStorage.setItem(keyFor(slot, 'secured'), JSON.stringify(record));
 }
-

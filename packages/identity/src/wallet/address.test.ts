@@ -18,11 +18,12 @@ const theirs = WalletSeeds.fromMnemonic(TEST_MNEMONIC);
 /* Recorded from the platform's own encoder for testkit's phrase. If this string
  * changes, either the derivation moved or the encoding did, and both are
  * changes to where somebody's salary lands. */
-const PREVIEW_ADDRESS = 'mn_shield-addr_preview1qpc63v0np98f86ycsx0jn6letdrr9gdf92rpkgae43dd2ets'
-  + 'v58x3zypyz9t39lq38zr0kxx4v6fug7wack76gkjrqdsgtsxf7800kgvxu67m';
+const PREVIEW_ADDRESS =
+  'mn_shield-addr_preview1qpc63v0np98f86ycsx0jn6letdrr9gdf92rpkgae43dd2ets' +
+  'v58x3zypyz9t39lq38zr0kxx4v6fug7wack76gkjrqdsgtsxf7800kgvxu67m';
 
 describe('the address a person is given at sign-up', () => {
-  it('is the address the Foundation\'s own testkit derives from the same words', () => {
+  it("is the address the Foundation's own testkit derives from the same words", () => {
     const fromTheirs = ZswapSecretKeys.fromSeed(theirs.shielded);
     const address = addressFor(ours.money.zswap, 'preview');
     expect(address.coinPublicKey).toBe(fromTheirs.coinPublicKey);
@@ -52,7 +53,7 @@ describe('the address a person is given at sign-up', () => {
     }
   });
 
-  it('has NO network segment on mainnet, which is the platform\'s own shape', () => {
+  it("has NO network segment on mainnet, which is the platform's own shape", () => {
     /*
      * Measured, not assumed, and it is the exception that would otherwise be
      * found the hard way: a mainnet address is `mn_shield-addr1...` with no
@@ -77,8 +78,7 @@ describe('the address a person is given at sign-up', () => {
   });
 
   it('is the same address every time, which is what "one address per person" means', () => {
-    expect(addressFor(identityFromWords(TEST_MNEMONIC).money.zswap, 'preview').bech32)
-      .toBe(PREVIEW_ADDRESS);
+    expect(addressFor(identityFromWords(TEST_MNEMONIC).money.zswap, 'preview').bech32).toBe(PREVIEW_ADDRESS);
   });
 });
 
@@ -156,7 +156,11 @@ describe('an address somebody nominates — their own wallet', () => {
     };
     for (const n of [32, 33, 63, 65, 96]) {
       let caught: unknown = null;
-      try { payeeAddress(sized(n), 'preview'); } catch (e) { caught = e; }
+      try {
+        payeeAddress(sized(n), 'preview');
+      } catch (e) {
+        caught = e;
+      }
       expect(caught, `${n} bytes`).toBeInstanceOf(AddressError);
       expect((caught as AddressError).code, `${n} bytes`).toBe('wrong-kind');
       expect((caught as Error).message, `${n} bytes`).toContain(`carries ${n} bytes`);
@@ -178,7 +182,8 @@ describe('what a person is shown before money moves', () => {
      * heads must differ.
      */
     const many = Array.from({ length: 60 }, () =>
-      shortPayee(addressFor(identityFromSecret(newSecret()).money.zswap, 'preview')));
+      shortPayee(addressFor(identityFromSecret(newSecret()).money.zswap, 'preview'))
+    );
     const heads = new Set(many.map((s) => s.split('…')[0]));
     expect(heads.size).toBeGreaterThan(55);
 
@@ -194,7 +199,8 @@ describe('what a person is shown before money moves', () => {
 
   it('still distinguishes mainnet addresses, which have no network segment', () => {
     const many = Array.from({ length: 40 }, () =>
-      shortPayee(addressFor(identityFromSecret(newSecret()).money.zswap, 'mainnet')));
+      shortPayee(addressFor(identityFromSecret(newSecret()).money.zswap, 'mainnet'))
+    );
     expect(new Set(many.map((s) => s.split('…')[0])).size).toBeGreaterThan(37);
   });
 

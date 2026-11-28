@@ -65,15 +65,20 @@ const afterTheSigning = async (): Promise<Element> => {
   const found = document.querySelector('[data-signed-in-heading]');
   if (!found) {
     throw new Error(
-      'the answer crossed and the signed-in heading is not on the screen. This is the '
-      + 'defect, not a wait that needed longer.');
+      'the answer crossed and the signed-in heading is not on the screen. This is the ' +
+        'defect, not a wait that needed longer.'
+    );
   }
   return found;
 };
 
 let port: WatchedPort;
-beforeEach(() => { port = watchedStore(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = watchedStore();
+});
+afterEach(() => {
+  cleanup();
+});
 
 /** A sign-in on the wire — no `wants`, which is the whole shape of the kind. */
 const signIn = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -83,7 +88,7 @@ const signIn = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   purpose: 'We need to know it is you before we show you your payslips.',
   nonce: 'n1',
   expiresAt: NOW + 600_000,
-  ...over,
+  ...over
 });
 
 const open = (data: unknown = signIn(), origin = ORIGIN) => {
@@ -93,11 +98,14 @@ const open = (data: unknown = signIn(), origin = ORIGIN) => {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
-  render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
+  render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }
@@ -128,53 +136,53 @@ describe('a sign-in asks one question and lists nothing', () => {
     screen.getByText('Who is asking');
     /* The question is written in what the BROWSER observed. It used to
      * read *"Do you want Payroll A to know it is you?"*, in the asker's words. */
-    expect(document.querySelector('[data-sign-in-question]')?.textContent)
-      .toBe(`Do you want ${ORIGIN} to know it is you?`);
+    expect(document.querySelector('[data-sign-in-question]')?.textContent).toBe(
+      `Do you want ${ORIGIN} to know it is you?`
+    );
     expect(document.querySelectorAll('[data-row]')).toHaveLength(0);
     expect(document.querySelector('[data-missing-required]')).toBeNull();
     expect(screen.getByText(signInTo())).toBeTruthy();
   });
 
-  it('THE QUESTION AND THE BUTTON ARE THE OBSERVED ORIGIN, AND THE NAME IS NOT IN THEM',
-    async () => {
-      /*
-       * **THIS IS THE TEST THAT CLOSES IT FOR SIGN-IN.** The change did
-       * this to the unlock screen and left the other two kinds writing
-       * themselves in `request.requester.name` — the one field on the whole ask
-       * the ASKER chose. **A person who skims reads the question and the button
-       * and nothing else**, so those two are exactly where a claim must not be.
-       */
-      await someone();
-      open();
-      await settled();
-      screen.getByText('Who is asking');
-      const question = document.querySelector('[data-sign-in-question]')?.textContent ?? '';
-      expect(question).toContain(ORIGIN);
-      expect(question).not.toContain('Payroll A');
-      const button = document.querySelector('[data-approve]')?.textContent ?? '';
-      expect(button).toContain(ORIGIN);
-      expect(button).not.toContain('Payroll A');
-      /* The name is still shown — it is what a person recognises — as a claim. */
-      expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
-    });
+  it('THE QUESTION AND THE BUTTON ARE THE OBSERVED ORIGIN, AND THE NAME IS NOT IN THEM', async () => {
+    /*
+     * **THIS IS THE TEST THAT CLOSES IT FOR SIGN-IN.** The change did
+     * this to the unlock screen and left the other two kinds writing
+     * themselves in `request.requester.name` — the one field on the whole ask
+     * the ASKER chose. **A person who skims reads the question and the button
+     * and nothing else**, so those two are exactly where a claim must not be.
+     */
+    await someone();
+    open();
+    await settled();
+    screen.getByText('Who is asking');
+    const question = document.querySelector('[data-sign-in-question]')?.textContent ?? '';
+    expect(question).toContain(ORIGIN);
+    expect(question).not.toContain('Payroll A');
+    const button = document.querySelector('[data-approve]')?.textContent ?? '';
+    expect(button).toContain(ORIGIN);
+    expect(button).not.toContain('Payroll A');
+    /* The name is still shown — it is what a person recognises — as a claim. */
+    expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
+  });
 
-  it('A PAGE CALLING ITSELF SOMEBODY ELSE IS ASKED ABOUT BY WHERE IT CAME FROM',
-    async () => {
-      /* The abused case, one kind further along: served from B, calling itself
-       * Payroll A. The wallet's own voice says B. */
-      const OTHER = 'https://payroll-b.example';
-      await someone();
-      open(signIn(), OTHER);
-      await settled();
-      screen.getByText('Who is asking');
-      expect(document.querySelector('[data-sign-in-question]')?.textContent)
-        .toBe(`Do you want ${OTHER} to know it is you?`);
-      expect(screen.getByText(signInTo(OTHER))).toBeTruthy();
-      expect(document.querySelector('[data-requester-origin]')?.textContent).toBe(OTHER);
-      expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
-    });
+  it('A PAGE CALLING ITSELF SOMEBODY ELSE IS ASKED ABOUT BY WHERE IT CAME FROM', async () => {
+    /* The abused case, one kind further along: served from B, calling itself
+     * Payroll A. The wallet's own voice says B. */
+    const OTHER = 'https://payroll-b.example';
+    await someone();
+    open(signIn(), OTHER);
+    await settled();
+    screen.getByText('Who is asking');
+    expect(document.querySelector('[data-sign-in-question]')?.textContent).toBe(
+      `Do you want ${OTHER} to know it is you?`
+    );
+    expect(screen.getByText(signInTo(OTHER))).toBeTruthy();
+    expect(document.querySelector('[data-requester-origin]')?.textContent).toBe(OTHER);
+    expect(document.querySelector('[data-requester-name]')?.textContent).toBe('Payroll A');
+  });
 
-  it('the origin is still the browser\'s, shown beside the name they chose', async () => {
+  it("the origin is still the browser's, shown beside the name they chose", async () => {
     await someone();
     open();
     await settled();
@@ -242,10 +250,11 @@ describe('§6 — NO SILENT SIGN-IN, EVER', () => {
     const ids = await someone();
     const opened = await load(port, identity);
     if (opened.of !== 'profile') throw new Error('unreachable');
-    await save(port, identity, grantTo(
-      opened.profile,
-      { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
-      0, ids, NOW));
+    await save(
+      port,
+      identity,
+      grantTo(opened.profile, { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, 0, ids, NOW)
+    );
 
     const { sent } = open();
     await settled();
@@ -263,7 +272,8 @@ describe('§6 — NO SILENT SIGN-IN, EVER', () => {
     fireEvent.click(screen.getByText('Do not sign in'));
     const answer = sent[sent.length - 1]!;
     expect(answer.message).toEqual({
-      schema: 'midnight-identity/disclosure-refused/v1', reason: 'declined',
+      schema: 'midnight-identity/disclosure-refused/v1',
+      reason: 'declined'
     });
     expect(answer.target).toBe(ORIGIN);
   });
@@ -286,26 +296,30 @@ describe('what crosses back, and what it is bound to', () => {
     const response = responseFrom(sent);
     expect(response.payload.disclosed).toEqual([]);
     expect(response.payload.declined).toEqual([]);
-    expect(verify(response, {
-      atOrigin: ORIGIN,
-      expectingNonce: 'n1',
-      payingAddress: response.payload.address,
-      networkId: NETWORK,
-      now: NOW,
-    })).toEqual({ ok: true });
+    expect(
+      verify(response, {
+        atOrigin: ORIGIN,
+        expectingNonce: 'n1',
+        payingAddress: response.payload.address,
+        networkId: NETWORK,
+        now: NOW
+      })
+    ).toEqual({ ok: true });
   });
 
   it('AND THE SAME SIGN-IN IS REFUSED AT A SECOND SITE', async () => {
     await someone();
     const sent = await pressIt();
     const response = responseFrom(sent);
-    expect(verify(response, {
-      atOrigin: 'https://payroll-b.example',
-      expectingNonce: 'n1',
-      payingAddress: response.payload.address,
-      networkId: NETWORK,
-      now: NOW,
-    })).toMatchObject({ ok: false, code: 'origin-mismatch' });
+    expect(
+      verify(response, {
+        atOrigin: 'https://payroll-b.example',
+        expectingNonce: 'n1',
+        payingAddress: response.payload.address,
+        networkId: NETWORK,
+        now: NOW
+      })
+    ).toMatchObject({ ok: false, code: 'origin-mismatch' });
   });
 
   it('the address it is signed by is the one the screen showed', async () => {
@@ -322,90 +336,88 @@ describe('what crosses back, and what it is bound to', () => {
 });
 
 describe('what the wallet writes down about it', () => {
-  it('THE HISTORY RECORDS IT AS A SIGN-IN, not as a disclosure that sent nothing',
-    async () => {
-      await someone();
-      const { sent } = open();
-      await settled();
-      screen.getByText('Who is asking');
-      /* Declared BEFORE the press and awaited after it. `answerDisclosure`
-       * writes its history entry with `void save(...)`, correctly and without
-       * awaiting it, so this waits for the WRITE rather than polling the store
-       * for what the write said. */
-      const written = afterWrites(port);
-      fireEvent.click(screen.getByText(signInTo()));
-      await afterTheSigning();
-      await written();
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('the profile could not be opened');
-      const entry = opened.profile.grants[0]!.disclosures[0]!;
-      expect(entry.kind).toBe('sign-in');
-      expect(entry.sent).toEqual([]);
-      expect(entry.declined).toEqual([]);
-      expect(entry.signed).not.toBeNull();
-      expect(opened.profile.grants[0]!.recipient.origin).toBe(ORIGIN);
-      expect(sent.length).toBeGreaterThan(1);
-    });
+  it('THE HISTORY RECORDS IT AS A SIGN-IN, not as a disclosure that sent nothing', async () => {
+    await someone();
+    const { sent } = open();
+    await settled();
+    screen.getByText('Who is asking');
+    /* Declared BEFORE the press and awaited after it. `answerDisclosure`
+     * writes its history entry with `void save(...)`, correctly and without
+     * awaiting it, so this waits for the WRITE rather than polling the store
+     * for what the write said. */
+    const written = afterWrites(port);
+    fireEvent.click(screen.getByText(signInTo()));
+    await afterTheSigning();
+    await written();
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('the profile could not be opened');
+    const entry = opened.profile.grants[0]!.disclosures[0]!;
+    expect(entry.kind).toBe('sign-in');
+    expect(entry.sent).toEqual([]);
+    expect(entry.declined).toEqual([]);
+    expect(entry.signed).not.toBeNull();
+    expect(opened.profile.grants[0]!.recipient.origin).toBe(ORIGIN);
+    expect(sent.length).toBeGreaterThan(1);
+  });
 
-  it('THE SENTENCE AFTERWARDS IS THE OBSERVED ORIGIN TOO, AND THE NAME IS NOT IN IT',
-    async () => {
-      /*
-       * **THE RULE REACHES PAST THE PRESS.** This half was unpinned:
-       * the sentence had been rebuilt from the observed origin and **nothing
-       * looked at `[data-signed-in]` at all**, so putting `requester.name` back
-       * into it left all seventeen tests in this file green.
-       *
-       * It matters as much as the button. *"On 23 Aug you signed in to Payroll
-       * A"* is the wallet telling a person, in its own voice and after the
-       * fact, that they did business with whoever the page said it was — and it
-       * is the sentence they would be reading if they had come back to check.
-       */
-      await someone();
-      const { sent } = open();
-      await settled();
-      screen.getByText('Who is asking');
-      const written = afterWrites(port);
-      fireEvent.click(screen.getByText(signInTo()));
-      await afterTheSigning();
-      await written();
+  it('THE SENTENCE AFTERWARDS IS THE OBSERVED ORIGIN TOO, AND THE NAME IS NOT IN IT', async () => {
+    /*
+     * **THE RULE REACHES PAST THE PRESS.** This half was unpinned:
+     * the sentence had been rebuilt from the observed origin and **nothing
+     * looked at `[data-signed-in]` at all**, so putting `requester.name` back
+     * into it left all seventeen tests in this file green.
+     *
+     * It matters as much as the button. *"On 23 Aug you signed in to Payroll
+     * A"* is the wallet telling a person, in its own voice and after the
+     * fact, that they did business with whoever the page said it was — and it
+     * is the sentence they would be reading if they had come back to check.
+     */
+    await someone();
+    const { sent } = open();
+    await settled();
+    screen.getByText('Who is asking');
+    const written = afterWrites(port);
+    fireEvent.click(screen.getByText(signInTo()));
+    await afterTheSigning();
+    await written();
 
-      const said = document.querySelector('[data-signed-in]')?.textContent ?? '';
-      expect(said).toContain(ORIGIN);
-      expect(said).not.toContain('Payroll A');
-      /* And the paragraph under it, which says what they keep. */
-      const keeps = document.body.textContent ?? '';
-      expect(keeps).toContain(`${ORIGIN} now holds a signed statement`);
-      expect(keeps).not.toContain('Payroll A now holds a signed statement');
-      expect(sent.length).toBeGreaterThan(1);
-    });
+    const said = document.querySelector('[data-signed-in]')?.textContent ?? '';
+    expect(said).toContain(ORIGIN);
+    expect(said).not.toContain('Payroll A');
+    /* And the paragraph under it, which says what they keep. */
+    const keeps = document.body.textContent ?? '';
+    expect(keeps).toContain(`${ORIGIN} now holds a signed statement`);
+    expect(keeps).not.toContain('Payroll A now holds a signed statement');
+    expect(sent.length).toBeGreaterThan(1);
+  });
 
-  it('A SIGN-IN DOES NOT ERASE WHAT THE PERSON ALREADY AGREED THAT SITE MAY SEE',
-    async () => {
-      /* `grantTo` REPLACES a grant's value list, so a sign-in that called it
-       * with the empty list it has would wipe the remembered values — and the
-       * next disclosure screen would pre-tick nothing, with no way to tell that
-       * from never having agreed. */
-      const ids = await someone();
-      const opened = await load(port, identity);
-      if (opened.of !== 'profile') throw new Error('unreachable');
-      await save(port, identity, grantTo(
-        opened.profile,
-        { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
-        0, ids, NOW));
+  it('A SIGN-IN DOES NOT ERASE WHAT THE PERSON ALREADY AGREED THAT SITE MAY SEE', async () => {
+    /* `grantTo` REPLACES a grant's value list, so a sign-in that called it
+     * with the empty list it has would wipe the remembered values — and the
+     * next disclosure screen would pre-tick nothing, with no way to tell that
+     * from never having agreed. */
+    const ids = await someone();
+    const opened = await load(port, identity);
+    if (opened.of !== 'profile') throw new Error('unreachable');
+    await save(
+      port,
+      identity,
+      grantTo(opened.profile, { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, 0, ids, NOW)
+    );
 
-      open();
-      await settled();
-      screen.getByText('Who is asking');
-      const written = afterWrites(port);
-      fireEvent.click(screen.getByText(signInTo()));
-      await afterTheSigning();
-      await written();
-      const after = await load(port, identity);
-      if (after.of !== 'profile') throw new Error('the profile could not be opened');
-      const grant = after.profile.grants.find((g) => g.subwallet === 0);
-      if (!grant) throw new Error('the sign-in left no grant for this subwallet');
-      expect([...grant.values].sort()).toEqual([...ids].sort());
-    });
+    open();
+    await settled();
+    screen.getByText('Who is asking');
+    const written = afterWrites(port);
+    fireEvent.click(screen.getByText(signInTo()));
+    await afterTheSigning();
+    await written();
+    const after = await load(port, identity);
+    if (after.of !== 'profile') throw new Error('the profile could not be opened');
+    const grant = after.profile.grants.find((g) => g.subwallet === 0);
+    if (!grant) throw new Error('the sign-in left no grant for this subwallet');
+    expect([...grant.values].sort()).toEqual([...ids].sort());
+  });
 
   it('and it says so afterwards without offering a leash it does not hold', async () => {
     await someone();
@@ -440,37 +452,35 @@ describe('what the wallet writes down about it', () => {
  * cannot observe is not claimed.
  */
 describe('what this wallet says it DID, and never what it achieved', () => {
-  it('THE HEADING NAMES THE ACT AND THE SITE, AND IS NOT A BARE "SIGNED IN"',
-    async () => {
-      await someone();
-      open();
-      await settled();
-      screen.getByText('Who is asking');
-      fireEvent.click(screen.getByText(signInTo()));
+  it('THE HEADING NAMES THE ACT AND THE SITE, AND IS NOT A BARE "SIGNED IN"', async () => {
+    await someone();
+    open();
+    await settled();
+    screen.getByText('Who is asking');
+    fireEvent.click(screen.getByText(signInTo()));
 
-      const heading = await afterTheSigning();
-      expect(heading.tagName).toBe('H1');
-      expect(heading.textContent).toBe(`You signed in to ${ORIGIN}`);
+    const heading = await afterTheSigning();
+    expect(heading.tagName).toBe('H1');
+    expect(heading.textContent).toBe(`You signed in to ${ORIGIN}`);
 
-      /* The defect itself, pinned: a heading that announces an outcome on
-       * somebody else's behalf. Nothing on this screen may read as one. */
-      for (const h of [...document.querySelectorAll('h1')]) {
-        expect(h.textContent?.trim()).not.toBe('Signed in');
-      }
-    });
+    /* The defect itself, pinned: a heading that announces an outcome on
+     * somebody else's behalf. Nothing on this screen may read as one. */
+    for (const h of [...document.querySelectorAll('h1')]) {
+      expect(h.textContent?.trim()).not.toBe('Signed in');
+    }
+  });
 
-  it('AND IT NAMES THE ORIGIN THE BROWSER OBSERVED, not the name the asker chose',
-    async () => {
-      /* The rule reaching the heading too. `Payroll A` is what the ask
-       * calls itself and it is the one field the asker fills in. */
-      await someone();
-      open();
-      await settled();
-      screen.getByText('Who is asking');
-      fireEvent.click(screen.getByText(signInTo()));
+  it('AND IT NAMES THE ORIGIN THE BROWSER OBSERVED, not the name the asker chose', async () => {
+    /* The rule reaching the heading too. `Payroll A` is what the ask
+     * calls itself and it is the one field the asker fills in. */
+    await someone();
+    open();
+    await settled();
+    screen.getByText('Who is asking');
+    fireEvent.click(screen.getByText(signInTo()));
 
-      const heading = await afterTheSigning();
-      expect(heading.textContent).toContain(ORIGIN);
-      expect(heading.textContent).not.toContain('Payroll A');
-    });
+    const heading = await afterTheSigning();
+    expect(heading.textContent).toContain(ORIGIN);
+    expect(heading.textContent).not.toContain('Payroll A');
+  });
 });

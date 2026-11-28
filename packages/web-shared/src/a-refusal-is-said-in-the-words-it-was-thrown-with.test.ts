@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { lowerHex, said, saidWithoutStop } from './vault-info-here.js';
 
 describe('A REFUSAL QUOTED INSIDE ANOTHER SENTENCE', () => {
-  it('is the error\'s message, or what was thrown, and drops only one closing full stop and the space after it', () => {
+  it("is the error's message, or what was thrown, and drops only one closing full stop and the space after it", () => {
     expect(said(new Error('the chain did not answer.'))).toBe('the chain did not answer.');
     expect(said('no indexer')).toBe('no indexer');
     /* RED WHEN: a quoted refusal keeps its full stop, so the sentence around it reads "answer.)." */

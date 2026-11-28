@@ -17,23 +17,45 @@ import type { CompanyCreation } from '../adapters/creation-standing.js';
 const SRC = fileURLToPath(new URL('../', import.meta.url));
 const read = (p: string): string => readFileSync(SRC + p, 'utf8');
 const ACTIONS = 'actions';
-const actionFiles = (): string[] => readdirSync(SRC + ACTIONS).filter((n) => /\.tsx?$/.test(n) && !/\.test(-support)?\./.test(n)).sort();
+const actionFiles = (): string[] =>
+  readdirSync(SRC + ACTIONS)
+    .filter((n) => /\.tsx?$/.test(n) && !/\.test(-support)?\./.test(n))
+    .sort();
 /** Every file of the application's own source, relative to it, but tests. */
-const everyFile = (dir = ''): string[] => readdirSync(SRC + dir, { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? everyFile(`${dir}${e.name}/`) : /\.tsx?$/.test(e.name) && !/\.test(-support)?\./.test(e.name) ? [`${dir}${e.name}`] : []);
+const everyFile = (dir = ''): string[] =>
+  readdirSync(SRC + dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? everyFile(`${dir}${e.name}/`)
+      : /\.tsx?$/.test(e.name) && !/\.test(-support)?\./.test(e.name)
+        ? [`${dir}${e.name}`]
+        : []
+  );
 /** Every name a file exports, however it is written. */
 const exportedNames = (text: string): string[] => [
   ...[...text.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+(\w+)/g)].map((m) => m[1]!),
-  ...[...text.matchAll(/export\s*\{([^}]*)\}/g)].flatMap((m) => m[1]!.split(',').map((x) => x.trim().split(/\s+as\s+/).pop()!).filter(Boolean)),
-  ...(/export\s+default\b/.test(text) ? ['default'] : []),
+  ...[...text.matchAll(/export\s*\{([^}]*)\}/g)].flatMap((m) =>
+    m[1]!
+      .split(',')
+      .map((x) =>
+        x
+          .trim()
+          .split(/\s+as\s+/)
+          .pop()!
+      )
+      .filter(Boolean)
+  ),
+  ...(/export\s+default\b/.test(text) ? ['default'] : [])
 ];
 /**
  * Every module a file names, by any way of naming one: an import or export
  * from it, in either quote, and an import() of a string written whole;
  * resolved against the file, without its extension.
  */
-const modulesNamed = (file: string, text: string): string[] => [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"`])([^'"`$]+)\1/g)]
-  .map((m) => m[2]!).filter((s) => s.startsWith('.')).map((s) => normalize(join(dirname(file), s)).replace(/\.(js|ts|tsx|jsx)$/, ''));
+const modulesNamed = (file: string, text: string): string[] =>
+  [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"`])([^'"`$]+)\1/g)]
+    .map((m) => m[2]!)
+    .filter((s) => s.startsWith('.'))
+    .map((s) => normalize(join(dirname(file), s)).replace(/\.(js|ts|tsx|jsx)$/, ''));
 
 /** The adapter that acts for each action, which that action alone may import. */
 const ACTS_FOR: Record<string, string> = {
@@ -68,13 +90,20 @@ const ACTS_FOR: Record<string, string> = {
   /* Retiring a vault from its page raises and carries a change to the company, asked of the same wallet conversation as raising and approving any proposal. */
   'retire-vault.tsx': 'adapters/proposal-acts.js',
   /* Setting how long a recovery waits, from the recovery page, acts through its own adapter. */
-  'recovery-window.tsx': 'adapters/recovery-window.js',
+  'recovery-window.tsx': 'adapters/recovery-window.js'
 };
 /** Files other than the action's own that may import its adapter, because they only read what it names: the invite adapter's role codes, kind names and approvals sentence are read by the signers component, and its amount reader `unitsOf` by the person acts, and its private-address check by the roles adapter, which holds a role change's typed address to it; the Vendors page reads its kind names to open the invite panel for a vendor, and the vendor panel its two kinds of terms; the proposals adapter's reason codes and result kinds are read by the shared proposal-act hook and display (`records/proposal-act.tsx`), and its can-approve and can-withdraw questions by the proposals page, which never calls its acts; the shared form fields (`fields/form-fields.tsx`) read its keypad, token list and kinds of terms, which they draw and never act on. */
 const ALSO_READ_BY: Record<string, string[]> = {
   'adapters/person-acts.js': ['records/parts.tsx'],
   'adapters/proposal-acts.js': ['records/proposal-act.tsx', 'screens/proposals.tsx'],
-  'adapters/invite.js': ['actions/signers.tsx', 'actions/vendor-panel.tsx', 'adapters/person-acts.ts', 'adapters/roles-here.ts', 'fields/form-fields.tsx', 'screens/vendors.tsx'],
+  'adapters/invite.js': [
+    'actions/signers.tsx',
+    'actions/vendor-panel.tsx',
+    'adapters/person-acts.ts',
+    'adapters/roles-here.ts',
+    'fields/form-fields.tsx',
+    'screens/vendors.tsx'
+  ]
 };
 /** The components in actions/ that are no step's: each with the only files that may show it, one component called from each, never a copy. */
 const NO_STEP: Record<string, string[]> = {
@@ -93,7 +122,7 @@ const NO_STEP: Record<string, string[]> = {
   'retry-run.tsx': ['screens/run'],
   'one-off.tsx': ['screens/vault', 'screens/vendors', 'shell/create-menu'],
   'retire-vault.tsx': ['screens/vault'],
-  'recovery-window.tsx': ['screens/recovery'],
+  'recovery-window.tsx': ['screens/recovery']
 };
 
 describe('every step is in the list, and every entry is a step', () => {
@@ -103,14 +132,20 @@ describe('every step is in the list, and every entry is a step', () => {
    * an everyday action (depositing, running payroll) made a setup step again.
    * The design's five steps, written out by hand: there is no step for handing the company over.
    */
-  it('has the design\'s five steps, in order, and builds every one of them', () => {
+  it("has the design's five steps, in order, and builds every one of them", () => {
     expect(EVERY_STEP.map((s) => s.id)).toEqual(['createCompany', 'finishCompany', 'signers', 'vault', 'people']);
-    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([STEP.createCompany, STEP.finishCompany, STEP.signers, STEP.vault, STEP.people]);
+    expect(EVERY_STEP.filter(isBuiltStep).map((s) => s.id)).toEqual([
+      STEP.createCompany,
+      STEP.finishCompany,
+      STEP.signers,
+      STEP.vault,
+      STEP.people
+    ]);
     expect(Object.values(STEP).sort()).toEqual(Object.keys(SETUP_STEPS).sort());
   });
 
   /* RED WHEN: a file in actions/ is a step's component that no entry shows (a step with no entry), or an entry's component is not in actions/ (an entry with no step). A component no step shows is listed by hand as such. */
-  it('shows every component in actions/ that is a step\'s from exactly one entry, and every entry\'s component is one of them', async () => {
+  it("shows every component in actions/ that is a step's from exactly one entry, and every entry's component is one of them", async () => {
     /* One export a file, and that export is, by identity, one entry's component: not a same-named copy made elsewhere. */
     const exported: unknown[] = [];
     for (const f of actionFiles().filter((n) => NO_STEP[n] === undefined)) {
@@ -131,14 +166,20 @@ describe('every step is in the list, and every entry is a step', () => {
    * component, the page from its own screen and the step from the list; or the step or the page is Coming soon, in whole or in
    * part, for choosing how many must approve again.
    */
-  it('shows the committee change from the vault panel and the super admins\' page only, and the signers component, which the step and the page both draw, without it', () => {
+  it("shows the committee change from the vault panel and the super admins' page only, and the signers component, which the step and the page both draw, without it", () => {
     /* Every one of them is a file in actions/, and no step shows it. */
     const shown = EVERY_STEP.filter(isBuiltStep).map((st) => (st.shows as { action: { name: string } }).action.name);
     expect(Object.keys(NO_STEP).every((f) => actionFiles().includes(f))).toBe(true);
     expect(shown).not.toContain('CommitteeChange');
     for (const [file, mounts] of Object.entries(NO_STEP)) {
       const target = `${ACTIONS}/${file}`.replace(/\.tsx$/, '');
-      expect(everyFile().filter((p) => modulesNamed(p, read(p)).includes(target)).map((p) => p.replace(/\.tsx?$/, '')).sort(), file).toEqual([...mounts].sort());
+      expect(
+        everyFile()
+          .filter((p) => modulesNamed(p, read(p)).includes(target))
+          .map((p) => p.replace(/\.tsx?$/, ''))
+          .sort(),
+        file
+      ).toEqual([...mounts].sort());
     }
     const signersStep = SETUP_STEPS[STEP.signers] as SetupStep;
     expect(isBuiltStep(signersStep) && signersStep.shows.action.name).toBe('Signers');
@@ -146,7 +187,9 @@ describe('every step is in the list, and every entry is a step', () => {
     expect(SETUP_STEPS[STEP.signers].page).toBe('settingsSigners');
     expect(PAGES.settingsSigners.shows).toHaveProperty('screen');
     expect(PAGES.settingsSigners.shows).not.toHaveProperty('comingSoon');
-    expect(((PAGES.settingsSigners as Page).shows as unknown as { screen: { screenName: string } }).screen.screenName).toBe('SignersBuilt');
+    expect(
+      ((PAGES.settingsSigners as Page).shows as unknown as { screen: { screenName: string } }).screen.screenName
+    ).toBe('SignersBuilt');
     expect(read('screens/settings-sections.tsx')).toMatch(/export function SignersBuilt\b[\s\S]*<Signers \/>/);
     expect(read('screens/settings-sections.tsx')).not.toMatch(/CommitteeChange/);
     expect(read(`${ACTIONS}/signers.tsx`).match(/<CommitteeChange\b/g)).toBeNull();
@@ -163,7 +206,9 @@ describe('every step is in the list, and every entry is a step', () => {
     expect(read(`${ACTIONS}/signers.tsx`).match(/<ChangeThreshold\b/g)).toHaveLength(1);
     expect(read('shell/create-menu.tsx').match(/<ChangeThreshold\b/g)).toHaveLength(1);
     expect(read('shell/create-menu.tsx')).not.toMatch(/data-create="change-approvals"[^\n]*soon=/);
-    expect(everyFile().filter((p) => /function ThresholdStepper|function ChangeThreshold\b/.test(read(p)))).toEqual([`${ACTIONS}/change-threshold.tsx`]);
+    expect(everyFile().filter((p) => /function ThresholdStepper|function ChangeThreshold\b/.test(read(p)))).toEqual([
+      `${ACTIONS}/change-threshold.tsx`
+    ]);
   });
 
   /* RED WHEN: a step that can be skipped cannot be, or finishing the company can be skipped. */
@@ -185,12 +230,14 @@ describe('a step and its page are one component', () => {
    * actions share is imported by any file but those two actions (and the files
    * listed as reading what it names), so one of them is not the only way to act.
    */
-  it('lets only an action\'s own file reach the adapter that acts for it', () => {
+  it("lets only an action's own file reach the adapter that acts for it", () => {
     expect(Object.keys(ACTS_FOR).sort()).toEqual(actionFiles());
     for (const adapter of new Set(Object.values(ACTS_FOR))) {
       const target = adapter.replace(/\.js$/, '');
       const importers = everyFile().filter((p) => modulesNamed(p, read(p)).includes(target));
-      const actions = Object.entries(ACTS_FOR).filter(([, a]) => a === adapter).map(([file]) => `${ACTIONS}/${file}`);
+      const actions = Object.entries(ACTS_FOR)
+        .filter(([, a]) => a === adapter)
+        .map(([file]) => `${ACTIONS}/${file}`);
       expect([...importers].sort(), adapter).toEqual([...actions, ...(ALSO_READ_BY[adapter] ?? [])].sort());
     }
   });
@@ -207,7 +254,8 @@ describe('a step and its page are one component', () => {
     expect(breaches).toEqual([]);
     /* The check reads what it is for: the list of pages names its screens whole, by import(). */
     expect([...read('pages.ts').matchAll(/\bimport\s*\(\s*'\.\/screens\//g)].length).toBeGreaterThan(5);
-    const probe = "const a = import(`../adapters/${n}.js`); const b = import(name); const c = import('../adapters/' + n); const d = import('../x.js');";
+    const probe =
+      "const a = import(`../adapters/${n}.js`); const b = import(name); const c = import('../adapters/' + n); const d = import('../x.js');";
     expect([...probe.matchAll(built)].length).toBe(3);
   });
 
@@ -215,7 +263,7 @@ describe('a step and its page are one component', () => {
    * RED WHEN: a built page named by a step shows something other than that
    * step's component from actions/: a screen of its own, or a copy.
    */
-  it('shows, on every built page a step names, the step\'s own component', () => {
+  it("shows, on every built page a step names, the step's own component", () => {
     const checked: string[] = [];
     for (const s of EVERY_STEP) {
       if (s.page === undefined) continue;
@@ -224,8 +272,12 @@ describe('a step and its page are one component', () => {
       if (!isBuilt(page) || !isBuiltStep(s)) continue;
       /* A screen loaded on demand is found by the name the list gives it. */
       const name = (page.shows.screen as { screenName?: string }).screenName ?? page.shows.screen.name;
-      const screen = everyFile().find((p) => p.startsWith('screens/') && new RegExp(`export function ${name}\\b`).test(read(p)))!;
-      expect(read(screen), s.id).toMatch(new RegExp(`import \\{[^}]*\\b${s.shows.action.name}\\b[^}]*\\} from '\\.\\./${ACTIONS}/`));
+      const screen = everyFile().find(
+        (p) => p.startsWith('screens/') && new RegExp(`export function ${name}\\b`).test(read(p))
+      )!;
+      expect(read(screen), s.id).toMatch(
+        new RegExp(`import \\{[^}]*\\b${s.shows.action.name}\\b[^}]*\\} from '\\.\\./${ACTIONS}/`)
+      );
       checked.push(`${s.id} on ${s.page}`);
     }
     /* Each built step whose page is built, named here, so the check above is seen reading it. */
@@ -242,17 +294,33 @@ describe('each piece the forms and pages share has one home', () => {
    */
   it('defines each shared piece in one file and sets the amount keypad in one', () => {
     const files = everyFile();
-    const definedIn = (name: string): string[] => files.filter((p) => new RegExp(`(?:function|const)\\s+${name}\\b`).test(read(p)));
+    const definedIn = (name: string): string[] =>
+      files.filter((p) => new RegExp(`(?:function|const)\\s+${name}\\b`).test(read(p)));
     expect({
-      useAdmitBySays: definedIn('useAdmitBySays'), BeliefLeftOut: definedIn('BeliefLeftOut'), TermsOf: definedIn('TermsOf'), CalendarDate: definedIn('CalendarDate'),
-      PayField: definedIn('PayField'), TermsChoice: definedIn('TermsChoice'), DayForm: definedIn('DayForm'), DateField: definedIn('DateField'),
+      useAdmitBySays: definedIn('useAdmitBySays'),
+      BeliefLeftOut: definedIn('BeliefLeftOut'),
+      TermsOf: definedIn('TermsOf'),
+      CalendarDate: definedIn('CalendarDate'),
+      PayField: definedIn('PayField'),
+      TermsChoice: definedIn('TermsChoice'),
+      DayForm: definedIn('DayForm'),
+      DateField: definedIn('DateField')
     }).toEqual({
-      useAdmitBySays: ['actions/admit.tsx'], BeliefLeftOut: ['records/parts.tsx'], TermsOf: ['records/parts.tsx'], CalendarDate: ['records/parts.tsx'],
-      PayField: ['fields/form-fields.tsx'], TermsChoice: ['fields/form-fields.tsx'], DayForm: ['fields/form-fields.tsx'], DateField: ['fields/form-fields.tsx'],
+      useAdmitBySays: ['actions/admit.tsx'],
+      BeliefLeftOut: ['records/parts.tsx'],
+      TermsOf: ['records/parts.tsx'],
+      CalendarDate: ['records/parts.tsx'],
+      PayField: ['fields/form-fields.tsx'],
+      TermsChoice: ['fields/form-fields.tsx'],
+      DayForm: ['fields/form-fields.tsx'],
+      DateField: ['fields/form-fields.tsx']
     });
     expect(files.filter((p) => /invitations\.kind\./.test(read(p)))).toEqual(['records/parts.tsx']);
     expect(files.filter((p) => /\binputMode\b/.test(read(p)))).toEqual(['fields/form-fields.tsx']);
-    expect(files.filter((p) => /\bDECIMAL_KEYPAD\b/.test(read(p)))).toEqual(['adapters/invite.ts', 'fields/form-fields.tsx']);
+    expect(files.filter((p) => /\bDECIMAL_KEYPAD\b/.test(read(p)))).toEqual([
+      'adapters/invite.ts',
+      'fields/form-fields.tsx'
+    ]);
     expect(files.filter((p) => /calendar\(\w+\) \|\| \w+/.test(read(p)))).toEqual(['records/parts.tsx']);
   });
 
@@ -263,8 +331,20 @@ describe('each piece the forms and pages share has one home', () => {
     for (const f of actionFiles()) {
       const stem = f.replace(/\.tsx?$/, '');
       for (const p of everyFile().filter((x) => x !== `${ACTIONS}/${f}`)) {
-        const from = [...read(p).matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'(?:\\./|\\.\\./actions/)${stem}\\.js'`, 'g'))].flatMap((m) => m[1]!.split(',').map((n) => n.trim()).filter(Boolean));
-        expect(from.filter((n) => fieldNames.test(n) && n !== 'InvitePeople'), `${p} imports a field from ${f}`).toEqual([]);
+        const from = [
+          ...read(p).matchAll(
+            new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*'(?:\\./|\\.\\./actions/)${stem}\\.js'`, 'g')
+          )
+        ].flatMap((m) =>
+          m[1]!
+            .split(',')
+            .map((n) => n.trim())
+            .filter(Boolean)
+        );
+        expect(
+          from.filter((n) => fieldNames.test(n) && n !== 'InvitePeople'),
+          `${p} imports a field from ${f}`
+        ).toEqual([]);
       }
     }
   });
@@ -277,14 +357,18 @@ describe('the vault step', () => {
    * not yet on the chain, held by keys that are not the committee now, or of
    * a standing not known; or one the committee holds does not.
    */
-  it('is done only by a vault the company\'s committee holds', async () => {
+  it("is done only by a vault the company's committee holds", async () => {
     const { VAULT } = await import('../adapters/company-rows.js');
     const { wasHandedOver } = await import('../adapters/vault-rows.js');
     const held = Object.values(VAULT).filter((standing) => wasHandedOver({ standing }));
-    expect(held.sort()).toEqual([VAULT.accountNotFundable, VAULT.accountNotHandedOver, VAULT.held, VAULT.notFundable].sort());
+    expect(held.sort()).toEqual(
+      [VAULT.accountNotFundable, VAULT.accountNotHandedOver, VAULT.held, VAULT.notFundable].sort()
+    );
     const vault = EVERY_STEP.find((s) => s.id === STEP.vault)!;
     for (const standing of Object.values(VAULT)) {
-      expect(vault.done({ company: 'c-1', vaults: [{ standing }], creation: null, invited: false }), standing).toBe(held.includes(standing));
+      expect(vault.done({ company: 'c-1', vaults: [{ standing }], creation: null, invited: false }), standing).toBe(
+        held.includes(standing)
+      );
     }
     expect(vault.done({ company: 'c-1', vaults: null, creation: null, invited: false })).toBe(false);
     expect(vault.done({ company: 'c-1', vaults: [], creation: null, invited: false })).toBe(false);
@@ -292,12 +376,23 @@ describe('the vault step', () => {
 });
 
 const creation = (over: Partial<CompanyCreation> = {}): CompanyCreation => ({
-  company: 'c-1', standing: 'finished', awaitingSecondPress: false, kept: false, confirmedFinished: true, mark: null, ...over,
+  company: 'c-1',
+  standing: 'finished',
+  awaitingSecondPress: false,
+  kept: false,
+  confirmedFinished: true,
+  mark: null,
+  ...over
 });
 
 describe('where a step stands', () => {
   const none = { company: null, vaults: null, creation: null, invited: false };
-  const created = { company: 'c-1', vaults: null, invited: false, creation: creation({ standing: 'pay-key-owed', confirmedFinished: false, mark: 'not-finished' }) };
+  const created = {
+    company: 'c-1',
+    vaults: null,
+    invited: false,
+    creation: creation({ standing: 'pay-key-owed', confirmedFinished: false, mark: 'not-finished' })
+  };
   const finished = { ...created, creation: creation() };
 
   /* RED WHEN: a step skipped is shown as done, a step done is shown as skipped, or a step neither is shown as either. */
@@ -306,7 +401,8 @@ describe('where a step stands', () => {
     expect(standingOf(create, none, new Set([STEP.createCompany]))).toBe(STANDING.skipped);
     expect(standingOf(create, none, new Set())).toBe(STANDING.open);
     expect(standingOf(create, created, new Set([STEP.createCompany]))).toBe(STANDING.done);
-    for (const s of EVERY_STEP.filter((x) => x.skippable && !x.done(created))) expect(standingOf(s, created, new Set([s.id])), s.id).toBe(STANDING.skipped);
+    for (const s of EVERY_STEP.filter((x) => x.skippable && !x.done(created)))
+      expect(standingOf(s, created, new Set([s.id])), s.id).toBe(STANDING.skipped);
   });
 
   /* RED WHEN: a step that cannot be skipped is shown as skipped because a skip was kept for it, so the wizard moves past it. */
@@ -329,8 +425,21 @@ describe('where a step stands', () => {
   it('counts creating the company done once it exists, or once this tab keeps its creation', () => {
     const create = EVERY_STEP.find((s) => s.id === STEP.createCompany)!;
     expect(create.done(none)).toBe(false);
-    expect(create.done({ ...none, creation: creation({ company: null, standing: null, confirmedFinished: false }) })).toBe(false);
-    expect(create.done({ ...none, creation: creation({ company: 'c-new', standing: 'not-created', kept: true, awaitingSecondPress: true, confirmedFinished: false }) })).toBe(true);
+    expect(
+      create.done({ ...none, creation: creation({ company: null, standing: null, confirmedFinished: false }) })
+    ).toBe(false);
+    expect(
+      create.done({
+        ...none,
+        creation: creation({
+          company: 'c-new',
+          standing: 'not-created',
+          kept: true,
+          awaitingSecondPress: true,
+          confirmedFinished: false
+        })
+      })
+    ).toBe(true);
     expect(create.done(created)).toBe(true);
   });
 
@@ -338,7 +447,9 @@ describe('where a step stands', () => {
   it('counts finishing the company done only when the wallet confirms it', () => {
     const finish = EVERY_STEP.find((s) => s.id === STEP.finishCompany)!;
     expect(finish.done(none)).toBe(false);
-    expect(finish.done({ ...created, creation: creation({ standing: 'finished', confirmedFinished: false }) })).toBe(false);
+    expect(finish.done({ ...created, creation: creation({ standing: 'finished', confirmedFinished: false }) })).toBe(
+      false
+    );
     expect(finish.done(created)).toBe(false);
     expect(finish.done(finished)).toBe(true);
   });

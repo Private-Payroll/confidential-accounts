@@ -1,11 +1,11 @@
-import * as React from "react"
-import { cn } from "vaults-ui/lib/utils"
-import { Progress as ProgressPrimitive } from "radix-ui"
+import * as React from 'react';
+import { cn } from 'vaults-ui/lib/utils';
+import { Progress as ProgressPrimitive } from 'radix-ui';
 
 /** One step of what is being done: its id, set as `data-mark` on its mark, and whether it is done. */
 export interface ProgressStep {
-  id: string
-  done: boolean
+  id: string;
+  done: boolean;
 }
 
 /**
@@ -23,13 +23,15 @@ function Progress({
   className,
   steps,
   ...props
-}: Omit<React.ComponentProps<typeof ProgressPrimitive.Root>, "value" | "max" | "children"> & { steps: readonly ProgressStep[] }) {
+}: Omit<React.ComponentProps<typeof ProgressPrimitive.Root>, 'value' | 'max' | 'children'> & {
+  steps: readonly ProgressStep[];
+}) {
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
       value={steps.filter((s) => s.done).length}
       max={Math.max(1, steps.length)}
-      className={cn("flex w-full items-center gap-1", className)}
+      className={cn('flex w-full items-center gap-1', className)}
       {...props}
     >
       {steps.map((s) => (
@@ -42,7 +44,7 @@ function Progress({
         />
       ))}
     </ProgressPrimitive.Root>
-  )
+  );
 }
 
-export { Progress }
+export { Progress };

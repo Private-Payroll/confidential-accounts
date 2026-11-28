@@ -15,7 +15,7 @@ export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSo
   return {
     lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
     getParams: (k) => vault.getParams(k),
-    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
+    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation)
   };
 };
 
@@ -28,10 +28,10 @@ export const networkCircuitsBeside = (vault: ArtefactSource, network: ArtefactSo
  */
 export const accountCircuitsBeside = (vault: ArtefactSource, account: ArtefactSource): ArtefactSource => {
   const which = (keyLocation: string) =>
-    (ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuitOf(keyLocation)) ? account : vault);
+    ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(circuitOf(keyLocation)) ? account : vault;
   return {
     lookupKey: (keyLocation) => which(keyLocation).lookupKey(keyLocation),
     getParams: (k) => vault.getParams(k),
-    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation),
+    artefact: (kind, keyLocation) => which(keyLocation).artefact(kind, keyLocation)
   };
 };

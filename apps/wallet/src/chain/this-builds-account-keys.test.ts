@@ -15,13 +15,17 @@ const ON_DISK = keysOnDisk([ACCOUNT_KEYS]).ok;
  */
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
-describe.skipIf(!ON_DISK)('THE COMPANY ACCOUNT\'S KEYS THIS WALLET IS BUILT WITH [needs contracts/managed/keys; `npm run compact` builds them]', () => {
-  it('ARE THE COMPILER\'S OWN DIGESTS OF THIS BUILD\'S KEYS, STEP BY STEP AND IN ORDER', () => {
-    const built = builtAccountKeys();
-    if (built.of !== 'built') throw new Error(built.why);
-    /* RED WHEN the digests are taken from anything but this build's key files, or a step's list or order drifts. */
-    expect([...built.keys.first.keys()]).toEqual([...CREATION_STEPS.first]);
-    expect([...built.keys.second.keys()]).toEqual([...CREATION_STEPS.second]);
-    for (const [c, d] of [...built.keys.first, ...built.keys.second]) expect(hex(d), c).toBe((account as any).expectedVk[c]);
-  });
-});
+describe.skipIf(!ON_DISK)(
+  "THE COMPANY ACCOUNT'S KEYS THIS WALLET IS BUILT WITH [needs contracts/managed/keys; `npm run compact` builds them]",
+  () => {
+    it("ARE THE COMPILER'S OWN DIGESTS OF THIS BUILD'S KEYS, STEP BY STEP AND IN ORDER", () => {
+      const built = builtAccountKeys();
+      if (built.of !== 'built') throw new Error(built.why);
+      /* RED WHEN the digests are taken from anything but this build's key files, or a step's list or order drifts. */
+      expect([...built.keys.first.keys()]).toEqual([...CREATION_STEPS.first]);
+      expect([...built.keys.second.keys()]).toEqual([...CREATION_STEPS.second]);
+      for (const [c, d] of [...built.keys.first, ...built.keys.second])
+        expect(hex(d), c).toBe((account as any).expectedVk[c]);
+    });
+  }
+);

@@ -13,8 +13,12 @@ import type { ActOutcome } from './wallet-act.js';
 
 /** The person or vendor an action is asked on, as the page names them: the company, their kind, their record and name. */
 interface PersonAsked {
-  readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress;
-  readonly kind: 'employee' | 'vendor'; readonly person: string; readonly name: string;
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly kind: 'employee' | 'vendor';
+  readonly person: string;
+  readonly name: string;
 }
 
 /**
@@ -27,13 +31,20 @@ interface PersonChangeAsked {
   readonly endDate?: string | null;
   readonly leavingDate?: string | null;
   readonly status?: 'active' | 'leaver';
-  readonly terms?: { readonly kind: 'one-off' } | { readonly kind: 'monthly'; readonly asset: string; readonly amount: bigint };
+  readonly terms?:
+    { readonly kind: 'one-off' } | { readonly kind: 'monthly'; readonly asset: string; readonly amount: bigint };
 }
 
 const asked = (ask: PersonAsked) => ({
-  record: ask.record, company: ask.company, account: ask.account, kind: ask.kind, person: ask.person, personName: ask.name,
+  record: ask.record,
+  company: ask.company,
+  account: ask.account,
+  kind: ask.kind,
+  person: ask.person,
+  personName: ask.name
 });
-const stepOf = (opts: { readonly onStep?: (at: StepAt) => void }) => (opts.onStep === undefined ? {} : { onStep: opts.onStep });
+const stepOf = (opts: { readonly onStep?: (at: StepAt) => void }) =>
+  opts.onStep === undefined ? {} : { onStep: opts.onStep };
 
 /**
  * **ADMITS AN EMPLOYEE OR A VENDOR FROM THE PERSON'S WALLET**: the admit-person action, run over one window. The
@@ -41,13 +52,22 @@ const stepOf = (opts: { readonly onStep?: (at: StepAt) => void }) => (opts.onSte
  * their wallet's signed claim, with none. Resolves with how the action ended.
  */
 export function admitPersonInTheWallet(
-  ask: PersonAsked & { readonly fingerprint?: string }, walletOrigin: string,
-  opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+  ask: PersonAsked & { readonly fingerprint?: string },
+  walletOrigin: string,
+  opts: { readonly onStep?: (at: StepAt) => void } = {},
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
   const fingerprint = ask.fingerprint?.trim();
-  return actOnACompanyInTheWallet({
-    name: 'admit-person', ...asked(ask), ...(fingerprint === undefined || fingerprint === '' ? {} : { fingerprint }),
-  }, walletOrigin, stepOf(opts), view);
+  return actOnACompanyInTheWallet(
+    {
+      name: 'admit-person',
+      ...asked(ask),
+      ...(fingerprint === undefined || fingerprint === '' ? {} : { fingerprint })
+    },
+    walletOrigin,
+    stepOf(opts),
+    view
+  );
 }
 
 /**
@@ -56,13 +76,24 @@ export function admitPersonInTheWallet(
  * action ended.
  */
 export function changePersonInTheWallet(
-  ask: PersonAsked & { readonly change: PersonChangeAsked }, walletOrigin: string,
-  opts: { readonly onStep?: (at: StepAt) => void } = {}, view: Openable = walletInThisPage(window),
+  ask: PersonAsked & { readonly change: PersonChangeAsked },
+  walletOrigin: string,
+  opts: { readonly onStep?: (at: StepAt) => void } = {},
+  view: Openable = walletInThisPage(window)
 ): Promise<ActOutcome> {
   const c = ask.change;
   const fields: Record<string, string> = {};
-  if (c.pay !== undefined) Object.assign(fields, { payAmount: c.pay.amount.toString(10), asset: c.pay.asset.toLowerCase(), payFrom: c.pay.from });
-  if (c.classification !== undefined) Object.assign(fields, { classification: c.classification.classification, classificationFrom: c.classification.from });
+  if (c.pay !== undefined)
+    Object.assign(fields, {
+      payAmount: c.pay.amount.toString(10),
+      asset: c.pay.asset.toLowerCase(),
+      payFrom: c.pay.from
+    });
+  if (c.classification !== undefined)
+    Object.assign(fields, {
+      classification: c.classification.classification,
+      classificationFrom: c.classification.from
+    });
   const cleared: string[] = [];
   for (const k of ['endDate', 'leavingDate'] as const) {
     const day = c[k];
@@ -71,9 +102,15 @@ export function changePersonInTheWallet(
   }
   if (c.terms !== undefined) {
     fields['terms'] = c.terms.kind;
-    if (c.terms.kind === 'monthly') Object.assign(fields, { termsAsset: c.terms.asset.toLowerCase(), termsAmount: c.terms.amount.toString(10) });
+    if (c.terms.kind === 'monthly')
+      Object.assign(fields, { termsAsset: c.terms.asset.toLowerCase(), termsAmount: c.terms.amount.toString(10) });
   }
   if (c.status !== undefined) fields['status'] = c.status;
   if (cleared.length > 0) fields['clear'] = cleared.join(',');
-  return actOnACompanyInTheWallet({ name: 'change-person', ...asked(ask), ...fields }, walletOrigin, stepOf(opts), view);
+  return actOnACompanyInTheWallet(
+    { name: 'change-person', ...asked(ask), ...fields },
+    walletOrigin,
+    stepOf(opts),
+    view
+  );
 }

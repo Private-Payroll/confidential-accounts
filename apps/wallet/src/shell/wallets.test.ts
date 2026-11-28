@@ -129,10 +129,8 @@ describe('the interface writes only wallets it can open, and the fixed ten', () 
    */
   it('and the refusal is this module’s own — so deleting its guard is still red', () => {
     const secret = newSecret();
-    expect(() => switchWallet(secret, 12))
-      .toThrow(/is not a wallet this interface offers/);
-    expect(() => switchWallet(secret, 1))
-      .toThrow(/is not a wallet this interface offers/);
+    expect(() => switchWallet(secret, 12)).toThrow(/is not a wallet this interface offers/);
+    expect(() => switchWallet(secret, 1)).toThrow(/is not a wallet this interface offers/);
   });
 
   /*
@@ -182,8 +180,7 @@ describe('the interface writes only wallets it can open, and the fixed ten', () 
     const secret = newSecret();
     saveSubwalletName(secret, 2, 'Client money');
     for (const notAWallet of [12, 99, 1.5, -1]) {
-      expect(() => saveSubwalletName(secret, notAWallet, 'Savings'), String(notAWallet))
-        .toThrow();
+      expect(() => saveSubwalletName(secret, notAWallet, 'Savings'), String(notAWallet)).toThrow();
     }
     /* A refusal that half-wrote would be worse than no refusal. */
     expect(loadSubwallets(secret).names).toEqual({ 2: 'Client money' });
@@ -194,8 +191,7 @@ describe('the interface writes only wallets it can open, and the fixed ten', () 
     /* Every slot the interface offers still takes a name. */
     for (const account of [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
       saveSubwalletName(secret, account, `slot ${account}`);
-      expect(loadSubwallets(secret).names[String(account)], String(account))
-        .toBe(`slot ${account}`);
+      expect(loadSubwallets(secret).names[String(account)], String(account)).toBe(`slot ${account}`);
     }
   });
 

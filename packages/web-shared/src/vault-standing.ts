@@ -10,8 +10,14 @@
 
 /** Every standing a vault can be reported in. */
 export const VAULT = {
-  held: 'held-by-committee', startOwed: 'start-owed', notOnChain: 'not-on-chain-yet', notFundable: 'not-fundable',
-  accountNotHandedOver: 'account-not-handed-over', accountNotFundable: 'account-not-fundable', heldByOtherKeys: 'held-by-other-keys', unknown: 'unknown',
+  held: 'held-by-committee',
+  startOwed: 'start-owed',
+  notOnChain: 'not-on-chain-yet',
+  notFundable: 'not-fundable',
+  accountNotHandedOver: 'account-not-handed-over',
+  accountNotFundable: 'account-not-fundable',
+  heldByOtherKeys: 'held-by-other-keys',
+  unknown: 'unknown'
 } as const;
 export type VaultStanding = (typeof VAULT)[keyof typeof VAULT];
 

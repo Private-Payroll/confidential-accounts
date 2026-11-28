@@ -21,14 +21,20 @@ interface CompanyRecordNamed {
  * version they name was served.
  */
 export const versionsWithheldIn = (
-  here: DirectoryHere, served: readonly SealedCompanyRecord[], record: CompanyRecordNamed, missingSaid: (version: number) => string,
-  withheld: ((read: { readonly store: 'company'; readonly kind: string; readonly id: string }) => string | null) | undefined,
+  here: DirectoryHere,
+  served: readonly SealedCompanyRecord[],
+  record: CompanyRecordNamed,
+  missingSaid: (version: number) => string,
+  withheld:
+    ((read: { readonly store: 'company'; readonly kind: string; readonly id: string }) => string | null) | undefined
 ): string | null => {
   const read = { store: 'company' as const, kind: record.kind, id: record.id };
   if (served.length === 0) return withheld?.(read) ?? null;
   const named = [
     ...(here.records.history.get(recordKeyOf(read)) ?? []).map((v) => v.version),
-    ...here.records.notYetAnchored.filter((e) => e.store === 'company' && e.kind === read.kind && e.id === read.id).map((e) => e.version),
+    ...here.records.notYetAnchored
+      .filter((e) => e.store === 'company' && e.kind === read.kind && e.id === read.id)
+      .map((e) => e.version)
   ];
   const missing = named.filter((v) => !served.some((r) => r.version === v));
   return missing.length === 0 ? null : missingSaid(Math.max(...missing));
@@ -41,14 +47,17 @@ export const versionsWithheldIn = (
  * now. An anchored version whose count cannot be read here, or served as other bytes than the anchor holds, throws
  * `unread()`: counted against today instead, a signer removed since could drop a change the bar once carried.
  */
-export const countAsAnchoredFor = (
-  here: DirectoryHere, filed: readonly SealedCompanyRecord[], record: CompanyRecordNamed, unread: () => Error,
-) => (version: number): SignedCount | undefined => {
-  const anchored = (here.records.history.get(recordKeyOf({ store: 'company', kind: record.kind, id: record.id })) ?? []).find((v) => v.version === version);
-  if (anchored === undefined) return undefined;
-  const rec = filed.find((r) => r.version === version);
-  const held = here.records.held?.(anchored.dirVersion) ?? null;
-  const then = held === null ? null : here.at(anchored.dirVersion);
-  if (rec === undefined || companyRecordEntry(rec).digest !== anchored.digest || held === null || then === null) throw unread();
-  return { seats: then.dir.seats, held: (seat) => held.seats.includes(seat.seat), bar: held.seatBar };
-};
+export const countAsAnchoredFor =
+  (here: DirectoryHere, filed: readonly SealedCompanyRecord[], record: CompanyRecordNamed, unread: () => Error) =>
+  (version: number): SignedCount | undefined => {
+    const anchored = (
+      here.records.history.get(recordKeyOf({ store: 'company', kind: record.kind, id: record.id })) ?? []
+    ).find((v) => v.version === version);
+    if (anchored === undefined) return undefined;
+    const rec = filed.find((r) => r.version === version);
+    const held = here.records.held?.(anchored.dirVersion) ?? null;
+    const then = held === null ? null : here.at(anchored.dirVersion);
+    if (rec === undefined || companyRecordEntry(rec).digest !== anchored.digest || held === null || then === null)
+      throw unread();
+    return { seats: then.dir.seats, held: (seat) => held.seats.includes(seat.seat), bar: held.seatBar };
+  };

@@ -4,11 +4,27 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { keyringKeyFor } from 'midnight-identity/profile/unlock';
 import { seal, signingPublicKeyOf, toHex, unseal, type Hex } from '../../../../src/core/crypto.js';
 import {
-  counterOf, sealedDigestOf, sealKeyring, withCreation, withNewSeat, withoutCreation, withPin, withRegistryMark, withSeatSetAside, type Keyring,
+  counterOf,
+  sealedDigestOf,
+  sealKeyring,
+  withCreation,
+  withNewSeat,
+  withoutCreation,
+  withPin,
+  withRegistryMark,
+  withSeatSetAside,
+  type Keyring
 } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { forgetOpenWallet } from '../accounts/wallets-held.js';
 import { keyringMarkOf, raiseKeyringMark } from '../accounts/storage.js';
-import { keyringMarksFor, openHeldKeyring, SavedKeysRefused, SeatChangeRefused, type KeyringMark, type KeyringMarks } from './held-keyring.js';
+import {
+  keyringMarksFor,
+  openHeldKeyring,
+  SavedKeysRefused,
+  SeatChangeRefused,
+  type KeyringMark,
+  type KeyringMarks
+} from './held-keyring.js';
 import { keyringSealKeyFor } from './seal-key.js';
 
 /*
@@ -22,25 +38,45 @@ const ASK = { requester: { origin: PAGE, name: 'Payroll', rdns: 'example.payroll
 const secret = newSecret();
 const identity = identityFromSecret(secret);
 const KEY = toHex(keyringSealKeyFor(identity, ASK));
-const SEAT = { signerId: 'sig_1', signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), blinding: '33'.repeat(32), scope: '44'.repeat(32) };
+const SEAT = {
+  signerId: 'sig_1',
+  signingSecret: '11'.repeat(32),
+  wrappingSecret: '22'.repeat(32),
+  blinding: '33'.repeat(32),
+  scope: '44'.repeat(32)
+};
 
-const marksInMemory = (): KeyringMarks & { readonly seen: Map<string, KeyringMark>; count(p: string): number | undefined } => {
+const marksInMemory = (): KeyringMarks & {
+  readonly seen: Map<string, KeyringMark>;
+  count(p: string): number | undefined;
+} => {
   const seen = new Map<string, KeyringMark>();
   return {
     seen,
     count: (p) => seen.get(p)?.counter,
     markOf: (p) => seen.get(p) ?? null,
-    raise: (p, m) => { if ((seen.get(p)?.counter ?? -1) < m.counter) seen.set(p, m); },
+    raise: (p, m) => {
+      if ((seen.get(p)?.counter ?? -1) < m.counter) seen.set(p, m);
+    }
   };
 };
 /** A mark as this wallet would have kept it on opening `sealed`. */
-const markFor = (sealed: ReturnType<typeof seal>, counter: number): KeyringMark => ({ counter, digest: sealedDigestOf(sealed), under: 2 });
+const markFor = (sealed: ReturnType<typeof seal>, counter: number): KeyringMark => ({
+  counter,
+  digest: sealedDigestOf(sealed),
+  under: 2
+});
 /** Saved keys as the page writes them: sealed by the same format, `count` writes on. */
 const writtenByThePage = (k: Keyring, count: number) => sealKeyring({ ...k, counter: count - 1 }, KEY).sealed;
 const opening = (sealed: ReturnType<typeof seal> | null, marks: KeyringMarks, version = 7) =>
   openHeldKeyring({ identity, ask: ASK, handedIn: { sealed, version }, marks });
 const refusedWith = (f: () => unknown): string => {
-  try { f(); } catch (e) { if (e instanceof SavedKeysRefused) return e.why; throw e; }
+  try {
+    f();
+  } catch (e) {
+    if (e instanceof SavedKeysRefused) return e.why;
+    throw e;
+  }
   return 'opened';
 };
 
@@ -132,18 +168,32 @@ describe('an older copy is refused', () => {
     expect(refusedWith(() => opening(older, fresh))).toBe('older-keys');
   });
 
-  it('refuses saved keys that do not open with this wallet\'s key for the person', () => {
+  it("refuses saved keys that do not open with this wallet's key for the person", () => {
     /* RED WHEN: another person's or another wallet's saved keys are read as this person's. */
-    expect(refusedWith(() => openHeldKeyring({
-      identity, ask: { ...ASK, person: 'usr_b' }, handedIn: { sealed: writtenByThePage({ accounts: {} }, 1), version: 0 }, marks: marksInMemory(),
-    }))).toBe('keys-did-not-open');
-    expect(refusedWith(() => opening(seal(JSON.stringify({ accounts: {} }), '00'.repeat(32)), marksInMemory()))).toBe('keys-did-not-open');
+    expect(
+      refusedWith(() =>
+        openHeldKeyring({
+          identity,
+          ask: { ...ASK, person: 'usr_b' },
+          handedIn: { sealed: writtenByThePage({ accounts: {} }, 1), version: 0 },
+          marks: marksInMemory()
+        })
+      )
+    ).toBe('keys-did-not-open');
+    expect(refusedWith(() => opening(seal(JSON.stringify({ accounts: {} }), '00'.repeat(32)), marksInMemory()))).toBe(
+      'keys-did-not-open'
+    );
   });
 });
 
 describe('a refused copy says what resolves it', () => {
   const says = (f: () => unknown): string => {
-    try { f(); } catch (e) { if (e instanceof SavedKeysRefused) return e.message; throw e; }
+    try {
+      f();
+    } catch (e) {
+      if (e instanceof SavedKeysRefused) return e.message;
+      throw e;
+    }
     return '';
   };
   it('names a reload for a page that is behind, and the newest device or a restore when the service holds the older copy', () => {
@@ -152,7 +202,7 @@ describe('a refused copy says what resolves it', () => {
     for (const message of [
       says(() => opening(writtenByThePage({ accounts: {} }, 4), marks)),
       says(() => opening(writtenByThePage({ accounts: {} }, 5), marks)),
-      says(() => opening(null, marks)),
+      says(() => opening(null, marks))
     ]) {
       /* RED WHEN: the refusal offers only a reload, which cannot help when the service itself holds the older copy. */
       expect(message).toMatch(/reload/iu);
@@ -190,10 +240,24 @@ describe('another copy at the same count is refused', () => {
 describe('a change seals only what it adds, never a seat it drops or alters', () => {
   const withSeats = (): Keyring => ({
     accounts: { acc_A: SEAT },
-    pendingSeats: { ['71'.repeat(32)]: { accountId: 'acc_B', signingPublicKey: '71'.repeat(32), signingSecret: '72'.repeat(32), wrappingSecret: '73'.repeat(32), blinding: '74'.repeat(32), scope: '75'.repeat(32) } },
+    pendingSeats: {
+      ['71'.repeat(32)]: {
+        accountId: 'acc_B',
+        signingPublicKey: '71'.repeat(32),
+        signingSecret: '72'.repeat(32),
+        wrappingSecret: '73'.repeat(32),
+        blinding: '74'.repeat(32),
+        scope: '75'.repeat(32)
+      }
+    }
   });
   const why = (f: () => unknown): string => {
-    try { f(); } catch (e) { if (e instanceof SeatChangeRefused) return 'refused'; throw e; }
+    try {
+      f();
+    } catch (e) {
+      if (e instanceof SeatChangeRefused) return 'refused';
+      throw e;
+    }
     return 'sealed';
   };
 
@@ -211,8 +275,17 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
     /* RED WHEN: a step can drop a seat's only copy, or rewrite its secrets, and seal the result as the newest. */
     expect(why(() => held.seal((k) => ({ ...k, accounts: {} })))).toBe('refused');
-    expect(why(() => held.seal((k) => ({ ...k, accounts: { acc_A: { ...SEAT, blinding: '99'.repeat(32) } } })))).toBe('refused');
-    expect(why(() => held.seal((k) => { const { pendingSeats: _gone, ...rest } = k; return rest; }))).toBe('refused');
+    expect(why(() => held.seal((k) => ({ ...k, accounts: { acc_A: { ...SEAT, blinding: '99'.repeat(32) } } })))).toBe(
+      'refused'
+    );
+    expect(
+      why(() =>
+        held.seal((k) => {
+          const { pendingSeats: _gone, ...rest } = k;
+          return rest;
+        })
+      )
+    ).toBe('refused');
     expect(why(() => held.seal(() => ({ accounts: { acc_A: SEAT } })))).toBe('refused');
     /* RED WHEN: a refused change leaves the keyring unable to seal what is allowed. */
     expect(why(() => held.seal((k) => withNewSeat(k, 'acc_C', SEAT)))).toBe('sealed');
@@ -222,8 +295,30 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
     const { acc_A: _a, ...none } = withSeats().accounts;
     /* RED WHEN: a seat is taken out of the saved keys and kept anywhere but under its own signing key, or with its keys changed. */
-    expect(why(() => held.seal((k) => ({ ...k, accounts: none, formerSeats: { ['00'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } } })))).toBe('refused');
-    expect(why(() => held.seal((k) => ({ ...k, accounts: none, formerSeats: { [signingPublicKeyOf(SEAT.signingSecret as Hex).toLowerCase()]: { ...SEAT, blinding: '99'.repeat(32), accountId: 'acc_A' } } })))).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => ({
+          ...k,
+          accounts: none,
+          formerSeats: { ['00'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } }
+        }))
+      )
+    ).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => ({
+          ...k,
+          accounts: none,
+          formerSeats: {
+            [signingPublicKeyOf(SEAT.signingSecret as Hex).toLowerCase()]: {
+              ...SEAT,
+              blinding: '99'.repeat(32),
+              accountId: 'acc_A'
+            }
+          }
+        }))
+      )
+    ).toBe('refused');
     /* RED WHEN: a seat the chain removed cannot be set aside for a new seat on the same company. */
     const moved = held.seal((k) => withSeatSetAside(k, 'acc_A'));
     moved.kept(2);
@@ -231,43 +326,89 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
     /* RED WHEN: a seat set aside is dropped. */
     expect(why(() => held.seal((k) => ({ ...k, formerSeats: {} })))).toBe('refused');
     /* A new seat on the same company is then kept beside the one set aside. */
-    expect(why(() => held.seal((k) => withNewSeat(k, 'acc_A', { ...SEAT, signingSecret: '98'.repeat(32) })))).toBe('sealed');
+    expect(why(() => held.seal((k) => withNewSeat(k, 'acc_A', { ...SEAT, signingSecret: '98'.repeat(32) })))).toBe(
+      'sealed'
+    );
     /* RED WHEN: a seat set aside is not watched for, so its secrets could leave this wallet in an answer to the page. */
     forgetWatched();
-    opening(writtenByThePage({ accounts: {}, formerSeats: { ['5a'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } } }, 1), marksInMemory());
+    opening(
+      writtenByThePage({ accounts: {}, formerSeats: { ['5a'.repeat(32)]: { ...SEAT, accountId: 'acc_A' } } }, 1),
+      marksInMemory()
+    );
     expect(carriesASecret({ said: SEAT.blinding })).toBe(true);
   });
 
-  it('keeps a seat\'s registry mark, and changes nothing else of the seat with it', () => {
+  it("keeps a seat's registry mark, and changes nothing else of the seat with it", () => {
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
     const leaf = '5b'.repeat(32) as Hex;
     /* RED WHEN: the note of a registry write sent, or the mark of one found, is refused as a change to the seat, so the entry is never written. */
-    expect(why(() => held.seal((k) => withRegistryMark(k, 'acc_A', { leaf, sent: { index: 0, at: 'then' } })).notKept())).toBe('sealed');
+    expect(
+      why(() => held.seal((k) => withRegistryMark(k, 'acc_A', { leaf, sent: { index: 0, at: 'then' } })).notKept())
+    ).toBe('sealed');
     /* RED WHEN: a change to a seat's keys passes because it came with a mark. */
-    expect(why(() => held.seal((k) => ({ ...k, accounts: { acc_A: { ...SEAT, blinding: '99'.repeat(32), registry: { leaf, written: true } } } })))).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => ({
+          ...k,
+          accounts: { acc_A: { ...SEAT, blinding: '99'.repeat(32), registry: { leaf, written: true } } }
+        }))
+      )
+    ).toBe('refused');
   });
 
-  it('never drops or moves a company\'s pin, and a second pin for the label changes nothing', () => {
+  it("never drops or moves a company's pin, and a second pin for the label changes nothing", () => {
     const LABEL = `co_${'6c'.repeat(32)}`;
-    const held = opening(writtenByThePage(withPin(withSeats(), LABEL, '6d'.repeat(32), 'created', 'then'), 1), marksInMemory());
+    const held = opening(
+      writtenByThePage(withPin(withSeats(), LABEL, '6d'.repeat(32), 'created', 'then'), 1),
+      marksInMemory()
+    );
     /* RED WHEN: a change drops a pin, or moves it to another account, and is sealed as the newest saved keys. */
-    expect(why(() => held.seal((k) => { const { pins: _gone, ...rest } = k; return rest; }))).toBe('refused');
-    expect(why(() => held.seal((k) => ({ ...k, pins: { [LABEL]: { account: '6e'.repeat(32), from: 'invited', at: 'now' } } })))).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => {
+          const { pins: _gone, ...rest } = k;
+          return rest;
+        })
+      )
+    ).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => ({ ...k, pins: { [LABEL]: { account: '6e'.repeat(32), from: 'invited', at: 'now' } } }))
+      )
+    ).toBe('refused');
     /* RED WHEN: pinning a label already pinned writes over its pin rather than leaving it. */
     expect(withPin(held.read(), LABEL, '6e'.repeat(32), 'invited', 'now').pins?.[LABEL]?.account).toBe('6d'.repeat(32));
-    expect(why(() => held.seal((k) => withPin(k, `co_${'6f'.repeat(32)}`, '6e'.repeat(32), 'invited', 'now')))).toBe('sealed');
+    expect(why(() => held.seal((k) => withPin(k, `co_${'6f'.repeat(32)}`, '6e'.repeat(32), 'invited', 'now')))).toBe(
+      'sealed'
+    );
   });
 
   it('a change cannot reach the saved keys it was handed and alter them in place', () => {
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
     /* RED WHEN: a change that writes into the keys it is handed alters what the wallet holds without being sealed. */
-    expect(why(() => held.seal((k) => { (k.accounts['acc_A'] as { blinding: string }).blinding = '99'.repeat(32); return k; }))).toBe('refused');
+    expect(
+      why(() =>
+        held.seal((k) => {
+          (k.accounts['acc_A'] as { blinding: string }).blinding = '99'.repeat(32);
+          return k;
+        })
+      )
+    ).toBe('refused');
     expect(held.read().accounts['acc_A']?.blinding).toBe(SEAT.blinding);
   });
 
   it('adds the founding seat and keeps, changes or drops a creation, as founding a company does', () => {
     const held = opening(writtenByThePage(withSeats(), 1), marksInMemory());
-    const creation = { accountId: 'acc_N', label: 'co_x', foundingKey: { tag: 'schnorr', value: 'ab' }, request: {}, made: false, deploy: null, signed: null, recorded: false } as never;
+    const creation = {
+      accountId: 'acc_N',
+      label: 'co_x',
+      foundingKey: { tag: 'schnorr', value: 'ab' },
+      request: {},
+      made: false,
+      deploy: null,
+      signed: null,
+      recorded: false
+    } as never;
     const founded = held.seal((k) => withCreation(withNewSeat(k, 'acc_N', SEAT), creation));
     founded.kept(2);
     const inside = JSON.parse(unseal(founded.sealed, KEY));
@@ -278,16 +419,22 @@ describe('a change seals only what it adds, never a seat it drops or alters', ()
   });
 });
 
-describe('the highest count is kept in the wallet\'s own storage', () => {
+describe("the highest count is kept in the wallet's own storage", () => {
   const backing = new Map<string, string>();
   beforeEach(() => {
     backing.clear();
     (globalThis as { localStorage?: unknown }).localStorage = {
       getItem: (key: string) => backing.get(key) ?? null,
-      setItem: (key: string, value: string) => { backing.set(key, String(value)); },
-      removeItem: (key: string) => { backing.delete(key); },
-      get length() { return backing.size; },
-      key: (index: number) => [...backing.keys()][index] ?? null,
+      setItem: (key: string, value: string) => {
+        backing.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        backing.delete(key);
+      },
+      get length() {
+        return backing.size;
+      },
+      key: (index: number) => [...backing.keys()][index] ?? null
     };
     forgetOpenWallet();
   });
@@ -343,13 +490,40 @@ describe('the saved keys move to a key no page had, once, and the old key opens 
     expect(held.underTheOldKey).toBe(false);
   });
 
-  it('refuses a copy under the old key that keeps a company\'s pin or a confirmed joining seat, and still opens a plain one', () => {
+  it("refuses a copy under the old key that keeps a company's pin or a confirmed joining seat, and still opens a plain one", () => {
     const LABEL = `co_${'6c'.repeat(32)}`;
-    const pinned = sealKeyring(withPin({ accounts: { acc_A: SEAT }, counter: 2 }, LABEL, '6d'.repeat(32), 'invited', 'then'), OLD).sealed;
-    const pending = { accountId: 'acc_B', signingPublicKey: '71'.repeat(32), signingSecret: '72'.repeat(32), wrappingSecret: '73'.repeat(32), blinding: '74'.repeat(32), scope: '75'.repeat(32) };
-    const joining = { invitation: 'inv', acceptance: '08'.repeat(32), inbox: '09'.repeat(32), label: LABEL, account: '6d'.repeat(32), offer: {} as never };
-    const confirmed = sealKeyring({ accounts: {}, pendingSeats: { [pending.signingPublicKey]: { ...pending, joining: { ...joining, confirmed: true } } }, counter: 2 } as Keyring, OLD).sealed;
-    const unconfirmed = sealKeyring({ accounts: {}, pendingSeats: { [pending.signingPublicKey]: { ...pending, joining } }, counter: 2 } as Keyring, OLD).sealed;
+    const pinned = sealKeyring(
+      withPin({ accounts: { acc_A: SEAT }, counter: 2 }, LABEL, '6d'.repeat(32), 'invited', 'then'),
+      OLD
+    ).sealed;
+    const pending = {
+      accountId: 'acc_B',
+      signingPublicKey: '71'.repeat(32),
+      signingSecret: '72'.repeat(32),
+      wrappingSecret: '73'.repeat(32),
+      blinding: '74'.repeat(32),
+      scope: '75'.repeat(32)
+    };
+    const joining = {
+      invitation: 'inv',
+      acceptance: '08'.repeat(32),
+      inbox: '09'.repeat(32),
+      label: LABEL,
+      account: '6d'.repeat(32),
+      offer: {} as never
+    };
+    const confirmed = sealKeyring(
+      {
+        accounts: {},
+        pendingSeats: { [pending.signingPublicKey]: { ...pending, joining: { ...joining, confirmed: true } } },
+        counter: 2
+      } as Keyring,
+      OLD
+    ).sealed;
+    const unconfirmed = sealKeyring(
+      { accounts: {}, pendingSeats: { [pending.signingPublicKey]: { ...pending, joining } }, counter: 2 } as Keyring,
+      OLD
+    ).sealed;
     /* RED WHEN: whoever kept the old key seals a copy pinning a label to a look-alike, or a confirmed seat for one, and a device with no mark opens it. */
     expect(refusedWith(() => opening(pinned, marksInMemory()))).toBe('keys-did-not-open');
     expect(refusedWith(() => opening(confirmed, marksInMemory()))).toBe('keys-did-not-open');
@@ -366,7 +540,9 @@ describe('the saved keys move to a key no page had, once, and the old key opens 
     /* RED WHEN: a page that kept the old key has a copy it sealed, at any count, taken as the newest. */
     expect(refusedWith(() => opening(underTheOld(9), m))).toBe('older-keys');
     /* RED WHEN: the refusal for a device that already moved to the new key is not the one that says the copy is an older one. */
-    expect(() => opening(underTheOld(9), m)).toThrow(/before this device moved them to the key no page holds, so they are an older copy/);
+    expect(() => opening(underTheOld(9), m)).toThrow(
+      /before this device moved them to the key no page holds, so they are an older copy/
+    );
   });
 
   it('opens under the old key again only the copy this device last opened that way, never a later one', () => {

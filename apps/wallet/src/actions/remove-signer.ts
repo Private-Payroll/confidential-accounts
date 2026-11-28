@@ -29,9 +29,16 @@ import { removalRefusal } from '../../../../src/core/vault-approvers.js';
 import type { GovernanceOnTheWire } from '../../../../packages/web-shared/src/governed-call-builder.js';
 import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { ThresholdChangeSteps } from '../../../../packages/web-shared/src/company-change-on-device.js';
-import { ApprovalNotOwed, WithdrawnWhileSent } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
+import {
+  ApprovalNotOwed,
+  WithdrawnWhileSent
+} from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { removalsOpenHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
-import { removeSignerOnDevice, type RemovalDoors, type RemovalOutcome } from '../../../../packages/web-shared/src/signer-removed-on-device.js';
+import {
+  removeSignerOnDevice,
+  type RemovalDoors,
+  type RemovalOutcome
+} from '../../../../packages/web-shared/src/signer-removed-on-device.js';
 import { anchorTheRecordsHere } from '../../../../packages/web-shared/src/records-anchored-here.js';
 import { directoryChangeFiledHere } from '../../../../packages/web-shared/src/anchored-on-the-way-in.js';
 import { openTheRoundHere } from '../../../../packages/web-shared/src/round-opened-here.js';
@@ -40,11 +47,34 @@ import { removalApproversHere } from '../../../../packages/web-shared/src/remova
 import { attestedIn, leaversStatementIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { approversHere, runsOutrunHere } from './approvers-here.js';
-import { companyReachFor, governanceDoorsFor, governanceRecordsFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
+import {
+  companyReachFor,
+  governanceDoorsFor,
+  governanceRecordsFor,
+  keptReach,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import type { VaultsChangedTold } from './vault-secrets-changed-here.js';
-import { approving, carryStep, onTheChain, type ApprovalStop, type CarryOut, type ProposalKind, type RoundHere } from './proposal-kinds.js';
+import {
+  approving,
+  carryStep,
+  onTheChain,
+  type ApprovalStop,
+  type CarryOut,
+  type ProposalKind,
+  type RoundHere
+} from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
 import { removed } from './holders-moved-here.js';
 import { removalReachFor, rosterForARemovalHere, UNREAD_SEAT_NAME } from './roster-for-a-removal.js';
@@ -58,14 +88,20 @@ import { anchorDoorsIn, rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps 
  * stands whatever it answers or throws.
  */
 export type AfterRemovalCarried = (
-  ctx: StepContext, r: CompanyReach, removed: { readonly leaf: Hex; readonly round: { readonly id: string; readonly chainId: string } },
+  ctx: StepContext,
+  r: CompanyReach,
+  removed: { readonly leaf: Hex; readonly round: { readonly id: string; readonly chainId: string } }
 ) => Promise<VaultsChangedTold>;
 
 /**
  * Run when a removal is about to be carried out, before anything of it is sent: refuses (`RemovalRefused`) a removal
  * that would leave a vault's private money openable by no signer who stays.
  */
-export type BeforeRemovalCarried = (ctx: StepContext, r: CompanyReach, leaving: { readonly leaf: Hex }) => Promise<void>;
+export type BeforeRemovalCarried = (
+  ctx: StepContext,
+  r: CompanyReach,
+  leaving: { readonly leaf: Hex }
+) => Promise<void>;
 
 /** What the removal reads: the company's chain and builder, the wallet's pause, and the hooks around carrying it out. */
 export interface RemoveSignerReach {
@@ -84,7 +120,10 @@ export interface RemoveSignerReach {
 
 /** Where the page is told the removal got to. */
 export const REMOVE_SIGNER_STATE = {
-  waiting: 'waiting-for-approvals', atItsBar: 'ready-to-carry', retirement: 'waiting-for-the-retirement', carried: 'carried-out',
+  waiting: 'waiting-for-approvals',
+  atItsBar: 'ready-to-carry',
+  retirement: 'waiting-for-the-retirement',
+  carried: 'carried-out'
 } as const;
 
 /** A removal the chain would refuse, or one that would leave a vault unable to pay: refused before anything is built. */
@@ -97,7 +136,8 @@ export class RemovalRefused extends Error {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.remove-signer.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.remove-signer.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const LEAF = /^[0-9a-f]{64}$/u;
@@ -117,7 +157,10 @@ const askedOf = (intent: ActIntent): Asked | Words => {
 
 /** Whether a proposal this wallet opened removes exactly the leaf asked, at exactly the threshold asked. */
 const isAsked = (g: GovernanceOnTheWire | undefined, a: Asked): boolean =>
-  g !== undefined && g.kind === 'remove-signer' && g.leaf.toLowerCase() === a.leaf && Number(g.threshold ?? '0') === a.threshold;
+  g !== undefined &&
+  g.kind === 'remove-signer' &&
+  g.leaf.toLowerCase() === a.leaf &&
+  Number(g.threshold ?? '0') === a.threshold;
 
 /**
  * **A REMOVAL THE CHAIN WOULD REFUSE, OR ONE THAT WOULD LEAVE A VAULT UNABLE TO PAY, IS REFUSED HERE** (`removalRefusal`),
@@ -128,10 +171,23 @@ const isAsked = (g: GovernanceOnTheWire | undefined, a: Asked): boolean =>
  */
 export const refuseARemovalHere = async (r: CompanyReach, a: Asked): Promise<void> => {
   const rr = removalReachFor(r, a.leaf);
-  const [roster, held] = await Promise.all([removalApproversHere({
-    approvers: () => approversHere(rr, () => runsOutrunHere(rr), { removal: true }), records: governanceRecordsFor(rr), accountId: r.accountId,
-  }, r.companyKeys), r.holders()]);
-  const no = removalRefusal(roster, { seats: held.seats, approvals: held.approvals, policyBar: held.policyBar }, a.leaf, a.threshold);
+  const [roster, held] = await Promise.all([
+    removalApproversHere(
+      {
+        approvers: () => approversHere(rr, () => runsOutrunHere(rr), { removal: true }),
+        records: governanceRecordsFor(rr),
+        accountId: r.accountId
+      },
+      r.companyKeys
+    ),
+    r.holders()
+  ]);
+  const no = removalRefusal(
+    roster,
+    { seats: held.seats, approvals: held.approvals, policyBar: held.policyBar },
+    a.leaf,
+    a.threshold
+  );
   if (no !== null) throw new RemovalRefused(no);
 };
 
@@ -145,14 +201,28 @@ type Leaving = { readonly name: string };
  * those words are the name sealed. Refuses a leaf that list holds no seat for, before anything is sent.
  */
 const leavingRead = async (
-  r: CompanyReach, a: Asked, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words,
+  r: CompanyReach,
+  a: Asked,
+  whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words
 ): Promise<{ read: Leaving; confirm: Words[]; over: Words }> => {
   const roster = await rosterForARemovalHere(r, a.leaf);
-  const leaving = roster.leavingUnread ? { name: UNREAD_SEAT_NAME } : roster.signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf);
-  if (leaving === undefined || typeof leaving.name !== 'string') throw new StepRefused(whyOf('no-such-seat', { leaf: a.leaf }));
-  const named: { readonly confirm: string; readonly over: string; readonly values: Readonly<Record<string, string>> } = roster.leavingUnread
-    ? { confirm: 'act.remove-signer.confirm.removing-unread', over: 'act.remove-signer.over.removing-unread', values: { leaf: a.leaf } }
-    : { confirm: 'act.remove-signer.confirm.removing', over: 'act.remove-signer.over.removing', values: { name: leaving.name, leaf: a.leaf } };
+  const leaving = roster.leavingUnread
+    ? { name: UNREAD_SEAT_NAME }
+    : roster.signers.find((x) => String(x.leafCommitment ?? '').toLowerCase() === a.leaf);
+  if (leaving === undefined || typeof leaving.name !== 'string')
+    throw new StepRefused(whyOf('no-such-seat', { leaf: a.leaf }));
+  const named: { readonly confirm: string; readonly over: string; readonly values: Readonly<Record<string, string>> } =
+    roster.leavingUnread
+      ? {
+          confirm: 'act.remove-signer.confirm.removing-unread',
+          over: 'act.remove-signer.over.removing-unread',
+          values: { leaf: a.leaf }
+        }
+      : {
+          confirm: 'act.remove-signer.confirm.removing',
+          over: 'act.remove-signer.over.removing',
+          values: { name: leaving.name, leaf: a.leaf }
+        };
   return {
     read: { name: leaving.name },
     over: { key: named.over, values: named.values },
@@ -160,8 +230,8 @@ const leavingRead = async (
       { key: named.confirm, values: named.values },
       a.threshold === 0
         ? { key: 'act.remove-signer.shown.keeps-the-threshold' }
-        : { key: 'act.remove-signer.shown.threshold', values: { threshold: a.threshold } },
-    ],
+        : { key: 'act.remove-signer.shown.threshold', values: { threshold: a.threshold } }
+    ]
   };
 };
 
@@ -173,13 +243,17 @@ const leavingRead = async (
 const withdrawnBeforeOf = async (doors: RemovalDoors, r: CompanyReach, a: Asked): Promise<Words[]> => {
   let ids: string[];
   try {
-    ids = (await removalsOpenHere(doors, r.companyKeys, false)).filter((x) => x.leaf === a.leaf && x.status === 'cancelled').map((x) => x.id);
+    ids = (await removalsOpenHere(doors, r.companyKeys, false))
+      .filter((x) => x.leaf === a.leaf && x.status === 'cancelled')
+      .map((x) => x.id);
   } catch (e) {
     if (e instanceof ActionStopped) throw e;
     /* Passed over on purpose: this read only adds words to the Confirm, and a stop here would hold up a removal nothing else holds up. */
     return [];
   }
-  return ids.length === 0 ? [] : [{ key: 'act.remove-signer.confirm.withdrawn-before', values: { proposals: ids.join(', ') } }];
+  return ids.length === 0
+    ? []
+    : [{ key: 'act.remove-signer.confirm.withdrawn-before', values: { proposals: ids.join(', ') } }];
 };
 
 /** Whose seat the person confirmed, as the first step read it; refused when nothing was read. */
@@ -199,7 +273,10 @@ const leavingOf = (round: RoundHere, whyOf: (k: string, v?: Readonly<Record<stri
  * `handed.over`. The anchor and key doors are read only when a removal reaches them.
  */
 export function removalDoorsFor(
-  r: CompanyReach, sleep: (ms: number) => Promise<void>, handed: Handed, o: { readonly waitMs?: number; readonly everyMs?: number } = {},
+  r: CompanyReach,
+  sleep: (ms: number) => Promise<void>,
+  handed: Handed,
+  o: { readonly waitMs?: number; readonly everyMs?: number } = {}
 ): RemovalDoors {
   let anchor: ReturnType<typeof anchorDoorsIn> | null = null;
   const anchored = () => (anchor ??= anchorDoorsIn(r));
@@ -210,8 +287,14 @@ export function removalDoorsFor(
     /* The vault check the shared code runs at the raise, every approval and the carrying out counts every open run. */
     approvers: () => approversHere(r, () => runsOutrunHere(r), { removal: true }),
     leaversStatement: async (seat) => leaversStatementIn(attestedIn(await r.roster()), seat, r.label, r.account),
-    directoryChange: async (change, signedFor) => { handed.over = true; return directoryChangeFiledHere(await anchored(), change, signedFor); },
-    anchorDirectory: async () => { handed.over = true; return anchorTheRecordsHere(await anchored()); },
+    directoryChange: async (change, signedFor) => {
+      handed.over = true;
+      return directoryChangeFiledHere(await anchored(), change, signedFor);
+    },
+    anchorDirectory: async () => {
+      handed.over = true;
+      return anchorTheRecordsHere(await anchored());
+    },
     kept: treeKeptHere().changes,
     companyKey: {
       filings: async () => (await rotating()).filings(),
@@ -221,32 +304,69 @@ export function removalDoorsFor(
       waiting: async () => (await rotating()).waiting!(),
       admitted: async () => (await rotating()).admitted!(),
       revoked: async () => (await rotating()).revoked(),
-      file: async (change, signedFor) => { handed.over = true; return (await rotating()).file(change, signedFor); },
-    },
+      file: async (change, signedFor) => {
+        handed.over = true;
+        return (await rotating()).file(change, signedFor);
+      }
+    }
   };
 }
 
 /** The wallet's doors for the removal of `leaf`, with the roster read as that removal reads it (`removalReachFor`). */
-const doorsOf = (r: CompanyReach, reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs'>, ctx: StepContext, handed: Handed, leaf: Hex) =>
+const doorsOf = (
+  r: CompanyReach,
+  reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs'>,
+  ctx: StepContext,
+  handed: Handed,
+  leaf: Hex
+) =>
   removalDoorsFor(removalReachFor(r, leaf), (ms) => reach.pause(ms, ctx.signal), handed, {
-    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
+    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }),
+    ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs })
   });
 
 /**
  * The shared code's removal, which checks the company itself before every send. `leaving` is whose seat the person
  * confirmed, read once in the first step: the name the raise seals in its summary, never read again here.
  */
-const onDevice = async (doors: RemovalDoors, r: CompanyReach, a: Asked, leaving: Leaving, steps: ThresholdChangeSteps): Promise<RemovalOutcome> =>
-  removeSignerOnDevice(doors, withCompanyKeys({
-    leaf: a.leaf, name: leaving.name, newThreshold: a.threshold, ...steps,
-    ...(a.becomes === undefined ? {} : { summary: `Change ${leaving.name}'s role to ${a.becomes}: remove them as a signer, then invite them again` }),
-  }, r.companyKeys));
+const onDevice = async (
+  doors: RemovalDoors,
+  r: CompanyReach,
+  a: Asked,
+  leaving: Leaving,
+  steps: ThresholdChangeSteps
+): Promise<RemovalOutcome> =>
+  removeSignerOnDevice(
+    doors,
+    withCompanyKeys(
+      {
+        leaf: a.leaf,
+        name: leaving.name,
+        newThreshold: a.threshold,
+        ...steps,
+        ...(a.becomes === undefined
+          ? {}
+          : {
+              summary: `Change ${leaving.name}'s role to ${a.becomes}: remove them as a signer, then invite them again`
+            })
+      },
+      r.companyKeys
+    )
+  );
 
 /** A stop, worded for what was handed over by then. */
-const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words): never => {
+const stoppedAs = (
+  e: unknown,
+  handed: Handed,
+  notSent: string,
+  whyOf: (k: string, v?: Readonly<Record<string, string>>) => Words
+): never => {
   if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
   if (e instanceof RemovalRefused) throw new StepRefused(whyOf('refused', { says: said(e) }), codeOfError(e));
-  throw new StepRefused(whyOf(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says: said(e) }), codeOfError(e));
+  throw new StepRefused(
+    whyOf(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says: said(e) }),
+    codeOfError(e)
+  );
 };
 
 /**
@@ -254,37 +374,56 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string, whyOf: (k: strin
  * again, and tells the page the company key's change and how many vaults ended in each state. A change that could not
  * start is told as `not-started`: the removal stands, and the next upkeep or a press of the change finishes it.
  */
-const carryOutFor = (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>): CarryOut => async (ctx, r, intent, round, handed, renewed) => {
-  const a = askedOf(intent);
-  if ('key' in a) throw new StepRefused(a);
-  try {
-    await reach.beforeCarried(ctx, r, { leaf: a.leaf });
-  } catch (e) {
-    return stoppedAs(e, handed, 'not-carried', why);
-  }
-  const out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, why), { approveOnly: round.chainId, carryOnly: true });
-  if (out.state === 'waiting-for-the-retirement') {
-    ctx.tell({ retirementSigned: out.signed, retirementNeeded: out.needed });
-    return { state: REMOVE_SIGNER_STATE.retirement };
-  }
-  if (out.state !== 'done') {
-    throw Object.assign(new Error('the company\'s records do not show this removal at the approvals it needs yet, so it was not carried out.'), { nothingWasSent: true });
-  }
-  ctx.tell({ rotation: out.rotation?.state ?? 'not-tried' });
-  try {
-    ctx.tell({ ...(await reach.afterCarried(ctx, await renewed(), { leaf: a.leaf, round: { id: round.id, chainId: round.chainId } })) });
-  } catch (e) {
-    /*
-     * The chain has carried the removal out, so nothing here undoes it or hides it: whatever stopped the change, a person's
-     * Stop included, the removal is told as carried out and the change as not started. A Stop still ends the action at
-     * the next step; the change is made by a staying signer's press, or finished by the upkeep where it was raised.
-     * What kind of stop it was is told as a code, never its message, which the page's outcome cannot carry; a Stop
-     * the person pressed is told with none.
-     */
-    ctx.tell(e instanceof ActionStopped ? { vaultSecrets: 'not-started' } : { vaultSecrets: 'not-started', vaultSecretsWhy: codeOfError(e) });
-  }
-  return undefined;
-};
+const carryOutFor =
+  (reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>): CarryOut =>
+  async (ctx, r, intent, round, handed, renewed) => {
+    const a = askedOf(intent);
+    if ('key' in a) throw new StepRefused(a);
+    try {
+      await reach.beforeCarried(ctx, r, { leaf: a.leaf });
+    } catch (e) {
+      return stoppedAs(e, handed, 'not-carried', why);
+    }
+    const out = await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, why), {
+      approveOnly: round.chainId,
+      carryOnly: true
+    });
+    if (out.state === 'waiting-for-the-retirement') {
+      ctx.tell({ retirementSigned: out.signed, retirementNeeded: out.needed });
+      return { state: REMOVE_SIGNER_STATE.retirement };
+    }
+    if (out.state !== 'done') {
+      throw Object.assign(
+        new Error(
+          "the company's records do not show this removal at the approvals it needs yet, so it was not carried out."
+        ),
+        { nothingWasSent: true }
+      );
+    }
+    ctx.tell({ rotation: out.rotation?.state ?? 'not-tried' });
+    try {
+      ctx.tell({
+        ...(await reach.afterCarried(ctx, await renewed(), {
+          leaf: a.leaf,
+          round: { id: round.id, chainId: round.chainId }
+        }))
+      });
+    } catch (e) {
+      /*
+       * The chain has carried the removal out, so nothing here undoes it or hides it: whatever stopped the change, a person's
+       * Stop included, the removal is told as carried out and the change as not started. A Stop still ends the action at
+       * the next step; the change is made by a staying signer's press, or finished by the upkeep where it was raised.
+       * What kind of stop it was is told as a code, never its message, which the page's outcome cannot carry; a Stop
+       * the person pressed is told with none.
+       */
+      ctx.tell(
+        e instanceof ActionStopped
+          ? { vaultSecrets: 'not-started' }
+          : { vaultSecrets: 'not-started', vaultSecretsWhy: codeOfError(e) }
+      );
+    }
+    return undefined;
+  };
 
 const KIND_WHY: Readonly<Record<string, string>> = { closed: 'carried-out', counted: 'already-counted' };
 
@@ -300,7 +439,7 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
     { key: 'act.remove-signer.shown.other-changes', from: 'action' },
     { key: 'act.remove-signer.shown.open-runs', from: 'action' },
     { key: 'act.remove-signer.shown.checks', from: 'action' },
-    { key: 'act.remove-signer.shown.vault-secrets', from: 'action' },
+    { key: 'act.remove-signer.shown.vault-secrets', from: 'action' }
   ];
 };
 
@@ -314,8 +453,11 @@ const removalShown = (intent: ActIntent): ShownLine[] => {
  * retirement it carries; it is carried out by the one carry step, which then changes the vault secrets
  * (`afterCarried`).
  */
-export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>): ProposalKind {
-  const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
+export function removalKind(
+  reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 'everyMs' | 'afterCarried' | 'beforeCarried'>
+): ProposalKind {
+  const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words =>
+    why(KIND_WHY[stop] ?? stop, values);
   const kind: ProposalKind = {
     fields: ['leaf'],
     changesTheCompany: true,
@@ -324,7 +466,7 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       { key: 'act.remove-signer.shown.proposal', values: { proposal: intent.fields['proposal'] ?? '' }, from: 'page' },
       ...removalShown(intent),
       { key: 'act.remove-signer.shown.named-here', from: 'action' },
-      { key: 'act.remove-signer.shown.approve', from: 'action' },
+      { key: 'act.remove-signer.shown.approve', from: 'action' }
     ],
     check: (intent) => {
       const a = askedOf(intent);
@@ -339,7 +481,17 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       let chainId: string;
       let summary: string;
       try {
-        const opened = await openTheRoundHere(doors.service, r.accountId, id, r.companyKeys, false, doors.records, doors.leaves, false, 'remove-signer');
+        const opened = await openTheRoundHere(
+          doors.service,
+          r.accountId,
+          id,
+          r.companyKeys,
+          false,
+          doors.records,
+          doors.leaves,
+          false,
+          'remove-signer'
+        );
         governance = opened.governance as GovernanceOnTheWire | undefined;
         chainId = opened.chainId;
         summary = opened.summary;
@@ -352,27 +504,37 @@ export function removalKind(reach: Pick<RemoveSignerReach, 'pause' | 'waitMs' | 
       const { read, confirm, over } = await leavingRead(r, a, kindWhy);
       ctx.show(over);
       /* The name the raising seat filed it under, so a removal raised as a change of role is seen as one. */
-      return { id, chainId, read, confirm: [...confirm, { key: 'act.remove-signer.confirm.named', values: { summary } }] };
+      return {
+        id,
+        chainId,
+        read,
+        confirm: [...confirm, { key: 'act.remove-signer.confirm.named', values: { summary } }]
+      };
     },
     needed: (round, held: AccountGovernance) => Math.max(round.needed ?? 0, held.approvals, held.seatBar),
     approve: async (ctx, r, intent, round, handed) => {
       const a = askedOf(intent);
       if ('key' in a) throw new StepRefused(a);
       try {
-        await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, kindWhy), { approveOnly: round.chainId, stopBeforeCarry: true });
+        await onDevice(doorsOf(r, reach, ctx, handed, a.leaf), r, a, leavingOf(round, kindWhy), {
+          approveOnly: round.chainId,
+          stopBeforeCarry: true
+        });
       } catch (e) {
         if (e instanceof ApprovalNotOwed || e instanceof WithdrawnWhileSent) throw e;
         stoppedAs(e, handed, 'not-approved', kindWhy);
       }
     },
     stateAt: (atItsBar) => (atItsBar ? REMOVE_SIGNER_STATE.atItsBar : REMOVE_SIGNER_STATE.waiting),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.remove-signer.step.carry' }, carryOutFor(reach))],
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.remove-signer.step.carry' }, carryOutFor(reach))
+    ],
     carries: (intent) => {
       const a = askedOf(intent);
       if ('key' in a) throw new StepRefused(a);
       return { kind: 'removal', move: removed(a.leaf, a.threshold) };
     },
-    why: kindWhy,
+    why: kindWhy
   };
   return kind;
 }
@@ -392,13 +554,13 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
       ...removalShown(intent),
       { key: 'act.remove-signer.shown.raise', from: 'action' as const },
       ...upkeepShown(),
-      { key: 'act.remove-signer.shown.nothing-else', from: 'action' as const },
+      { key: 'act.remove-signer.shown.nothing-else', from: 'action' as const }
     ],
     checks: [
       { key: 'act.remove-signer.check.seat' },
       { key: 'act.remove-signer.check.chain' },
       { key: 'act.remove-signer.check.vaults' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
@@ -407,7 +569,9 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
     },
     steps: (intent) => {
       const kind = removalKind(reach);
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const here = approving();
       /* Whose seat the person confirmed in the first step, before anything is sent: what the raise seals, as it was shown. */
       let leaving: Leaving | null = null;
@@ -424,9 +588,12 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
             stoppedAs(e, { over: false }, 'not-raised', why);
           }
           const named = await leavingRead(r, a, (k, v) => why(k === 'no-such-seat' ? 'no-such-seat-to-raise' : k, v));
-          await ctx.confirm([...named.confirm, ...await withdrawnBeforeOf(doorsOf(r, reach, ctx, { over: false }, a.leaf), r, a)]);
+          await ctx.confirm([
+            ...named.confirm,
+            ...(await withdrawnBeforeOf(doorsOf(r, reach, ctx, { over: false }, a.leaf), r, a))
+          ]);
           leaving = named.read;
-        },
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const raise: ActionStep = {
@@ -444,10 +611,17 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
             return stoppedAs(e, handed, 'not-raised', why);
           }
           if (out.state === 'waiting-for-the-retirement') {
-            ctx.tell({ state: REMOVE_SIGNER_STATE.retirement, retirementSigned: out.signed, retirementNeeded: out.needed });
+            ctx.tell({
+              state: REMOVE_SIGNER_STATE.retirement,
+              retirementSigned: out.signed,
+              retirementNeeded: out.needed
+            });
             return;
           }
-          if (out.round === null) throw new StepRefused(why('not-raised', { says: 'The company holds no record of the removal raised. Nothing more was sent.' }));
+          if (out.round === null)
+            throw new StepRefused(
+              why('not-raised', { says: 'The company holds no record of the removal raised. Nothing more was sent.' })
+            );
           here.round = { id: out.round.id, chainId: String(out.round.chainId).toLowerCase(), read: leaving };
           const now = await onTheChain(r, here.round.chainId);
           const held: AccountGovernance = await r.holders();
@@ -455,12 +629,13 @@ export function removeSignerAction(reach: RemoveSignerReach): ActionDefinition {
           here.needed = now === undefined ? null : kind.needed(now, held, intent);
           ctx.tell({
             state: out.state === 'ready-to-carry' ? REMOVE_SIGNER_STATE.atItsBar : REMOVE_SIGNER_STATE.waiting,
-            ...(now === undefined ? {} : { approvals: now.approvals }), ...(here.needed === null ? {} : { needed: here.needed }),
+            ...(now === undefined ? {} : { approvals: now.approvals }),
+            ...(here.needed === null ? {} : { needed: here.needed })
           });
-        },
+        }
       };
       const carry = carryStep(kind, intent, read, here, { key: 'act.remove-signer.step.carry' }, carryOutFor(reach));
       return [seat, upkeep.first, raise, carry, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

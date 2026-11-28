@@ -1,9 +1,40 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Button, PageLoading, useText } from 'vaults-ui';
-import { companiesReadThisVisit, OF, signOut as endSignIn, whoIsSignedIn, type Company, type Person, type WhoIsSignedIn } from './adapters/session.js';
-import { HOME, isBuilt, mayOpen, outerOf, PAGES, VIEWS, viewFor, type Page, type PageId, type Params, type View, type Viewer } from './pages.js';
+import {
+  companiesReadThisVisit,
+  OF,
+  signOut as endSignIn,
+  whoIsSignedIn,
+  type Company,
+  type Person,
+  type WhoIsSignedIn
+} from './adapters/session.js';
+import {
+  HOME,
+  isBuilt,
+  mayOpen,
+  outerOf,
+  PAGES,
+  VIEWS,
+  viewFor,
+  type Page,
+  type PageId,
+  type Params,
+  type View,
+  type Viewer
+} from './pages.js';
 import type { Preferences } from './preferences.js';
-import { forgetLink, go, holdLink, homeOf, RESOLVED, resolve, useAddress, CurrentPageProvider, type Resolved } from './router.js';
+import {
+  forgetLink,
+  go,
+  holdLink,
+  homeOf,
+  RESOLVED,
+  resolve,
+  useAddress,
+  CurrentPageProvider,
+  type Resolved
+} from './router.js';
 import { SessionProvider, type Session } from './session.js';
 import { AccountFrame } from './shell/account-frame.js';
 import { ComingSoonPage } from './shell/coming-soon-page.js';
@@ -16,7 +47,8 @@ import { VisitorProvider } from './visitor.js';
 const LOADING = { of: 'loading' } as const;
 
 /** The companies read this visit, asked only of a person signed in: a visitor reads none, and the code that holds them stays unloaded. */
-const readsOf = async (w: WhoIsSignedIn): Promise<readonly string[]> => (w.of === OF.signedIn ? companiesReadThisVisit() : []);
+const readsOf = async (w: WhoIsSignedIn): Promise<readonly string[]> =>
+  w.of === OF.signedIn ? companiesReadThisVisit() : [];
 
 export interface AppProps {
   preferences: Preferences;
@@ -36,17 +68,31 @@ export function App({ preferences, choose, mac }: AppProps) {
   const [company, setCompany] = useState<string | null>(null);
   const [reads, setReads] = useState<readonly string[]>([]);
   /* Before the first address is read: an invitation link's token is taken out of it and held, once per load. */
-  useState(() => { holdLink(window.location.pathname, window.location.hash); return null; });
+  useState(() => {
+    holdLink(window.location.pathname, window.location.hash);
+    return null;
+  });
   const address = useAddress();
 
-  const ask = useCallback(async () => { const w = await whoIsSignedIn(); setWho(w); setReads(await readsOf(w)); }, []);
-  useEffect(() => { void ask(); }, [ask]);
+  const ask = useCallback(async () => {
+    const w = await whoIsSignedIn();
+    setWho(w);
+    setReads(await readsOf(w));
+  }, []);
+  useEffect(() => {
+    void ask();
+  }, [ask]);
 
   const signedIn = who.of === OF.signedIn ? who : null;
   const companies: readonly Company[] = signedIn?.companies ?? [];
   const signs = companies.length > 0;
-  const viewer: Viewer = { signedIn: signedIn !== null, view: viewFor(signs, chosenView), signs, reads: signedIn === null ? [] : reads };
-  const shown = company !== null && companies.some((c) => c.id === company) ? company : companies[0]?.id ?? null;
+  const viewer: Viewer = {
+    signedIn: signedIn !== null,
+    view: viewFor(signs, chosenView),
+    signs,
+    reads: signedIn === null ? [] : reads
+  };
+  const shown = company !== null && companies.some((c) => c.id === company) ? company : (companies[0]?.id ?? null);
 
   /*
    * An address a visitor may not open takes them to the landing page, and the
@@ -59,7 +105,10 @@ export function App({ preferences, choose, mac }: AppProps) {
   const ready = who.of === OF.signedIn || who.of === OF.nobody;
   useEffect(() => {
     if (!ready) return;
-    if (resolved.of === RESOLVED.notYours && !viewer.signedIn) { wanted = resolved.id; go(HOME.visitor, true); }
+    if (resolved.of === RESOLVED.notYours && !viewer.signedIn) {
+      wanted = resolved.id;
+      go(HOME.visitor, true);
+    }
   }, [ready, resolved.of, resolved.of === RESOLVED.nothing ? null : resolved.id, viewer.signedIn, viewer.view]);
 
   /*
@@ -73,7 +122,12 @@ export function App({ preferences, choose, mac }: AppProps) {
     setWho(next);
     setReads(readNow);
     const signsNow = next.of === OF.signedIn && next.companies.length > 0;
-    const after: Viewer = { signedIn: next.of === OF.signedIn, view: viewFor(signsNow, VIEWS.company), signs: signsNow, reads: readNow };
+    const after: Viewer = {
+      signedIn: next.of === OF.signedIn,
+      view: viewFor(signsNow, VIEWS.company),
+      signs: signsNow,
+      reads: readNow
+    };
     setChosenView(VIEWS.company);
     const target = afterSignIn(resolve(window.location.pathname, after), wanted, after);
     wanted = null;
@@ -84,7 +138,10 @@ export function App({ preferences, choose, mac }: AppProps) {
   const companiesChanged = useCallback(async (choose?: string) => {
     const next = await whoIsSignedIn();
     setWho(next);
-    if (choose !== undefined) { setCompany(choose); setChosenView(VIEWS.company); }
+    if (choose !== undefined) {
+      setCompany(choose);
+      setChosenView(VIEWS.company);
+    }
   }, []);
 
   const signOut = useCallback(async () => {
@@ -98,10 +155,32 @@ export function App({ preferences, choose, mac }: AppProps) {
   }, []);
 
   if (who.of === LOADING.of) return <div className="min-h-svh bg-background" aria-busy={true} />;
-  if (who.of === OF.unreachable) return <><ServiceUnreachable retry={() => { void ask(); }} /><AccountFrame /></>;
-  if (who.of === OF.recordsApart) return <RecordsApart signOut={() => { void signOut(); }} />;
+  if (who.of === OF.unreachable)
+    return (
+      <>
+        <ServiceUnreachable
+          retry={() => {
+            void ask();
+          }}
+        />
+        <AccountFrame />
+      </>
+    );
+  if (who.of === OF.recordsApart)
+    return (
+      <RecordsApart
+        signOut={() => {
+          void signOut();
+        }}
+      />
+    );
 
-  const page = resolved.of === RESOLVED.page ? <PageView id={resolved.id} params={resolved.params} /> : <NoPage home={homeOf(viewer)} />;
+  const page =
+    resolved.of === RESOLVED.page ? (
+      <PageView id={resolved.id} params={resolved.params} />
+    ) : (
+      <NoPage home={homeOf(viewer)} />
+    );
 
   if (signedIn === null) {
     return (
@@ -113,9 +192,25 @@ export function App({ preferences, choose, mac }: AppProps) {
   }
 
   const session: Session = {
-    person: signedIn.person as Person, companies, company: shown, chooseCompany: setCompany, viewer,
-    chooseView: (view) => { setChosenView(view); go(HOME[viewFor(signs, view)]); },
-    preferences, choose, signOut: () => { void signOut(); }, mac, companiesChanged, readerOpened: () => { void companiesReadThisVisit().then(setReads); },
+    person: signedIn.person as Person,
+    companies,
+    company: shown,
+    chooseCompany: setCompany,
+    viewer,
+    chooseView: (view) => {
+      setChosenView(view);
+      go(HOME[viewFor(signs, view)]);
+    },
+    preferences,
+    choose,
+    signOut: () => {
+      void signOut();
+    },
+    mac,
+    companiesChanged,
+    readerOpened: () => {
+      void companiesReadThisVisit().then(setReads);
+    }
   };
   /* The landing page is a page of its own for a signed-in person too, outside the menu, as it is for a visitor. */
   if (resolved.of === RESOLVED.page && resolved.id === HOME.visitor) {
@@ -143,7 +238,12 @@ export function App({ preferences, choose, mac }: AppProps) {
  */
 export function InFrame({ current, children }: { current: PageId | null; children?: React.ReactNode }) {
   const focused = current === null ? undefined : (PAGES[current] as Page).focused;
-  if (current !== null && focused !== undefined) return <FocusedFrame current={current} exit={focused.exit}>{children}</FocusedFrame>;
+  if (current !== null && focused !== undefined)
+    return (
+      <FocusedFrame current={current} exit={focused.exit}>
+        {children}
+      </FocusedFrame>
+    );
   return <Shell current={current}>{children}</Shell>;
 }
 
@@ -171,7 +271,11 @@ export function PageView({ id, params = {} }: { id: PageId; params?: Params }) {
   const own = isBuilt(page) ? <page.shows.screen /> : <ComingSoonPage id={id} />;
   const inside = outerOf(page as Page);
   const framed = inside === undefined ? own : <OuterPage id={inside}>{own}</OuterPage>;
-  return <CurrentPageProvider id={id} params={params}><Suspense fallback={<PageLoading data-loading="" />}>{framed}</Suspense></CurrentPageProvider>;
+  return (
+    <CurrentPageProvider id={id} params={params}>
+      <Suspense fallback={<PageLoading data-loading="" />}>{framed}</Suspense>
+    </CurrentPageProvider>
+  );
 }
 
 function OuterPage({ id, children }: { id: PageId; children: React.ReactNode }) {
@@ -192,10 +296,15 @@ function VisitorContext({ signedInNow, children }: { signedInNow: () => Promise<
 function ServiceUnreachable({ retry }: { retry: () => void }) {
   const t = useText();
   return (
-    <main className="mx-auto flex min-h-svh max-w-md flex-col justify-center gap-4 p-6" data-screen="service-unreachable">
+    <main
+      className="mx-auto flex min-h-svh max-w-md flex-col justify-center gap-4 p-6"
+      data-screen="service-unreachable"
+    >
       <h1 className="text-xl font-semibold">{t('service.unreachable.title')}</h1>
       <p className="text-sm text-muted-foreground">{t('service.unreachable.body')}</p>
-      <div><Button onClick={retry}>{t('service.unreachable.retry')}</Button></div>
+      <div>
+        <Button onClick={retry}>{t('service.unreachable.retry')}</Button>
+      </div>
     </main>
   );
 }
@@ -206,7 +315,11 @@ function RecordsApart({ signOut }: { signOut: () => void }) {
     <main className="mx-auto flex min-h-svh max-w-md flex-col justify-center gap-4 p-6" data-screen="records-apart">
       <h1 className="text-xl font-semibold">{t('service.recordsApart.title')}</h1>
       <p className="text-sm text-muted-foreground">{t('service.recordsApart.body')}</p>
-      <div><Button variant="outline" onClick={signOut}>{t('account.signOut')}</Button></div>
+      <div>
+        <Button variant="outline" onClick={signOut}>
+          {t('account.signOut')}
+        </Button>
+      </div>
     </main>
   );
 }

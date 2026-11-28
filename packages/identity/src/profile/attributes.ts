@@ -65,7 +65,7 @@ export const PUBLIC_RECEIVING_ADDRESS: AttributeName = 'public-receiving-address
  * the pattern refuses what is certainly wrong (no `@`, whitespace, no dot in
  * the domain) and lets the person own the rest.
  */
-const EMAIL_PATTERN = "[^@\\s]+@[^@\\s.]+(?:\\.[^@\\s.]+)+";
+const EMAIL_PATTERN = '[^@\\s]+@[^@\\s.]+(?:\\.[^@\\s.]+)+';
 
 /*
  * **THE SHAPE OF A SHIELDED ADDRESS, AND WHAT THIS PATTERN IS AND IS NOT.**
@@ -114,9 +114,9 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
     render: {
       label: 'First name',
       hint: 'The name you are called by. You can hold more than one.',
-      abbreviate: 'none',
+      abbreviate: 'none'
     },
-    provable: [],
+    provable: []
   }),
   define({
     name: FAMILY_NAME,
@@ -128,7 +128,7 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
     multiple: true,
     sensitivity: 'ordinary',
     render: { label: 'Last name', hint: '', abbreviate: 'none' },
-    provable: [],
+    provable: []
   }),
   define({
     name: EMAIL,
@@ -139,7 +139,7 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
       minLength: 3,
       maxLength: 254,
       pattern: EMAIL_PATTERN,
-      patternSays: 'An email address looks like name@example.com.',
+      patternSays: 'An email address looks like name@example.com.'
     },
     selfAssertable: true,
     acceptedIssuers: null,
@@ -150,9 +150,9 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
     render: {
       label: 'Email',
       hint: 'Where a company would write to you. You can hold more than one.',
-      abbreviate: 'domain',
+      abbreviate: 'domain'
     },
-    provable: [],
+    provable: []
   }),
   define({
     name: RECEIVING_ADDRESS,
@@ -168,8 +168,8 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
       maxLength: 200,
       pattern: SHIELDED_ADDRESS_PATTERN,
       patternSays:
-        'A receiving address is a shielded one — mn_shield-addr_… — because it has to say '
-        + 'who may READ the payment as well as who may spend it.',
+        'A receiving address is a shielded one — mn_shield-addr_… — because it has to say ' +
+        'who may READ the payment as well as who may spend it.'
     },
     selfAssertable: false,
     acceptedIssuers: null,
@@ -184,14 +184,15 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
     sensitivity: 'sensitive',
     render: {
       label: 'Receiving address',
-      hint: 'Where this company would pay you. It comes from the wallet you choose below, '
-        + 'and it changes if you choose a different one.',
+      hint:
+        'Where this company would pay you. It comes from the wallet you choose below, ' +
+        'and it changes if you choose a different one.',
       /* The rule — both ends, never only the head. Two shielded addresses on
        * one network share their prefix, so a head-only shortening makes every
        * address on this network look like every other. */
-      abbreviate: 'middle',
+      abbreviate: 'middle'
     },
-    provable: [],
+    provable: []
   }),
   define({
     name: PUBLIC_RECEIVING_ADDRESS,
@@ -204,8 +205,8 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
       maxLength: 200,
       pattern: PUBLIC_ADDRESS_PATTERN,
       patternSays:
-        'A public receiving address is an unshielded one, starting mn_addr, because this '
-        + 'money has no private form and cannot be paid to a shielded address.',
+        'A public receiving address is an unshielded one, starting mn_addr, because this ' +
+        'money has no private form and cannot be paid to a shielded address.'
     },
     selfAssertable: false,
     acceptedIssuers: null,
@@ -218,12 +219,13 @@ const DEFINITIONS: readonly AttributeDefinition[] = Object.freeze([
     sensitivity: 'sensitive',
     render: {
       label: 'Public receiving address',
-      hint: 'Where this company would pay you, in money that is only ever paid publicly. It '
-        + 'comes from the wallet you choose below, and it changes if you choose a different one.',
-      abbreviate: 'middle',
+      hint:
+        'Where this company would pay you, in money that is only ever paid publicly. It ' +
+        'comes from the wallet you choose below, and it changes if you choose a different one.',
+      abbreviate: 'middle'
     },
-    provable: [],
-  }),
+    provable: []
+  })
 ]);
 
 /**
@@ -250,10 +252,11 @@ export function registryOf(definitions: readonly AttributeDefinition[]): Registr
     const existing = byName.get(definition.name);
     if (existing) {
       throw new Error(
-        `'${definition.name}' is defined twice in one registry (versions `
-        + `${existing.version} and ${definition.version}). A registry holds ONE definition `
-        + 'per name; a new version REPLACES the entry and the values already stored under '
-        + 'the old one stay readable by the version they record.');
+        `'${definition.name}' is defined twice in one registry (versions ` +
+          `${existing.version} and ${definition.version}). A registry holds ONE definition ` +
+          'per name; a new version REPLACES the entry and the values already stored under ' +
+          'the old one stay readable by the version they record.'
+      );
     }
     byName.set(definition.name, definition);
   }
@@ -261,7 +264,7 @@ export function registryOf(definitions: readonly AttributeDefinition[]): Registr
   return Object.freeze({
     all,
     definitionOf: (name: AttributeName) => byName.get(name) ?? null,
-    knows: (name: AttributeName) => byName.has(name),
+    knows: (name: AttributeName) => byName.has(name)
   });
 }
 

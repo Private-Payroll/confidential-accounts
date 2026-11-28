@@ -7,7 +7,11 @@
  * grows with, so a page that asks more records of one kind at a larger company is named; a press is held to the kinds it asks.
  */
 
-import { askedByKind, carriedNotAsHeld, recordsCarried } from '../../../wallet/src/actions/records-carried.test-support.js';
+import {
+  askedByKind,
+  carriedNotAsHeld,
+  recordsCarried
+} from '../../../wallet/src/actions/records-carried.test-support.js';
 import type { CompanyHeld } from './company-harness.test-support.js';
 
 /**
@@ -25,7 +29,11 @@ export interface Called {
 
 /** A call and the service's answer to it, logged with the records the answer carried. */
 export const calledAs = async (
-  route: string, method: string, path: string, body: string | undefined, answer: { readonly status: number; readonly body: unknown },
+  route: string,
+  method: string,
+  path: string,
+  body: string | undefined,
+  answer: { readonly status: number; readonly body: unknown }
 ): Promise<Called> => {
   const records = answer.status < 300 ? recordsCarried(method, path, body, answer.body) : [];
   return { route, method, path, body, records, notAsHeld: await carriedNotAsHeld(method, path, body, records) };
@@ -60,13 +68,36 @@ const kindIn = (at: string): string => at.slice(at.indexOf(' asks ') + ' asks '.
  * at every size. The wallet's actions hold theirs by the action (`ASKED_GROWS_WITH`); a page is held by the kind it asks.
  */
 type Grown = keyof CompanyHeld;
-const EACH_VAULT = { with: [['vaults']], why: 'a page reads each vault\'s name and each vault\'s own records, their newest versions and their proofs, one of each for each vault' } as const;
-export const PAGE_ASKED_GROWS_WITH: Readonly<Record<string, { readonly with: readonly (readonly Grown[])[]; readonly why: string; readonly pages?: readonly string[] }>> = Object.freeze({
-  ...Object.fromEntries(['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'].flatMap((k) => [[`record ${k}`, EACH_VAULT], [`vault ${k}`, EACH_VAULT]])),
+const EACH_VAULT = {
+  with: [['vaults']],
+  why: "a page reads each vault's name and each vault's own records, their newest versions and their proofs, one of each for each vault"
+} as const;
+export const PAGE_ASKED_GROWS_WITH: Readonly<
+  Record<
+    string,
+    { readonly with: readonly (readonly Grown[])[]; readonly why: string; readonly pages?: readonly string[] }
+  >
+> = Object.freeze({
+  ...Object.fromEntries(
+    ['pool', 'deposit-journal', 'payment-journal', 'nonce-secret'].flatMap((k) => [
+      [`record ${k}`, EACH_VAULT],
+      [`vault ${k}`, EACH_VAULT]
+    ])
+  ),
   'record vault-info': EACH_VAULT,
-  'record person': { with: [['people']], why: 'a page that shows the people checks each person record the people list carries against its newest entered version' },
-  'record vendor': { with: [['vendors']], why: 'a page that shows the vendors reads each vendor record and checks it against its newest entered version' },
-  'record spending-policy': { with: [['policies']], why: 'a page that shows the spending policies in force reads each policy record the chain holds a commitment for and checks it against its newest entered version', pages: ['policies'] },
+  'record person': {
+    with: [['people']],
+    why: 'a page that shows the people checks each person record the people list carries against its newest entered version'
+  },
+  'record vendor': {
+    with: [['vendors']],
+    why: 'a page that shows the vendors reads each vendor record and checks it against its newest entered version'
+  },
+  'record spending-policy': {
+    with: [['policies']],
+    why: 'a page that shows the spending policies in force reads each policy record the chain holds a commitment for and checks it against its newest entered version',
+    pages: ['policies']
+  }
 });
 
 /**
@@ -76,8 +107,12 @@ export const PAGE_ASKED_GROWS_WITH: Readonly<Record<string, { readonly with: rea
  * only one of the sizes is named too.
  */
 export const askedBeyondWhatGrew = (
-  where: string, wasCalls: readonly Called[], nowCalls: readonly Called[], held: readonly [CompanyHeld, CompanyHeld],
-  labels: readonly [string, string], page?: string,
+  where: string,
+  wasCalls: readonly Called[],
+  nowCalls: readonly Called[],
+  held: readonly [CompanyHeld, CompanyHeld],
+  labels: readonly [string, string],
+  page?: string
 ): string[] => {
   const [was, now] = [askedEachCall(wasCalls), askedEachCall(nowCalls)];
   return [...new Set([...was.keys(), ...now.keys()])].flatMap((k) => {
@@ -96,8 +131,14 @@ export const askedBeyondWhatGrew = (
  * by where it was counted, the route, the kind and both counts. A press files records of its own (a vault, its proposals), so
  * the company it reads is not the first size's company grown evenly, and the number asked of a kind is held to the kinds only.
  */
-export const askedKindsChanged = (where: string, wasCalls: readonly Called[], nowCalls: readonly Called[], labels: readonly [string, string]): string[] => {
+export const askedKindsChanged = (
+  where: string,
+  wasCalls: readonly Called[],
+  nowCalls: readonly Called[],
+  labels: readonly [string, string]
+): string[] => {
   const [was, now] = [askedByRoute(wasCalls), askedByRoute(nowCalls)];
-  return [...new Set([...was.keys(), ...now.keys()])].filter((k) => (was.get(k) ?? 0) === 0 !== ((now.get(k) ?? 0) === 0))
+  return [...new Set([...was.keys(), ...now.keys()])]
+    .filter((k) => ((was.get(k) ?? 0) === 0) !== ((now.get(k) ?? 0) === 0))
     .map((k) => `${where}: ${k} ${was.get(k) ?? 0} ${labels[0]}, ${now.get(k) ?? 0} ${labels[1]}`);
 };

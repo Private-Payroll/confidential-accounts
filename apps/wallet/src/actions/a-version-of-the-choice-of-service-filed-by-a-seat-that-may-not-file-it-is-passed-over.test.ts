@@ -7,7 +7,12 @@
 import { describe, it, expect } from 'vitest';
 import { newSigningKeypair, unwrapKey, type Hex } from '../../../../src/core/crypto.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
-import { OUR_SERVICE, openedWithTheCompanyKey, sealCompanyService, type CompanyService } from '../../../../src/midnight/company-service-record.js';
+import {
+  OUR_SERVICE,
+  openedWithTheCompanyKey,
+  sealCompanyService,
+  type CompanyService
+} from '../../../../src/midnight/company-service-record.js';
 import { FILING_REFUSAL } from '../../../../src/midnight/seat-directory.js';
 import { signCompanyFiling, type SealedCompanyRecord } from '../../../../src/midnight/sealed-record-wire.js';
 import { serviceFromVersions, serviceVersionsFrom } from './company-service-read.js';
@@ -17,8 +22,9 @@ const LEAF = 'ae'.repeat(32) as Hex;
 const KEY0 = '0c'.repeat(32) as Hex;
 const RECORDS = recordsKeypairFrom(new Uint8Array(32).fill(7));
 const me = {
-  signerId: LEAF, keyOf: (w: Parameters<typeof unwrapKey>[0]) => unwrapKey(w, RECORDS.secret as Hex) as Hex,
-  companyCopy: openedWithTheCompanyKey(COMPANY, () => KEY0),
+  signerId: LEAF,
+  keyOf: (w: Parameters<typeof unwrapKey>[0]) => unwrapKey(w, RECORDS.secret as Hex) as Hex,
+  companyCopy: openedWithTheCompanyKey(COMPANY, () => KEY0)
 };
 const signers = [{ id: LEAF, wrappingPublicKey: RECORDS.publicKey as Hex }];
 const ADA = newSigningKeypair();
@@ -29,14 +35,24 @@ const OWN: CompanyService = { service: 'own', at: 'https://relay.example.com' };
 const NONE: CompanyService = { service: 'none' };
 
 const filed = (version: number, by: { secret: string }, choice: CompanyService): SealedCompanyRecord =>
-  signCompanyFiling(sealCompanyService({ company: COMPANY, version, sealing: { key: KEY0, epoch: 0 }, choice, signers }), by.secret as Hex);
+  signCompanyFiling(
+    sealCompanyService({ company: COMPANY, version, sealing: { key: KEY0, epoch: 0 }, choice, signers }),
+    by.secret as Hex
+  );
 const judge = (filer: Hex | null): string | null => {
   if (filer === CYD.publicKey) return FILING_REFUSAL['role-may-not-file'];
-  return filer !== null && (filer === ADA.publicKey || filer === BEA.publicKey) ? null : 'not a seat this device believes';
+  return filer !== null && (filer === ADA.publicKey || filer === BEA.publicKey)
+    ? null
+    : 'not a seat this device believes';
 };
 const doors = (served: SealedCompanyRecord[]) => ({
-  company: COMPANY, judge, needed: 2, me, named: served.map((r) => r.version), withheld: null,
-  seatedNow: () => true,
+  company: COMPANY,
+  judge,
+  needed: 2,
+  me,
+  named: served.map((r) => r.version),
+  withheld: null,
+  seatedNow: () => true
 });
 const read = (served: SealedCompanyRecord[]) => serviceFromVersions(served, doors(served));
 
@@ -51,9 +67,12 @@ describe('A VERSION FILED BY A SEAT THAT MAY NOT FILE IT IS PASSED OVER, NEVER T
     expect(read([filed(1, ADA, OWN), filed(2, CYD, NONE), filed(3, BEA, OWN)])).toEqual({ choice: OWN });
   });
 
-  it('such a seat\'s version does not count toward the seats a choice needs', () => {
+  it("such a seat's version does not count toward the seats a choice needs", () => {
     /* RED WHEN: a seat that may not file the choice counts as one of the seats that agreed it. */
-    expect(read([filed(1, ADA, OWN), filed(2, CYD, OWN)])).toMatchObject({ choice: OUR_SERVICE, unchosen: expect.stringMatching(/no choice of service has been filed by the 2 seats/u) });
+    expect(read([filed(1, ADA, OWN), filed(2, CYD, OWN)])).toMatchObject({
+      choice: OUR_SERVICE,
+      unchosen: expect.stringMatching(/no choice of service has been filed by the 2 seats/u)
+    });
     const served = [filed(1, ADA, OWN), filed(2, BEA, OWN), filed(3, CYD, NONE)];
     const counted = serviceVersionsFrom(served, doors(served));
     /* RED WHEN: the version passed over is counted, or the next version filed is not the one after it. */
@@ -64,6 +83,8 @@ describe('A VERSION FILED BY A SEAT THAT MAY NOT FILE IT IS PASSED OVER, NEVER T
   it('a version no seat filed that the check refuses for another reason still leaves the choice unread', () => {
     const stranger = newSigningKeypair();
     /* RED WHEN: passing over a role's version also passes over a version a seat the directory does not hold filed. */
-    expect(read([filed(1, ADA, OWN), filed(2, BEA, OWN), filed(3, stranger, NONE)])).toEqual({ unread: 'not a seat this device believes' });
+    expect(read([filed(1, ADA, OWN), filed(2, BEA, OWN), filed(3, stranger, NONE)])).toEqual({
+      unread: 'not a seat this device believes'
+    });
   });
 });

@@ -7,7 +7,19 @@ import { MidnightCommitments } from '../../../../src/midnight/commitments.js';
 import { seatAt } from '../keyring/seat-at.js';
 import { ABSENT_IN_A_ROW, authorityPassedOver, registryEntriesFound } from './private-registry-on-chain.js';
 import {
-  ACCOUNT_STATE, ADOPT_V2, ADOPT_V3, NETWORK, PUT, REGISTRY_STATE, SECOND_REGISTRY_STATE, STRANGER_V2, STRANGER_V3, entryFor, leafOf, registryWorld, stateHex,
+  ACCOUNT_STATE,
+  ADOPT_V2,
+  ADOPT_V3,
+  NETWORK,
+  PUT,
+  REGISTRY_STATE,
+  SECOND_REGISTRY_STATE,
+  STRANGER_V2,
+  STRANGER_V3,
+  entryFor,
+  leafOf,
+  registryWorld,
+  stateHex
 } from './registry-entries.test-support.js';
 
 /*
@@ -27,24 +39,37 @@ const SECOND = 'e2'.repeat(32);
 const seated = (label = LABEL, n = 0) => [leafOf(identity, label, n)];
 const find = (w: ReturnType<typeof registryWorld>) => registryEntriesFound(identity, NETWORK, w.reads);
 
-describe('a person\'s companies found again from their registry entries', () => {
+describe("a person's companies found again from their registry entries", () => {
   it('finds the company an entry names when the chain bears it out, reading nothing from our service', async () => {
     const w = registryWorld(identity, {
       registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } },
+      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } }
     });
     const found = await find(w);
     /* RED WHEN: an entry the chain bears out is not found, or is found without its fingerprint and released version. */
     expect(found).toMatchObject({
-      of: 'read', clashes: [], passedOver: [],
-      companies: [{ label: LABEL, account: A, fingerprint: companyFingerprint(LABEL, A), version: 4, entries: [entryFor(LABEL, A)] }],
+      of: 'read',
+      clashes: [],
+      passedOver: [],
+      companies: [
+        {
+          label: LABEL,
+          account: A,
+          fingerprint: companyFingerprint(LABEL, A),
+          version: 4,
+          entries: [entryFor(LABEL, A)]
+        }
+      ]
     });
   });
 
   it('believes nothing of a seat that has left: its entry is neither found nor a clash', async () => {
     const w = registryWorld(identity, {
       registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), 1: entryFor(LABEL, B, 2) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: ['77'.repeat(32)] }, [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated(LABEL, 2) } },
+      accounts: {
+        [A]: { label: LABEL, state: ACCOUNT_STATE, seats: ['77'.repeat(32)] },
+        [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated(LABEL, 2) }
+      }
     });
     const found = await find(w);
     /* RED WHEN: an entry whose seat is no longer among the account's seats is believed, here as a clash with the live one. */
@@ -53,14 +78,31 @@ describe('a person\'s companies found again from their registry entries', () => 
 
   it('answers two accounts under one label as a clash with both fingerprints, and neither as found', async () => {
     const w = registryWorld(identity, {
-      registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), 1: entryFor(LABEL, B), 2: entryFor(OTHER, A) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() }, [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } },
+      registries: {
+        [FIRST]: {
+          state: REGISTRY_STATE,
+          held: { 0: entryFor(LABEL, A), 1: entryFor(LABEL, B), 2: entryFor(OTHER, A) }
+        }
+      },
+      accounts: {
+        [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() },
+        [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() }
+      }
     });
     const found = await find(w);
     /* RED WHEN: one of two accounts under one label is found, or the clash does not show both fingerprints. */
     expect(found).toMatchObject({
-      of: 'read', companies: [],
-      clashes: [{ label: LABEL, accounts: [{ account: A, fingerprint: companyFingerprint(LABEL, A) }, { account: B, fingerprint: companyFingerprint(LABEL, B) }] }],
+      of: 'read',
+      companies: [],
+      clashes: [
+        {
+          label: LABEL,
+          accounts: [
+            { account: A, fingerprint: companyFingerprint(LABEL, A) },
+            { account: B, fingerprint: companyFingerprint(LABEL, B) }
+          ]
+        }
+      ]
     });
   });
 
@@ -71,26 +113,41 @@ describe('a person\'s companies found again from their registry entries', () => 
         [FIRST]: { state: stateHex({ put: [PUT] }, 1, 1), held },
         [SECOND]: { state: stateHex({ put: [PUT] }, 0, 0), held },
         ['e3'.repeat(32)]: { state: stateHex({ put: [STRANGER_V3] }), held },
-        ['e4'.repeat(32)]: { state: stateHex({ put: [STRANGER_V2, PUT] }), held },
+        ['e4'.repeat(32)]: { state: stateHex({ put: [STRANGER_V2, PUT] }), held }
       },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } },
+      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } }
     });
     const found = await find(w);
     /* RED WHEN: a registry someone could change, or one whose write is checked by a key of no released version, is read. */
     expect(found).toMatchObject({
-      of: 'read', companies: [],
-      passedOver: [{ registry: FIRST, why: 'held' }, { registry: SECOND, why: 'held' }, { registry: 'e3'.repeat(32), why: 'not-released' }, { registry: 'e4'.repeat(32), why: 'not-released' }],
+      of: 'read',
+      companies: [],
+      passedOver: [
+        { registry: FIRST, why: 'held' },
+        { registry: SECOND, why: 'held' },
+        { registry: 'e3'.repeat(32), why: 'not-released' },
+        { registry: 'e4'.repeat(32), why: 'not-released' }
+      ]
     });
     expect(w.asked.tags).toEqual([]);
   });
 
   it('files a registry whose authority could not be read as unread, never as held', () => {
     const authority = (committee: number, threshold: number) => ({
-      state: 'read' as const, address: FIRST,
-      authority: { committee: Array.from({ length: committee }, () => ({ tag: 'schnorr', value: 'ab'.repeat(32) })), threshold, counter: 0n, shape: committee === 0 ? 'no-one' as const : 'one-key' as const, hasDuplicateMembers: false },
+      state: 'read' as const,
+      address: FIRST,
+      authority: {
+        committee: Array.from({ length: committee }, () => ({ tag: 'schnorr', value: 'ab'.repeat(32) })),
+        threshold,
+        counter: 0n,
+        shape: committee === 0 ? ('no-one' as const) : ('one-key' as const),
+        hasDuplicateMembers: false
+      }
     });
     /* RED WHEN: an authority nobody could read is said to be held by someone, or let through. */
-    expect(authorityPassedOver({ state: 'unreadable', address: FIRST, why: 'the state carries no authority' })).toBe('unread');
+    expect(authorityPassedOver({ state: 'unreadable', address: FIRST, why: 'the state carries no authority' })).toBe(
+      'unread'
+    );
     expect(authorityPassedOver({ state: 'absent', address: FIRST, why: 'nothing there' })).toBe('unread');
     expect(authorityPassedOver(authority(1, 1))).toBe('held');
     expect(authorityPassedOver(authority(0, 1))).toBeNull();
@@ -100,7 +157,7 @@ describe('a person\'s companies found again from their registry entries', () => 
     for (const keys of [[STRANGER_V2, ADOPT_V3], [ADOPT_V2, STRANGER_V3], [ADOPT_V3]]) {
       const w = registryWorld(identity, {
         registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } } },
-        accounts: { [A]: { label: LABEL, state: stateHex({ adopt: keys }), seats: seated() } },
+        accounts: { [A]: { label: LABEL, state: stateHex({ adopt: keys }), seats: seated() } }
       });
       /* RED WHEN: an account whose circuit holds a hidden key in its other slot, or lacks one of its released keys, is believed. */
       expect(await find(w)).toMatchObject({ of: 'read', companies: [], clashes: [] });
@@ -108,10 +165,16 @@ describe('a person\'s companies found again from their registry entries', () => 
   });
 
   it('walks the tags until twenty in a row are absent: a shorter gap is walked past, twenty end the walk', async () => {
-    const world = (second: number) => registryWorld(identity, {
-      registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), [second]: entryFor(OTHER, B) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() }, [B]: { label: OTHER, state: ACCOUNT_STATE, seats: seated(OTHER) } },
-    });
+    const world = (second: number) =>
+      registryWorld(identity, {
+        registries: {
+          [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), [second]: entryFor(OTHER, B) } }
+        },
+        accounts: {
+          [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() },
+          [B]: { label: OTHER, state: ACCOUNT_STATE, seats: seated(OTHER) }
+        }
+      });
     const past = await find(world(ABSENT_IN_A_ROW));
     /* RED WHEN: a gap of nineteen absent tags ends the walk before the entry after it. */
     expect(past.of === 'read' && past.companies.map((c) => c.label)).toEqual([LABEL, OTHER]);
@@ -130,21 +193,36 @@ describe('a person\'s companies found again from their registry entries', () => 
   it('names an account that could not be read as unread, beside the ones that were', async () => {
     const w = registryWorld(identity, {
       registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: entryFor(LABEL, A), 1: entryFor(LABEL, B) } } },
-      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() }, [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } },
-      unread: [B],
+      accounts: {
+        [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() },
+        [B]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() }
+      },
+      unread: [B]
     });
     /* RED WHEN an account whose state read failed is not believed in silence: the other account of a clash would then be found alone. */
-    expect(await find(w)).toMatchObject({ of: 'read', passedOver: [{ registry: B, why: 'unread' }], companies: [{ account: A }], clashes: [] });
+    expect(await find(w)).toMatchObject({
+      of: 'read',
+      passedOver: [{ registry: B, why: 'unread' }],
+      companies: [{ account: A }],
+      clashes: []
+    });
   });
 
   it('names a registry that could not be read, and still reads the others', async () => {
     const w = registryWorld(identity, {
-      registries: { [FIRST]: { state: REGISTRY_STATE, held: {} }, [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } } },
+      registries: {
+        [FIRST]: { state: REGISTRY_STATE, held: {} },
+        [SECOND]: { state: SECOND_REGISTRY_STATE, held: { 0: entryFor(LABEL, A) } }
+      },
       accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats: seated() } },
-      unread: [FIRST],
+      unread: [FIRST]
     });
     /* RED WHEN: an unread registry is read as empty, or stops the others being read. */
-    expect(await find(w)).toMatchObject({ of: 'read', passedOver: [{ registry: FIRST, why: 'unread' }], companies: [{ account: A }] });
+    expect(await find(w)).toMatchObject({
+      of: 'read',
+      passedOver: [{ registry: FIRST, why: 'unread' }],
+      companies: [{ account: A }]
+    });
   });
 });
 
@@ -152,16 +230,17 @@ describe('a seat is believed at the scope its entry names or at every vault', ()
   const NARROW = '77'.repeat(32) as Hex;
   const narrowEntry = { ...entryFor(LABEL, A), scope: NARROW };
   const seat = seatAt(identity, LABEL, 0, NARROW, MidnightCommitments);
-  const over = (seats: readonly string[]) => registryWorld(identity, {
-    registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: narrowEntry } } },
-    accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats } },
-  });
+  const over = (seats: readonly string[]) =>
+    registryWorld(identity, {
+      registries: { [FIRST]: { state: REGISTRY_STATE, held: { 0: narrowEntry } } },
+      accounts: { [A]: { label: LABEL, state: ACCOUNT_STATE, seats } }
+    });
 
   it('HOLDS TWO DIFFERENT LEAVES FOR A NARROW SCOPE', () => {
     expect(seat.leaf).not.toBe(seat.leafAtAll);
   });
 
-  it('FINDS THE COMPANY WHEN THE CHAIN HOLDS THE SEAT AT THE ENTRY\'S SCOPE', async () => {
+  it("FINDS THE COMPANY WHEN THE CHAIN HOLDS THE SEAT AT THE ENTRY'S SCOPE", async () => {
     /* RED WHEN the leaf at the entry's own scope is not accepted, or the entry's scope is read from the wrong field. */
     expect(await find(over([seat.leaf]))).toMatchObject({ companies: [{ account: A }] });
   });

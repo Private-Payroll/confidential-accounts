@@ -25,7 +25,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { App } from '../app.js';
@@ -40,14 +40,26 @@ beforeEach(() => {
 
 describe('the component gallery', () => {
   it('renders with no account, no unlock and no storage', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     expect(screen.getByText('The kit')).toBeTruthy();
     /* Every section, by its heading, and the last line of the page — so a
      * half-rendered gallery is a red test rather than a shorter page nobody
      * notices. The list is the kit the design names. */
     for (const heading of [
-      'Tokens', 'Button', 'Badge', 'Card', 'Input, Textarea and Label',
-      'Alert', 'EmptyState', 'ListRow', 'Table', 'Skeleton and Separator',
+      'Tokens',
+      'Button',
+      'Badge',
+      'Card',
+      'Input, Textarea and Label',
+      'Alert',
+      'EmptyState',
+      'ListRow',
+      'Table',
+      'Skeleton and Separator',
       /* The fetched component gets a section like every other, so a
        * gallery that renders without it is a red test rather than a shorter
        * page nobody notices. ADDED, not loosened: every heading already asserted is
@@ -66,7 +78,7 @@ describe('the component gallery', () => {
        * region, in two tones, one of which is the destructive treatment. ADDED,
        * not loosened: every heading already asserted is still
        * asserted, in the same way. */
-      'Section',
+      'Section'
     ]) {
       expect(screen.getByRole('heading', { name: heading, level: 2 })).toBeTruthy();
     }
@@ -81,7 +93,11 @@ describe('the component gallery', () => {
    * that it takes either — a page showing only the chevron would still pass a
    * one-filling test while the slot had quietly become a chevron holder. */
   it('shows the card-header action slot, filled two ways', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     const slots = [...document.querySelectorAll('[data-slot="card-action"]')];
     expect(slots.length).toBeGreaterThanOrEqual(2);
     /* One NAVIGATES and one ACTS — the two kinds of thing the slot exists to
@@ -97,13 +113,21 @@ describe('the component gallery', () => {
   });
 
   it('is not a place — no rail, no bottom bar, and one main', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     expect(document.querySelectorAll('nav[aria-label="Places"]')).toHaveLength(0);
     expect(document.querySelectorAll('main')).toHaveLength(1);
   });
 
   it('is linked from nowhere — every href on the page is the gallery itself', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     const strays = [...document.querySelectorAll('main a[href]')]
       .map((a) => a.getAttribute('href'))
       .filter((href) => href !== '#/kit');
@@ -111,12 +135,20 @@ describe('the component gallery', () => {
   });
 
   it('carries the amber alert’s sentence verbatim — what is at risk, not what is undone', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     expect(screen.getByText('If you lose this device your money is gone')).toBeTruthy();
     expect(screen.getByText(/Nobody can recover it, including us/)).toBeTruthy();
   });
   it('names the network by its record, and writes no network name of its own', () => {
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     /* RED WHEN the Network row is a literal name again: the row then shows
      * the bare id and not the record's label ('Midnight Stagenet' today). */
     const shown = screen.getAllByText(networkRecord(NETWORK).label).find((el) => el.closest('main') !== null);

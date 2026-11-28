@@ -11,30 +11,50 @@ import { join } from 'node:path';
 
 /** What our DUST wallet was configured with, and what the testkit was asked to build. */
 let configured: any = null;
-let built: { shieldedConfig?: any; facadeDust?: any; facadeShielded?: any; facadeUnshielded?: any; withWallet?: any[] } = {};
-let historyStore: unknown = 'THE WALLET\'S OWN STORE';
+let built: {
+  shieldedConfig?: any;
+  facadeDust?: any;
+  facadeShielded?: any;
+  facadeUnshielded?: any;
+  withWallet?: any[];
+} = {};
+let historyStore: unknown = "THE WALLET'S OWN STORE";
 let restoreThrows: string | null = null;
 
 vi.mock('@midnight-ntwrk/testkit-js', () => ({
   FluentWalletBuilder: {
     forEnvironment: () => ({
-      config: { indexerClientConnection: { indexerWsUrl: 'wss://i/ws' }, txHistoryStorage: historyStore, forks: { v9: 2000000n } },
-      networkId: 'preprod',
-    }),
+      config: {
+        indexerClientConnection: { indexerWsUrl: 'wss://i/ws' },
+        txHistoryStorage: historyStore,
+        forks: { v9: 2000000n }
+      },
+      networkId: 'preprod'
+    })
   },
   DEFAULT_DUST_OPTIONS: { ledgerParams: 'params', feeBlocksMargin: 5 },
-  WalletSeeds: { fromMasterSeed: () => ({ dust: 'dust-seed', shielded: 'shielded-seed', unshielded: 'unshielded-seed' }) },
+  WalletSeeds: {
+    fromMasterSeed: () => ({ dust: 'dust-seed', shielded: 'shielded-seed', unshielded: 'unshielded-seed' })
+  },
   WalletFactory: {
-    createShieldedWallet: async (config: unknown) => { built.shieldedConfig = config; return { shielded: true }; },
+    createShieldedWallet: async (config: unknown) => {
+      built.shieldedConfig = config;
+      return { shielded: true };
+    },
     createUnshieldedWallet: async () => ({ unshielded: true }),
     createWalletFacade: async (_c: unknown, shielded: unknown, unshielded: unknown, dust: unknown) => {
-      built.facadeDust = dust; built.facadeShielded = shielded; built.facadeUnshielded = unshielded;
+      built.facadeDust = dust;
+      built.facadeShielded = shielded;
+      built.facadeUnshielded = unshielded;
       return { dust, shielded, unshielded };
-    },
+    }
   },
   MidnightWalletProvider: {
-    withWallet: async (...args: any[]) => { built.withWallet = args; return { wallet: args[2] }; },
-  },
+    withWallet: async (...args: any[]) => {
+      built.withWallet = args;
+      return { wallet: args[2] };
+    }
+  }
 }));
 /** The two variants the projections wallet was composed from, and every snapshot a wallet was asked to restore. */
 let forking: { v1: any; v2: any } | null = null;
@@ -45,68 +65,109 @@ const walletClass = () => ({
     restoredFrom.push(saved);
     if (restoreThrows) throw new Error(restoreThrows);
     return null;
-  },
+  }
 });
 vi.mock('@midnightntwrk/wallet-sdk', () => ({
-  DustWallet: (config: unknown) => { configured = config; return walletClass(); },
+  DustWallet: (config: unknown) => {
+    configured = config;
+    return walletClass();
+  },
   CustomForkingDustWallet: (config: unknown, v1: unknown, v2: unknown) => {
     configured = config;
     forking = { v1, v2 };
     return walletClass();
   },
-  dustVariantConfigurations: (c: any) => ({ v1: { ...c, side: 'v1' }, v2: { ...c, side: 'v2' }, migration: 'CROSS-LEDGER' }),
+  dustVariantConfigurations: (c: any) => ({
+    v1: { ...c, side: 'v1' },
+    v2: { ...c, side: 'v2' },
+    migration: 'CROSS-LEDGER'
+  }),
   createKeystore: () => ({ keystore: true }),
-  ShieldedWallet: (config: unknown) => ({ restore: (saved: string) => {
-    restoredFrom.push(`shielded ${saved}`);
-    if (shieldedRestoreThrows) throw new Error(shieldedRestoreThrows);
-    return { shielded: 'restored', config };
-  } }),
-  UnshieldedWallet: () => ({ restore: (saved: string) => { restoredFrom.push(`unshielded ${saved}`); return { unshielded: 'restored' }; } }),
-  InMemoryTransactionHistoryStorage: class { readonly fresh = true; },
+  ShieldedWallet: (config: unknown) => ({
+    restore: (saved: string) => {
+      restoredFrom.push(`shielded ${saved}`);
+      if (shieldedRestoreThrows) throw new Error(shieldedRestoreThrows);
+      return { shielded: 'restored', config };
+    }
+  }),
+  UnshieldedWallet: () => ({
+    restore: (saved: string) => {
+      restoredFrom.push(`unshielded ${saved}`);
+      return { unshielded: 'restored' };
+    }
+  }),
+  InMemoryTransactionHistoryStorage: class {
+    readonly fresh = true;
+  },
   WalletEntrySchema: 'schema',
-  mergeWalletEntries: 'merge',
+  mergeWalletEntries: 'merge'
 }));
 let shieldedRestoreThrows: string | null = null;
 /** A builder that records each step it is given, so the composition can be read back. */
 class Recorder {
   constructor(readonly steps: string[] = []) {}
-  private with(step: string) { return new Recorder([...this.steps, step]); }
-  withDefaults() { return this.with('defaults'); }
-  withSync(service: string, capability: string) { return this.with(`sync ${service} ${capability}`); }
-  withStartAuxDefaults() { return this.with('start aux'); }
-  withMigration(m: string) { return this.with(`migration ${m}`); }
+  private with(step: string) {
+    return new Recorder([...this.steps, step]);
+  }
+  withDefaults() {
+    return this.with('defaults');
+  }
+  withSync(service: string, capability: string) {
+    return this.with(`sync ${service} ${capability}`);
+  }
+  withStartAuxDefaults() {
+    return this.with('start aux');
+  }
+  withMigration(m: string) {
+    return this.with(`migration ${m}`);
+  }
 }
 vi.mock('@midnightntwrk/wallet-sdk/dust/v2', () => ({
   V2Builder: Recorder,
-  SyncService: { makeEventLessSyncService: 'PROJECTIONS', makeEventLessSyncCapability: 'PROJECTIONS-APPLY' },
+  SyncService: { makeEventLessSyncService: 'PROJECTIONS', makeEventLessSyncCapability: 'PROJECTIONS-APPLY' }
 }));
 vi.mock('@midnight-ntwrk/midnight-js-protocol/v9', () => ({
-  LedgerParameters: { initialParameters: () => ({ dust: 'dust-params' }) },
+  LedgerParameters: { initialParameters: () => ({ dust: 'dust-params' }) }
 }));
 vi.mock('@midnightntwrk/wallet-sdk/dust/v1', () => ({ V1Builder: Recorder }));
 
 import { NETWORK } from 'midnight-identity/network';
 
 const {
-  networkHeightAt, waitForDustAtTip, dustNumbers, buildWalletWithDust, describeDustView,
-  dustCachePath, saveWalletState, walletCachePath, facadeAtLedger9, reportSync, dustCaughtUp, waitForDustCatchUp,
-  registrationSidesSynced,
+  networkHeightAt,
+  waitForDustAtTip,
+  dustNumbers,
+  buildWalletWithDust,
+  describeDustView,
+  dustCachePath,
+  saveWalletState,
+  walletCachePath,
+  facadeAtLedger9,
+  reportSync,
+  dustCaughtUp,
+  waitForDustCatchUp,
+  registrationSidesSynced
 } = await import('./dust-wallet.js');
 
 const build = (root = '/nowhere-that-exists', options: any = {}, seed = 'ab'.repeat(32)) =>
   buildWalletWithDust('LOGGER', { env: true }, seed, NETWORK, root, { note: () => {}, ...options });
 
 beforeEach(() => {
-  configured = null; forking = null; restoredFrom = []; built = {};
-  historyStore = 'THE WALLET\'S OWN STORE'; restoreThrows = null; shieldedRestoreThrows = null;
+  configured = null;
+  forking = null;
+  restoredFrom = [];
+  built = {};
+  historyStore = "THE WALLET'S OWN STORE";
+  restoreThrows = null;
+  shieldedRestoreThrows = null;
 });
 
-describe('the network\'s newest block, read from the indexer', () => {
+describe("the network's newest block, read from the indexer", () => {
   /*
    * RED WHEN: the fee payer's target is anything but the height of the indexer's newest block, read now from the
    * address it is given; or an answer without a block is taken as reached.
    */
-  it('asks the indexer for its newest block\'s height', async () => {
+  it("asks the indexer for its newest block's height", async () => {
     const asked: any[] = [];
     const post = async (url: string, init: any) => {
       asked.push({ url, body: JSON.parse(init.body) });
@@ -118,8 +179,9 @@ describe('the network\'s newest block, read from the indexer', () => {
   });
 
   it('refuses an answer without a block', async () => {
-    await expect(networkHeightAt('u', (async () => ({ json: async () => ({ data: { block: null } }) })) as any))
-      .rejects.toThrow(/no newest block/);
+    await expect(
+      networkHeightAt('u', (async () => ({ json: async () => ({ data: { block: null } }) })) as any)
+    ).rejects.toThrow(/no newest block/);
   });
 });
 
@@ -130,11 +192,21 @@ function rig(applied: bigint | null, onSleep: (t: number, live: { applied: bigin
   const notes: string[] = [];
   const opts = {
     now: () => t,
-    sleep: async (ms: number) => { t += ms; onSleep(t, live); },
+    sleep: async (ms: number) => {
+      t += ms;
+      onSleep(t, live);
+    }
   };
-  const wallet = { state: () => ({ dust: { progress: {
-    highestIndex: live.applied ?? 7n, isStrictlyComplete: () => live.applied !== null,
-  } } }) };
+  const wallet = {
+    state: () => ({
+      dust: {
+        progress: {
+          highestIndex: live.applied ?? 7n,
+          isStrictlyComplete: () => live.applied !== null
+        }
+      }
+    })
+  };
   return { live, notes, opts, wallet, note: (s: string) => notes.push(s), elapsed: () => t };
 }
 
@@ -143,7 +215,9 @@ describe('waiting for the view to reach the network, strictly', () => {
    * RED WHEN: a view short of the network's newest block by any number of blocks counts as reached.
    */
   it('answers ok only when the view covers the newest block the indexer held', async () => {
-    const r = rig(99n, (t, live) => { if (t >= 4_000) live.applied = 100n; });
+    const r = rig(99n, (t, live) => {
+      if (t >= 4_000) live.applied = 100n;
+    });
     const at = await waitForDustAtTip(r.wallet, async () => 100n, r.note, r.opts);
     expect(at).toEqual({ ok: true, applied: 100n, tip: 100n });
     expect(r.elapsed()).toBe(4_000);
@@ -155,7 +229,10 @@ describe('waiting for the view to reach the network, strictly', () => {
   it('refuses a view that has not moved for a minute, and says where it stands', async () => {
     const r = rig(50n);
     const at = await waitForDustAtTip(r.wallet, async () => 100n, r.note, r.opts);
-    expect(at).toEqual({ ok: false, why: expect.stringMatching(/has not moved for 60 s \(dust view at block 50 of 100\)/) });
+    expect(at).toEqual({
+      ok: false,
+      why: expect.stringMatching(/has not moved for 60 s \(dust view at block 50 of 100\)/)
+    });
     expect(r.elapsed()).toBe(60_000);
   });
 
@@ -163,7 +240,9 @@ describe('waiting for the view to reach the network, strictly', () => {
    * RED WHEN: a view that keeps moving is refused as stalled, or is waited for without end.
    */
   it('keeps waiting while the view moves, up to twenty minutes in all', async () => {
-    const r = rig(0n, (_t, live) => { live.applied = (live.applied ?? 0n) + 1n; });
+    const r = rig(0n, (_t, live) => {
+      live.applied = (live.applied ?? 0n) + 1n;
+    });
     const at = await waitForDustAtTip(r.wallet, async () => 10_000_000n, r.note, r.opts);
     expect(at).toEqual({ ok: false, why: expect.stringMatching(/within 20 minutes/) });
     expect(r.elapsed()).toBe(20 * 60_000);
@@ -176,13 +255,22 @@ describe('waiting for the view to reach the network, strictly', () => {
    */
   it('refuses when the indexer cannot say where the network is', async () => {
     const r = rig(5n);
-    const at = await waitForDustAtTip(r.wallet, async () => { throw new Error('the indexer is away'); }, r.note, r.opts);
+    const at = await waitForDustAtTip(
+      r.wallet,
+      async () => {
+        throw new Error('the indexer is away');
+      },
+      r.note,
+      r.opts
+    );
     expect(at).toEqual({ ok: false, why: expect.stringMatching(/the indexer is away/) });
   });
 
   /* RED WHEN: a view part-way through a pass, at the block its last pass reached, is taken as reaching it. */
   it('does not count a view part-way through a pass', async () => {
-    const r = rig(null, (t, live) => { if (t >= 5_000) live.applied = 100n; });
+    const r = rig(null, (t, live) => {
+      if (t >= 5_000) live.applied = 100n;
+    });
     const at = await waitForDustAtTip(r.wallet, async () => 100n, r.note, r.opts);
     expect(at).toEqual({ ok: true, applied: 100n, tip: 100n });
     expect(r.elapsed()).toBe(5_000);
@@ -199,11 +287,15 @@ describe('the numbers written down when a fee is not paid', () => {
         progress: { highestIndex: 40n, isStrictlyComplete: () => true },
         availableCoins: [1, 2],
         state: { pendingDust: [1], state: { utxos: [1, 2, 3] } },
-        balance: () => 25n,
-      },
+        balance: () => 25n
+      }
     };
-    expect(dustNumbers(state, 41n)).toBe('dust view at block 40 of 41; 2 coins free to spend, 1 booked by the wallet, 3 unbooked in the ledger state; balance 25');
-    expect(dustNumbers(null, null)).toBe('dust view at block ? of ?; ? coins free to spend, ? booked by the wallet, ? unbooked in the ledger state; balance ?');
+    expect(dustNumbers(state, 41n)).toBe(
+      'dust view at block 40 of 41; 2 coins free to spend, 1 booked by the wallet, 3 unbooked in the ledger state; balance 25'
+    );
+    expect(dustNumbers(null, null)).toBe(
+      'dust view at block ? of ?; ? coins free to spend, ? booked by the wallet, ? unbooked in the ledger state; balance ?'
+    );
   });
 });
 
@@ -224,7 +316,7 @@ describe('the wallet, built with our DUST wallet in it from the start', () => {
   it('builds the shielded wallet applying events a hundred at a time', async () => {
     await build();
     expect(built.shieldedConfig.batchUpdates).toEqual({ size: 100 });
-    expect(built.shieldedConfig.txHistoryStorage).toBe('THE WALLET\'S OWN STORE');
+    expect(built.shieldedConfig.txHistoryStorage).toBe("THE WALLET'S OWN STORE");
   });
 
   /*
@@ -233,7 +325,7 @@ describe('the wallet, built with our DUST wallet in it from the start', () => {
    */
   it('writes its history to the store the wallet was built with', async () => {
     await build();
-    expect(configured.txHistoryStorage).toBe('THE WALLET\'S OWN STORE');
+    expect(configured.txHistoryStorage).toBe("THE WALLET'S OWN STORE");
   });
 
   /* RED WHEN: any wallet is built with the library's event-replay DUST wallet, which replays every DUST event since
@@ -246,7 +338,7 @@ describe('the wallet, built with our DUST wallet in it from the start', () => {
   });
 
   /* RED WHEN: a wallet whose history store cannot be found is built anyway, with a fresh, empty one. */
-  it('refuses to build, saying why, when the wallet\'s history store cannot be found', async () => {
+  it("refuses to build, saying why, when the wallet's history store cannot be found", async () => {
     historyStore = undefined;
     await expect(build()).rejects.toThrow(/history store/);
     expect(configured).toBeNull();
@@ -273,11 +365,15 @@ describe('the DUST wallet, syncing by projections', () => {
    */
   it('composes the ledger 9 variant with the projections sync, keeping the fee floor and the history store', async () => {
     const { wallet } = await build();
-    expect(forking!.v2.builder.steps).toEqual(
-      ['defaults', 'sync PROJECTIONS PROJECTIONS-APPLY', 'start aux', 'migration CROSS-LEDGER']);
+    expect(forking!.v2.builder.steps).toEqual([
+      'defaults',
+      'sync PROJECTIONS PROJECTIONS-APPLY',
+      'start aux',
+      'migration CROSS-LEDGER'
+    ]);
     expect(forking!.v2.configuration.side).toBe('v2');
     expect(forking!.v1.builder.steps).toEqual(['defaults']);
-    expect(configured.txHistoryStorage).toBe('THE WALLET\'S OWN STORE');
+    expect(configured.txHistoryStorage).toBe("THE WALLET'S OWN STORE");
     expect(configured.costParameters.additionalFeeOverhead).toBeGreaterThan(0n);
     expect(typeof configured.chainVersionProbe).toBe('function');
     expect(wallet.wallet.dust).toMatchObject({ installed: true });
@@ -332,11 +428,22 @@ describe('the DUST sync, made visible', () => {
     vi.useFakeTimers();
     try {
       let push: (s: unknown) => void = () => {};
-      const dust = { state: { subscribe: (o: any) => { push = o.next; return { unsubscribe: () => {} }; } } };
+      const dust = {
+        state: {
+          subscribe: (o: any) => {
+            push = o.next;
+            return { unsubscribe: () => {} };
+          }
+        }
+      };
       const notes: string[] = [];
       reportSync(dust, 'dust wallet', (s) => notes.push(s));
       const progress = (applied: bigint, highest: bigint) => ({
-        progress: { appliedIndex: applied, highestRelevantWalletIndex: highest, isStrictlyComplete: () => applied === highest },
+        progress: {
+          appliedIndex: applied,
+          highestRelevantWalletIndex: highest,
+          isStrictlyComplete: () => applied === highest
+        }
       });
       push(progress(5n, 9n));
       vi.advanceTimersByTime(9_999);
@@ -354,10 +461,14 @@ describe('the DUST sync, made visible', () => {
   });
 });
 
-describe('a projections DUST wallet counted caught up only after a pass\'s state update', () => {
+describe("a projections DUST wallet counted caught up only after a pass's state update", () => {
   const reading = (applied: bigint, highest: bigint, height: bigint) => ({
-    appliedIndex: applied, highestRelevantWalletIndex: highest, highestIndex: height,
-    isConnected: true, isStrictlyComplete: () => applied === highest, isCompleteWithin: () => true,
+    appliedIndex: applied,
+    highestRelevantWalletIndex: highest,
+    highestIndex: height,
+    isConnected: true,
+    isStrictlyComplete: () => applied === highest,
+    isCompleteWithin: () => true
   });
 
   /*
@@ -378,7 +489,15 @@ describe('a projections DUST wallet counted caught up only after a pass\'s state
       t += ms;
       if (t >= 3_000) state = { dust: { state: { progress: reading(9n, 9n, 101n) } } };
     };
-    await expect(waitForDustCatchUp({ state: () => state }, () => {}, () => '', 60_000, { sleep, now: () => t })).resolves.toBe(true);
+    await expect(
+      waitForDustCatchUp(
+        { state: () => state },
+        () => {},
+        () => '',
+        60_000,
+        { sleep, now: () => t }
+      )
+    ).resolves.toBe(true);
     expect(t).toBe(3_000);
   });
 });
@@ -394,14 +513,32 @@ describe('what a NIGHT registration waits for', () => {
     const asked: string[] = [];
     const facade = {
       currentVersion: () => version,
-      shielded: { waitForSyncedState: async () => { asked.push('shielded'); return {}; } },
-      unshielded: { waitForSyncedState: async () => { asked.push('unshielded'); return { availableCoins: ['night'] }; } },
-      dust: { waitForSyncedState: async () => { asked.push('dust'); return { address: 'dust-address' }; } },
+      shielded: {
+        waitForSyncedState: async () => {
+          asked.push('shielded');
+          return {};
+        }
+      },
+      unshielded: {
+        waitForSyncedState: async () => {
+          asked.push('unshielded');
+          return { availableCoins: ['night'] };
+        }
+      },
+      dust: {
+        waitForSyncedState: async () => {
+          asked.push('dust');
+          return { address: 'dust-address' };
+        }
+      }
     };
     const notes: string[] = [];
     const sides = await registrationSidesSynced(facade, 2000000n, (l) => notes.push(l), {
       now: () => t,
-      sleep: async (ms) => { t += ms; if (t >= 25_000) version = 2001100n; },
+      sleep: async (ms) => {
+        t += ms;
+        if (t >= 25_000) version = 2001100n;
+      }
     });
     expect(sides).toEqual({ unshielded: { availableCoins: ['night'] }, dust: { address: 'dust-address' } });
     expect(asked.sort()).toEqual(['dust', 'unshielded']);
@@ -435,7 +572,7 @@ describe('the shielded and unshielded wallets, cached beside the DUST wallet', (
   });
 
   /* RED WHEN: a cache older than the DUST cache's limit is restored, or a refused one stops the run or is not named. */
-  it('keeps the DUST cache\'s rules: an old cache is not used, a refused one is named and replaced', async () => {
+  it("keeps the DUST cache's rules: an old cache is not used, a refused one is named and replaced", async () => {
     const root = fresh();
     const seed = '34'.repeat(32);
     const shieldedFile = walletCachePath(root, NETWORK, seed, 'shielded');
@@ -460,11 +597,13 @@ describe('the shielded and unshielded wallets, cached beside the DUST wallet', (
   it('saves all three, each to its own file', async () => {
     const root = fresh();
     const seed = '56'.repeat(32);
-    const wallet = { wallet: {
-      dust: { serializeState: async () => '{"syncKind":"projections"}' },
-      shielded: { serializeState: async () => 'SHIELDED NOW' },
-      unshielded: { serializeState: async () => 'UNSHIELDED NOW' },
-    } };
+    const wallet = {
+      wallet: {
+        dust: { serializeState: async () => '{"syncKind":"projections"}' },
+        shielded: { serializeState: async () => 'SHIELDED NOW' },
+        unshielded: { serializeState: async () => 'UNSHIELDED NOW' }
+      }
+    };
     const bytes = await saveWalletState(wallet, seed, NETWORK, root);
     expect(readFileSync(walletCachePath(root, NETWORK, seed, 'shielded'), 'utf8')).toBe('SHIELDED NOW');
     expect(readFileSync(walletCachePath(root, NETWORK, seed, 'unshielded'), 'utf8')).toBe('UNSHIELDED NOW');
@@ -480,10 +619,15 @@ describe('the shielded and unshielded wallets, cached beside the DUST wallet', (
       const seed = '78'.repeat(32);
       let push: (s: unknown) => void = () => {};
       const shielded = {
-        state: { subscribe: (o: any) => { push = o.next; return { unsubscribe: () => {} }; } },
-        serializeState: async () => 'SHIELDED AT THE TIP',
+        state: {
+          subscribe: (o: any) => {
+            push = o.next;
+            return { unsubscribe: () => {} };
+          }
+        },
+        serializeState: async () => 'SHIELDED AT THE TIP'
       };
-      const { WalletFactory } = await import('@midnight-ntwrk/testkit-js') as any;
+      const { WalletFactory } = (await import('@midnight-ntwrk/testkit-js')) as any;
       const original = WalletFactory.createShieldedWallet;
       WalletFactory.createShieldedWallet = async () => shielded;
       try {
@@ -508,9 +652,14 @@ describe('nothing is written before the facade writes for ledger 9', () => {
     const notes: string[] = [];
     await facadeAtLedger9({ currentVersion: () => version }, 2000000n, (l) => notes.push(l), {
       now: () => t,
-      sleep: async (ms) => { t += ms; if (t >= 12_000) version = 2001100n; },
+      sleep: async (ms) => {
+        t += ms;
+        if (t >= 12_000) version = 2001100n;
+      }
     });
     expect(t).toBe(12_000);
-    expect(notes).toEqual([expect.stringMatching(/10s {2}the wallet writes for protocol version 1000, not yet ledger 9/)]);
+    expect(notes).toEqual([
+      expect.stringMatching(/10s {2}the wallet writes for protocol version 1000, not yet ledger 9/)
+    ]);
   });
 });

@@ -28,12 +28,12 @@ export const KINDS_IN_THE_WALLET: Readonly<Record<string, KindInTheWallet>> = Ob
   'vault-secret': { sealedAs: VAULT_SECRET, never: 'never-vault-secret' },
   'retire-vault': { sealedAs: RETIRE_VAULT },
   'pay-key': { sealedAs: PAY_KEY, never: 'never-pay-key', unlessOutrun: true },
-  recovery: { never: 'never-recovery' },
+  recovery: { never: 'never-recovery' }
 });
 
 /** The kind named by the wallet, or null for a name it does not act on. */
 export const kindInTheWallet = (named: string): KindInTheWallet | null =>
-  (Object.prototype.hasOwnProperty.call(KINDS_IN_THE_WALLET, named) ? KINDS_IN_THE_WALLET[named]! : null);
+  Object.prototype.hasOwnProperty.call(KINDS_IN_THE_WALLET, named) ? KINDS_IN_THE_WALLET[named]! : null;
 
 /** Whether the wallet refuses this kind's withdrawal whatever the chain holds. */
 export const neverWithdrawn = (k: KindInTheWallet): boolean => k.never !== undefined && k.unlessOutrun !== true;
@@ -41,9 +41,11 @@ export const neverWithdrawn = (k: KindInTheWallet): boolean => k.never !== undef
 const listed = Object.entries(KINDS_IN_THE_WALLET);
 
 /** The wallet's name for each kind of proposal, by the kind its sealed record names. */
-export const WALLET_KIND: Readonly<Record<string, string>> = Object.freeze(Object.fromEntries(
-  listed.flatMap(([name, k]) => (k.sealedAs === undefined ? [] : [[k.sealedAs, name] as const])),
-));
+export const WALLET_KIND: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(listed.flatMap(([name, k]) => (k.sealedAs === undefined ? [] : [[k.sealedAs, name] as const])))
+);
 
 /** The kinds, as their sealed records name them, that a page never offers to withdraw. */
-export const NEVER_WITHDRAWN: ReadonlySet<string> = new Set(listed.flatMap(([, k]) => (k.sealedAs !== undefined && k.never !== undefined ? [k.sealedAs] : [])));
+export const NEVER_WITHDRAWN: ReadonlySet<string> = new Set(
+  listed.flatMap(([, k]) => (k.sealedAs !== undefined && k.never !== undefined ? [k.sealedAs] : []))
+);

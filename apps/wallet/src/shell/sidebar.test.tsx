@@ -44,7 +44,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -77,7 +77,7 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 /** An unlocked wallet, through the real unlock — no phase is faked. */
@@ -86,21 +86,20 @@ async function unlocked(): Promise<void> {
   await saveSecret(newSecret());
   vi.mocked(usePasskey).mockResolvedValue({ credentialId: 'cred-1' } as never);
   vi.mocked(verifyAssertion).mockResolvedValue({ passkey: passkeyFixture('cred-1') } as never);
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
   fireEvent.click(screen.getByText('Unlock with your passkey'));
   await screen.findByText('Every wallet');
 }
 
-const sidebar = (): HTMLElement | null =>
-  document.querySelector('[data-slot="sidebar"]');
-const trigger = (): HTMLElement | null =>
-  document.querySelector('[data-slot="sidebar-trigger"]');
-const footer = (): HTMLElement | null =>
-  document.querySelector('[data-slot="sidebar-footer"]');
-const headerChip = (): HTMLElement | null =>
-  document.querySelector('header [data-account]');
-const footerChip = (): HTMLElement | null =>
-  document.querySelector('[data-slot="sidebar-footer"] [data-account]');
+const sidebar = (): HTMLElement | null => document.querySelector('[data-slot="sidebar"]');
+const trigger = (): HTMLElement | null => document.querySelector('[data-slot="sidebar-trigger"]');
+const footer = (): HTMLElement | null => document.querySelector('[data-slot="sidebar-footer"]');
+const headerChip = (): HTMLElement | null => document.querySelector('header [data-account]');
+const footerChip = (): HTMLElement | null => document.querySelector('[data-slot="sidebar-footer"] [data-account]');
 
 const commandB = (): void => {
   fireEvent.keyDown(window, { key: 'b', metaKey: true });
@@ -253,8 +252,9 @@ describe('the navigation never reaches the printed page', () => {
      * on somebody's recovery sheet. */
     /* The kit's sidebar is two boxes, the column and the space it keeps beside
      * the page, so the frame hides both by the sidebar's own mark. */
-    expect(document.querySelector('[data-slot="sidebar-wrapper"]')?.className)
-      .toContain('print:**:data-[slot=sidebar]:hidden');
+    expect(document.querySelector('[data-slot="sidebar-wrapper"]')?.className).toContain(
+      'print:**:data-[slot=sidebar]:hidden'
+    );
     const bar = document.querySelector('nav[aria-label="Places"]:not([data-collapsed])');
     expect(bar?.className).toContain('print:hidden');
     expect(document.querySelector('header')?.className).toContain('print:hidden');

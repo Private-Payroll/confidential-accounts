@@ -3,7 +3,12 @@
  * chain holds, and the open run the most removals have outrun.
  */
 import type { ApproverRoster, SeatRights } from '../../../../src/core/vault-approvers.js';
-import { activeSeatsOnTheChain, approversFrom, rightsBelievedIn, unnamedSeatsRefusal } from '../../../../packages/web-shared/src/approvers-read.js';
+import {
+  activeSeatsOnTheChain,
+  approversFrom,
+  rightsBelievedIn,
+  unnamedSeatsRefusal
+} from '../../../../packages/web-shared/src/approvers-read.js';
 import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
 import type { CompanyReach } from './company-reach.js';
 
@@ -34,17 +39,24 @@ export const seatsWithNoRightsRead = async (r: DirectoryReach & Pick<CompanyReac
  * account holds; for a removal (`o.removal`), so is the one approval more it adds to every open run.
  */
 export const approversHere = async (
-  r: Pick<CompanyReach, 'roster' | 'holders' | 'builder' | 'judges' | 'accountId' | 'label' | 'account' | 'companyKeys'>,
+  r: Pick<
+    CompanyReach,
+    'roster' | 'holders' | 'builder' | 'judges' | 'accountId' | 'label' | 'account' | 'companyKeys'
+  >,
   removals?: () => Promise<{ readonly removals: number; readonly run: string | null; readonly open?: string | null }>,
-  o: { readonly removal?: boolean } = {},
+  o: { readonly removal?: boolean } = {}
 ): Promise<ApproverRoster> => {
   const [account, held, wide] = await Promise.all([r.roster(), r.holders(), r.builder.companyWide()]);
   const unnamed = unnamedSeatsRefusal(account);
   if (unnamed !== null) throw new Error(unnamed);
   const outrun = removals === undefined ? undefined : await removals();
   return approversFrom({
-    account, held, companyWide: wide, rights: await rightsBelievedHere(r),
-    ...(outrun === undefined ? {} : { outrun }), ...(o.removal === true ? { removal: true } : {}),
+    account,
+    held,
+    companyWide: wide,
+    rights: await rightsBelievedHere(r),
+    ...(outrun === undefined ? {} : { outrun }),
+    ...(o.removal === true ? { removal: true } : {})
   });
 };
 
@@ -55,15 +67,25 @@ export const approversHere = async (
  * outrun it, or null when none is. Each run is named as the company's records name it where the service lists it, and
  * by its identity on the chain otherwise, so a refusal can say which run to withdraw, pay out or raise again.
  */
-export const runsOutrunHere = async (r: CompanyReach): Promise<{ readonly removals: number; readonly run: string | null; readonly open: string | null }> => {
+export const runsOutrunHere = async (
+  r: CompanyReach
+): Promise<{ readonly removals: number; readonly run: string | null; readonly open: string | null }> => {
   const runs = await r.builder.runsOutrun({ account: r.account, indexer: r.chain.indexer });
   let most: { removals: number; chainId: string | null } = { removals: 0, chainId: null };
-  for (const [chainId, removals] of Object.entries(runs)) if (removals > most.removals) most = { removals, chainId: chainId.toLowerCase() };
-  const first = Object.keys(runs).map((x) => x.toLowerCase()).sort()[0] ?? null;
+  for (const [chainId, removals] of Object.entries(runs))
+    if (removals > most.removals) most = { removals, chainId: chainId.toLowerCase() };
+  const first =
+    Object.keys(runs)
+      .map((x) => x.toLowerCase())
+      .sort()[0] ?? null;
   if (most.chainId === null && first === null) return { removals: 0, run: null, open: null };
-  const listed = await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId).catch(() => [] as readonly { id: string; chainId: string }[]);
+  const listed = await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId).catch(
+    () => [] as readonly { id: string; chainId: string }[]
+  );
   const nameOf = (chainId: string): string => {
-    const named = (listed as readonly { id: string; chainId: string }[]).find((p) => String(p.chainId).toLowerCase() === chainId);
+    const named = (listed as readonly { id: string; chainId: string }[]).find(
+      (p) => String(p.chainId).toLowerCase() === chainId
+    );
     return named === undefined ? chainId : `${named.id} (${chainId})`;
   };
   const open = nameOf(most.chainId ?? first!);

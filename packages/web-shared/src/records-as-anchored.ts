@@ -6,7 +6,12 @@
  */
 import type { Hex } from '../../../src/core/crypto.js';
 import {
-  boundaryKeyOfEntry, EMPTY_HEAD, filedKindOfEntry, WITNESSED_AS, type DirectoryAsAnchored, type ManifestEntryBody,
+  boundaryKeyOfEntry,
+  EMPTY_HEAD,
+  filedKindOfEntry,
+  WITNESSED_AS,
+  type DirectoryAsAnchored,
+  type ManifestEntryBody
 } from '../../../src/midnight/record-manifest.js';
 import type { CheckedHead } from '../../../src/midnight/record-tree.js';
 import { mayFile, mayFileTheRecord } from '../../../src/midnight/seat-directory.js';
@@ -22,7 +27,6 @@ export class AnchorNotMade extends Error {
   }
 }
 
-
 /**
  * **WHICH SEAT SIGNED A BATCH ALREADY ANCHORED, OR AN ENTRY IN IT, BY THE
  * DIRECTORY AS IT WAS ANCHORED WITH THAT BATCH.** The directory this device
@@ -37,7 +41,11 @@ export class AnchorNotMade extends Error {
  * holds the account now, or of the seat's role now, enters into it.
  */
 export const seatAsAnchoredHere = (
-  here: DirectoryBelieved, asAnchored: DirectoryAsAnchored, publicKey: Hex, entry?: ManifestEntryBody, held?: HeldAsAnchored,
+  here: DirectoryBelieved,
+  asAnchored: DirectoryAsAnchored,
+  publicKey: Hex,
+  entry?: ManifestEntryBody,
+  held?: HeldAsAnchored
 ): string | null => {
   const then = here.at(asAnchored.version, held);
   if (then === null) return null;
@@ -66,7 +74,8 @@ export interface ReadHere {
 }
 
 /** The head the account holds, as its history read here holds it: the head the last anchor call left, or the empty head. */
-export const headOn = (landed: readonly AnchorLanded[]): Hex => (landed.length === 0 ? EMPTY_HEAD : landed[landed.length - 1]!.head.toLowerCase() as Hex);
+export const headOn = (landed: readonly AnchorLanded[]): Hex =>
+  landed.length === 0 ? EMPTY_HEAD : (landed[landed.length - 1]!.head.toLowerCase() as Hex);
 
 /**
  * What this device keeps once a header is checked: the head, every head before it from the first when it checked from
@@ -79,14 +88,19 @@ export const keptAfter = (kept: CheckedHeads | null, c: CheckedHead, fromZero: b
   const checkedBefore = kept?.heads.includes(c.head) ?? false;
   const gaveUp = kept !== null && !checkedBefore && c.seq <= kept.latest.seq ? kept.latest : undefined;
   /* Heads stay in seq order from `base` on the chain's line: a recovery's head takes the place of the heads it gave up. */
-  const below = kept === null ? [] : gaveUp === undefined ? kept.heads : kept.heads.slice(0, Math.max(0, c.seq - (kept.base ?? 0)));
+  const below =
+    kept === null ? [] : gaveUp === undefined ? kept.heads : kept.heads.slice(0, Math.max(0, c.seq - (kept.base ?? 0)));
   const heads = kept !== null && checkedBefore ? kept.heads : [...below, c.head];
   /* The heads checked last, whole, oldest first: a recovery resuming from one before the latest gives up what came after it. */
   const recent = [...(kept?.recent ?? []).filter((r) => r.seq < c.seq), c].slice(-RECENT_KEPT);
   return {
-    ...(kept?.base === undefined ? {} : { base: kept.base }), ...(kept?.from === undefined ? {} : { from: kept.from }),
+    ...(kept?.base === undefined ? {} : { base: kept.base }),
+    ...(kept?.from === undefined ? {} : { from: kept.from }),
     ...(kept?.before === undefined ? {} : { before: kept.before }),
-    latest: kept !== null && kept.latest.seq > c.seq && checkedBefore ? kept.latest : c, fromZero: fromZero ? c : (kept?.fromZero ?? null), heads, recent,
-    ...(gaveUp === undefined ? {} : { gaveUp }),
+    latest: kept !== null && kept.latest.seq > c.seq && checkedBefore ? kept.latest : c,
+    fromZero: fromZero ? c : (kept?.fromZero ?? null),
+    heads,
+    recent,
+    ...(gaveUp === undefined ? {} : { gaveUp })
   };
 };

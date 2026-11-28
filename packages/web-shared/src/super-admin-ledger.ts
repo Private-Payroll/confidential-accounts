@@ -25,14 +25,21 @@ export interface SuperAdminLedger {
 }
 
 /** What the ledger is asked for: its classes that make an update, and its signature check. */
-export type LedgerHere = ReplacementPrimitives & { verifySignature(key: Key, data: Uint8Array, signature: Key): boolean };
+export type LedgerHere = ReplacementPrimitives & {
+  verifySignature(key: Key, data: Uint8Array, signature: Key): boolean;
+};
 
 /** The ledger's part, made with the ledger itself. */
 export const superAdminLedgerOf = (L: LedgerHere): SuperAdminLedger => ({
-  updateBytes: async (update) => committeeReplacement(L, {
-    vault: update.vault, counter: update.counter,
-    to: { committee: update.to.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: update.to.threshold },
-  }).dataToSign,
+  updateBytes: async (update) =>
+    committeeReplacement(L, {
+      vault: update.vault,
+      counter: update.counter,
+      to: {
+        committee: update.to.committee.map((k) => ({ tag: k.tag, value: k.value })),
+        threshold: update.to.threshold
+      }
+    }).dataToSign,
   signedBy: async (key, data, signature) => {
     try {
       return L.verifySignature(key, data, { tag: signature.tag, value: signature.value });
@@ -41,5 +48,5 @@ export const superAdminLedgerOf = (L: LedgerHere): SuperAdminLedger => ({
       return false;
     }
   },
-  joinedBy: async (bytes, key, signature) => joinedBy(L, bytes, key, signature),
+  joinedBy: async (bytes, key, signature) => joinedBy(L, bytes, key, signature)
 });

@@ -15,7 +15,12 @@ import { sentNothing } from './vault-start-stops.js';
 import { type ChainHereDoors, type Pacing, type VaultOnChainDoors, until } from './vault-doors.js';
 import { theWalletsIndexer } from './vault-read-here.js';
 import { takesDepositsOrThrow } from './vault-fundable-here.js';
-import { chainParametersForADeposit, DEPOSIT_CLOCKS_MAY_DIFFER_MS, type DepositDoors, whyNotTheDepositBuilt } from './vault-private-deposit.js';
+import {
+  chainParametersForADeposit,
+  DEPOSIT_CLOCKS_MAY_DIFFER_MS,
+  type DepositDoors,
+  whyNotTheDepositBuilt
+} from './vault-private-deposit.js';
 
 /**
  * **WHEN A PUBLIC DEPOSIT CAN NO LONGER LAND**, on this device's clock: its own time to live (`until`, read from the
@@ -39,12 +44,18 @@ export interface PublicDepositMoney {
  * service's own answer.
  */
 export class PublicDepositSignedNotSent extends Error {
-  constructor(readonly vault: Hex, readonly until: number, refusal: unknown) {
+  constructor(
+    readonly vault: Hex,
+    readonly until: number,
+    refusal: unknown
+  ) {
     const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
-    super(`the public deposit was not sent, so no money has moved yet. Your wallet already signed it, and `
-      + `until ${at} anyone can still send it. If they do, the money goes into this vault and nowhere else. Do not put `
-      + `the same money in again before ${at}, or the vault may receive it twice. The service said: `
-      + `${(refusal as Error)?.message ?? String(refusal)}`);
+    super(
+      `the public deposit was not sent, so no money has moved yet. Your wallet already signed it, and ` +
+        `until ${at} anyone can still send it. If they do, the money goes into this vault and nowhere else. Do not put ` +
+        `the same money in again before ${at}, or the vault may receive it twice. The service said: ` +
+        `${(refusal as Error)?.message ?? String(refusal)}`
+    );
     this.name = 'PublicDepositSignedNotSent';
   }
 }
@@ -60,10 +71,11 @@ export class PublicDepositNotAsBuilt extends PublicDepositSignedNotSent {
   constructor(vault: Hex, until: number, why: string) {
     super(vault, until, why);
     const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
-    this.message = `this page did not send the public deposit, because your wallet handed back a deposit other than `
-      + `the one this device built: ${why} Your wallet already signed what it handed back, and until ${at} anyone `
-      + `holding it, your wallet included, can still send it. Do not put money in again before ${at}. If your wallet's `
-      + 'public balance has not dropped by then, no money moved.';
+    this.message =
+      `this page did not send the public deposit, because your wallet handed back a deposit other than ` +
+      `the one this device built: ${why} Your wallet already signed what it handed back, and until ${at} anyone ` +
+      `holding it, your wallet included, can still send it. Do not put money in again before ${at}. If your wallet's ` +
+      'public balance has not dropped by then, no money moved.';
     this.name = 'PublicDepositNotAsBuilt';
   }
 }
@@ -75,15 +87,23 @@ export class PublicDepositNotAsBuilt extends PublicDepositSignedNotSent {
  * deposit this page did not send, the money is not put in again before it can no longer land.
  */
 export class PublicDepositStoppedByAChange extends PublicDepositSignedNotSent {
-  constructor(vault: Hex, until: number, readonly notAdopted: boolean, refusal: unknown) {
+  constructor(
+    vault: Hex,
+    until: number,
+    readonly notAdopted: boolean,
+    refusal: unknown
+  ) {
     super(vault, until, refusal);
     const at = new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString();
-    this.message = (notAdopted
-      ? 'this page did not send the public deposit, because the company no longer adopts this vault: it was retired after this page first checked it. '
-      : 'this page did not send the public deposit, because the company changed while you approved it in your wallet, so it was not sent on what was read before. ')
-      + `No money moved. Your wallet already signed the deposit, and until ${at} anyone holding it can still send it. If anyone does, `
-      + (notAdopted ? 'the vault refuses it, because it is retired, and no money moves. ' : 'the money goes into this vault. ')
-      + `Do not put money in again before ${at}.`;
+    this.message =
+      (notAdopted
+        ? 'this page did not send the public deposit, because the company no longer adopts this vault: it was retired after this page first checked it. '
+        : 'this page did not send the public deposit, because the company changed while you approved it in your wallet, so it was not sent on what was read before. ') +
+      `No money moved. Your wallet already signed the deposit, and until ${at} anyone holding it can still send it. If anyone does, ` +
+      (notAdopted
+        ? 'the vault refuses it, because it is retired, and no money moves. '
+        : 'the money goes into this vault. ') +
+      `Do not put money in again before ${at}.`;
     this.name = 'PublicDepositStoppedByAChange';
   }
 }
@@ -103,9 +123,14 @@ const changeFoundIn = (e: unknown): 'not-adopted' | 'changed' | null => {
  * can be put in again at once. Raised only on the chain's own result for that part, read at the wallet's indexer.
  */
 export class PublicDepositRefused extends Error {
-  constructor(readonly vault: Hex, readonly transactionHash: string) {
-    super(`the chain refused this public deposit (${transactionHash}), so nothing went into the vault and it will not `
-      + 'be tried again. You can put money in again now.');
+  constructor(
+    readonly vault: Hex,
+    readonly transactionHash: string
+  ) {
+    super(
+      `the chain refused this public deposit (${transactionHash}), so nothing went into the vault and it will not ` +
+        'be tried again. You can put money in again now.'
+    );
     this.name = 'PublicDepositRefused';
   }
 }
@@ -116,9 +141,14 @@ export class PublicDepositRefused extends Error {
  * clocks that differ have both passed. Nothing went into the vault, and the money can be put in again.
  */
 export class PublicDepositNeverLanded extends Error {
-  constructor(readonly vault: Hex, readonly until: number) {
-    super(`the public deposit did not reach the chain before ${new Date(until).toLocaleTimeString()}, when it stopped `
-      + 'being valid, so it never will and nothing went into the vault. You can put money in again now.');
+  constructor(
+    readonly vault: Hex,
+    readonly until: number
+  ) {
+    super(
+      `the public deposit did not reach the chain before ${new Date(until).toLocaleTimeString()}, when it stopped ` +
+        'being valid, so it never will and nothing went into the vault. You can put money in again now.'
+    );
     this.name = 'PublicDepositNeverLanded';
   }
 }
@@ -134,13 +164,19 @@ export class PublicDepositNeverLanded extends Error {
  * could not see it, and is named for support.
  */
 export class PublicDepositNotYetSeen extends Error {
-  constructor(readonly vault: Hex, readonly until: number, cause?: unknown) {
-    super('the public deposit may have been sent, and this page was not told whether it arrived. Do not put the same '
-      + `money in again before ${new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString()}. If it has not arrived by then, it never will. `
-      + 'Open your wallet: if its public balance has dropped by this amount and you spent nothing else from it, the '
-      + 'vault has it. "Check my last deposit" finds only private deposits, so it cannot tell you about this one.'
-      + (cause === undefined ? '' : ` Details for support: ${(cause as Error)?.message ?? String(cause)}`),
-      cause === undefined ? undefined : { cause });
+  constructor(
+    readonly vault: Hex,
+    readonly until: number,
+    cause?: unknown
+  ) {
+    super(
+      'the public deposit may have been sent, and this page was not told whether it arrived. Do not put the same ' +
+        `money in again before ${new Date(publicDepositCannotLandAfter(until)).toLocaleTimeString()}. If it has not arrived by then, it never will. ` +
+        'Open your wallet: if its public balance has dropped by this amount and you spent nothing else from it, the ' +
+        'vault has it. "Check my last deposit" finds only private deposits, so it cannot tell you about this one.' +
+        (cause === undefined ? '' : ` Details for support: ${(cause as Error)?.message ?? String(cause)}`),
+      cause === undefined ? undefined : { cause }
+    );
     this.name = 'PublicDepositNotYetSeen';
   }
 }
@@ -184,7 +220,10 @@ const HEX32_TOKEN = /^[0-9a-f]{64}$/u;
  * never landed.
  */
 async function publicDepositSeenOnChain(
-  doors: PublicDepositDoors, vault: Hex, transaction: string, livesUntil: number,
+  doors: PublicDepositDoors,
+  vault: Hex,
+  transaction: string,
+  livesUntil: number
 ) {
   doors.progress?.('waiting for the chain');
   const clock = doors.clock ?? Date.now;
@@ -193,7 +232,10 @@ async function publicDepositSeenOnChain(
   const seen = await until<Look>(doors, async () => {
     try {
       const found = await doors.builder.vaultCallOnChain!({
-        vault, entryPoints: [PUBLIC_DEPOSIT_ENTRY], transaction, indexer: await theWalletsIndexer(doors, vault),
+        vault,
+        entryPoints: [PUBLIC_DEPOSIT_ENTRY],
+        transaction,
+        indexer: await theWalletsIndexer(doors, vault)
       });
       if (found.of !== 'not-seen') return { found };
       return clock() > publicDepositCannotLandAfter(livesUntil) ? { never: true } : null;
@@ -207,7 +249,11 @@ async function publicDepositSeenOnChain(
   if ('cannot' in seen) throw new PublicDepositNotYetSeen(vault, livesUntil, seen.cannot);
   if (seen.found.of === 'refused') throw new PublicDepositRefused(vault, seen.found.transactionHash);
   if (seen.found.of !== 'landed') {
-    throw new PublicDepositNotYetSeen(vault, livesUntil, new Error(seen.found.of === 'not-known' ? seen.found.why : seen.found.of));
+    throw new PublicDepositNotYetSeen(
+      vault,
+      livesUntil,
+      new Error(seen.found.of === 'not-known' ? seen.found.why : seen.found.of)
+    );
   }
   return seen.found.transactionHash;
 }
@@ -254,47 +300,74 @@ async function publicDepositSeenOnChain(
  * chain say whether it arrived.
  */
 export async function depositPubliclyIntoCompanyVault(
-  doors: PublicDepositDoors, vault: Hex, money: PublicDepositMoney,
+  doors: PublicDepositDoors,
+  vault: Hex,
+  money: PublicDepositMoney
 ): Promise<{ txRef: string; transactionHash: string; token: Hex; value: bigint }> {
   /* The token as the asset's row names it: 64 lowercase hex characters, compared and sent as it is. */
   if (typeof money.token !== 'string' || !HEX32_TOKEN.test(money.token)) {
-    throw new Error('this is not a public token a vault can hold, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+    throw new Error(
+      'this is not a public token a vault can hold, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.'
+    );
   }
   if (typeof money.value !== 'bigint' || money.value <= 0n) throw new Error('an amount of nothing is not a deposit.');
   if (typeof doors.service.depositPublicly !== 'function') {
-    throw new Error('this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+    throw new Error(
+      'this page cannot send a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.'
+    );
   }
   doors.progress?.('checking the vault');
   const answer = await takesDepositsOrThrow(doors, vault);
   /* Asked before the wallet is, so a deposit into a vault not yet started asks the wallet for nothing. */
   if (answer.of !== 'fundable') throw new Error(answer.why);
   const view = answer.view;
-  if (view.state === undefined) throw new Error('the chain does not show this vault\'s state, so no money goes in.');
+  if (view.state === undefined) throw new Error("the chain does not show this vault's state, so no money goes in.");
   const parameters = await chainParametersForADeposit(doors, vault);
   if (typeof doors.builder.publicDeposit !== 'function') {
-    throw new Error('this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+    throw new Error(
+      'this page cannot build a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.'
+    );
   }
   /* A deposit this page could not read or watch arrive would end with nobody able to say it did, so it is not started. */
   if (typeof doors.builder.vaultCallOnChain !== 'function' || typeof doors.builder.readTransaction !== 'function') {
-    throw new Error('this page cannot watch the chain for a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.');
+    throw new Error(
+      'this page cannot watch the chain for a public deposit, so nothing was built or sent. No money moved. Reload the page and try again; if it happens again, the service needs attention.'
+    );
   }
   doors.progress?.('building the deposit');
   const built = await doors.builder.publicDeposit({
-    vault, token: money.token, amount: money.value.toString(), state: view.state, parameters,
+    vault,
+    token: money.token,
+    amount: money.value.toString(),
+    state: view.state,
+    parameters
   });
   doors.progress?.('asking your wallet');
-  const paid = await doors.pay({ company: doors.company, account: doors.account, vault: vault as VaultAddress, transaction: built.tx });
+  const paid = await doors.pay({
+    company: doors.company,
+    account: doors.account,
+    vault: vault as VaultAddress,
+    transaction: built.tx
+  });
   /*
    * **WHAT THE WALLET SAYS LEFT IT MUST BE WHAT WAS ASKED.** The wallet reads the
    * amount from the transaction, not from this page; an answer naming anything
    * else is not sent. What it booked is let go when the transaction can no
    * longer be sent.
    */
-  const leaves = Array.isArray(paid?.leaves) ? paid.leaves as readonly { token?: unknown; amount?: unknown; kind?: unknown }[] : [];
-  if (leaves.length !== 1 || leaves[0]?.kind !== 'unshielded'
-    || String(leaves[0]?.token).toLowerCase() !== money.token || String(leaves[0]?.amount) !== money.value.toString()) {
-    throw new Error('your wallet prepared a payment for something other than this public deposit, so this page did not '
-      + 'send it and no money moved. You can put money in again now.');
+  const leaves = Array.isArray(paid?.leaves)
+    ? (paid.leaves as readonly { token?: unknown; amount?: unknown; kind?: unknown }[])
+    : [];
+  if (
+    leaves.length !== 1 ||
+    leaves[0]?.kind !== 'unshielded' ||
+    String(leaves[0]?.token).toLowerCase() !== money.token ||
+    String(leaves[0]?.amount) !== money.value.toString()
+  ) {
+    throw new Error(
+      'your wallet prepared a payment for something other than this public deposit, so this page did not ' +
+        'send it and no money moved. You can put money in again now.'
+    );
   }
   /*
    * **WHEN IT CAN NO LONGER LAND, READ FROM WHAT THE WALLET SIGNED.** Every intent's time to live is checked by the
@@ -304,13 +377,17 @@ export async function depositPubliclyIntoCompanyVault(
    */
   const read = await doors.builder.readTransaction!({ transaction: paid.transaction });
   if (read === null || read.timeToLive === null || read.identifiers.length === 0) {
-    throw new Error('this page could not read the public deposit your wallet signed, so it did not send it and no '
-      + 'money moved. You can put money in again now.');
+    throw new Error(
+      'this page could not read the public deposit your wallet signed, so it did not send it and no ' +
+        'money moved. You can put money in again now.'
+    );
   }
   const livesUntil = read.timeToLive;
   if ((doors.clock ?? Date.now)() >= livesUntil) {
-    throw new Error(`the public deposit your wallet signed stopped being valid at ${new Date(livesUntil).toLocaleTimeString()}, `
-      + 'so this page did not send it and no money moved. You can put money in again now.');
+    throw new Error(
+      `the public deposit your wallet signed stopped being valid at ${new Date(livesUntil).toLocaleTimeString()}, ` +
+        'so this page did not send it and no money moved. You can put money in again now.'
+    );
   }
   /*
    * The wallet's own account of what it paid (`leaves`) is its word; the transaction it signed is what lands. One that

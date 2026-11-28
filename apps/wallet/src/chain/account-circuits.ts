@@ -1,7 +1,11 @@
 import {
-  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
-  ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS,
-  VAULT_CIRCUITS, type VaultCircuit,
+  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS,
+  ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
+  ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
+  ACCOUNT_CIRCUITS_AN_INVITEE_PROVES,
+  ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS,
+  VAULT_CIRCUITS,
+  type VaultCircuit
 } from '../../../../src/midnight/vault-contract.js';
 import REGISTRY_INFO from '../../../../contracts/managed-registry/compiler/contract-info.json' with { type: 'json' };
 
@@ -21,8 +25,10 @@ import REGISTRY_INFO from '../../../../contracts/managed-registry/compiler/contr
  * wallet can read the sets without loading a builder.
  */
 export const ACCOUNT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze([
-  ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ...ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ...ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
-  ...ACCOUNT_CIRCUITS_AN_INVITEE_PROVES,
+  ...ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
+  ...ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS,
+  ...ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
+  ...ACCOUNT_CIRCUITS_AN_INVITEE_PROVES
 ]);
 
 /**
@@ -36,7 +42,13 @@ export const ACCOUNT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.free
  * company makes is built elsewhere, so the wallet holds no proving key for it.
  */
 export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze([
-  'setNonceSecret', 'writeSecretCopy', 'deposit', 'payout', 'payoutUnshielded', 'mergeNotes', 'retire',
+  'setNonceSecret',
+  'writeSecretCopy',
+  'deposit',
+  'payout',
+  'payoutUnshielded',
+  'mergeNotes',
+  'retire'
 ]);
 
 /**
@@ -52,16 +64,20 @@ export const VAULT_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze
  * nothing. A call missing here
  * is a proof the wallet cannot make, so the whole transaction stops at it.
  */
-export const ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS: Readonly<Record<string, readonly string[]>> = Object.freeze(Object.fromEntries(
-  VAULT_CIRCUITS_THE_WALLET_PROVES.map((c) => {
-    const calls: readonly string[] | undefined = ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS[c as VaultCircuit];
-    if (calls === undefined) throw new Error(`${c} is not one of the vault's circuits, so which account circuits it calls is not known.`);
-    return [c, calls];
-  })));
+export const ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS: Readonly<Record<string, readonly string[]>> = Object.freeze(
+  Object.fromEntries(
+    VAULT_CIRCUITS_THE_WALLET_PROVES.map((c) => {
+      const calls: readonly string[] | undefined = ACCOUNT_CIRCUITS_EVERY_VAULT_CIRCUIT_CALLS[c as VaultCircuit];
+      if (calls === undefined)
+        throw new Error(`${c} is not one of the vault's circuits, so which account circuits it calls is not known.`);
+      return [c, calls];
+    })
+  )
+);
 
 /** The account circuits a vault circuit this wallet proves calls: the wallet proves each, only as that call. */
 export const ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL: readonly string[] = Object.freeze([
-  ...new Set(VAULT_CIRCUITS_THE_WALLET_PROVES.flatMap((c) => ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c] ?? [])),
+  ...new Set(VAULT_CIRCUITS_THE_WALLET_PROVES.flatMap((c) => ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c] ?? []))
 ]);
 
 /**
@@ -70,7 +86,8 @@ export const ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL: readonly string[]
  * copies into its own keys and pins.
  */
 export const ACCOUNT_CIRCUITS_THE_WALLET_HOLDS_KEYS_FOR: readonly string[] = Object.freeze([
-  ...ACCOUNT_CIRCUITS_THE_WALLET_PROVES, ...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL,
+  ...ACCOUNT_CIRCUITS_THE_WALLET_PROVES,
+  ...ACCOUNT_CIRCUITS_THE_WALLETS_VAULT_CIRCUITS_CALL
 ]);
 
 /**
@@ -85,4 +102,5 @@ export const VAULT_CIRCUITS_THE_WALLET_DEPLOYS: readonly string[] = Object.freez
  * their seed alone finds it again. Read from the compile, so the list cannot drift from the contract.
  */
 export const REGISTRY_CIRCUITS_THE_WALLET_PROVES: readonly string[] = Object.freeze(
-  REGISTRY_INFO.circuits.filter((c) => c.proof).map((c) => c.name));
+  REGISTRY_INFO.circuits.filter((c) => c.proof).map((c) => c.name)
+);

@@ -1,7 +1,9 @@
 import { CostModel, Transaction } from '@midnightntwrk/ledger-v9';
 import type { ProvingProvider } from '@midnightntwrk/ledger-v9';
 import type {
-  AnyVersionUnboundTransaction, AnyVersionUnprovenTransaction, VersionedProvingService,
+  AnyVersionUnboundTransaction,
+  AnyVersionUnprovenTransaction,
+  VersionedProvingService
 } from '@midnightntwrk/wallet-sdk/capabilities/proving';
 import type { KeyMaterialProvider } from '@midnightntwrk/zkir-v2';
 import { makePinnedKeyMaterialProvider } from './key-material.js';
@@ -38,8 +40,7 @@ export const PROVING_CEILING_MS = 10 * 60 * 1000;
 
 /** The default key material source — OURS: own origin, hash-pinned,
  * IndexedDB-cached (`key-material.ts`). NOT the SDK's bucket. */
-export const defaultKeyMaterial = (): KeyMaterialProvider =>
-  makePinnedKeyMaterialProvider();
+export const defaultKeyMaterial = (): KeyMaterialProvider => makePinnedKeyMaterialProvider();
 
 type FromWorker =
   | { readonly op: 'ready' }
@@ -79,9 +80,12 @@ export const KEPT_IDLE_MS = 2 * 60_000;
  * out a fresh copy per ask and keeps none, so moving it takes it from nobody.
  */
 export const buffersOf = (value: unknown): ArrayBuffer[] => {
-  const parts = value instanceof Uint8Array ? [value]
-    : value !== null && typeof value === 'object' ? Object.values(value).filter((v): v is Uint8Array => v instanceof Uint8Array)
-      : [];
+  const parts =
+    value instanceof Uint8Array
+      ? [value]
+      : value !== null && typeof value === 'object'
+        ? Object.values(value).filter((v): v is Uint8Array => v instanceof Uint8Array)
+        : [];
   return [...new Set(parts.map((p) => p.buffer).filter((b): b is ArrayBuffer => b instanceof ArrayBuffer))];
 };
 
@@ -103,8 +107,17 @@ interface Job {
  * before: a proof never waits for another to finish. A worker that failed, was
  * lost or ran past the ceiling is never kept.
  */
-export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEPT_IDLE_MS): {
-  run(op: 'prove' | 'check', keyLocation: string, preimage: Uint8Array, km: KeyMaterialProvider, overwriteBindingInput?: bigint): Promise<unknown>;
+export function keptProvers(
+  spawn: () => ProvingWorkerLike,
+  idleMs: number = KEPT_IDLE_MS
+): {
+  run(
+    op: 'prove' | 'check',
+    keyLocation: string,
+    preimage: Uint8Array,
+    km: KeyMaterialProvider,
+    overwriteBindingInput?: bigint
+  ): Promise<unknown>;
   /** Lets every idle worker go. A proof in flight finishes and is not kept. */
   stop(): void;
   readonly idle: number;
@@ -123,7 +136,12 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
   const post = (kept: Kept): void => {
     const job = kept.job;
     if (job === null || !kept.ready) return;
-    kept.worker.postMessage({ op: job.op, keyLocation: job.keyLocation, preimage: job.preimage, overwriteBindingInput: job.overwriteBindingInput });
+    kept.worker.postMessage({
+      op: job.op,
+      keyLocation: job.keyLocation,
+      preimage: job.preimage,
+      overwriteBindingInput: job.overwriteBindingInput
+    });
   };
 
   const make = (): Kept => {
@@ -145,15 +163,25 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
           return;
         case 'lookupKey':
           if (job === null) return;
-          job.km.lookupKey(data.keyLocation)
-            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value)))
-            .catch((e: unknown) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) }));
+          job.km
+            .lookupKey(data.keyLocation)
+            .then((value) =>
+              kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value))
+            )
+            .catch((e: unknown) =>
+              kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) })
+            );
           return;
         case 'getParams':
           if (job === null) return;
-          job.km.getParams(data.k)
-            .then((value) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value)))
-            .catch((e: unknown) => kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) }));
+          job.km
+            .getParams(data.k)
+            .then((value) =>
+              kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: true, value }, buffersOf(value))
+            )
+            .catch((e: unknown) =>
+              kept.worker.postMessage({ op: 'answer', askId: data.askId, ok: false, error: describeFailure(e) })
+            );
           return;
         case 'result':
           kept.job = null;
@@ -171,7 +199,10 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
   };
 
   const keep = (keyLocation: string, kept: Kept): void => {
-    if (stopped || kept.dead || idle.has(keyLocation)) { kept.worker.terminate(); return; }
+    if (stopped || kept.dead || idle.has(keyLocation)) {
+      kept.worker.terminate();
+      return;
+    }
     kept.letGo = setTimeout(() => {
       if (idle.get(keyLocation) !== kept) return;
       idle.delete(keyLocation);
@@ -181,41 +212,46 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
   };
 
   return {
-    run: (op, keyLocation, preimage, km, overwriteBindingInput) => new Promise<unknown>((resolve, reject) => {
-      const waiting = idle.get(keyLocation);
-      if (waiting !== undefined) {
-        idle.delete(keyLocation);
-        if (waiting.letGo !== null) clearTimeout(waiting.letGo);
-        waiting.letGo = null;
-      }
-      const kept = waiting !== undefined && !waiting.dead ? waiting : make();
-      let settled = false;
-      const ceiling = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        kept.job = null;
-        kept.dead = true;
-        kept.worker.terminate();
-        reject(new Error(`the ${op} did not finish within ten minutes, the SDK's own ceiling for a single proof`));
-      }, PROVING_CEILING_MS);
-      kept.job = {
-        op, keyLocation, preimage, overwriteBindingInput, km,
-        resolve: (value) => {
+    run: (op, keyLocation, preimage, km, overwriteBindingInput) =>
+      new Promise<unknown>((resolve, reject) => {
+        const waiting = idle.get(keyLocation);
+        if (waiting !== undefined) {
+          idle.delete(keyLocation);
+          if (waiting.letGo !== null) clearTimeout(waiting.letGo);
+          waiting.letGo = null;
+        }
+        const kept = waiting !== undefined && !waiting.dead ? waiting : make();
+        let settled = false;
+        const ceiling = setTimeout(() => {
           if (settled) return;
           settled = true;
-          clearTimeout(ceiling);
-          keep(keyLocation, kept);
-          resolve(value);
-        },
-        reject: (e) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(ceiling);
-          reject(e);
-        },
-      };
-      post(kept);
-    }),
+          kept.job = null;
+          kept.dead = true;
+          kept.worker.terminate();
+          reject(new Error(`the ${op} did not finish within ten minutes, the SDK's own ceiling for a single proof`));
+        }, PROVING_CEILING_MS);
+        kept.job = {
+          op,
+          keyLocation,
+          preimage,
+          overwriteBindingInput,
+          km,
+          resolve: (value) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(ceiling);
+            keep(keyLocation, kept);
+            resolve(value);
+          },
+          reject: (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(ceiling);
+            reject(e);
+          }
+        };
+        post(kept);
+      }),
     stop: () => {
       stopped = true;
       for (const kept of idle.values()) {
@@ -224,14 +260,19 @@ export function keptProvers(spawn: () => ProvingWorkerLike, idleMs: number = KEP
       }
       idle.clear();
     },
-    get idle() { return idle.size; },
+    get idle() {
+      return idle.size;
+    }
   };
 }
 
 /** The workers this wallet's proofs run in, for as long as the page is open. */
 let provers: ReturnType<typeof keptProvers> | null = null;
 const theProvers = (): ReturnType<typeof keptProvers> => {
-  provers ??= keptProvers(() => new Worker(new URL('./proving-worker.ts', import.meta.url), { type: 'module' }) as unknown as ProvingWorkerLike);
+  provers ??= keptProvers(
+    () =>
+      new Worker(new URL('./proving-worker.ts', import.meta.url), { type: 'module' }) as unknown as ProvingWorkerLike
+  );
   return provers;
 };
 
@@ -252,27 +293,37 @@ export interface BrowserProvingOptions {
  */
 export function browserProvingProvider(
   keyMaterialProvider?: KeyMaterialProvider,
-  options: BrowserProvingOptions = {},
+  options: BrowserProvingOptions = {}
 ): ProvingProvider {
   const km = keyMaterialProvider ?? defaultKeyMaterial();
   const workers = options.provers ?? theProvers();
 
   const callWorker = (
-    op: 'prove' | 'check', keyLocation: string, preimage: Uint8Array, overwriteBindingInput?: bigint,
+    op: 'prove' | 'check',
+    keyLocation: string,
+    preimage: Uint8Array,
+    overwriteBindingInput?: bigint
   ): Promise<unknown> => {
     options.onProof?.({ op, at: 'start' });
     const said = (): void => options.onProof?.({ op, at: 'end' });
-    return workers.run(op, keyLocation, preimage, km, overwriteBindingInput)
-      .then((value) => { said(); return value; }, (e: unknown) => { said(); throw e; });
+    return workers.run(op, keyLocation, preimage, km, overwriteBindingInput).then(
+      (value) => {
+        said();
+        return value;
+      },
+      (e: unknown) => {
+        said();
+        throw e;
+      }
+    );
   };
 
   return {
-    check: (preimage, keyLocation) =>
-      callWorker('check', keyLocation, preimage) as Promise<(bigint | undefined)[]>,
+    check: (preimage, keyLocation) => callWorker('check', keyLocation, preimage) as Promise<(bigint | undefined)[]>,
     prove: (preimage, keyLocation, overwriteBindingInput) =>
       callWorker('prove', keyLocation, preimage, overwriteBindingInput) as Promise<Uint8Array>,
     /* Key material is read on this side, as the SDK's own provider reads it. */
-    lookupKey: (keyLocation) => km.lookupKey(keyLocation),
+    lookupKey: (keyLocation) => km.lookupKey(keyLocation)
   };
 }
 
@@ -283,7 +334,7 @@ export function browserProvingProvider(
  */
 export function builderProving(
   keyMaterialProvider?: KeyMaterialProvider,
-  options: BrowserProvingOptions = {},
+  options: BrowserProvingOptions = {}
 ): (unproven: Provable) => Promise<{ serialize(): Uint8Array }> {
   const prover = createLedger9ProofProvider(browserProvingProvider(keyMaterialProvider, options));
   return (unproven) => provedTransaction(prover, unproven);
@@ -296,7 +347,7 @@ export function builderProving(
  */
 export function makeBrowserProvingService(
   keyMaterialProvider?: KeyMaterialProvider,
-  options: BrowserProvingOptions = {},
+  options: BrowserProvingOptions = {}
 ): VersionedProvingService<AnyVersionUnboundTransaction, AnyVersionUnprovenTransaction> {
   const provider = browserProvingProvider(keyMaterialProvider, options);
   /* The SDK's own invocation for a ledger-v9 transaction. A transaction of an
@@ -304,10 +355,12 @@ export function makeBrowserProvingService(
   return {
     prove: async (transaction) => {
       if (!(transaction instanceof Transaction)) {
-        throw new Error('this transaction was built for an earlier ledger than the one this wallet proves for, '
-          + 'so nothing was proved and nothing was sent.');
+        throw new Error(
+          'this transaction was built for an earlier ledger than the one this wallet proves for, ' +
+            'so nothing was proved and nothing was sent.'
+        );
       }
       return transaction.prove(provider, CostModel.initialCostModel());
-    },
+    }
   };
 }

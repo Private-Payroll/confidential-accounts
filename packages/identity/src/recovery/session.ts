@@ -114,15 +114,14 @@ export interface StartOptions {
   readonly waitMs?: number;
 }
 
-const terminal = (state: RecoveryState): boolean =>
-  state === 'completed' || state === 'cancelled';
+const terminal = (state: RecoveryState): boolean => state === 'completed' || state === 'cancelled';
 
 function refuseIfOver(session: RecoverySession, doing: string): void {
   if (terminal(session.state)) {
     throw new RecoveryError(
       'not-enough-pieces',
-      `this recovery is already ${session.state} and cannot be ${doing}. `
-      + 'Start a new one.');
+      `this recovery is already ${session.state} and cannot be ${doing}. ` + 'Start a new one.'
+    );
   }
 }
 
@@ -130,8 +129,8 @@ export function startRecovery(options: StartOptions): RecoverySession {
   if (options.threshold < 2) {
     throw new RecoveryError(
       'threshold-of-one',
-      'a recovery needs at least two pieces. One piece that opens everything is '
-      + 'not a threshold, it is a copy.');
+      'a recovery needs at least two pieces. One piece that opens everything is ' + 'not a threshold, it is a copy.'
+    );
   }
   return Object.freeze({
     id: options.id,
@@ -142,7 +141,7 @@ export function startRecovery(options: StartOptions): RecoverySession {
     startedAt: options.now,
     readyAt: null,
     waitMs: Math.max(0, options.waitMs ?? 0),
-    cancelledBecause: null,
+    cancelledBecause: null
   });
 }
 
@@ -156,9 +155,7 @@ export function startRecovery(options: StartOptions): RecoverySession {
  * the other door. A second offer from a holder already counted **replaces** it
  * rather than adding, so a re-fetch after a network failure is not an error.
  */
-export function offerPiece(
-  session: RecoverySession, piece: OfferedPiece, now: number,
-): RecoverySession {
+export function offerPiece(session: RecoverySession, piece: OfferedPiece, now: number): RecoverySession {
   refuseIfOver(session, 'added to');
 
   const holder = piece.holder.trim().toLowerCase();
@@ -199,23 +196,26 @@ export function offerPiece(
     if (header.fingerprint !== agreed.fingerprint) {
       throw new RecoveryError(
         'pieces-from-different-sets',
-        `this piece is from a DIFFERENT ACCOUNT — not the one ${already} rebuild. `
-        + 'Check you are holding the right cards, or take the others out and gather '
-        + 'that account’s set instead.');
+        `this piece is from a DIFFERENT ACCOUNT — not the one ${already} rebuild. ` +
+          'Check you are holding the right cards, or take the others out and gather ' +
+          'that account’s set instead.'
+      );
     }
     if (header.setId !== agreed.setId) {
       throw new RecoveryError(
         'pieces-from-different-sets',
-        `this piece is from a different cut of the same account — an older or newer `
-        + `set than ${already}. Pieces only combine with the set they were cut with: `
-        + 'use cards that were made together. Both sets still work on their own.');
+        `this piece is from a different cut of the same account — an older or newer ` +
+          `set than ${already}. Pieces only combine with the set they were cut with: ` +
+          'use cards that were made together. Both sets still work on their own.'
+      );
     }
     if (header.threshold !== agreed.threshold) {
       throw new RecoveryError(
         'pieces-from-different-sets',
-        `this piece says ${header.threshold} pieces are needed, and ${already} `
-        + `${kept.length === 1 ? 'says' : 'say'} ${agreed.threshold} — they cannot be `
-        + 'from the same set. Check this one against its card, or take the others out first.');
+        `this piece says ${header.threshold} pieces are needed, and ${already} ` +
+          `${kept.length === 1 ? 'says' : 'say'} ${agreed.threshold} — they cannot be ` +
+          'from the same set. Check this one against its card, or take the others out first.'
+      );
     }
   }
 
@@ -228,8 +228,9 @@ export function offerPiece(
   if (gathered.length > MAX_PIECES) {
     throw new RecoveryError(
       'not-enough-pieces',
-      `a recovery takes at most ${MAX_PIECES} pieces and this one already has `
-      + `${session.gathered.length}. Remove one before adding another.`);
+      `a recovery takes at most ${MAX_PIECES} pieces and this one already has ` +
+        `${session.gathered.length}. Remove one before adding another.`
+    );
   }
 
   /*
@@ -242,18 +243,14 @@ export function offerPiece(
    * agrees with this one (checked above), so this is the set's number, not
    * the newest paste's.
    */
-  return advance(
-    { ...session, threshold: header.threshold, gathered: Object.freeze(gathered) }, now);
+  return advance({ ...session, threshold: header.threshold, gathered: Object.freeze(gathered) }, now);
 }
 
 /** Take one back out — a piece that turned out to be the wrong one. */
-export function withdrawPiece(
-  session: RecoverySession, holder: string, now: number,
-): RecoverySession {
+export function withdrawPiece(session: RecoverySession, holder: string, now: number): RecoverySession {
   refuseIfOver(session, 'changed');
   const target = holder.trim().toLowerCase();
-  const remaining = session.gathered.filter(
-    (p) => p.holder.trim().toLowerCase() !== target);
+  const remaining = session.gathered.filter((p) => p.holder.trim().toLowerCase() !== target);
   /*
    * RECOMPUTED FROM WHAT REMAINS. The number on the screen must
    * describe the pieces that are actually in, so taking one out re-reads the
@@ -261,11 +258,8 @@ export function withdrawPiece(
    * left there is nothing to read, and the session's current number stands
    * until the first piece of the next attempt is offered.
    */
-  const threshold = remaining.length > 0
-    ? readPieceHeader(remaining[0]!.bytes).threshold
-    : session.threshold;
-  return advance(
-    { ...session, threshold, gathered: Object.freeze(remaining) }, now);
+  const threshold = remaining.length > 0 ? readPieceHeader(remaining[0]!.bytes).threshold : session.threshold;
+  return advance({ ...session, threshold, gathered: Object.freeze(remaining) }, now);
 }
 
 /**
@@ -283,7 +277,9 @@ export function advance(session: RecoverySession, now: number): RecoverySession 
     /* Dropping back below the threshold cancels any waiting period, so a piece
      * removed and re-added does not inherit a clock that was already running. */
     return Object.freeze({
-      ...session, state: 'gathering' as const, readyAt: null,
+      ...session,
+      state: 'gathering' as const,
+      readyAt: null
     });
   }
 
@@ -291,7 +287,7 @@ export function advance(session: RecoverySession, now: number): RecoverySession 
   return Object.freeze({
     ...session,
     readyAt,
-    state: now >= readyAt ? ('ready' as const) : ('waiting' as const),
+    state: now >= readyAt ? ('ready' as const) : ('waiting' as const)
   });
 }
 
@@ -302,14 +298,13 @@ export function advance(session: RecoverySession, now: number): RecoverySession 
  * It is allowed while `gathering` too, because somebody who started a recovery
  * by mistake should be able to stop it without waiting for it to finish.
  */
-export function cancelRecovery(
-  session: RecoverySession, because: string,
-): RecoverySession {
+export function cancelRecovery(session: RecoverySession, because: string): RecoverySession {
   if (session.state === 'completed') {
     throw new RecoveryError(
       'not-enough-pieces',
-      'this recovery has already finished. Cancelling it now would change nothing — '
-      + 'what is needed is to move the account to a new set of pieces.');
+      'this recovery has already finished. Cancelling it now would change nothing — ' +
+        'what is needed is to move the account to a new set of pieces.'
+    );
   }
   if (session.state === 'cancelled') return session;
   /*
@@ -325,7 +320,7 @@ export function cancelRecovery(
     state: 'cancelled' as const,
     cancelledBecause: because,
     usedCount: session.gathered.length,
-    gathered: Object.freeze([]),
+    gathered: Object.freeze([])
   });
 }
 
@@ -342,9 +337,7 @@ export interface Recovered {
  * still waiting is inside the window the owner can veto. **Neither of those is
  * a case for a "force" flag**, and there is deliberately not one.
  */
-export async function completeRecovery(
-  session: RecoverySession, now: number,
-): Promise<Recovered> {
+export async function completeRecovery(session: RecoverySession, now: number): Promise<Recovered> {
   /*
    * A FINISHED OR CANCELLED SESSION IS REFUSED HERE AND BY NAME. Without this,
    * `advance` returns the terminal session untouched, the check below sees a
@@ -360,10 +353,10 @@ export async function completeRecovery(
     throw new RecoveryError(
       'not-enough-pieces',
       current.state === 'waiting'
-        ? 'this recovery is still inside its waiting period. It can be cancelled from '
-          + 'any device the owner still has until then.'
-        : `this recovery has ${current.gathered.length} of the ${current.threshold} `
-          + `pieces it needs.`);
+        ? 'this recovery is still inside its waiting period. It can be cancelled from ' +
+            'any device the owner still has until then.'
+        : `this recovery has ${current.gathered.length} of the ${current.threshold} ` + `pieces it needs.`
+    );
   }
   const secret = await combinePieces(current.gathered.map((p) => p.bytes));
   return {
@@ -377,17 +370,21 @@ export async function completeRecovery(
       ...current,
       state: 'completed' as const,
       usedCount: current.gathered.length,
-      gathered: Object.freeze([]),
-    }),
+      gathered: Object.freeze([])
+    })
   };
 }
 
 /** What a screen shows: how far along, and what is still missing. */
-export const progress = (session: RecoverySession): {
-  readonly have: number; readonly need: number; readonly state: RecoveryState;
+export const progress = (
+  session: RecoverySession
+): {
+  readonly have: number;
+  readonly need: number;
+  readonly state: RecoveryState;
 } => ({
   /* A finished session has dropped its pieces, so the count is what it used. */
   have: session.gathered.length || session.usedCount,
   need: session.threshold,
-  state: session.state,
+  state: session.state
 });

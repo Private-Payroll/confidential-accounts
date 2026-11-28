@@ -15,7 +15,12 @@ export function CompanyCreated() {
   const shown = companies.find((c) => c.id === company);
   if (shown === undefined) return null;
   return (
-    <Section title={t('page.settingsCompany.name')} description={<span data-company-created>{t('settingsCompany.created', { date: day(shown.createdAt) })}</span>} list={false} box={false}>
+    <Section
+      title={t('page.settingsCompany.name')}
+      description={<span data-company-created>{t('settingsCompany.created', { date: day(shown.createdAt) })}</span>}
+      list={false}
+      box={false}
+    >
       {null}
     </Section>
   );
@@ -32,7 +37,12 @@ export function CompanyCreated() {
 export function SignersBuilt() {
   const t = useText();
   return (
-    <Section title={t('page.settingsSigners.name')} description={<span data-public-facts>{t('settingsSigners.publicFacts')}</span>} list={false} box={false}>
+    <Section
+      title={t('page.settingsSigners.name')}
+      description={<span data-public-facts>{t('settingsSigners.publicFacts')}</span>}
+      list={false}
+      box={false}
+    >
       <Signers />
     </Section>
   );

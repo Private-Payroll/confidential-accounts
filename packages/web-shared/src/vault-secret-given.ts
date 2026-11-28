@@ -1,4 +1,8 @@
-import { admitToNonceSecret, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
+import {
+  admitToNonceSecret,
+  openNonceSecrets,
+  recordsKeypairFrom
+} from '../../../src/midnight/company-nonce-secret.js';
 import type { DeviceRecords, DeviceSigner } from './deposit-on-device.js';
 import { readersIn, seatNotBelievedHere, type DirectoryRead } from './vault-page-doors.js';
 
@@ -24,7 +28,8 @@ export async function giveEachVaultSecretHere(input: {
   readonly directory: DirectoryRead;
   readonly records: DeviceRecords;
 }): Promise<{
-  readonly given: readonly string[]; readonly had: readonly string[];
+  readonly given: readonly string[];
+  readonly had: readonly string[];
   readonly skipped: readonly { readonly seat: string; readonly why: string }[];
 }> {
   const here = await input.directory();
@@ -33,9 +38,18 @@ export async function giveEachVaultSecretHere(input: {
   const skipped: { seat: string; why: string }[] = [];
   for (const seat of new Set(input.seats.map((s) => s.toLowerCase()))) {
     const key = readers.get(seat);
-    if (key !== undefined) { keys.push(key); continue; }
+    if (key !== undefined) {
+      keys.push(key);
+      continue;
+    }
     const entry = here.dir.seats.find((x) => x.seat === seat);
-    skipped.push({ seat, why: entry === undefined ? NO_ENTRY : `their seat is not one this device believes: ${seatNotBelievedHere(here, entry)}` });
+    skipped.push({
+      seat,
+      why:
+        entry === undefined
+          ? NO_ENTRY
+          : `their seat is not one this device believes: ${seatNotBelievedHere(here, entry)}`
+    });
   }
   const store = input.records('nonce-secret');
   const opener = recordsKeypairFrom(input.me.companyKey);
@@ -43,15 +57,28 @@ export async function giveEachVaultSecretHere(input: {
   const had: string[] = [];
   for (const vault of input.vaultIds) {
     const rec = await store.get(vault);
-    if (rec === null) throw new Error(`vault ${vault} has no nonce secret filed, so there is no copy to give. Nothing more was filed.`);
+    if (rec === null)
+      throw new Error(`vault ${vault} has no nonce secret filed, so there is no copy to give. Nothing more was filed.`);
     const holding = openNonceSecrets(rec, vault, opener).readers;
     const lacking = keys.filter((k) => !holding.includes(k));
-    if (lacking.length === 0) { had.push(vault); continue; }
-    await store.put(vault, admitToNonceSecret(rec, vault, opener, lacking.map((publicKey) => ({ publicKey }))));
+    if (lacking.length === 0) {
+      had.push(vault);
+      continue;
+    }
+    await store.put(
+      vault,
+      admitToNonceSecret(
+        rec,
+        vault,
+        opener,
+        lacking.map((publicKey) => ({ publicKey }))
+      )
+    );
     given.push(vault);
   }
   return { given, had, skipped };
 }
 
-const NO_ENTRY = 'they have no entry in the company\'s directory that this device believes yet, so there is no key of theirs to '
-  + 'give a copy to. Their entry is filed from their own device once they are seated';
+const NO_ENTRY =
+  "they have no entry in the company's directory that this device believes yet, so there is no key of theirs to " +
+  'give a copy to. Their entry is filed from their own device once they are seated';

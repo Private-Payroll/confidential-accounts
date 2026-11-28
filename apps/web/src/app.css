@@ -3,7 +3,7 @@
  * named as a source of class names. Its tests are not: a class written only
  * in a test is never drawn, and would otherwise be built and served.
  */
-@import "vaults-ui/styles.css";
+@import 'vaults-ui/styles.css';
 
 @source "./";
 @source not "./**/*.test.*";

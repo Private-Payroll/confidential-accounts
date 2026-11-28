@@ -8,21 +8,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * are both read.
  */
 const kr = vi.hoisted(() => ({
-  who: null as { id: string } | null, resumed: 0, forgot: 0, calls: [] as string[], specs: [] as unknown[], builders: [] as unknown[],
-  started: async (): Promise<{ accountId: string; account: string; label: string }> => ({ accountId: 'acc_new', account: 'ab'.repeat(32), label: 'co_drawn' }),
-  builder: null as Record<string, unknown> | null,
+  who: null as { id: string } | null,
+  resumed: 0,
+  forgot: 0,
+  calls: [] as string[],
+  specs: [] as unknown[],
+  builders: [] as unknown[],
+  started: async (): Promise<{ accountId: string; account: string; label: string }> => ({
+    accountId: 'acc_new',
+    account: 'ab'.repeat(32),
+    label: 'co_drawn'
+  }),
+  builder: null as Record<string, unknown> | null
 }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
   currentUser: () => kr.who,
-  forgetLocally: () => { kr.forgot += 1; kr.who = null; },
-  resumeSession: async () => { kr.resumed += 1; kr.who = { id: 'u1' }; return kr.who; },
+  forgetLocally: () => {
+    kr.forgot += 1;
+    kr.who = null;
+  },
+  resumeSession: async () => {
+    kr.resumed += 1;
+    kr.who = { id: 'u1' };
+    return kr.who;
+  }
 }));
 vi.mock('vaults-web-shared/company-creation.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-creation.js')>()),
   startCompanyHeldFromTheStart: async (spec: unknown, _origin: string, ...rest: unknown[]) => {
-    kr.calls.push('start'); kr.specs.push(spec); kr.builders.push(...rest); return kr.started();
-  },
+    kr.calls.push('start');
+    kr.specs.push(spec);
+    kr.builders.push(...rest);
+    return kr.started();
+  }
 }));
 vi.mock('./vault-builder.js', () => ({ theCreationBuilder: async () => kr.builder }));
 
@@ -38,10 +57,20 @@ async function load(origin = 'http://wallet.localhost:5180') {
 }
 
 beforeEach(() => {
-  Object.assign(kr, { who: null, resumed: 0, forgot: 0, calls: [], specs: [], builders: [], builder: { theBuilder: true } });
+  Object.assign(kr, {
+    who: null,
+    resumed: 0,
+    forgot: 0,
+    calls: [],
+    specs: [],
+    builders: [],
+    builder: { theBuilder: true }
+  });
   kr.started = async () => ({ accountId: 'acc_new', account: 'ab'.repeat(32), label: 'co_drawn' });
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('creating a company on this device', () => {
   /* RED WHEN: the button creates the company on the service's path, not the wallet's, or not with the person as its one signer at one approval, under the name typed. */
@@ -49,7 +78,11 @@ describe('creating a company on this device', () => {
     const { m } = await load();
     kr.who = { id: 'u1' };
     /* RED WHEN: the label the wallet drew is not handed to the screen, so the person is never shown what their wallet named the company. */
-    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'done', companyId: 'acc_new', label: 'co_drawn' });
+    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({
+      of: 'done',
+      companyId: 'acc_new',
+      label: 'co_drawn'
+    });
     /* RED WHEN: the first press goes on to sign, send or finish the company, which is the second step's alone. */
     expect(kr.calls).toEqual(['start']);
     expect(kr.specs).toEqual([{ name: 'Acme', signers: [{ name: 'Priya', role: 'admin' }], threshold: 1 }]);
@@ -62,9 +95,20 @@ describe('creating a company on this device', () => {
     const { m } = await load();
     kr.who = { id: 'u1' };
     let n = 0;
-    kr.started = async () => { n += 1; return { accountId: `acc_${n}`, account: 'ab'.repeat(32), label: `co_${n}` }; };
-    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'done', companyId: 'acc_1', label: 'co_1' });
-    expect(await m.createCompany('u1', { name: 'Other', firstSigner: 'Priya' })).toEqual({ of: 'done', companyId: 'acc_2', label: 'co_2' });
+    kr.started = async () => {
+      n += 1;
+      return { accountId: `acc_${n}`, account: 'ab'.repeat(32), label: `co_${n}` };
+    };
+    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({
+      of: 'done',
+      companyId: 'acc_1',
+      label: 'co_1'
+    });
+    expect(await m.createCompany('u1', { name: 'Other', firstSigner: 'Priya' })).toEqual({
+      of: 'done',
+      companyId: 'acc_2',
+      label: 'co_2'
+    });
     expect(kr.calls).toEqual(['start', 'start']);
   });
 
@@ -75,12 +119,15 @@ describe('creating a company on this device', () => {
     expect((await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).of).toBe('done');
     expect([kr.forgot, kr.resumed]).toEqual([1, 1]);
     kr.who = { id: 'u9' };
-    expect(await m.createCompany('u2', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'refused', why: 'not-signed-in' });
+    expect(await m.createCompany('u2', { name: 'Acme', firstSigner: 'Priya' })).toEqual({
+      of: 'refused',
+      why: 'not-signed-in'
+    });
     expect(kr.calls).toEqual(['start']);
   });
 
   /* RED WHEN: a refusal is handed on in the keyring's words, or two different refusals are said as one. */
-  it('hands back a reason by the refusal\'s kind, never its words', async () => {
+  it("hands back a reason by the refusal's kind, never its words", async () => {
     const { m, keyring, creation, transport, wallet } = await load();
     kr.who = { id: 'u1' };
     const cases: [unknown, string][] = [
@@ -91,18 +138,23 @@ describe('creating a company on this device', () => {
       [new transport.AuthError('x'), 'not-signed-in'],
       [new wallet.WalletClosed({ of: 'declined' }, 'x'), 'declined'],
       [new TypeError('x'), 'unreachable'],
-      [new Error('the service said something'), 'did-not-finish'],
+      [new Error('the service said something'), 'did-not-finish']
     ];
     for (const [e, why] of cases) {
-      kr.started = async () => { throw e; };
+      kr.started = async () => {
+        throw e;
+      };
       expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' }), why).toEqual({ of: 'refused', why });
     }
   });
 
   /* RED WHEN: a page that does not know where the wallet is starts anything, or the page's worker is asked for anything. */
-  it('refuses, starting nothing, when the page does not know where the wallet is, and never needs the page\'s worker', async () => {
+  it("refuses, starting nothing, when the page does not know where the wallet is, and never needs the page's worker", async () => {
     let { m } = await load('');
-    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({ of: 'refused', why: 'not-set-up' });
+    expect(await m.createCompany('u1', { name: 'Acme', firstSigner: 'Priya' })).toEqual({
+      of: 'refused',
+      why: 'not-set-up'
+    });
     expect(kr.resumed).toBe(0);
     expect(kr.calls).toEqual([]);
     ({ m } = await load());

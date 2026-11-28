@@ -29,15 +29,25 @@ export function languagesFrom(files: Readonly<Record<string, unknown>>): Languag
     const name = /([^/\\]+)\.json$/.exec(path)?.[1];
     if (name === undefined) throw new Error(`${path} is not a language file: a language file is <tag>.json`);
     let tag: string;
-    try { tag = Intl.getCanonicalLocales(name)[0] ?? ''; } catch { tag = ''; }
-    if (tag !== name) throw new Error(`${path} is not named by a language tag${tag ? `; the tag is written ${tag}` : ''}`);
-    if (content === null || typeof content !== 'object' || Array.isArray(content)
-      || !Object.values(content).every((v) => typeof v === 'string')) {
+    try {
+      tag = Intl.getCanonicalLocales(name)[0] ?? '';
+    } catch {
+      tag = '';
+    }
+    if (tag !== name)
+      throw new Error(`${path} is not named by a language tag${tag ? `; the tag is written ${tag}` : ''}`);
+    if (
+      content === null ||
+      typeof content !== 'object' ||
+      Array.isArray(content) ||
+      !Object.values(content).every((v) => typeof v === 'string')
+    ) {
       throw new Error(`${path} is not one object of phrases, each a string under its key`);
     }
     out.push({ tag, messages: content as Messages });
   }
-  if (!out.some((l) => l.tag === FALLBACK)) throw new Error(`there is no ${FALLBACK}.json; every phrase falls back to English`);
+  if (!out.some((l) => l.tag === FALLBACK))
+    throw new Error(`there is no ${FALLBACK}.json; every phrase falls back to English`);
   return out.sort((a, b) => (a.tag === FALLBACK ? -1 : b.tag === FALLBACK ? 1 : a.tag.localeCompare(b.tag)));
 }
 
@@ -46,7 +56,8 @@ const RTL_SCRIPTS = new Set(['Arab', 'Hebr', 'Syrc', 'Thaa', 'Nkoo', 'Adlm', 'Ro
 /** Which way a language is written. Read from the browser when it knows, else from the language's script. */
 export function directionOf(tag: string): 'ltr' | 'rtl' {
   const locale = new Intl.Locale(tag) as Intl.Locale & {
-    getTextInfo?: () => { direction?: string }; textInfo?: { direction?: string };
+    getTextInfo?: () => { direction?: string };
+    textInfo?: { direction?: string };
   };
   const info = typeof locale.getTextInfo === 'function' ? locale.getTextInfo() : locale.textInfo;
   if (info?.direction === 'rtl' || info?.direction === 'ltr') return info.direction;
@@ -58,7 +69,11 @@ export function directionOf(tag: string): 'ltr' | 'rtl' {
  * first of the browser's languages a file exists for, exactly or by its base
  * language (`pt-BR` finds `pt`); else English.
  */
-export function chooseLanguage(offered: readonly Language[], pick: string | null | undefined, browser: readonly string[]): string {
+export function chooseLanguage(
+  offered: readonly Language[],
+  pick: string | null | undefined,
+  browser: readonly string[]
+): string {
   const tags = offered.map((l) => l.tag);
   if (pick && tags.includes(pick)) return pick;
   for (const b of browser) {

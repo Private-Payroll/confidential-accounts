@@ -43,7 +43,9 @@ export type CompanyCheck =
  * no label there is nothing to check and nothing is read.
  */
 export function useCompanyCheck(
-  label: CompanyLabel | null, account: AccountAddress | null, read: LabelReader,
+  label: CompanyLabel | null,
+  account: AccountAddress | null,
+  read: LabelReader
 ): CompanyCheck {
   /* Each answer is kept with the label and account it was read for, so an
    * answer for one request is never shown against the next. */
@@ -52,10 +54,16 @@ export function useCompanyCheck(
     if (label === null || account === null) return undefined;
     let alive = true;
     read(account).then(
-      (found) => { if (alive) setRead({ label, account, check: found }); },
-      () => { if (alive) setRead({ label, account, check: { of: 'unreadable', why: 'the read did not come back.' } }); },
+      (found) => {
+        if (alive) setRead({ label, account, check: found });
+      },
+      () => {
+        if (alive) setRead({ label, account, check: { of: 'unreadable', why: 'the read did not come back.' } });
+      }
     );
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [label, account, read]);
   if (label === null || account === null) return { of: 'no-account-yet' };
   return read_ !== null && read_.label === label && read_.account === account ? read_.check : { of: 'checking' };
@@ -82,11 +90,20 @@ export function CompanyOnChain(props: {
   readonly compareWith: string;
 }): ReactNode {
   /* Announced as it changes, so a person who cannot see the screen hears why the button is held or let go. */
-  return <div aria-live="polite" data-company-section><CompanySection {...props} /></div>;
+  return (
+    <div aria-live="polite" data-company-section>
+      <CompanySection {...props} />
+    </div>
+  );
 }
 
 function CompanySection({
-  label, account, check, fingerprintClass = 'text-xl', doing = 'given', compareWith,
+  label,
+  account,
+  check,
+  fingerprintClass = 'text-xl',
+  doing = 'given',
+  compareWith
 }: {
   readonly label: CompanyLabel;
   readonly account: AccountAddress | null;
@@ -101,8 +118,12 @@ function CompanySection({
         <p className="m-0 text-foreground" data-no-account-yet>
           {`This company has no account on the chain yet, so this wallet has nothing to check it against and no fingerprint to compare. Nothing can be ${doing}. Ask the company to finish setting up, then try again.`}
         </p>
-        <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>The company&rsquo;s label, in full</p>
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-label>{label}</p>
+        <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
+          The company&rsquo;s label, in full
+        </p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-label>
+          {label}
+        </p>
       </div>
     );
   }
@@ -125,31 +146,45 @@ function CompanySection({
         <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
           {`This wallet read the account from ${INDEXER_HOST} and it carries this company's label.`}
         </p>
-        <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>The account, in full</p>
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-account>{account}</p>
+        <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.5rem' }}>
+          The account, in full
+        </p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-account>
+          {account}
+        </p>
         <BuildStamp address={account} contract="account" />
         <p className="m-0 text-sm text-muted-foreground">The company&rsquo;s label, in full</p>
-        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-label>{label}</p>
+        <p className="m-0 font-mono break-all text-sm text-muted-foreground" data-company-label>
+          {label}
+        </p>
       </div>
     );
   }
   const nothing = `Nothing can be ${doing}.`;
-  const says = check.of === 'carries'
-    ? `The account the page named belongs to a different company from the one it asks about. That is what it would look like if somebody were trying to pass one company off as another. ${nothing} Do not continue, and tell the company by a way of reaching them that is not this page.`
-    : check.of === 'no-account'
-      ? `There is no account on the chain at the address the page gave. ${nothing} If the company was set up in the last few minutes, refuse this and try again shortly; otherwise tell the company.`
-      : check.of === 'no-label'
-        ? `The contract at the address the page gave is not a company account: it carries no company label. ${nothing} Tell whoever sent you to this page.`
-        /* A fixed sentence, never `check.why`: the read's own words come from the network, and a person must not be
-         * shown text the indexer or a page could choose in the place where the fingerprint goes. */
-        : `This wallet could not read the company's account from the network, so it cannot show you the fingerprint. ${nothing} Nothing has been kept. Refuse this and try again in a minute.`;
+  const says =
+    check.of === 'carries'
+      ? `The account the page named belongs to a different company from the one it asks about. That is what it would look like if somebody were trying to pass one company off as another. ${nothing} Do not continue, and tell the company by a way of reaching them that is not this page.`
+      : check.of === 'no-account'
+        ? `There is no account on the chain at the address the page gave. ${nothing} If the company was set up in the last few minutes, refuse this and try again shortly; otherwise tell the company.`
+        : check.of === 'no-label'
+          ? `The contract at the address the page gave is not a company account: it carries no company label. ${nothing} Tell whoever sent you to this page.`
+          : /* A fixed sentence, never `check.why`: the read's own words come from the network, and a person must not be
+             * shown text the indexer or a page could choose in the place where the fingerprint goes. */
+            `This wallet could not read the company's account from the network, so it cannot show you the fingerprint. ${nothing} Nothing has been kept. Refuse this and try again in a minute.`;
   return (
     <StatusAlert
       tone="danger"
-      title={check.of === 'carries' ? 'This is not the company the page names'
-        : check.of === 'no-account' ? 'This company\'s account could not be found' : 'This company could not be checked'}
+      title={
+        check.of === 'carries'
+          ? 'This is not the company the page names'
+          : check.of === 'no-account'
+            ? "This company's account could not be found"
+            : 'This company could not be checked'
+      }
     >
-      <p className="m-0" data-company-check={check.of === 'carries' ? 'another-company' : check.of}>{says}</p>
+      <p className="m-0" data-company-check={check.of === 'carries' ? 'another-company' : check.of}>
+        {says}
+      </p>
     </StatusAlert>
   );
 }

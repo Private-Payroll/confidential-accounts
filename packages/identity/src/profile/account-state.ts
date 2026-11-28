@@ -49,16 +49,18 @@ export const as32 = (value: unknown): Uint8Array | null => {
 export function seatsInAccountState(serialized: Uint8Array): AccountSeats {
   const state = ContractState.deserialize(serialized);
   const fields = state.data.state.asArray();
-  const leaves = fields === undefined || fields.length <= SIGNER_LEAVES_FIELD ? undefined : fields[SIGNER_LEAVES_FIELD]!.asMap();
-  if (leaves === undefined) throw new Error('that contract\'s state is not laid out as a company\'s account.');
+  const leaves =
+    fields === undefined || fields.length <= SIGNER_LEAVES_FIELD ? undefined : fields[SIGNER_LEAVES_FIELD]!.asMap();
+  if (leaves === undefined) throw new Error("that contract's state is not laid out as a company's account.");
   const seats: string[] = [];
   for (const key of leaves.keys()) {
     const leaf = as32(key.value[0]);
-    if (leaf === null) throw new Error('that contract\'s state is not laid out as a company\'s account.');
+    if (leaf === null) throw new Error("that contract's state is not laid out as a company's account.");
     seats.push(Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join(''));
   }
   const authority = authorityIn(state);
-  if ('why' in authority) throw new Error('that contract\'s state is not laid out as a company\'s account: ' + authority.why);
+  if ('why' in authority)
+    throw new Error("that contract's state is not laid out as a company's account: " + authority.why);
   return Object.freeze({ committee: authority.committee, threshold: authority.threshold, seats: Object.freeze(seats) });
 }
 
@@ -69,15 +71,22 @@ export function seatsInAccountState(serialized: Uint8Array): AccountSeats {
  * dropped) and every vault in its set of adopted vaults. Throws when the bytes
  * are not a contract's state laid out as a company's account is.
  */
-export function holdersInAccountState(serialized: Uint8Array, policyBarKey: string): Omit<AccountHolders, 'founding' | 'foundingCommittee'> {
+export function holdersInAccountState(
+  serialized: Uint8Array,
+  policyBarKey: string
+): Omit<AccountHolders, 'founding' | 'foundingCommittee'> {
   const seats = seatsInAccountState(serialized);
   const governance = governanceInAccountState(serialized, policyBarKey);
   const fields = ContractState.deserialize(serialized).data.state.asArray();
   if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(NOT_AN_ACCOUNT);
-  return Object.freeze({ ...seats, ...governance, adoptedVaults: Object.freeze(vaultsInField(fields, ADOPTED_VAULTS_FIELD)) });
+  return Object.freeze({
+    ...seats,
+    ...governance,
+    adoptedVaults: Object.freeze(vaultsInField(fields, ADOPTED_VAULTS_FIELD))
+  });
 }
 
-const NOT_AN_ACCOUNT = 'that contract\'s state is not laid out as a company\'s account.';
+const NOT_AN_ACCOUNT = "that contract's state is not laid out as a company's account.";
 
 /** A number the state holds as one cell of little-endian bytes with trailing zeros dropped; throws for anything else. */
 function uint64In(value: { asCell(): unknown } | undefined): number {
@@ -103,13 +112,17 @@ function uint64In(value: { asCell(): unknown } | undefined): number {
  */
 export function governanceInAccountState(serialized: Uint8Array, policyBarKey: string): AccountGovernance {
   const barKey = String(policyBarKey).toLowerCase();
-  if (!/^[0-9a-f]{64}$/u.test(barKey)) throw new Error('the key the approvals a policy change needs are kept under was not given, so the account\'s approvals were not read.');
+  if (!/^[0-9a-f]{64}$/u.test(barKey))
+    throw new Error(
+      "the key the approvals a policy change needs are kept under was not given, so the account's approvals were not read."
+    );
   const fields = ContractState.deserialize(serialized).data.state.asArray();
   if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error(NOT_AN_ACCOUNT);
   const approvals = uint64In(fields[ACCOUNT_THRESHOLD_FIELD]);
   if (approvals < 1) throw new Error(NOT_AN_ACCOUNT);
   const map = fields[THRESHOLDS_FIELD]?.asMap() as
-    { keys(): Iterable<{ value: unknown[] }>; get(key: { value: unknown[] }): { asCell(): unknown } | undefined } | undefined;
+    | { keys(): Iterable<{ value: unknown[] }>; get(key: { value: unknown[] }): { asCell(): unknown } | undefined }
+    | undefined;
   if (map === undefined) throw new Error(NOT_AN_ACCOUNT);
   let policyBar: number | null = null;
   const vaultThresholds: { vault: string; threshold: number }[] = [];
@@ -121,12 +134,17 @@ export function governanceInAccountState(serialized: Uint8Array, policyBarKey: s
     if (row === barKey) policyBar = threshold;
     else vaultThresholds.push(Object.freeze({ vault: row, threshold }));
   }
-  return Object.freeze({ approvals, vaultThresholds: Object.freeze(vaultThresholds), policyBar, seatBar: seatBarOf(approvals, policyBar) });
+  return Object.freeze({
+    approvals,
+    vaultThresholds: Object.freeze(vaultThresholds),
+    policyBar,
+    seatBar: seatBarOf(approvals, policyBar)
+  });
 }
 
 /** Every vault address a set or map field of the account's state lists, in the order the state holds them. */
 function vaultsInField(fields: readonly { asMap(): unknown }[], index: number): string[] {
-  const notAnAccount = 'that contract\'s state is not laid out as a company\'s account.';
+  const notAnAccount = "that contract's state is not laid out as a company's account.";
   const map = fields[index]?.asMap() as { keys(): Iterable<{ value: unknown[] }> } | undefined;
   if (map === undefined) throw new Error(notAnAccount);
   const vaults: string[] = [];
@@ -146,6 +164,9 @@ function vaultsInField(fields: readonly { asMap(): unknown }[], index: number): 
  */
 export function vaultsInAccountState(serialized: Uint8Array): readonly string[] {
   const fields = ContractState.deserialize(serialized).data.state.asArray();
-  if (fields === undefined || fields.length <= ROLES_FIELD) throw new Error('that contract\'s state is not laid out as a company\'s account.');
-  return Object.freeze([...new Set([...vaultsInField(fields, ADOPTED_VAULTS_FIELD), ...vaultsInField(fields, RETIRED_VAULTS_FIELD)])]);
+  if (fields === undefined || fields.length <= ROLES_FIELD)
+    throw new Error("that contract's state is not laid out as a company's account.");
+  return Object.freeze([
+    ...new Set([...vaultsInField(fields, ADOPTED_VAULTS_FIELD), ...vaultsInField(fields, RETIRED_VAULTS_FIELD)])
+  ]);
 }

@@ -438,7 +438,7 @@ CURRENTLY seated, not ever-seated: `removeSigner` takes the departing leaf
 back out. That is what lets this set stand in for a count: it rises with a
 seating and falls with an unseating.
 
-AND IT DOES NOT HOLD *EXACTLY* WHAT THE TREE HOLDS. The tree also holds `vacantSlot()` markers, which
+AND IT DOES NOT HOLD _EXACTLY_ WHAT THE TREE HOLDS. The tree also holds `vacantSlot()` markers, which
 this set never holds, so the two agree about real signers and about nothing
 else. The residue is named rather than papered over: `amendSigner`'s removal
 branch proves TREE membership and then removes from this SET without
@@ -515,7 +515,7 @@ WHAT THE VALUE IS, AND IT IS NOT A DATE.
 `Uint<64>` was chosen so that a retirement TIME can be stored one day. It
 cannot be stored today: THERE IS NO WAY TO READ THE BLOCK TIME IN A CIRCUIT.
 Compact exposes `blockTimeLt`, `blockTimeGte`, `blockTimeGt` and
-`blockTimeLte` and nothing that answers *what time is it*
+`blockTimeLte` and nothing that answers _what time is it_
 (there is no `kernel.blockTime()`: a read would bind the proof to an exact timestamp).
 The alternative — taking a time as an ARGUMENT — is the caller's word for it,
 and `retireVault`'s caller is the VAULT, so it would be a number nobody
@@ -531,15 +531,15 @@ SO THE FIELD IS PRESENCE-AS-FACT AND THE VALUE IS A MARKER. The type is
 `Uint<64>` and not a `Set` because the TYPE is the half that can never be
 changed and a real time can be written into it by a later circuit, which can.
 
-AND IT ANSWERS *EVER RETIRED*, NOT *IS RETIRED*. NOTHING REMOVES FROM THIS
+AND IT ANSWERS _EVER RETIRED_, NOT _IS RETIRED_. NOTHING REMOVES FROM THIS
 MAP, and `adopt` refuses only current membership of `vaults` — so a vault
 that is retired and then adopted again sits in `vaults` AND in here at the
 same time, with nothing distinguishing the two states. `Vault.retire` writes
 no vault state at all, so a retired vault is not disabled either: it can be
 funded and it can still pay. **A recovering party reading this map as a
 STATUS would skip a live vault, and a recovering party is exactly who this
-field is for.** `vaults` still holds the truth. It is a known shape — *a map
-that only grows, keyed by a thing that can be destroyed* — and it is written
+field is for.** `vaults` still holds the truth. It is a known shape — _a map
+that only grows, keyed by a thing that can be destroyed_ — and it is written
 down here rather than fixed here: clearing the row in `adopt` is a second
 decision, and a circuit is the half that can still be added after the
 deploy.
@@ -611,7 +611,7 @@ standing warning is the same: a sentence that reads as a guarantee when what
 holds it is an absence.
 
 SO "NO SETTER" IS A FACT ABOUT TODAY AND NOT A PROMISE ABOUT TOMORROW.
-*Field NO, setter YES* — a setter is ADDABLE AFTER DEPLOY by whoever holds
+_Field NO, setter YES_ — a setter is ADDABLE AFTER DEPLOY by whoever holds
 the maintenance authority, because circuits are replaceable and this field
 is not. Anyone reasoning about who can redirect a company's successor is
 reasoning about the maintenance authority, not about this declaration.
@@ -637,7 +637,7 @@ ITS TENANTS:
   `policyKeyOf(vault, assetKey)`, and the marker that a vault is under a
   policy, under `policyOnKeyOf(vault)`, both written by `setPolicy`;
 - each period's RUNNING TOTAL, a commitment under `periodKeyOf(policyKey,
-  commitment, period)`, and the record that a run's tree was charged, under
+commitment, period)`, and the record that a run's tree was charged, under
   `chargedKeyOf(periodKey, root)`, both written by `clearRun`;
 - and, reserved, a later anchor entry under `anchorKey()`.
 
@@ -1567,8 +1567,8 @@ Behaviour is identical. This is the same rule, not a weaker one.
 The old `approvalCount`, and `signerCount` until it was deleted, were
 `Counter`s — an ADT with methods. A count read out of a `Map<Bytes<32>,
 Uint<64>>` is a plain number and has none, and the compiler says so in as
-many words: *expected left-hand side of . to have an ADT or contract type,
-received Uint<64>*. Both spellings mean the same thing; only one of them
+many words: _expected left-hand side of . to have an ADT or contract type,
+received Uint<64>_. Both spellings mean the same thing; only one of them
 exists here. `Set.size()` answers a plain `Uint<64>` too, which is why the
 three threshold comparisons now read the same way this one does.
 
@@ -1679,8 +1679,8 @@ parameter's original purpose, and the same shape as the guard two circuits
 below: make the bad value UNREPRESENTABLE rather than REFUSED.
 
 AND THIS LINE SHUTS THE BOOTSTRAP WINDOW FOR EVER, WHICH IS THE LARGEST
-THING THE DELETION DOES. It was accepted in these terms: *adding
-your first colleague becomes three steps instead of one, permanently.*
+THING THE DELETION DOES. It was accepted in these terms: _adding
+your first colleague becomes three steps instead of one, permanently._
 
 WHAT SHUTS IT IS NOT AN ASSERT. THERE IS NO LINE TO DELETE AND NO GUARD TO
 WEAKEN — the state that opens the window is one NO WRITER CAN PRODUCE, and
@@ -1780,7 +1780,7 @@ people agreed", and one stolen key was enough to manufacture that.
 The rationale for the old behaviour was real but did not carry the weight put
 on it: adding a signer grants no reading power, because the viewing key is
 re-wrapped off chain and the chain never holds it. True — and irrelevant to
-this attack, which is about *approving*, not reading.
+this attack, which is about _approving_, not reading.
 
 So there are two paths, and the account's own size decides which:
 
@@ -1955,10 +1955,10 @@ THE LANGUAGE DOES, AND NO COMMENT ENFORCES ANYTHING. It is held by two
 tests and two mutations and by nothing else.
 
 AND THE TWO TESTS ARE NOT THE PAIR A READER WOULD GUESS. In
-`signer-governance.test.ts`, *"bootstrap is bounded"* goes red only when
-the GATE is weakened, and *"refuses to strand the account below its own
-threshold"* only when THIS assert is — those two DISCRIMINATE. *"AND
-THEREFORE a removal can never reopen the bootstrap window"* is the test
+`signer-governance.test.ts`, _"bootstrap is bounded"_ goes red only when
+the GATE is weakened, and _"refuses to strand the account below its own
+threshold"_ only when THIS assert is — those two DISCRIMINATE. _"AND
+THEREFORE a removal can never reopen the bootstrap window"_ is the test
 that states the property in words, and it goes red for EITHER half: it
 proves the complement holds and says nothing about which half broke.
 
@@ -2026,7 +2026,7 @@ those two quantities are the two branches of this circuit and
 
 WHAT IS ENFORCED HERE, NAMED RATHER THAN ASSUMED: NOTHING. This line
 enforces nothing any more, because the state it discriminates on is
-unreachable. The property *no seat is taken without an approved proposal*
+unreachable. The property _no seat is taken without an approved proposal_
 is held by the CONSTRUCTOR'S `threshold = 1` and by the two floor asserts,
 and it would be broken by changing any of those and not by touching this.
 
@@ -2286,8 +2286,8 @@ worse than that.
 SO WHY IT IS HERE AT ALL, AND THE ANSWER IS ABOUT WHAT ENFORCES THE
 INVARIANT RATHER THAN ABOUT SEVERITY. THREE TypeScript sites refuse this
 sequence and two of them say IN THEIR OWN WORDS that the contract does not
-— `src/midnight/ledger.ts` (*"the contract's run branch takes the
-vault OPAQUE — it asserts nothing about it"*),
+— `src/midnight/ledger.ts` (_"the contract's run branch takes the
+vault OPAQUE — it asserts nothing about it"_),
 `src/core/ledger.ts` and `src/core/account.ts`. A
 client habit is not an enforcer, and one comparison is a cheap price for
 turning a stated invariant into a checked one. AND THIS IS THE LAST EDIT
@@ -2409,8 +2409,8 @@ comparison on a circuit that is already the largest in this contract, and
 it forecloses raising a VAULT-SCOPED proposal through the opaque branch.
 
 AND SOMETHING DOES WANT THAT SHAPE. `Accounts.propose` carries an
-optional `vault`, documented as *"WHICH VAULT'S MONEY THIS ROUND REACHES
-INTO"*, and the boundary threads it into this branch verbatim.
+optional `vault`, documented as _"WHICH VAULT'S MONEY THIS ROUND REACHES
+INTO"_, and the boundary threads it into this branch verbatim.
 `src/core/a-vault-s-own-threshold.test.ts` exercises it with two real
 vaults.
 
@@ -2756,7 +2756,7 @@ THE MONEY IS NOT STOLEN — IT STAYS IN THE VAULT. What is destroyed is the
 run, and those people must be paid from a fresh one.
 
 THIS IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
-REMEMBERED: it is an accepted risk — *accept and detect*. IT
+REMEMBERED: it is an accepted risk — _accept and detect_. IT
 CANNOT BE REMOVED FROM HERE. This circuit's whole authorisation is knowledge
 of its arguments because its only caller is a contract, and a contract on
 Midnight cannot see who called it and cannot read another contract's state.
@@ -2846,7 +2846,7 @@ The nonce is derived from the person, the month, the kind of pay and the
 occurrence, so this value is the same for every payment to one person for one
 month and kind. It is refused if the account holds it and recorded if not. It
 comes AFTER the leaf's check on purpose: an identical payment tried again is
-still refused as *that payment has already been made*, which is the sentence
+still refused as _that payment has already been made_, which is the sentence
 the retry paths rely on. A real second payment is raised as a later
 occurrence - a numbered extra - and passes. See `movements`.
 
@@ -2913,7 +2913,7 @@ From one read of the account's state and the key, for each person on a run:
 which occurrences of their kind of pay for their month the chain records as
 paid (`alreadyPaidOf`, `src/midnight/ledger.ts`). The chain cannot tell a paid
 run from one whose payment was recorded without being made, so its words never
-claim more than *recorded on chain as paid*. No screen shows it yet.
+claim more than _recorded on chain as paid_. No screen shows it yet.
 
 ## Vaults
 

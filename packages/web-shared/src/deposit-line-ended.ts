@@ -11,7 +11,9 @@ import type { KeptOnThisDevice } from './in-flight-on-this-device.js';
 import type { PoolDoors } from './vault-doors.js';
 
 /** What ending a line needs: the vault's records, this device's seat, the signers, and its deposits kept on their way. */
-type DepositDoors = Pick<PoolDoors, 'records' | 'me' | 'signers'> & { readonly inFlight: Pick<KeptOnThisDevice<unknown>, 'forget'> };
+type DepositDoors = Pick<PoolDoors, 'records' | 'me' | 'signers'> & {
+  readonly inFlight: Pick<KeptOnThisDevice<unknown>, 'forget'>;
+};
 
 /**
  * **THE DEPOSIT WAS NOT SENT, AND ITS JOURNAL LINE COULD NOT BE MARKED AS NEVER SENT.** Says what stopped the deposit
@@ -19,17 +21,25 @@ type DepositDoors = Pick<PoolDoors, 'records' | 'me' | 'signers'> & { readonly i
  * deposit is on its way although it can never arrive.
  */
 export class DepositLineNotEnded extends Error {
-  constructor(readonly stopped: Error, why: string) {
-    super(`${stopped.message.replace(/\s*$/u, '')} This deposit's line in the vault's deposit journal could not be marked as `
-      + `never sent (${why}), so until its window passes a check of this vault may say it is still on its way. It was not `
-      + 'sent and cannot arrive.', { cause: stopped });
+  constructor(
+    readonly stopped: Error,
+    why: string
+  ) {
+    super(
+      `${stopped.message.replace(/\s*$/u, '')} This deposit's line in the vault's deposit journal could not be marked as ` +
+        `never sent (${why}), so until its window passes a check of this vault may say it is still on its way. It was not ` +
+        'sent and cannot arrive.',
+      { cause: stopped }
+    );
     this.name = 'DepositLineNotEnded';
   }
 }
 
 /** Forgotten as in flight. A failure to forget is not a failure of the deposit: the next look finds it settled again. */
 export const letGo = async (doors: DepositDoors, vault: Hex, claim: string): Promise<void> => {
-  await doors.inFlight.forget(vault, claim).catch(() => { /* the next look settles it again, and finds nothing to do */ });
+  await doors.inFlight.forget(vault, claim).catch(() => {
+    /* the next look settles it again, and finds nothing to do */
+  });
 };
 
 /**
@@ -38,11 +48,22 @@ export const letGo = async (doors: DepositDoors, vault: Hex, claim: string): Pro
  * where this device never handed the transaction to anything that could send it. Returns the error to throw: `stopped`
  * itself, or, when the line could not be marked, `DepositLineNotEnded` saying so.
  */
-export const neverHandedOver = async (doors: DepositDoors, vault: Hex, nonce: string, stopped: Error, claim?: string): Promise<Error> => {
+export const neverHandedOver = async (
+  doors: DepositDoors,
+  vault: Hex,
+  nonce: string,
+  stopped: Error,
+  claim?: string
+): Promise<Error> => {
   if (claim !== undefined) await letGo(doors, vault, claim);
   try {
-    await endDepositNeverHandedOver(doors.records('deposit-journal'), vault,
-      { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret }, doors.signers, nonce);
+    await endDepositNeverHandedOver(
+      doors.records('deposit-journal'),
+      vault,
+      { id: doors.me.signerId, wrappingSecret: doors.me.wrappingSecret },
+      doors.signers,
+      nonce
+    );
     return stopped;
   } catch (e) {
     return new DepositLineNotEnded(stopped, e instanceof Error ? e.message : String(e));
@@ -55,7 +76,11 @@ export const neverHandedOver = async (doors: DepositDoors, vault: Hex, nonce: st
  * leaves a deposit said to be on its way.
  */
 export const endedIfItThrows = async <T>(
-  doors: DepositDoors, vault: Hex, nonce: string, step: () => Promise<T>, claim?: string,
+  doors: DepositDoors,
+  vault: Hex,
+  nonce: string,
+  step: () => Promise<T>,
+  claim?: string
 ): Promise<T> => {
   try {
     return await step();

@@ -24,23 +24,20 @@ import { GLYPH, Glyph } from '../glyphs.js';
  */
 export function UnsecuredNotice(): ReactNode {
   return (
-    <StatusAlert
-      tone="warning"
-      role={null}
-      title="If you lose this device, the money in this wallet is gone."
-    >
+    <StatusAlert tone="warning" role={null} title="If you lose this device, the money in this wallet is gone.">
       <p className="m-0">
-        Your account exists only in this browser. Cut it into pieces and place them —
-        your own cloud account, paper, people you trust — and a lost or broken machine
-        becomes an errand instead of a loss.
+        Your account exists only in this browser. Cut it into pieces and place them — your own cloud account, paper,
+        people you trust — and a lost or broken machine becomes an errand instead of a loss.
       </p>
       <p className="mt-2 mb-0">
-        One set of pieces covers every subwallet — securing once secures all of them,
-        including subwallets you first use years from now.
+        One set of pieces covers every subwallet — securing once secures all of them, including subwallets you first use
+        years from now.
       </p>
       <p className="mt-3 mb-0">
         {/* The alert underlines the links in its words; this one is a button. */}
-        <Button asChild variant="default" className="no-underline!"><a href={hrefOf('secure')}>Secure your account</a></Button>
+        <Button asChild variant="default" className="no-underline!">
+          <a href={hrefOf('secure')}>Secure your account</a>
+        </Button>
       </p>
     </StatusAlert>
   );
@@ -58,14 +55,15 @@ export function RecoveredUnknownCard(): ReactNode {
   return (
     <Card aria-label="Where this account's pieces are is not known here">
       <CardHeader>
-        <CardTitle role="heading" aria-level={3}>This account was just put back from its pieces.</CardTitle>
+        <CardTitle role="heading" aria-level={3}>
+          This account was just put back from its pieces.
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <p className="m-0 text-sm text-muted-foreground">
-          The pieces you used exist — you fetched them yourself. This browser could not
-          write its own note of where they are, so it does not know, and this screen
-          cannot tell you whether the account is secured. It does not follow that
-          anything is wrong.
+          The pieces you used exist — you fetched them yourself. This browser could not write its own note of where they
+          are, so it does not know, and this screen cannot tell you whether the account is secured. It does not follow
+          that anything is wrong.
         </p>
         <p className="m-0 mt-3 text-xs text-muted-foreground">
           Cutting a new set from{' '}
@@ -89,13 +87,14 @@ export function PairedUnknownCard({ at }: { readonly at: number }): ReactNode {
   return (
     <Card aria-label="Where this account's pieces are is not known here">
       <CardHeader>
-        <CardTitle role="heading" aria-level={3}>This wallet arrived from another device on {day(at)}.</CardTitle>
+        <CardTitle role="heading" aria-level={3}>
+          This wallet arrived from another device on {day(at)}.
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <p className="m-0 text-sm text-muted-foreground">
-          Whether it is secured — where its pieces are, if it has any — is recorded on
-          the machine it came from, not here. This browser cannot tell, and does not
-          guess.
+          Whether it is secured — where its pieces are, if it has any — is recorded on the machine it came from, not
+          here. This browser cannot tell, and does not guess.
         </p>
         <p className="m-0 mt-3 text-xs text-muted-foreground">
           You can check on the other machine, or cut a set from{' '}
@@ -130,17 +129,20 @@ export function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactN
     <Card aria-label="This account is secured">
       <CardHeader>
         <CardTitle role="heading" aria-level={3} className="flex items-center gap-2">
-          <span className="ok" aria-hidden="true">✓</span> Account secured
+          <span className="ok" aria-hidden="true">
+            ✓
+          </span>{' '}
+          Account secured
         </CardTitle>
         <CardDescription>
           {setup.partial
-            ? `On ${day(setup.rebuiltAt)} this account was put back from ${setup.pieces.length} `
-              + 'pieces fetched from where they were placed — the strongest check there is. '
-              + 'These are the pieces you used; there may be others this browser does not '
-              + 'know about.'
-            : `On ${day(setup.rebuiltAt)} this account was cut into ${setup.pieces.length} pieces `
-              + `and proved rebuildable from any ${setup.threshold}. One piece was read back from `
-              + 'its card; you said the rest are placed.'}
+            ? `On ${day(setup.rebuiltAt)} this account was put back from ${setup.pieces.length} ` +
+              'pieces fetched from where they were placed — the strongest check there is. ' +
+              'These are the pieces you used; there may be others this browser does not ' +
+              'know about.'
+            : `On ${day(setup.rebuiltAt)} this account was cut into ${setup.pieces.length} pieces ` +
+              `and proved rebuildable from any ${setup.threshold}. One piece was read back from ` +
+              'its card; you said the rest are placed.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -148,8 +150,7 @@ export function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactN
           {setup.pieces.map((piece) => (
             <div className="piece-row" key={`${piece.holder}:${piece.label}`}>
               <span className="who">{piece.label}</span>
-              {piece.holder !== piece.label
-                && <span className="faint small">{piece.holder}</span>}
+              {piece.holder !== piece.label && <span className="faint small">{piece.holder}</span>}
               <span className={typeof piece.lastVerified === 'number' ? 'verified' : 'verified never'}>
                 {verifiedWords(piece.lastVerified)}
               </span>
@@ -157,9 +158,8 @@ export function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactN
           ))}
         </div>
         <p className="m-0 mt-3 text-xs text-muted-foreground">
-          These pieces cover every subwallet too: all of them grow out of the one secret
-          the pieces rebuild — including subwallets first used after the pieces were
-          placed.
+          These pieces cover every subwallet too: all of them grow out of the one secret the pieces rebuild — including
+          subwallets first used after the pieces were placed.
         </p>
         {ownOld.length > 0 && (
           <details className="reveal" style={{ marginTop: '0.75rem' }}>
@@ -169,8 +169,8 @@ export function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactN
                 : `${ownOld.length} earlier sets were replaced — their pieces still work`}
             </summary>
             <p className="warn-text small" style={{ margin: '0.5rem 0 0.25rem' }}>
-              Replacing a plan adds a way in and never removes one: these pieces rebuild
-              this account for as long as they exist, and nothing can switch them off.
+              Replacing a plan adds a way in and never removes one: these pieces rebuild this account for as long as
+              they exist, and nothing can switch them off.
             </p>
             {ownOld.map((old) => (
               <p className="faint small" key={old.supersededAt} style={{ margin: '0.25rem 0' }}>
@@ -188,10 +188,9 @@ export function SecuredCard({ setup }: { readonly setup: SecuredSetup }): ReactN
                 : `${foreignOld.length} different accounts’ piece lists are also on file`}
             </summary>
             <p className="muted small" style={{ margin: '0.5rem 0 0.25rem' }}>
-              These pieces do <strong>not</strong> open this account — they belong to an
-              account that was on this browser before. The list is kept because
-              destroying a map is never this wallet&rsquo;s call: whoever owns that
-              account may still need it.
+              These pieces do <strong>not</strong> open this account — they belong to an account that was on this
+              browser before. The list is kept because destroying a map is never this wallet&rsquo;s call: whoever owns
+              that account may still need it.
             </p>
             {foreignOld.map((old) => (
               <p className="faint small" key={old.supersededAt} style={{ margin: '0.25rem 0' }}>
@@ -262,9 +261,7 @@ export function ThisDeviceCard({ secret }: { readonly secret: Secret }): ReactNo
       <CardContent className="flex items-center gap-3">
         <Glyph icon={GLYPH.wallet} className="size-5 text-muted-foreground" />
         <p className="m-0 text-sm text-foreground">
-          {made
-            ? `Created in this browser on ${day(made.at)}.`
-            : `Linked on ${day(linked!.at)}.`}
+          {made ? `Created in this browser on ${day(made.at)}.` : `Linked on ${day(linked!.at)}.`}
         </p>
       </CardContent>
     </Card>
@@ -291,13 +288,13 @@ export function ThisDeviceCard({ secret }: { readonly secret: Secret }): ReactNo
  * who wants to re-verify their pieces or cut a fresh set still needs a way in.
  * The sentence it carries is the state, in the three states §7.15 has.
  */
-export function SetUp({ state }: {
-  readonly state: 'secured' | 'unsecured' | 'unknown';
-}): ReactNode {
+export function SetUp({ state }: { readonly state: 'secured' | 'unsecured' | 'unknown' }): ReactNode {
   return (
     <Card aria-label="What to do next">
       <CardHeader>
-        <CardTitle role="heading" aria-level={3}>Set up</CardTitle>
+        <CardTitle role="heading" aria-level={3}>
+          Set up
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <RowItems>
@@ -305,11 +302,13 @@ export function SetUp({ state }: {
             href={hrefOf('secure')}
             leading={<Glyph icon={GLYPH.secured} className="size-5 text-muted-foreground" />}
             title="Secure your account"
-            subtitle={state === 'secured'
-              ? 'Done — revisit the pieces, re-verify them, or change the plan'
-              : state === 'unsecured'
-                ? 'The one thing worth doing first'
-                : 'This browser does not know where this account’s pieces are'}
+            subtitle={
+              state === 'secured'
+                ? 'Done — revisit the pieces, re-verify them, or change the plan'
+                : state === 'unsecured'
+                  ? 'The one thing worth doing first'
+                  : 'This browser does not know where this account’s pieces are'
+            }
           />
           <RowItem
             href={hrefOf('add-device')}
@@ -319,7 +318,6 @@ export function SetUp({ state }: {
              * so these fit one line rather than the row growing to hold them.
              * The full sentence lives on the screen each one leads to. */
             subtitle="Scan a code and compare two digits on both screens"
-
           />
           <RowItem
             href={hrefOf('advanced')}
@@ -330,9 +328,8 @@ export function SetUp({ state }: {
           />
         </RowItems>
         <p className="m-0 mt-3 text-xs text-muted-foreground">
-          Recovering a <em>different</em> account onto this machine starts from the lock
-          screen — press Lock first. It replaces the wallet stored here, and says so
-          before it does.
+          Recovering a <em>different</em> account onto this machine starts from the lock screen — press Lock first. It
+          replaces the wallet stored here, and says so before it does.
         </p>
       </CardContent>
     </Card>

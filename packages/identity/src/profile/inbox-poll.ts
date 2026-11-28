@@ -60,10 +60,10 @@ export type InboxState =
   | { readonly of: 'asking' }
   /** The host answered. `openings` is one entry per item it returned, always. */
   | {
-    readonly of: 'answered';
-    readonly openings: readonly Opening[];
-    readonly at: number;
-  }
+      readonly of: 'answered';
+      readonly openings: readonly Opening[];
+      readonly at: number;
+    }
   /** The host could not be reached, or would not answer. **NOT an empty inbox.** */
   | { readonly of: 'failed'; readonly why: string; readonly at: number };
 
@@ -75,7 +75,9 @@ export interface Timers {
 
 export const REAL_TIMERS: Timers = Object.freeze({
   after: (ms: number, fn: () => void) => setTimeout(fn, ms),
-  cancel: (handle: unknown) => { clearTimeout(handle as ReturnType<typeof setTimeout>); },
+  cancel: (handle: unknown) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  }
 });
 
 /**
@@ -112,8 +114,13 @@ export interface InboxPollingOptions {
 }
 
 export function startInboxPolling({
-  host, keys, unlocked, onState,
-  everyMs = POLL_EVERY_MS, now = Date.now, timers = REAL_TIMERS,
+  host,
+  keys,
+  unlocked,
+  onState,
+  everyMs = POLL_EVERY_MS,
+  now = Date.now,
+  timers = REAL_TIMERS
 }: InboxPollingOptions): InboxPolling {
   let handle: unknown = null;
   let halted = false;
@@ -124,18 +131,27 @@ export function startInboxPolling({
 
   const stop = (): void => {
     halted = true;
-    if (handle !== null) { timers.cancel(handle); handle = null; }
+    if (handle !== null) {
+      timers.cancel(handle);
+      handle = null;
+    }
   };
 
   const schedule = (): void => {
     if (halted) return;
-    handle = timers.after(everyMs, () => { handle = null; void ask(); });
+    handle = timers.after(everyMs, () => {
+      handle = null;
+      void ask();
+    });
   };
 
   const ask = async (): Promise<void> => {
     if (halted) return;
     /* GUARD ONE — nothing reaches the host from a wallet that is not open. */
-    if (!unlocked()) { stop(); return; }
+    if (!unlocked()) {
+      stop();
+      return;
+    }
     if (inFlight) return;
     inFlight = true;
     onState({ of: 'asking' });
@@ -143,24 +159,30 @@ export function startInboxPolling({
       const answer = await host.items({
         schema: 'midnight-identity/inbox-ask/v1',
         inbox: keys.publicKey,
-        ...(after === undefined ? {} : { after }),
+        ...(after === undefined ? {} : { after })
       });
       /* GUARD TWO — the wallet may have locked while the host was answering.
        * The bytes are dropped rather than delivered into a phase that ended. */
-      if (halted || !unlocked()) { stop(); return; }
+      if (halted || !unlocked()) {
+        stop();
+        return;
+      }
       after = answer?.cursor;
       onState({
         of: 'answered',
         openings: openAll(answer?.items ?? [], keys),
-        at: now(),
+        at: now()
       });
     } catch (e) {
-      if (halted || !unlocked()) { stop(); return; }
+      if (halted || !unlocked()) {
+        stop();
+        return;
+      }
       /* A HOST THAT DID NOT ANSWER IS NOT AN EMPTY INBOX. */
       onState({
         of: 'failed',
         why: e instanceof Error ? e.message : 'the inbox host did not answer.',
-        at: now(),
+        at: now()
       });
     } finally {
       inFlight = false;
@@ -172,8 +194,10 @@ export function startInboxPolling({
   void ask();
 
   return Object.freeze({
-    refresh: () => { if (!halted) void ask(); },
+    refresh: () => {
+      if (!halted) void ask();
+    },
     stop,
-    stopped: () => halted,
+    stopped: () => halted
   });
 }

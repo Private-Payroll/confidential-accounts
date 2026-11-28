@@ -14,6 +14,6 @@ export function loggerWithoutSecret<L extends object>(logger: L, secret: string)
       const value = Reflect.get(target, key, receiver);
       if (typeof value !== 'function') return value;
       return (...args: unknown[]) => (args.some(carries) ? undefined : value.apply(target, args));
-    },
+    }
   });
 }

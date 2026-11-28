@@ -89,7 +89,7 @@ export const refuseEndpointsThatCannotWork = (endpoints: IndexerEndpoints): void
     throw new Error(
       'the connected wallet did not say which indexer it is synchronised against, so there is ' +
         'nowhere to read this account from. Reconnect the wallet, or update it: the address is ' +
-        'part of what it reports about itself.',
+        'part of what it reports about itself.'
     );
   }
 
@@ -97,7 +97,7 @@ export const refuseEndpointsThatCannotWork = (endpoints: IndexerEndpoints): void
   if (read !== 'http:' && read !== 'https:') {
     throw new Error(
       `the wallet reports its indexer at "${indexerUri}", which is not an address this can ` +
-        'read from over HTTP. Nothing has been read.',
+        'read from over HTTP. Nothing has been read.'
     );
   }
 
@@ -106,7 +106,7 @@ export const refuseEndpointsThatCannotWork = (endpoints: IndexerEndpoints): void
     throw new Error(
       `the wallet reports its indexer subscription at "${indexerWsUri}", which is not a ` +
         'websocket address, so nothing has been read. The two addresses a wallet reports differ ' +
-        'by four characters and this is the one that watches for changes.',
+        'by four characters and this is the one that watches for changes.'
     );
   }
 };
@@ -117,14 +117,10 @@ export const refuseEndpointsThatCannotWork = (endpoints: IndexerEndpoints): void
  * The import is dynamic and the module it loads is large. See the header: this
  * must not be called from anything the page's own build reaches.
  */
-export const publicDataProviderFor = async (
-  endpoints: IndexerEndpoints,
-): Promise<PublicDataProvider> => {
+export const publicDataProviderFor = async (endpoints: IndexerEndpoints): Promise<PublicDataProvider> => {
   refuseEndpointsThatCannotWork(endpoints);
 
-  const { indexerPublicDataProvider } = await import(
-    '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
-  );
+  const { indexerPublicDataProvider } = await import('@midnight-ntwrk/midnight-js-indexer-public-data-provider');
 
   /*
    * **THE OPTIONS-OBJECT FORM, AND IT IS DELIBERATELY NOT THE POSITIONAL ONE
@@ -144,6 +140,6 @@ export const publicDataProviderFor = async (
    */
   return indexerPublicDataProvider({
     queryURL: endpoints.indexerUri,
-    subscriptionURL: endpoints.indexerWsUri,
+    subscriptionURL: endpoints.indexerWsUri
   });
 };

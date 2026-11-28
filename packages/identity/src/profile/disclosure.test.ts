@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import {
-  ClaimRewardsTransaction, Intent, MaintenanceUpdate, sampleContractAddress,
-  signData, signatureVerifyingKey,
+  ClaimRewardsTransaction,
+  Intent,
+  MaintenanceUpdate,
+  sampleContractAddress,
+  signData,
+  signatureVerifyingKey
 } from '@midnightntwrk/ledger-v9';
 import { identityFromWords } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
@@ -30,34 +34,37 @@ const value = (id: string, about: string, text: string): Sent => ({
   id,
   about,
   says: { of: 'value', value: text },
-  asserted: { by: 'self', formerly: null },
+  asserted: { by: 'self', formerly: null }
 });
 
 const addressOf = (account: number): string =>
   addressOfVerifyingKey(
     signatureVerifyingKey({
       tag: 'schnorr',
-      value: Buffer.from(identity.moneyAt(account).night).toString('hex'),
-    }).value, NETWORK);
+      value: Buffer.from(identity.moneyAt(account).night).toString('hex')
+    }).value,
+    NETWORK
+  );
 
 const AT = 1_755_000_000_000;
 
-const forA = (): DisclosureResponse => mint(identity, SUBWALLET, {
-  origin: 'https://payroll-a.example',
-  nonce: 'nonce-from-a',
-  address: addressOf(SUBWALLET),
-  at: AT,
-  disclosed: [value('v1', 'given-name', 'Sarah'), value('v2', 'email', 'sarah@work.example')],
-  declined: [],
-  requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
-}).response;
+const forA = (): DisclosureResponse =>
+  mint(identity, SUBWALLET, {
+    origin: 'https://payroll-a.example',
+    nonce: 'nonce-from-a',
+    address: addressOf(SUBWALLET),
+    at: AT,
+    disclosed: [value('v1', 'given-name', 'Sarah'), value('v2', 'email', 'sarah@work.example')],
+    declined: [],
+    requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
+  }).response;
 
 const atA = {
   atOrigin: 'https://payroll-a.example',
   expectingNonce: 'nonce-from-a',
   payingAddress: addressOf(SUBWALLET),
   networkId: NETWORK,
-  now: AT + 1000,
+  now: AT + 1000
 };
 
 describe('the replay binding — §5.4', () => {
@@ -72,7 +79,7 @@ describe('the replay binding — §5.4', () => {
     const verdict = verify(forA(), {
       ...atA,
       atOrigin: 'https://payroll-b.example',
-      expectingNonce: 'nonce-from-b',
+      expectingNonce: 'nonce-from-b'
     });
     expect(verdict.ok).toBe(false);
     expect(verdict.ok === false && verdict.code).toBe('origin-mismatch');
@@ -88,10 +95,12 @@ describe('the replay binding — §5.4', () => {
     const original = forA();
     const tampered: DisclosureResponse = {
       ...original,
-      payload: { ...original.payload, origin: 'https://payroll-b.example' },
+      payload: { ...original.payload, origin: 'https://payroll-b.example' }
     };
     const verdict = verify(tampered, {
-      ...atA, atOrigin: 'https://payroll-b.example', expectingNonce: 'nonce-from-a',
+      ...atA,
+      atOrigin: 'https://payroll-b.example',
+      expectingNonce: 'nonce-from-a'
     });
     expect(verdict.ok).toBe(false);
     expect(verdict.ok === false && verdict.code).toBe('signature-invalid');
@@ -105,10 +114,13 @@ describe('the replay binding — §5.4', () => {
   it('and editing the nonce breaks the signature too', () => {
     const original = forA();
     const tampered: DisclosureResponse = {
-      ...original, payload: { ...original.payload, nonce: 'a-later-request' },
+      ...original,
+      payload: { ...original.payload, nonce: 'a-later-request' }
     };
-    expect(verify(tampered, { ...atA, expectingNonce: 'a-later-request' }))
-      .toMatchObject({ ok: false, code: 'signature-invalid' });
+    expect(verify(tampered, { ...atA, expectingNonce: 'a-later-request' })).toMatchObject({
+      ok: false,
+      code: 'signature-invalid'
+    });
   });
 
   it('every disclosed field is inside the signature — changing any one breaks it', () => {
@@ -117,8 +129,8 @@ describe('the replay binding — §5.4', () => {
       ...original,
       payload: {
         ...original.payload,
-        disclosed: [value('v1', 'given-name', 'Someone Else'), original.payload.disclosed[1]!],
-      },
+        disclosed: [value('v1', 'given-name', 'Someone Else'), original.payload.disclosed[1]!]
+      }
     };
     expect(verify(swapped, atA)).toMatchObject({ ok: false, code: 'signature-invalid' });
   });
@@ -132,19 +144,25 @@ describe('the replay binding — §5.4', () => {
      */
     const original = forA();
     const swapped: DisclosureResponse = {
-      ...original, payload: { ...original.payload, address: addressOf(4) },
+      ...original,
+      payload: { ...original.payload, address: addressOf(4) }
     };
-    expect(verify(swapped, { ...atA, payingAddress: addressOf(SUBWALLET) }))
-      .toMatchObject({ ok: false, code: 'signature-invalid' });
+    expect(verify(swapped, { ...atA, payingAddress: addressOf(SUBWALLET) })).toMatchObject({
+      ok: false,
+      code: 'signature-invalid'
+    });
   });
 
   it('so is the time, and so is what was DECLINED', () => {
     const original = forA();
-    expect(verify({ ...original, payload: { ...original.payload, at: AT + 1 } }, atA))
-      .toMatchObject({ ok: false, code: 'signature-invalid' });
-    expect(verify(
-      { ...original, payload: { ...original.payload, declined: ['email'] } }, atA))
-      .toMatchObject({ ok: false, code: 'signature-invalid' });
+    expect(verify({ ...original, payload: { ...original.payload, at: AT + 1 } }, atA)).toMatchObject({
+      ok: false,
+      code: 'signature-invalid'
+    });
+    expect(verify({ ...original, payload: { ...original.payload, declined: ['email'] } }, atA)).toMatchObject({
+      ok: false,
+      code: 'signature-invalid'
+    });
   });
 });
 
@@ -161,7 +179,7 @@ describe('the address binding — §7 step 6', () => {
       at: AT,
       disclosed: [value('v1', 'given-name', 'Sarah')],
       declined: [],
-      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
     }).response;
     const verdict = verify(original, { ...atA, payingAddress: addressOf(4) });
     expect(verdict.ok).toBe(false);
@@ -181,7 +199,7 @@ describe('the address binding — §7 step 6', () => {
       at: AT,
       disclosed: [],
       declined: [],
-      requesterSaidItWas: { name: 'A', rdns: 'a' },
+      requesterSaidItWas: { name: 'A', rdns: 'a' }
     }).response;
     const four = mint(identity, 4, {
       origin: 'https://payroll-a.example',
@@ -190,7 +208,7 @@ describe('the address binding — §7 step 6', () => {
       at: AT,
       disclosed: [],
       declined: [],
-      requesterSaidItWas: { name: 'A', rdns: 'a' },
+      requesterSaidItWas: { name: 'A', rdns: 'a' }
     }).response;
     expect(three.verifyingKey).not.toBe(four.verifyingKey);
     expect(addressOfVerifyingKey(three.verifyingKey, NETWORK)).toBe(addressOf(3));
@@ -210,8 +228,8 @@ describe('an issued claim that has gone stale is refused by the recipient', () =
         signature: 'ff',
         issuedAt: AT - 90 * 86_400_000,
         expiresAt: AT - 86_400_000,
-        reachableAt: null,
-      },
+        reachableAt: null
+      }
     };
     const response = mint(identity, SUBWALLET, {
       origin: 'https://payroll-a.example',
@@ -220,7 +238,7 @@ describe('an issued claim that has gone stale is refused by the recipient', () =
       at: AT,
       disclosed: [stale],
       declined: [],
-      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
     }).response;
     expect(verify(response, atA)).toMatchObject({ ok: false, code: 'expired-claim' });
   });
@@ -230,10 +248,15 @@ describe('the preimage', () => {
   it('is unambiguous: moving a character between two fields changes the bytes', () => {
     const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
     const base = {
-      schema: RESPONSE_SCHEMA, address: 'addr', at: 1, disclosed: [], declined: [],
+      schema: RESPONSE_SCHEMA,
+      address: 'addr',
+      at: 1,
+      disclosed: [],
+      declined: []
     } as const;
-    expect(hex(preimage({ ...base, origin: 'ab', nonce: 'c' })))
-      .not.toBe(hex(preimage({ ...base, origin: 'a', nonce: 'bc' })));
+    expect(hex(preimage({ ...base, origin: 'ab', nonce: 'c' }))).not.toBe(
+      hex(preimage({ ...base, origin: 'a', nonce: 'bc' }))
+    );
   });
 
   it('a `null` expiry and a numeric one cannot collide', () => {
@@ -245,15 +268,21 @@ describe('the preimage', () => {
       address: 'addr',
       at: 1,
       declined: [],
-      disclosed: [{
-        id: 'i',
-        about: 'a',
-        says: { of: 'value', value: 'v' },
-        asserted: {
-          by: 'issuer', issuer: 'x', signature: 's', issuedAt: 1, expiresAt: null,
-          reachableAt: null,
-        },
-      }],
+      disclosed: [
+        {
+          id: 'i',
+          about: 'a',
+          says: { of: 'value', value: 'v' },
+          asserted: {
+            by: 'issuer',
+            issuer: 'x',
+            signature: 's',
+            issuedAt: 1,
+            expiresAt: null,
+            reachableAt: null
+          }
+        }
+      ]
     });
     const withZero = preimage({
       schema: RESPONSE_SCHEMA,
@@ -262,78 +291,83 @@ describe('the preimage', () => {
       address: 'addr',
       at: 1,
       declined: [],
-      disclosed: [{
-        id: 'i',
-        about: 'a',
-        says: { of: 'value', value: 'v' },
-        asserted: {
-          by: 'issuer', issuer: 'x', signature: 's', issuedAt: 1, expiresAt: 0,
-          reachableAt: null,
-        },
-      }],
+      disclosed: [
+        {
+          id: 'i',
+          about: 'a',
+          says: { of: 'value', value: 'v' },
+          asserted: {
+            by: 'issuer',
+            issuer: 'x',
+            signature: 's',
+            issuedAt: 1,
+            expiresAt: 0,
+            reachableAt: null
+          }
+        }
+      ]
     });
     expect(hex(withNull)).not.toBe(hex(withZero));
   });
 
-  it(
-    'BEGINS WITH BYTES NO LEDGER SIGNING ENVELOPE BEGINS WITH — measured against the SDK',
-    () => {
-      /*
-       * This wallet signs with a SPENDING key, and `ledger-v9.d.ts:447` warns
-       * against signing data that is not strictly controlled with a valuable
-       * key. The structural half of that control is that our preimage cannot
-       * be mistaken for something the ledger would accept as an authorisation.
-       *
-       * **MEASURED, NOT ASSERTED, AND MEASURED AGAINST THE SHIPPED SDK RATHER
-       * THAN A FIXTURE** — so the day the ledger changes its envelope, this
-       * line goes red instead of the argument going quietly stale.
-       */
-      /*
-       * ALL THREE PRODUCERS OF SIGNABLE BYTES IN `ledger-v9`, asked at run
-       * time: `Intent.signatureData` (`ledger-v9.d.ts:2126`),
-       * `MaintenanceUpdate.dataToSign` (`:2325`) and
-       * `ClaimRewardsTransaction.dataToSign` (`:3260`). Every one of them
-       * begins with the ASCII `midnight:` and an envelope name.
-       */
-      const envelopes: readonly Uint8Array[] = [
-        Intent.new(new Date(AT + 3_600_000)).signatureData(1),
-        new MaintenanceUpdate(sampleContractAddress(), [], 0n).dataToSign,
-        ClaimRewardsTransaction.new(
-          'undeployed', 100n,
-          signatureVerifyingKey({ tag: 'schnorr', value: 'ab'.repeat(32) }),
-          '00'.repeat(32), 'Reward').dataToSign,
-      ];
-      for (const envelope of envelopes) {
-        expect(new TextDecoder().decode(envelope.slice(0, 9))).toBe('midnight:');
-      }
-      const real = envelopes[0]!;
+  it('BEGINS WITH BYTES NO LEDGER SIGNING ENVELOPE BEGINS WITH — measured against the SDK', () => {
+    /*
+     * This wallet signs with a SPENDING key, and `ledger-v9.d.ts:447` warns
+     * against signing data that is not strictly controlled with a valuable
+     * key. The structural half of that control is that our preimage cannot
+     * be mistaken for something the ledger would accept as an authorisation.
+     *
+     * **MEASURED, NOT ASSERTED, AND MEASURED AGAINST THE SHIPPED SDK RATHER
+     * THAN A FIXTURE** — so the day the ledger changes its envelope, this
+     * line goes red instead of the argument going quietly stale.
+     */
+    /*
+     * ALL THREE PRODUCERS OF SIGNABLE BYTES IN `ledger-v9`, asked at run
+     * time: `Intent.signatureData` (`ledger-v9.d.ts:2126`),
+     * `MaintenanceUpdate.dataToSign` (`:2325`) and
+     * `ClaimRewardsTransaction.dataToSign` (`:3260`). Every one of them
+     * begins with the ASCII `midnight:` and an envelope name.
+     */
+    const envelopes: readonly Uint8Array[] = [
+      Intent.new(new Date(AT + 3_600_000)).signatureData(1),
+      new MaintenanceUpdate(sampleContractAddress(), [], 0n).dataToSign,
+      ClaimRewardsTransaction.new(
+        'undeployed',
+        100n,
+        signatureVerifyingKey({ tag: 'schnorr', value: 'ab'.repeat(32) }),
+        '00'.repeat(32),
+        'Reward'
+      ).dataToSign
+    ];
+    for (const envelope of envelopes) {
+      expect(new TextDecoder().decode(envelope.slice(0, 9))).toBe('midnight:');
+    }
+    const real = envelopes[0]!;
 
-      const ours = preimage({
-        schema: RESPONSE_SCHEMA,
-        origin: 'https://a',
-        nonce: 'n',
-        address: 'addr',
-        at: 1,
-        disclosed: [],
-        declined: [],
-      });
-      expect(new TextDecoder().decode(ours.slice(0, DISCLOSURE_DOMAIN.length)))
-        .toBe(DISCLOSURE_DOMAIN);
-      /* Ours differs from EVERY one of them at the ninth byte — `-` for `:`. */
-      for (const envelope of envelopes) {
-        expect(Buffer.from(ours.slice(0, 8))).toEqual(Buffer.from(envelope.slice(0, 8)));
-        expect(ours[8]).not.toBe(envelope[8]);
-      }
-      expect(real.length).toBeGreaterThan(0);
+    const ours = preimage({
+      schema: RESPONSE_SCHEMA,
+      origin: 'https://a',
+      nonce: 'n',
+      address: 'addr',
+      at: 1,
+      disclosed: [],
+      declined: []
     });
+    expect(new TextDecoder().decode(ours.slice(0, DISCLOSURE_DOMAIN.length))).toBe(DISCLOSURE_DOMAIN);
+    /* Ours differs from EVERY one of them at the ninth byte — `-` for `:`. */
+    for (const envelope of envelopes) {
+      expect(Buffer.from(ours.slice(0, 8))).toEqual(Buffer.from(envelope.slice(0, 8)));
+      expect(ours[8]).not.toBe(envelope[8]);
+    }
+    expect(real.length).toBeGreaterThan(0);
+  });
 
   it('nothing exported from this module signs bytes handed to it', async () => {
     /* The other half of "strictly controlled": there is no door. If a future
      * round adds one, this test names it. */
-    const module = await import('./disclosure.js') as Record<string, unknown>;
+    const module = (await import('./disclosure.js')) as Record<string, unknown>;
     const exported = Object.keys(module).sort();
-    expect(exported).toEqual(
-      ['DISCLOSURE_SCHEMES', 'addressOfVerifyingKey', 'mint', 'recheck', 'verify']);
+    expect(exported).toEqual(['DISCLOSURE_SCHEMES', 'addressOfVerifyingKey', 'mint', 'recheck', 'verify']);
   });
 
   it('the raw SDK signer is not re-exported anywhere in this module', () => {
@@ -373,15 +407,15 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
         signature: 'ab12',
         issuedAt: AT - 86_400_000,
         expiresAt: AT + 86_400_000,
-        reachableAt: 'https://a-checking-service.example/again',
-      },
+        reachableAt: 'https://a-checking-service.example/again'
+      }
     },
     {
       id: 'v3',
       about: 'family-name',
       says: { of: 'value', value: 'Okonjo' },
-      asserted: { by: 'self', formerly: { issuer: 'a-registrar', issuedAt: AT - 500 } },
-    },
+      asserted: { by: 'self', formerly: { issuer: 'a-registrar', issuedAt: AT - 500 } }
+    }
   ];
 
   /** A recorded entry, built the way `screens/approve.tsx` builds one. */
@@ -393,7 +427,7 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
       at: AT,
       disclosed: claimed,
       declined: ['email'],
-      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
     });
     return {
       at: AT,
@@ -405,8 +439,8 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
         bytes: minted.signedBytes,
         signature: minted.response.signature,
         verifyingKey: minted.response.verifyingKey,
-        scheme: minted.response.scheme,
-      },
+        scheme: minted.response.scheme
+      }
     };
   };
 
@@ -429,13 +463,15 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
     const at = bytes.length - 3;
     bytes[at] = (bytes[at] ?? 0) ^ 0x01;
     const tampered: Disclosure = {
-      ...entry, signed: { ...entry.signed!, bytes: toBase64Url(bytes) },
+      ...entry,
+      signed: { ...entry.signed!, bytes: toBase64Url(bytes) }
     };
     /* It may not even decode — either refusal is correct, and both are named. */
     const outcome = recheck(tampered);
     expect(outcome.ok).toBe(false);
-    expect(outcome.ok === false && ['signature-invalid', 'bytes-unreadable'])
-      .toContain(outcome.ok === false ? outcome.code : '');
+    expect(outcome.ok === false && ['signature-invalid', 'bytes-unreadable']).toContain(
+      outcome.ok === false ? outcome.code : ''
+    );
   });
 
   it('BYTES THAT ARE A VALID, CORRECTLY-SIGNED PAYLOAD OF SOMETHING ELSE ARE REFUSED', () => {
@@ -455,7 +491,7 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
        * what has to catch this is the per-value comparison. */
       disclosed: [value('v1', 'given-name', 'Somebody Else'), claimed[1]!, claimed[2]!],
       declined: ['email'],
-      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
     });
     const swapped: Disclosure = {
       ...entry,
@@ -463,8 +499,8 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
         bytes: other.signedBytes,
         signature: other.response.signature,
         verifyingKey: other.response.verifyingKey,
-        scheme: other.response.scheme,
-      },
+        scheme: other.response.scheme
+      }
     };
     const outcome = recheck(swapped);
     expect(outcome.ok).toBe(false);
@@ -478,7 +514,7 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
       ['the time', { ...entry, at: AT + 1 }],
       ['the nonce', { ...entry, nonce: 'another' }],
       ['what was declined', { ...entry, declined: [] }],
-      ['how many values were sent', { ...entry, sent: entry.sent.slice(0, 1) }],
+      ['how many values were sent', { ...entry, sent: entry.sent.slice(0, 1) }]
     ] as const) {
       const outcome = recheck(changed);
       expect(outcome.ok, what).toBe(false);
@@ -508,10 +544,15 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
       at: AT,
       disclosed: [],
       declined: [],
-      requesterSaidItWas: { name: 'A', rdns: 'a' },
+      requesterSaidItWas: { name: 'A', rdns: 'a' }
     });
-    expect(Object.keys(minted.response).sort()).toEqual(
-      ['payload', 'requesterSaidItWas', 'scheme', 'signature', 'verifyingKey']);
+    expect(Object.keys(minted.response).sort()).toEqual([
+      'payload',
+      'requesterSaidItWas',
+      'scheme',
+      'signature',
+      'verifyingKey'
+    ]);
     expect(JSON.stringify(minted.response)).not.toContain(minted.signedBytes);
   });
 
@@ -523,10 +564,11 @@ describe('§5.5 — the history entry keeps the EXACT bytes that were signed', (
       at: AT,
       disclosed: claimed,
       declined: [],
-      requesterSaidItWas: { name: 'A', rdns: 'a' },
+      requesterSaidItWas: { name: 'A', rdns: 'a' }
     });
-    expect(Buffer.from(fromBase64Url(minted.signedBytes)).toString('hex'))
-      .toBe(Buffer.from(preimage(minted.response.payload)).toString('hex'));
+    expect(Buffer.from(fromBase64Url(minted.signedBytes)).toString('hex')).toBe(
+      Buffer.from(preimage(minted.response.payload)).toString('hex')
+    );
   });
 });
 
@@ -539,15 +581,19 @@ describe('the preimage reads back', () => {
         about: 'x',
         says: { of: 'predicate', predicate: 'over-18', result: false },
         asserted: {
-          by: 'issuer', issuer: 'i', signature: 's', issuedAt: 1, expiresAt: null,
-          reachableAt: null,
-        },
+          by: 'issuer',
+          issuer: 'i',
+          signature: 's',
+          issuedAt: 1,
+          expiresAt: null,
+          reachableAt: null
+        }
       },
       {
         id: 'c',
         about: 'y',
         says: { of: 'value', value: 'a value with a ✓ and a — in it' },
-        asserted: { by: 'self', formerly: { issuer: 'was-them', issuedAt: 7 } },
+        asserted: { by: 'self', formerly: { issuer: 'was-them', issuedAt: 7 } }
       },
       {
         /*
@@ -560,8 +606,8 @@ describe('the preimage reads back', () => {
         id: 'receiving-address',
         about: 'receiving-address',
         says: { of: 'value', value: 'mn_shield-addr_undeployed1qqqq' },
-        asserted: { by: 'wallet' },
-      },
+        asserted: { by: 'wallet' }
+      }
     ];
     const payload = {
       schema: RESPONSE_SCHEMA,
@@ -570,14 +616,13 @@ describe('the preimage reads back', () => {
       address: 'addr',
       at: 1_700_000_000_000,
       disclosed: shapes,
-      declined: ['p', 'q'],
+      declined: ['p', 'q']
     } as const;
     const back = readPreimage(preimage(payload));
     expect(back).not.toBeNull();
     expect(back).toEqual(payload);
     /* And re-encoding what came back gives the same bytes. */
-    expect(Buffer.from(preimage(back!)).toString('hex'))
-      .toBe(Buffer.from(preimage(payload)).toString('hex'));
+    expect(Buffer.from(preimage(back!)).toString('hex')).toBe(Buffer.from(preimage(payload)).toString('hex'));
   });
 
   it('refuses bytes that are truncated, padded, or not ours at all', () => {
@@ -588,7 +633,7 @@ describe('the preimage reads back', () => {
       address: 'addr',
       at: 1,
       disclosed: [value('a', 'b', 'c')],
-      declined: [],
+      declined: []
     });
     expect(readPreimage(bytes)).not.toBeNull();
     expect(readPreimage(bytes.slice(0, bytes.length - 1))).toBeNull();
@@ -597,8 +642,7 @@ describe('the preimage reads back', () => {
     const padded = new Uint8Array(bytes.length + 1);
     padded.set(bytes);
     expect(readPreimage(padded)).toBeNull();
-    expect(readPreimage(new TextEncoder().encode('midnight:intent-signing-envelope[v9]:')))
-      .toBeNull();
+    expect(readPreimage(new TextEncoder().encode('midnight:intent-signing-envelope[v9]:'))).toBeNull();
     expect(readPreimage(new Uint8Array(0))).toBeNull();
   });
 });

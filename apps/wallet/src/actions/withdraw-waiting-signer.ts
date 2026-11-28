@@ -1,13 +1,31 @@
 import type { ActIntent } from 'midnight-identity/profile/request';
 import { InvitationRefused, SeatMayNotInvite } from '../../../../packages/web-shared/src/invitation-on-device.js';
 import {
-  withdrawalReadsHere, withdrawWaitingSignerHere, type WaitingReads, type WithdrawalReads,
+  withdrawalReadsHere,
+  withdrawWaitingSignerHere,
+  type WaitingReads,
+  type WithdrawalReads
 } from '../../../../packages/web-shared/src/waiting-signer-withdrawn.js';
 import { RecordWithheld } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { chainTimeOf } from './chain-time.js';
-import { companyReachFor, governanceRecordsFor, keptReach, writesOfTheStep, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  companyReachFor,
+  governanceRecordsFor,
+  keptReach,
+  writesOfTheStep,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { invitingSeatOf } from './invite.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -34,7 +52,8 @@ export interface WithdrawWaitingSignerReach {
 export const WITHDRAW_STATE = { withdrawn: 'withdrawn' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.withdraw-waiting-signer.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.withdraw-waiting-signer.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 
@@ -43,23 +62,32 @@ export function withdrawWaitingSignerAction(reach: WithdrawWaitingSignerReach): 
   return Object.freeze({
     headline: 'act.withdraw-waiting-signer.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
-      { key: 'act.withdraw-waiting-signer.shown.name', values: { name: intent.fields['personName'] ?? '' }, from: 'page' },
+      {
+        key: 'act.withdraw-waiting-signer.shown.name',
+        values: { name: intent.fields['personName'] ?? '' },
+        from: 'page'
+      },
       { key: 'act.withdraw-waiting-signer.shown.checks', from: 'action' },
       { key: 'act.withdraw-waiting-signer.shown.withdraw', from: 'action' },
       ...upkeepShown(),
-      { key: 'act.withdraw-waiting-signer.shown.nothing-else', from: 'action' },
+      { key: 'act.withdraw-waiting-signer.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.withdraw-waiting-signer.check.seat' },
       { key: 'act.withdraw-waiting-signer.check.chain' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
-    check: async (intent) => (['record', 'signer', 'personName'].some((k) => (intent.fields[k] ?? '') === '') ? why('not-a-signer') : null),
+    check: async (intent) =>
+      ['record', 'signer', 'personName'].some((k) => (intent.fields[k] ?? '') === '') ? why('not-a-signer') : null,
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.withdraw-waiting-signer.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const withdraw: ActionStep = {
@@ -79,18 +107,26 @@ export function withdrawWaitingSignerAction(reach: WithdrawWaitingSignerReach): 
             throw new StepRefused(why('chain-unread', { says: said(e) }), codeOfError(e));
           }
           try {
-            await withdrawWaitingSignerHere({ id: r.accountId, companyKeys: r.companyKeys }, inviting, signerId, reads, writesOfTheStep(r), intent.fields['personName']!);
+            await withdrawWaitingSignerHere(
+              { id: r.accountId, companyKeys: r.companyKeys },
+              inviting,
+              signerId,
+              reads,
+              writesOfTheStep(r),
+              intent.fields['personName']!
+            );
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof SeatMayNotInvite) throw new StepRefused(why('may-not', { says: said(e) }), codeOfError(e));
-            if (e instanceof InvitationRefused) throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
+            if (e instanceof InvitationRefused)
+              throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
             throw new StepRefused(why('not-withdrawn', { says: said(e) }), codeOfError(e));
           }
           read.renew();
           ctx.tell({ state: WITHDRAW_STATE.withdrawn });
-        },
+        }
       };
       return [upkeep.first, seat, withdraw, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

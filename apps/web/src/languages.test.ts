@@ -20,7 +20,7 @@ describe('the words a screen needs', () => {
   });
 
   /* RED WHEN: a page's words come without the common ones, or without its own, or with another page's. */
-  it('are the common words and the page\'s own, each language\'s under its tag', async () => {
+  it("are the common words and the page's own, each language's under its tag", async () => {
     const join = (await wordsFor('join')())['en']!;
     const vault = (await wordsFor('vault')())['en']!;
     expect(Object.keys(join)).toContain('join.noToken.title');
@@ -37,8 +37,10 @@ describe('the words a screen needs', () => {
   });
 
   /* RED WHEN: a page opened from the first download's languages alone shows keys, because its screen does not bring its words, or brings the common words but not its own. */
-  it('come with the screen, so a page opens with its words from the first download\'s languages alone', async () => {
-    const view = render(createElement(KitProvider, { languages: LANGUAGES, pick: 'en' }, createElement(PageView, { id: 'apps' })));
+  it("come with the screen, so a page opens with its words from the first download's languages alone", async () => {
+    const view = render(
+      createElement(KitProvider, { languages: LANGUAGES, pick: 'en' }, createElement(PageView, { id: 'apps' }))
+    );
     const screen = await untilPageShown(view.container);
     expect(screen.textContent).toContain('Interoperability');
     expect(screen.textContent).not.toMatch(/\bapps\.[a-z]/);

@@ -72,9 +72,7 @@ describe('commitment schemes agree with the contract', () => {
 
   it('produces the same signer leaf as the contract', () => {
     const fromContract = sim.leafOf(blake);
-    const fromClient = MidnightCommitments.signerLeaf(
-      toHex(sim.publicKeyOf(blake)), toHex(blake.blinding),
-    );
+    const fromClient = MidnightCommitments.signerLeaf(toHex(sim.publicKeyOf(blake)), toHex(blake.blinding));
     expect(fromClient).toBe(toHex(fromContract));
   });
 
@@ -120,9 +118,7 @@ describe('commitment schemes agree with the contract', () => {
      * one test standing between us and a client/circuit scheme mismatch was
      * asserting nothing at all.
      */
-    const leaf = MidnightCommitments.signerLeaf(
-      toHex(sim.publicKeyOf(blake)), toHex(blake.blinding),
-    );
+    const leaf = MidnightCommitments.signerLeaf(toHex(sim.publicKeyOf(blake)), toHex(blake.blinding));
     /*
      * Blake takes his seat through an approved invitation, and the chain builds
      * his leaf from his own key, blinding and rights. The leaf it seats must be
@@ -165,15 +161,14 @@ describe('commitment schemes agree with the contract', () => {
      * — and `changeCommitment` carries exactly such an amount into every
      * proposal, so it is the surviving door to the same line.
      */
-    const key = 'aa'.repeat(32), batch = 'cc'.repeat(32), salt = 'bb'.repeat(32);
-    expect(() => MidnightCommitments.changeCommitment(key, -1n, batch, salt))
-      .toThrow(/negative/);
-    expect(() => MidnightCommitments.changeCommitment(key, 1n << 128n, batch, salt))
-      .toThrow(/Uint<128>/);
+    const key = 'aa'.repeat(32),
+      batch = 'cc'.repeat(32),
+      salt = 'bb'.repeat(32);
+    expect(() => MidnightCommitments.changeCommitment(key, -1n, batch, salt)).toThrow(/negative/);
+    expect(() => MidnightCommitments.changeCommitment(key, 1n << 128n, batch, salt)).toThrow(/Uint<128>/);
     // The largest value that DOES fit is accepted, so the boundary is tested
     // from both sides rather than only from the failing one.
-    expect(() => MidnightCommitments.changeCommitment(key, (1n << 128n) - 1n, batch, salt))
-      .not.toThrow();
+    expect(() => MidnightCommitments.changeCommitment(key, (1n << 128n) - 1n, batch, salt)).not.toThrow();
   });
 
   it('is a different scheme from the simulated one, and says so', () => {
@@ -265,18 +260,15 @@ describe('what a commitment names, which no mirror can check', () => {
      * for all of them and fails on the very first pair.
      */
     const ONE_TOKEN = asset(testToken('one token'));
-    const keys = [b(10), b(60), b(110), b(160)].map(
-      blinding => toHex(pureCircuits.assetKeyOf(ONE_TOKEN, blinding)),
-    );
+    const keys = [b(10), b(60), b(110), b(160)].map((blinding) => toHex(pureCircuits.assetKeyOf(ONE_TOKEN, blinding)));
     expect(new Set(keys).size).toBe(keys.length);
 
     // Named singly as well as by the set, so a failure says which rule broke
     // rather than only that a count was wrong.
-    expect(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(10))))
-      .not.toBe(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(60))));
+    expect(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(10)))).not.toBe(toHex(pureCircuits.assetKeyOf(ONE_TOKEN, b(60))));
   });
 
-  it('the asset key names the ASSET, so one account\'s two tokens do not share a key', () => {
+  it("the asset key names the ASSET, so one account's two tokens do not share a key", () => {
     /*
      * The other half of the same rule. One blinding, four assets, four keys —
      * without which an account's two tokens would key the same and a
@@ -287,8 +279,8 @@ describe('what a commitment names, which no mirror can check', () => {
      * `payoutDetails` is the enforcer.
      */
     const blinding = b(10);
-    const keys = ['first', 'second', 'third', 'fourth'].map(
-      label => toHex(pureCircuits.assetKeyOf(asset(testToken(label)), blinding)),
+    const keys = ['first', 'second', 'third', 'fourth'].map((label) =>
+      toHex(pureCircuits.assetKeyOf(asset(testToken(label)), blinding))
     );
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -316,14 +308,17 @@ describe('what a commitment names, which no mirror can check', () => {
      * NAMED RATHER THAN ASSUMED: this held until now because nobody had
      * written the code that would break it.
      */
-    const amount = 20_000n, batch = b(6), salt = b(7);
-    const commitments = [b(20), b(70), b(120), b(170)].map(
-      key => toHex(pureCircuits.changeCommitmentOf(key, amount, batch, salt)),
+    const amount = 20_000n,
+      batch = b(6),
+      salt = b(7);
+    const commitments = [b(20), b(70), b(120), b(170)].map((key) =>
+      toHex(pureCircuits.changeCommitmentOf(key, amount, batch, salt))
     );
     expect(new Set(commitments).size).toBe(commitments.length);
 
-    expect(toHex(pureCircuits.changeCommitmentOf(b(20), amount, batch, salt)))
-      .not.toBe(toHex(pureCircuits.changeCommitmentOf(b(70), amount, batch, salt)));
+    expect(toHex(pureCircuits.changeCommitmentOf(b(20), amount, batch, salt))).not.toBe(
+      toHex(pureCircuits.changeCommitmentOf(b(70), amount, batch, salt))
+    );
   });
 
   it('a change commitment tells apart every field it carries, not only the asset', () => {
@@ -333,7 +328,10 @@ describe('what a commitment names, which no mirror can check', () => {
      * treatment, so that a later change which drops one of THEM is caught here
      * rather than becoming the next silent second copy.
      */
-    const KEY = b(20), AMOUNT = 20_000n, BATCH = b(6), SALT = b(7);
+    const KEY = b(20),
+      AMOUNT = 20_000n,
+      BATCH = b(6),
+      SALT = b(7);
     const base = toHex(pureCircuits.changeCommitmentOf(KEY, AMOUNT, BATCH, SALT));
 
     expect(toHex(pureCircuits.changeCommitmentOf(KEY, AMOUNT + 1n, BATCH, SALT))).not.toBe(base);
@@ -423,7 +421,9 @@ describe('what a commitment names, which no mirror can check', () => {
     /* A token whose 32 bytes are the ones these vectors were pinned with: three bytes, then zeros. */
     const ASSET = asset('474250' + '00'.repeat(29));
     const BLINDING = b(1);
-    const KEY = b(2), BATCH = b(3), SALT = b(4);
+    const KEY = b(2),
+      BATCH = b(3),
+      SALT = b(4);
     /*
      * **THE TOP BIT OF THE `Uint<128>` IS SET, AND THAT IS THE WHOLE REASON FOR
      * THE SHAPE OF THIS NUMBER.**
@@ -443,15 +443,15 @@ describe('what a commitment names, which no mirror can check', () => {
     const AMOUNT = (1n << 127n) + 12345678901234567890n;
 
     it('assetKeyOf(asset, blinding) — the asset is the value and the blinding is the opening', () => {
-      expect(toHex(pureCircuits.assetKeyOf(ASSET, BLINDING)))
-        .toBe('32c0adc78a1f7b371bb49bea21c80b3c09f4f253320e87a9dfa74e8ad3a448ef');
+      expect(toHex(pureCircuits.assetKeyOf(ASSET, BLINDING))).toBe(
+        '32c0adc78a1f7b371bb49bea21c80b3c09f4f253320e87a9dfa74e8ad3a448ef'
+      );
       /*
        * And the swap really does move it. Without this line the literal above
        * would be satisfied by a circuit that happened to be symmetric, and the
        * test would pin a number without pinning an order.
        */
-      expect(toHex(pureCircuits.assetKeyOf(BLINDING, ASSET)))
-        .not.toBe(toHex(pureCircuits.assetKeyOf(ASSET, BLINDING)));
+      expect(toHex(pureCircuits.assetKeyOf(BLINDING, ASSET))).not.toBe(toHex(pureCircuits.assetKeyOf(ASSET, BLINDING)));
     });
 
     it('changeCommitmentOf(assetKey, amount, batch, salt) — three same-typed arguments, one order', () => {
@@ -487,30 +487,34 @@ describe('what a commitment names, which no mirror can check', () => {
        */
       const body = bodyOf(codeOf(), 'changeCommitmentOf');
 
-      expect(body, 'changeCommitmentOf has lost its domain separator. Without it this '
-        + 'derivation sits in the same commitment family as signerLeaf and proposalIdOf with '
-        + 'nothing in the circuit keeping it out of their outputs — what kept it out was that '
-        + 'callers happen to pass an asset key, which is an assumption about call sites and '
-        + 'not a property of the function.')
-        .toContain('pad(32, "midnight-accounts:change:")');
+      expect(
+        body,
+        'changeCommitmentOf has lost its domain separator. Without it this ' +
+          'derivation sits in the same commitment family as signerLeaf and proposalIdOf with ' +
+          'nothing in the circuit keeping it out of their outputs — what kept it out was that ' +
+          'callers happen to pass an asset key, which is an assumption about call sites and ' +
+          'not a property of the function.'
+      ).toContain('pad(32, "midnight-accounts:change:")');
 
-      expect(body, 'changeCommitmentOf commits over three elements again, which is the family '
-        + 'the untagged body shared with the two tagged derivations and with the vault\'s '
-        + 'payout details.')
-        .toContain('persistentCommit<Vector<4, Bytes<32>>>');
+      expect(
+        body,
+        'changeCommitmentOf commits over three elements again, which is the family ' +
+          "the untagged body shared with the two tagged derivations and with the vault's " +
+          'payout details.'
+      ).toContain('persistentCommit<Vector<4, Bytes<32>>>');
 
       /*
        * THE ORDER, AS ONE STRING. Whitespace-normalised so re-wrapping the
        * source does not redden it, and every element named so a transposition
        * of any two cannot satisfy it.
        */
-      expect(body.replace(/\s+/g, ' '),
-        'changeCommitmentOf reads its elements in a different order. Nothing else in this '
-        + 'suite goes red for that: every behavioural test takes both sides from the contract, '
-        + 'so a relabelling returns silently, and this test has no pinned value while the '
-        + 'vector is owed.')
-        .toContain('[pad(32, "midnight-accounts:change:"), assetKey, '
-          + 'amount as Field as Bytes<32>, batch], salt');
+      expect(
+        body.replace(/\s+/g, ' '),
+        'changeCommitmentOf reads its elements in a different order. Nothing else in this ' +
+          'suite goes red for that: every behavioural test takes both sides from the contract, ' +
+          'so a relabelling returns silently, and this test has no pinned value while the ' +
+          'vector is owed.'
+      ).toContain('[pad(32, "midnight-accounts:change:"), assetKey, ' + 'amount as Field as Bytes<32>, batch], salt');
 
       /*
        * **AND THE AMOUNT REALLY IS 128 BITS, WATCHED RATHER THAN ASSERTED IN A
@@ -518,8 +522,7 @@ describe('what a commitment names, which no mirror can check', () => {
        * this vector's amount was 64 bits wide it did not, and only running the
        * mask showed it.
        */
-      expect(toHex(pureCircuits.changeCommitmentOf(
-        KEY, AMOUNT & ((1n << 64n) - 1n), BATCH, SALT))).not.toBe(base);
+      expect(toHex(pureCircuits.changeCommitmentOf(KEY, AMOUNT & ((1n << 64n) - 1n), BATCH, SALT))).not.toBe(base);
 
       /*
        * Each of the three transpositions of `assetKey`, `batch` and `salt`,
@@ -582,26 +585,32 @@ describe('what a commitment names, which no mirror can check', () => {
   describe('a signer leaf and a proposal id are different families', () => {
     it('signerLeaf pads its own domain tag into the commitment', () => {
       const body = bodyOf(codeOf(), 'signerLeaf');
-      expect(body, 'signerLeaf has lost its domain separator. Without it signerLeaf(X, Y, Z) '
-        + 'and proposalIdOf(X, Z, Y) are the same 32 bytes, so a signer leaf and a proposal id '
-        + 'are one value under a relabelling. Nothing else in this suite goes red for '
-        + 'this: every behavioural test takes both sides from the contract, so the collision '
-        + 'returns silently.')
-        .toContain('pad(32, "midnight-accounts:signer-leaf:")');
-      expect(body, 'signerLeaf commits over a two-vector again, which is the shape that '
-        + 'collided with proposalIdOf.')
-        .toContain('persistentCommit<Vector<3, Bytes<32>>>');
+      expect(
+        body,
+        'signerLeaf has lost its domain separator. Without it signerLeaf(X, Y, Z) ' +
+          'and proposalIdOf(X, Z, Y) are the same 32 bytes, so a signer leaf and a proposal id ' +
+          'are one value under a relabelling. Nothing else in this suite goes red for ' +
+          'this: every behavioural test takes both sides from the contract, so the collision ' +
+          'returns silently.'
+      ).toContain('pad(32, "midnight-accounts:signer-leaf:")');
+      expect(
+        body,
+        'signerLeaf commits over a two-vector again, which is the shape that ' + 'collided with proposalIdOf.'
+      ).toContain('persistentCommit<Vector<3, Bytes<32>>>');
     });
 
     it('proposalIdOf pads its own domain tag into the commitment', () => {
       const body = bodyOf(codeOf(), 'proposalIdOf');
-      expect(body, 'proposalIdOf has lost its domain separator. Without it proposalIdOf(X, Z, Y) '
-        + 'and signerLeaf(X, Y, Z) are the same 32 bytes, so a proposal id and a signer leaf are '
-        + 'one value under a relabelling. Nothing else in this suite goes red for this.')
-        .toContain('pad(32, "midnight-accounts:proposal-id:")');
-      expect(body, 'proposalIdOf commits over a two-vector again, which is the shape that '
-        + 'collided with signerLeaf.')
-        .toContain('persistentCommit<Vector<3, Bytes<32>>>');
+      expect(
+        body,
+        'proposalIdOf has lost its domain separator. Without it proposalIdOf(X, Z, Y) ' +
+          'and signerLeaf(X, Y, Z) are the same 32 bytes, so a proposal id and a signer leaf are ' +
+          'one value under a relabelling. Nothing else in this suite goes red for this.'
+      ).toContain('pad(32, "midnight-accounts:proposal-id:")');
+      expect(
+        body,
+        'proposalIdOf commits over a two-vector again, which is the shape that ' + 'collided with signerLeaf.'
+      ).toContain('persistentCommit<Vector<3, Bytes<32>>>');
     });
 
     /*
@@ -621,11 +630,9 @@ describe('what a commitment names, which no mirror can check', () => {
      * this test beside that mutation is not read as a mis-scored catch.
      */
     it('no two domain tags in the account contract are the same string', () => {
-      const tags = [...codeOf().matchAll(/pad\(32, "([^"]+)"\)/g)].map(m => m[1]);
-      expect(tags.length, 'the contract pads no domain tags at all, which cannot be right')
-        .toBeGreaterThan(1);
-      expect(new Set(tags).size,
-        `two derivations pad the same domain string: ${tags.join(', ')}`).toBe(tags.length);
+      const tags = [...codeOf().matchAll(/pad\(32, "([^"]+)"\)/g)].map((m) => m[1]);
+      expect(tags.length, 'the contract pads no domain tags at all, which cannot be right').toBeGreaterThan(1);
+      expect(new Set(tags).size, `two derivations pad the same domain string: ${tags.join(', ')}`).toBe(tags.length);
     });
 
     /*
@@ -635,18 +642,26 @@ describe('what a commitment names, which no mirror can check', () => {
      * so every permutation is the test.
      */
     it('a signer leaf is not a proposal id under any permutation of three arguments', () => {
-      const X = b(11), Y = b(12), Z = b(13);
+      const X = b(11),
+        Y = b(12),
+        Z = b(13);
       const leaf = toHex(pureCircuits.signerLeaf(X, Y, Z));
 
       const permutations: ReadonlyArray<readonly [Uint8Array, Uint8Array, Uint8Array]> = [
-        [X, Y, Z], [X, Z, Y], [Y, X, Z], [Y, Z, X], [Z, X, Y], [Z, Y, X],
+        [X, Y, Z],
+        [X, Z, Y],
+        [Y, X, Z],
+        [Y, Z, X],
+        [Z, X, Y],
+        [Z, Y, X]
       ];
       for (const [p, v, s] of permutations) {
-        expect(toHex(pureCircuits.proposalIdOf(p, v, s)),
-          'a proposal id equals a signer leaf under a permutation of the same three '
-          + 'arguments. The two circuits decide who may approve a payment and '
-          + 'what was approved, and a value that is both is a value neither check can rely on.')
-          .not.toBe(leaf);
+        expect(
+          toHex(pureCircuits.proposalIdOf(p, v, s)),
+          'a proposal id equals a signer leaf under a permutation of the same three ' +
+            'arguments. The two circuits decide who may approve a payment and ' +
+            'what was approved, and a value that is both is a value neither check can rely on.'
+        ).not.toBe(leaf);
       }
 
       /*

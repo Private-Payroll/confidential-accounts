@@ -20,25 +20,35 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   schema: 'midnight-identity/disclosure-request/v1',
   kind: 'creation',
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-  purpose: 'To finish creating your company\'s account.',
+  purpose: "To finish creating your company's account.",
   nonce: 'n1',
   expiresAt: NOW + 60_000,
   company: COMPANY,
   account: ACCOUNT,
   deploy: 'REVQTE9Z',
   insert: [{ circuit: 'payout', key: 'S0VZ' }],
-  ...over,
+  ...over
 });
 const codeOf = (f: () => unknown): string => {
-  try { f(); } catch (e) { return e instanceof RequestError ? e.code : `not refused by name: ${String(e)}`; }
+  try {
+    f();
+  } catch (e) {
+    return e instanceof RequestError ? e.code : `not refused by name: ${String(e)}`;
+  }
   return 'not refused';
 };
 
-describe('AN ASK TO FINISH CREATING A COMPANY\'S ACCOUNT', () => {
+describe("AN ASK TO FINISH CREATING A COMPANY'S ACCOUNT", () => {
   it('IS READ WHOLE: THE COMPANY, THE ACCOUNT, THE DEPLOY AND THE KEYS IT INSERTS', () => {
     const ask = parseAsk(wire(), ORIGIN, NOW) as CreationRequest;
     /* RED WHEN: any of the four is dropped or changed on the way in. */
-    expect(ask).toMatchObject({ kind: 'creation', company: COMPANY, account: ACCOUNT, deploy: 'REVQTE9Z', insert: [{ circuit: 'payout', key: 'S0VZ' }] });
+    expect(ask).toMatchObject({
+      kind: 'creation',
+      company: COMPANY,
+      account: ACCOUNT,
+      deploy: 'REVQTE9Z',
+      insert: [{ circuit: 'payout', key: 'S0VZ' }]
+    });
   });
 
   it.each([
@@ -46,8 +56,17 @@ describe('AN ASK TO FINISH CREATING A COMPANY\'S ACCOUNT', () => {
     ['a key to seal an answer to', { inboxPublicKey: 'ab'.repeat(32) }, 'inbox-key-on-a-creation'],
     ['a deploy that is not base64', { deploy: 'not base64!' }, 'not-a-creation'],
     ['no keys to insert', { insert: [] }, 'not-a-creation'],
-    ['one circuit twice', { insert: [{ circuit: 'payout', key: 'S0VZ' }, { circuit: 'payout', key: 'S0VZ' }] }, 'not-a-creation'],
-    ['a key that is not base64', { insert: [{ circuit: 'payout', key: 'K' }] }, 'not-a-creation'],
+    [
+      'one circuit twice',
+      {
+        insert: [
+          { circuit: 'payout', key: 'S0VZ' },
+          { circuit: 'payout', key: 'S0VZ' }
+        ]
+      },
+      'not-a-creation'
+    ],
+    ['a key that is not base64', { insert: [{ circuit: 'payout', key: 'K' }] }, 'not-a-creation']
   ])('IS REFUSED BY NAME WITH %s', (_what, over, code) => {
     /* RED WHEN: the ask is read with the field ignored, or refused without saying why. */
     expect(codeOf(() => parseAsk(wire(over), ORIGIN, NOW))).toBe(code);
@@ -58,37 +77,67 @@ describe('AN ASK TO FINISH CREATING A COMPANY\'S ACCOUNT', () => {
     for (const field of ['deploy', 'insert']) {
       const other = wire({ kind: 'holders' });
       delete other[field === 'deploy' ? 'insert' : 'deploy'];
-      expect(codeOf(() => parseAsk(other, ORIGIN, NOW)), field).toBe('creation-fields-on-another-kind');
+      expect(
+        codeOf(() => parseAsk(other, ORIGIN, NOW)),
+        field
+      ).toBe('creation-fields-on-another-kind');
     }
   });
 });
 
 describe('A LABEL THIS WALLET DREW FOR A COMPANY IT CREATES', () => {
-  const drawn = recordRelease(emptyProfile(NOW), {
-    at: NOW, nonce: 'n1', recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, company: COMPANY, account: null,
-  } as never, NOW);
+  const drawn = recordRelease(
+    emptyProfile(NOW),
+    {
+      at: NOW,
+      nonce: 'n1',
+      recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
+      company: COMPANY,
+      account: null
+    } as never,
+    NOW
+  );
 
   it('IS ONE WHOSE KEY WAS RELEASED BEFORE THE COMPANY HAD AN ACCOUNT', () => {
     /* RED WHEN: a creation is signed for a label this wallet never drew. */
     expect(drewTheLabelFor(emptyProfile(NOW), COMPANY)).toBe(false);
     expect(drewTheLabelFor(drawn, COMPANY)).toBe(true);
     /* RED WHEN: a key released for a company's account counts as drawing its label. */
-    const forAnAccount = recordRelease(emptyProfile(NOW), {
-      at: NOW, nonce: 'n2', recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' }, company: COMPANY, account: ACCOUNT,
-    } as never, NOW);
+    const forAnAccount = recordRelease(
+      emptyProfile(NOW),
+      {
+        at: NOW,
+        nonce: 'n2',
+        recipient: { origin: ORIGIN, name: 'Payroll A', rdns: 'example.payroll-a' },
+        company: COMPANY,
+        account: ACCOUNT
+      } as never,
+      NOW
+    );
     expect(drewTheLabelFor(forAnAccount, COMPANY)).toBe(false);
   });
 });
 
-describe('THE PAGE READING THE WALLET\'S SIGNATURE ON A CREATION', () => {
+describe("THE PAGE READING THE WALLET'S SIGNATURE ON A CREATION", () => {
   const answer = (over: Record<string, unknown> = {}) => ({
-    schema: CREATION_SIGNATURE_SCHEMA, origin: ORIGIN, company: COMPANY, account: ACCOUNT, nonce: 'n1', at: NOW,
-    signer: KEY, signature: { tag: 'schnorr', value: '5a'.repeat(64) }, ...over,
+    schema: CREATION_SIGNATURE_SCHEMA,
+    origin: ORIGIN,
+    company: COMPANY,
+    account: ACCOUNT,
+    nonce: 'n1',
+    at: NOW,
+    signer: KEY,
+    signature: { tag: 'schnorr', value: '5a'.repeat(64) },
+    ...over
   });
   const expecting = { atOrigin: ORIGIN, expectingNonce: 'n1', company: COMPANY, account: ACCOUNT, signer: KEY };
 
   it('TAKES THE SIGNATURE WHEN EVERYTHING IS WHAT THE PAGE ASKED ABOUT', () => {
-    expect(readCreationSignature(answer(), expecting)).toEqual({ ok: true, signer: KEY, signature: { tag: 'schnorr', value: '5a'.repeat(64) } });
+    expect(readCreationSignature(answer(), expecting)).toEqual({
+      ok: true,
+      signer: KEY,
+      signature: { tag: 'schnorr', value: '5a'.repeat(64) }
+    });
   });
 
   it.each([
@@ -97,7 +146,7 @@ describe('THE PAGE READING THE WALLET\'S SIGNATURE ON A CREATION', () => {
     ['another company', { company: `co_${'99'.repeat(32)}` }, 'other-company'],
     ['another account', { account: 'c1'.repeat(32) }, 'other-company'],
     ['another signer', { signer: { tag: 'schnorr', value: '11'.repeat(32) } }, 'other-company'],
-    ['no signature', { signature: null }, 'not-an-answer'],
+    ['no signature', { signature: null }, 'not-an-answer']
   ])('REFUSES %s', (_what, over, code) => {
     /* RED WHEN: that field is not compared with what the page asked about. */
     const read = readCreationSignature(answer(over), expecting);

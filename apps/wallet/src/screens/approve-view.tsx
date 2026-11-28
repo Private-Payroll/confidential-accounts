@@ -6,7 +6,13 @@ import type { ReactNode } from 'react';
 import { AskOver } from './ask-over.js';
 import type { Screen } from './approve-shape.js';
 import { noRequestView, refusedView, swappedView, unopenableView } from './approve-early-views.js';
-import { detailsSentView, joinSentView, keyringSentView, signInSentView, unlockSentView } from './approve-sent-views.js';
+import {
+  detailsSentView,
+  joinSentView,
+  keyringSentView,
+  signInSentView,
+  unlockSentView
+} from './approve-sent-views.js';
 import { askedView } from './approve-asked.js';
 
 export function approveView(v: Screen): ReactNode {

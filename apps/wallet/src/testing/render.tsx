@@ -29,6 +29,6 @@ export function render(ui: ReactNode, options?: Omit<RenderOptions, 'queries'>) 
           {Outer === undefined ? children : <Outer>{children}</Outer>}
         </KeysReaderContext.Provider>
       </KitProvider>
-    ),
+    )
   });
 }

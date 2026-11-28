@@ -19,7 +19,10 @@ import { NothingToApprove } from '../../../../packages/web-shared/src/proposal-a
 import { approveSeatInvitationOnDevice } from '../../../../packages/web-shared/src/seat-invited-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
 import { WaitingIdTaken } from '../../../../packages/web-shared/src/roster-here.js';
-import { approveSeatByLeafOnDevice, seatByLeafToConfirmHere } from '../../../../packages/web-shared/src/signer-by-link.js';
+import {
+  approveSeatByLeafOnDevice,
+  seatByLeafToConfirmHere
+} from '../../../../packages/web-shared/src/signer-by-link.js';
 import { chainTimeOf } from './chain-time.js';
 import { governanceDoorsFor, type CompanyReach } from './company-reach.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
@@ -39,12 +42,20 @@ export interface AddSignerReach {
 /** The signer role an add-signer proposal names, or null: a seat it adds holds a leaf, so it is never a reader's. */
 export const roleOf = (x: string | undefined): SignerRole | null => (isSignerRole(x) ? x : null);
 /** The threshold an invitation sets once its seat is taken, as the page showed it: none, '' and '0' all keep the one in force. */
-const shownThresholdOf = (x: string | undefined): string | null => (x === undefined || x === '' || x === '0' ? null : x);
+const shownThresholdOf = (x: string | undefined): string | null =>
+  x === undefined || x === '' || x === '0' ? null : x;
 const addSignerWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => {
-  const key = ({ closed: 'carried-out', counted: 'already-counted', 'not-raised': 'not-approved' } as Record<string, string>)[stop] ?? stop;
+  const key =
+    ({ closed: 'carried-out', counted: 'already-counted', 'not-raised': 'not-approved' } as Record<string, string>)[
+      stop
+    ] ?? stop;
   return {
     key: `act.approve-proposal.why.${key}`,
-    ...(values === undefined ? (key === 'not-approved' ? { values: { says: 'The company holds no proposal raised on the chain for this change. Nothing was sent.' } } : {}) : { values }),
+    ...(values === undefined
+      ? key === 'not-approved'
+        ? { values: { says: 'The company holds no proposal raised on the chain for this change. Nothing was sent.' } }
+        : {}
+      : { values })
   };
 };
 
@@ -57,43 +68,59 @@ const BY_ADDRESS_FIELDS = ['address', 'scope', 'coinKey'] as const;
 /** The doors this seat approves a seat through, its sends marked in `handed`, at the pace this kind's reach sets. */
 const doorsOf = (reach: AddSignerReach, r: CompanyReach, ctx: StepContext, handed: Handed) => ({
   ...governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal), handed, {
-    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }), ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs }),
+    ...(reach.waitMs === undefined ? {} : { waitMs: reach.waitMs }),
+    ...(reach.everyMs === undefined ? {} : { everyMs: reach.everyMs })
   }),
-  anchorDirectory: anchorDirectoryDoorIn(r, handed),
+  anchorDirectory: anchorDirectoryDoorIn(r, handed)
 });
 
 /** The lines the window shows for a seat added by address: who, the role, the address, its coin key, the rights and the threshold once seated. */
 const shownByAddress = async (reach: AddSignerReach, intent: ActIntent): Promise<readonly ShownLine[]> => {
   const f = intent.fields;
-  const all = await reach.commitments().then((c) => c.allVaults().toLowerCase(), () => {
-    /* Without the account's own functions the rights are shown as the page named them, never as every vault. */
-    return null;
-  });
+  const all = await reach.commitments().then(
+    (c) => c.allVaults().toLowerCase(),
+    () => {
+      /* Without the account's own functions the rights are shown as the page named them, never as every vault. */
+      return null;
+    }
+  );
   return [
     { key: 'act.approve-proposal.shown.name', values: { name: f['personName'] ?? '' }, from: 'page' },
-    ...(roleOf(f['role']) === null ? [] : [{ key: `act.approve-proposal.shown.role.${roleOf(f['role'])!}`, from: 'page' as const }]),
+    ...(roleOf(f['role']) === null
+      ? []
+      : [{ key: `act.approve-proposal.shown.role.${roleOf(f['role'])!}`, from: 'page' as const }]),
     { key: 'act.approve-proposal.shown.address', values: { address: f['address'] ?? '' }, from: 'page' },
     { key: 'act.approve-proposal.shown.coin-key', values: { coinKey: f['coinKey'] ?? '' }, from: 'page' },
     all !== null && (f['scope'] ?? '').toLowerCase() === all
       ? { key: 'act.approve-proposal.shown.every-vault', from: 'action' }
       : { key: 'act.approve-proposal.shown.scope', values: { scope: f['scope'] ?? '' }, from: 'page' },
-    ...(shownThresholdOf(f['threshold']) === null ? [] : [{
-      key: 'act.approve-proposal.shown.new-threshold', values: { threshold: shownThresholdOf(f['threshold'])! }, from: 'page' as const,
-    }]),
+    ...(shownThresholdOf(f['threshold']) === null
+      ? []
+      : [
+          {
+            key: 'act.approve-proposal.shown.new-threshold',
+            values: { threshold: shownThresholdOf(f['threshold'])! },
+            from: 'page' as const
+          }
+        ]),
     { key: 'act.approve-proposal.shown.checks', from: 'action' },
-    { key: 'act.approve-proposal.shown.approve', from: 'action' },
+    { key: 'act.approve-proposal.shown.approve', from: 'action' }
   ];
 };
 
 /** The lines the window shows for a seat named by its leaf: who and the role; the fingerprint follows, read, for the person to confirm. */
 const shownByLeaf = (intent: ActIntent): readonly ShownLine[] => [
   { key: 'act.approve-proposal.shown.name', values: { name: intent.fields['personName'] ?? '' }, from: 'page' },
-  ...(roleOf(intent.fields['role']) === null ? [] : [{ key: `act.approve-proposal.shown.role.${roleOf(intent.fields['role'])!}`, from: 'page' as const }]),
-  { key: 'act.approve-proposal.shown.approve', from: 'action' },
+  ...(roleOf(intent.fields['role']) === null
+    ? []
+    : [{ key: `act.approve-proposal.shown.role.${roleOf(intent.fields['role'])!}`, from: 'page' as const }]),
+  { key: 'act.approve-proposal.shown.approve', from: 'action' }
 ];
 
 /** What a seat named by its leaf is approved with: the fingerprint the person confirmed, which the person waiting read out. */
-interface ReadOutHere { readonly readOut: string }
+interface ReadOutHere {
+  readonly readOut: string;
+}
 
 /**
  * Opens a proposal to seat a leaf, held to the person waiting for it (`seatByLeafToConfirmHere`) and to the person,
@@ -101,28 +128,54 @@ interface ReadOutHere { readonly readOut: string }
  * proposal's invitation names them, and the fingerprint of the keys in the request of the person waiting, whose
  * own wallet signed the address the proposal seats.
  */
-const openedByLeaf = async (reach: AddSignerReach, ctx: StepContext, r: CompanyReach, intent: ActIntent): Promise<OpenedRound> => {
+const openedByLeaf = async (
+  reach: AddSignerReach,
+  ctx: StepContext,
+  r: CompanyReach,
+  intent: ActIntent
+): Promise<OpenedRound> => {
   const f = intent.fields;
   const id = f['proposal']!;
   const commitments = await reach.commitments();
   let read: Awaited<ReturnType<typeof seatByLeafToConfirmHere>>;
   try {
-    read = await seatByLeafToConfirmHere(doorsOf(reach, r, ctx, { over: false }), withCompanyKeys({
-      proposal: id, inviteAddressOf: (c: Hex, salt: Hex) => commitments.inviteAddressOf(c, salt),
-    }, r.companyKeys));
+    read = await seatByLeafToConfirmHere(
+      doorsOf(reach, r, ctx, { over: false }),
+      withCompanyKeys(
+        {
+          proposal: id,
+          inviteAddressOf: (c: Hex, salt: Hex) => commitments.inviteAddressOf(c, salt)
+        },
+        r.companyKeys
+      )
+    );
   } catch (e) {
-    if (e instanceof InvitationNotBound || e instanceof NotOpenedOnThisDevice || e instanceof SeatKeyNotFromTheInvitee || e instanceof WaitingIdTaken) {
+    if (
+      e instanceof InvitationNotBound ||
+      e instanceof NotOpenedOnThisDevice ||
+      e instanceof SeatKeyNotFromTheInvitee ||
+      e instanceof WaitingIdTaken
+    ) {
       throw new StepRefused(addSignerWhy('not-approved', { says: said(e) }), codeOfError(e));
     }
     throw e;
   }
   const t = read.proposal.invited.terms;
-  if (t.name !== f['personName'] || t.role !== roleOf(f['role']) || String(t.leaf).toLowerCase() !== f['leaf']!.toLowerCase()) {
+  if (
+    t.name !== f['personName'] ||
+    t.role !== roleOf(f['role']) ||
+    String(t.leaf).toLowerCase() !== f['leaf']!.toLowerCase()
+  ) {
     throw new StepRefused(addSignerWhy('not-approved', { says: SEATS_ANOTHER_THAN_SHOWN }), 'invitation-not-bound');
   }
   return {
-    id, chainId: read.proposal.chainId, read: { readOut: read.fingerprint } satisfies ReadOutHere,
-    confirm: [await rightsFiled(reach, t.invite!.scope), { key: 'act.approve-proposal.confirm.fingerprint', values: { name: t.name, fingerprint: read.fingerprint } }],
+    id,
+    chainId: read.proposal.chainId,
+    read: { readOut: read.fingerprint } satisfies ReadOutHere,
+    confirm: [
+      await rightsFiled(reach, t.invite!.scope),
+      { key: 'act.approve-proposal.confirm.fingerprint', values: { name: t.name, fingerprint: read.fingerprint } }
+    ]
   };
 };
 
@@ -131,18 +184,22 @@ const openedByLeaf = async (reach: AddSignerReach, ctx: StepContext, r: CompanyR
  * vault, or the rights it names. Without the account's own functions the rights are shown as named.
  */
 const rightsFiled = async (reach: AddSignerReach, scope: string): Promise<Words> => {
-  const all = await reach.commitments().then((c) => c.allVaults().toLowerCase(), () => {
-    /* Without the account's own functions the rights cannot be read as every vault: they are shown as the proposal names them. */
-    return null;
-  });
+  const all = await reach.commitments().then(
+    (c) => c.allVaults().toLowerCase(),
+    () => {
+      /* Without the account's own functions the rights cannot be read as every vault: they are shown as the proposal names them. */
+      return null;
+    }
+  );
   return all !== null && scope.toLowerCase() === all
     ? { key: 'act.approve-proposal.shown.every-vault' }
     : { key: 'act.approve-proposal.shown.scope', values: { scope: scope.toLowerCase() } };
 };
 
 /** Why a proposal to seat a leaf is refused when it seats another person, role or leaf than the page showed, and what clears it. */
-const SEATS_ANOTHER_THAN_SHOWN = 'The proposal the company holds under that name seats another person, role or leaf than the ones '
-  + 'shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.';
+const SEATS_ANOTHER_THAN_SHOWN =
+  'The proposal the company holds under that name seats another person, role or leaf than the ones ' +
+  'shown, so nothing was approved. Nothing was sent. Do not approve it: reload the page and check it again.';
 
 /**
  * **ADDING A SIGNER INVITED BY ADDRESS, OR ONE WHO JOINED BY A LINK OR A CODE.** A seat invited by address is opened
@@ -161,7 +218,8 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
     fields: ['personName', 'role'],
     changesTheCompany: true,
     readsFirst: byLeaf,
-    shown: async (intent): Promise<readonly ShownLine[]> => (byLeaf(intent) ? shownByLeaf(intent) : shownByAddress(reach, intent)),
+    shown: async (intent): Promise<readonly ShownLine[]> =>
+      byLeaf(intent) ? shownByLeaf(intent) : shownByAddress(reach, intent),
     check: (intent) => {
       if (roleOf(intent.fields['role']) === null) return addSignerWhy('not-a-proposal');
       if (byLeaf(intent)) return null;
@@ -172,13 +230,18 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
     opened: async (ctx, r, intent) => {
       if (byLeaf(intent)) return openedByLeaf(reach, ctx, r, intent);
       const id = intent.fields['proposal']!;
-      const rec = ((await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId)) as readonly SealedProposal[]).find((p) => p.id === id);
+      const rec = (
+        (await governedCallServiceThrough(r.stepView).sealedProposals!(r.accountId)) as readonly SealedProposal[]
+      ).find((p) => p.id === id);
       /* The identity is the one the signed filing and the signed invitation both name, checked here (`addSignerByAddressIn`). */
       const body = rec === undefined ? null : addSignerByAddressIn(rec, r.accountId, r.companyKeys);
       if (body === null) {
-        throw new StepRefused(addSignerWhy('not-approved', {
-          says: 'The company holds no proposal to add a seat by address under that name that this device can open, so nothing was approved. Nothing was sent. Reload the page.',
-        }), 'invitation-not-bound');
+        throw new StepRefused(
+          addSignerWhy('not-approved', {
+            says: 'The company holds no proposal to add a seat by address under that name that this device can open, so nothing was approved. Nothing was sent. Reload the page.'
+          }),
+          'invitation-not-bound'
+        );
       }
       return { id, chainId: body.chainId };
     },
@@ -190,28 +253,52 @@ export function addSignerKind(reach: AddSignerReach): ProposalKind {
       try {
         const commitments = await reach.commitments();
         if (byLeaf(intent)) {
-          await approveSeatByLeafOnDevice(doors, withCompanyKeys({
-            proposal: f['proposal']!, readOut: (round.read as ReadOutHere).readOut, inviteAddressOf: (c: Hex, salt: Hex) => commitments.inviteAddressOf(c, salt),
-          }, r.companyKeys));
+          await approveSeatByLeafOnDevice(
+            doors,
+            withCompanyKeys(
+              {
+                proposal: f['proposal']!,
+                readOut: (round.read as ReadOutHere).readOut,
+                inviteAddressOf: (c: Hex, salt: Hex) => commitments.inviteAddressOf(c, salt)
+              },
+              r.companyKeys
+            )
+          );
           return;
         }
         const threshold = shownThresholdOf(f['threshold']);
-        await approveSeatInvitationOnDevice(doors, withCompanyKeys({
-          shown: {
-            proposal: f['proposal']!, name: f['personName']!, role: roleOf(f['role'])!, address: f['address']!, scope: f['scope']!, coinPublicKey: f['coinKey']!,
-            ...(threshold === null ? {} : { threshold }),
-          },
-          chainTime: chainTimeOf(r),
-        }, r.companyKeys), (c, salt) => commitments.inviteAddressOf(c, salt));
+        await approveSeatInvitationOnDevice(
+          doors,
+          withCompanyKeys(
+            {
+              shown: {
+                proposal: f['proposal']!,
+                name: f['personName']!,
+                role: roleOf(f['role'])!,
+                address: f['address']!,
+                scope: f['scope']!,
+                coinPublicKey: f['coinKey']!,
+                ...(threshold === null ? {} : { threshold })
+              },
+              chainTime: chainTimeOf(r)
+            },
+            r.companyKeys
+          ),
+          (c, salt) => commitments.inviteAddressOf(c, salt)
+        );
       } catch (e) {
         if (e instanceof InvitationOutrun) throw new StepRefused(addSignerWhy('outrun'), codeOfError(e));
         if (e instanceof NothingToApprove || e instanceof InvitationNotBound || e instanceof NotOpenedOnThisDevice) {
-          throw new StepRefused(addSignerWhy(handed.over ? 'may-be-sent' : 'not-approved', { says: said(e) }), codeOfError(e));
+          throw new StepRefused(
+            addSignerWhy(handed.over ? 'may-be-sent' : 'not-approved', { says: said(e) }),
+            codeOfError(e)
+          );
         }
         throw e;
       }
     },
-    stateAt: (atItsBar, _approvedNow, outrun) => (outrun ? 'outrun' : atItsBar ? 'waiting-for-the-invitee' : 'waiting-for-approvals'),
-    why: addSignerWhy,
+    stateAt: (atItsBar, _approvedNow, outrun) =>
+      outrun ? 'outrun' : atItsBar ? 'waiting-for-the-invitee' : 'waiting-for-approvals',
+    why: addSignerWhy
   };
 }

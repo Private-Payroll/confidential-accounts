@@ -20,8 +20,15 @@ import { readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { parseSync } from 'vite';
 
-export interface Source { path: string; text: string }
-export interface Breach { path: string; line: number; what: string }
+export interface Source {
+  path: string;
+  text: string;
+}
+export interface Breach {
+  path: string;
+  line: number;
+  what: string;
+}
 
 type Node = { type: string; start: number; end: number; [k: string]: unknown };
 
@@ -35,7 +42,10 @@ const parse = (s: Source) => {
 
 /** Every node under `root`, parents before children, each with its parent. */
 function* walk(root: unknown, parent: Node | null = null): Generator<{ node: Node; parent: Node | null }> {
-  if (Array.isArray(root)) { for (const r of root) yield* walk(r, parent); return; }
+  if (Array.isArray(root)) {
+    for (const r of root) yield* walk(r, parent);
+    return;
+  }
   if (root === null || typeof root !== 'object') return;
   const node = root as Node;
   if (typeof node.type === 'string') yield { node, parent };
@@ -47,7 +57,10 @@ function* walk(root: unknown, parent: Node | null = null): Generator<{ node: Nod
 
 /** Every node under `root`, each with every node above it, the outermost first. */
 function* walkDown(root: unknown, up: readonly Node[] = []): Generator<{ node: Node; up: readonly Node[] }> {
-  if (Array.isArray(root)) { for (const r of root) yield* walkDown(r, up); return; }
+  if (Array.isArray(root)) {
+    for (const r of root) yield* walkDown(r, up);
+    return;
+  }
   if (root === null || typeof root !== 'object') return;
   const node = root as Node;
   const isNode = typeof node.type === 'string';
@@ -60,13 +73,20 @@ function* walkDown(root: unknown, up: readonly Node[] = []): Generator<{ node: N
 }
 
 /** Each node above `node` with the child it was reached through, the nearest first. */
-function* parentsOf(node: Node, up: readonly Node[]): Generator<{ parent: Node; child: Node; above: Node | undefined }> {
+function* parentsOf(
+  node: Node,
+  up: readonly Node[]
+): Generator<{ parent: Node; child: Node; above: Node | undefined }> {
   for (let i = up.length - 1; i >= 0; i -= 1) yield { parent: up[i]!, child: up[i + 1] ?? node, above: up[i - 1] };
 }
 
 const nameOf = (n: unknown): string => {
   const x = n as Node | null | undefined;
-  return x?.type === 'Identifier' || x?.type === 'JSXIdentifier' ? String(x.name) : x?.type === 'Literal' ? String(x.value) : '';
+  return x?.type === 'Identifier' || x?.type === 'JSXIdentifier'
+    ? String(x.name)
+    : x?.type === 'Literal'
+      ? String(x.value)
+      : '';
 };
 
 /** A code file that ships: TypeScript or TSX, and not a test or a test's support. */
@@ -81,7 +101,10 @@ export function filesUnder(root: string, dir: string, keep: (p: string) => boole
       if (n === 'node_modules') continue;
       const p = join(d, n);
       if (statSync(p).isDirectory()) go(p);
-      else { const r = relative(root, p).split(sep).join('/'); if (keep(r)) out.push(r); }
+      else {
+        const r = relative(root, p).split(sep).join('/');
+        if (keep(r)) out.push(r);
+      }
     }
   };
   go(join(root, dir));
@@ -102,15 +125,26 @@ export function filesUnder(root: string, dir: string, keep: (p: string) => boole
  * by its address, as the application's rules load the walk, so it is
  * typechecked where it lives and not a second time under the kit's settings.
  */
-interface Edge { specifier: string; dynamic: boolean; worker: boolean }
-interface ImportReader { importsOf: (file: string, source: string) => Promise<Edge[]>; isNodeBuiltin: (specifier: string) => boolean }
+interface Edge {
+  specifier: string;
+  dynamic: boolean;
+  worker: boolean;
+}
+interface ImportReader {
+  importsOf: (file: string, source: string) => Promise<Edge[]>;
+  isNodeBuiltin: (specifier: string) => boolean;
+}
 const READER = new URL('../../../../scripts/browser-graph.ts', import.meta.url).href;
 let reader: Promise<ImportReader> | undefined;
-const importReader = (): Promise<ImportReader> => (reader ??= import(/* @vite-ignore */ READER) as Promise<ImportReader>);
+const importReader = (): Promise<ImportReader> =>
+  (reader ??= import(/* @vite-ignore */ READER) as Promise<ImportReader>);
 
 /** Where a module is named in a file: the first place its name is written in quotes, else the first line. */
 const lineNaming = (text: string, specifier: string): number => {
-  for (const q of ["'", '"', '`']) { const at = text.indexOf(q + specifier + q); if (at >= 0) return lineOf(text, at); }
+  for (const q of ["'", '"', '`']) {
+    const at = text.indexOf(q + specifier + q);
+    if (at >= 0) return lineOf(text, at);
+  }
   const bare = text.indexOf(specifier);
   return bare >= 0 ? lineOf(text, bare) : 1;
 };
@@ -118,7 +152,10 @@ const lineNaming = (text: string, specifier: string): number => {
 /** Every module a file names, as the browser graph reads it, each with the line it is named on. */
 export async function specifiersOf(s: Source): Promise<{ specifier: string; line: number }[]> {
   const { importsOf } = await importReader();
-  return (await importsOf(s.path, s.text)).map((e) => ({ specifier: e.specifier, line: lineNaming(s.text, e.specifier) }));
+  return (await importsOf(s.path, s.text)).map((e) => ({
+    specifier: e.specifier,
+    line: lineNaming(s.text, e.specifier)
+  }));
 }
 
 /*
@@ -134,12 +171,18 @@ function declaredSpecifiersOf(s: Source): { specifier: string; line: number }[] 
   const out: { specifier: string; line: number }[] = [];
   for (const { node } of walk(parse(s).program)) {
     let source: Node | null = null;
-    if (node.type === 'ImportDeclaration' || node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') source = (node.source ?? null) as Node | null;
+    if (
+      node.type === 'ImportDeclaration' ||
+      node.type === 'ExportNamedDeclaration' ||
+      node.type === 'ExportAllDeclaration'
+    )
+      source = (node.source ?? null) as Node | null;
     if (node.type === 'TSImportType') {
       const arg = (node.source ?? node.argument ?? null) as Node | null;
       source = arg?.type === 'TSLiteralType' ? (arg.literal as Node) : arg;
     }
-    if (source?.type === 'Literal' && typeof source.value === 'string') out.push({ specifier: source.value, line: lineOf(s.text, source.start) });
+    if (source?.type === 'Literal' && typeof source.value === 'string')
+      out.push({ specifier: source.value, line: lineOf(s.text, source.start) });
   }
   return out;
 }
@@ -180,7 +223,8 @@ export async function undeclaredImports(files: readonly Source[], declared: Read
   for (const f of files) {
     for (const { specifier, line } of await specifiersOf(f)) {
       if (isPath(specifier)) continue;
-      if (isNodeBuiltin(specifier) || !declared.has(packageOf(specifier))) out.push({ path: f.path, line, what: specifier });
+      if (isNodeBuiltin(specifier) || !declared.has(packageOf(specifier)))
+        out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -198,7 +242,7 @@ export function declaredBy(packageJson: string): Set<string> {
  * is in the first download of every page.
  */
 export const KIT_ENTRIES: Readonly<Record<string, string>> = {
-  'vaults-ui/data-table': 'the table and the library it is built on, used only by pages loaded when they are opened',
+  'vaults-ui/data-table': 'the table and the library it is built on, used only by pages loaded when they are opened'
 };
 
 /**
@@ -211,16 +255,31 @@ export const KIT_ENTRIES: Readonly<Record<string, string>> = {
  * is each of the kit's own entries in `KIT_ENTRIES`. `root` is the
  * repository, `kit` the kit's folder in it; `name` is the kit's package name.
  */
-export async function pathsIntoTheKit(files: readonly Source[], root: string, kit: string, name = 'vaults-ui'): Promise<Breach[]> {
+export async function pathsIntoTheKit(
+  files: readonly Source[],
+  root: string,
+  kit: string,
+  name = 'vaults-ui'
+): Promise<Breach[]> {
   /* Compared without case: the Mac's file system finds `packages/UI` as `packages/ui`. */
   const kitDir = (resolve(root, kit) + sep).toLowerCase();
   const out: Breach[] = [];
   for (const f of files) {
     for (const { specifier, line } of await everySpecifierOf(f)) {
-      const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier)
-        : specifier.startsWith('/') ? resolve(root, `.${specifier}`) : null;
-      if (target !== null && (target + sep).toLowerCase().startsWith(kitDir)) out.push({ path: f.path, line, what: specifier });
-      if (target === null && specifier.startsWith(`${name}/`) && !specifier.endsWith('.css') && !(specifier in KIT_ENTRIES)) out.push({ path: f.path, line, what: specifier });
+      const target = specifier.startsWith('.')
+        ? resolve(root, dirname(f.path), specifier)
+        : specifier.startsWith('/')
+          ? resolve(root, `.${specifier}`)
+          : null;
+      if (target !== null && (target + sep).toLowerCase().startsWith(kitDir))
+        out.push({ path: f.path, line, what: specifier });
+      if (
+        target === null &&
+        specifier.startsWith(`${name}/`) &&
+        !specifier.endsWith('.css') &&
+        !(specifier in KIT_ENTRIES)
+      )
+        out.push({ path: f.path, line, what: specifier });
     }
   }
   return out;
@@ -241,14 +300,20 @@ export async function secondCn(files: readonly Source[], home: string): Promise<
   for (const f of files) {
     if (f.path === home) continue;
     for (const { specifier, line } of await specifiersOf(f)) {
-      if (['cn', 'clsx', 'tailwind-merge'].includes(packageOf(specifier))) out.push({ path: f.path, line, what: `imports ${specifier}` });
+      if (['cn', 'clsx', 'tailwind-merge'].includes(packageOf(specifier)))
+        out.push({ path: f.path, line, what: `imports ${specifier}` });
     }
     for (const { node } of walk(parse(f).program)) {
       if (node.type === 'ImportDeclaration' && (node.source as Node).value === 'class-variance-authority') {
-        for (const s of node.specifiers as Node[]) if (s.type === 'ImportSpecifier' && nameOf(s.imported) === 'cx') out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'imports cx' });
+        for (const s of node.specifiers as Node[])
+          if (s.type === 'ImportSpecifier' && nameOf(s.imported) === 'cx')
+            out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'imports cx' });
       }
       const id = (node.id ?? null) as Node | null;
-      const named = (node.type === 'FunctionDeclaration' || node.type === 'VariableDeclarator') && id?.type === 'Identifier' && id.name === 'cn';
+      const named =
+        (node.type === 'FunctionDeclaration' || node.type === 'VariableDeclarator') &&
+        id?.type === 'Identifier' &&
+        id.name === 'cn';
       if (named) out.push({ path: f.path, line: lineOf(f.text, node.start), what: 'declares cn' });
     }
   }
@@ -272,7 +337,18 @@ const GLOBAL_SCOPES = new Set(['window', 'globalThis', 'self', 'top', 'parent', 
 const unwrapped = (n: unknown): Node | undefined => {
   let x = n as Node | undefined;
   for (;;) {
-    if (x !== undefined && x !== null && ['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression'].includes(x.type)) x = x.expression as Node;
+    if (
+      x !== undefined &&
+      x !== null &&
+      [
+        'TSAsExpression',
+        'TSSatisfiesExpression',
+        'TSNonNullExpression',
+        'TSTypeAssertion',
+        'ParenthesizedExpression'
+      ].includes(x.type)
+    )
+      x = x.expression as Node;
     else if (x?.type === 'SequenceExpression') x = (x.expressions as Node[]).at(-1);
     else return x;
   }
@@ -280,7 +356,10 @@ const unwrapped = (n: unknown): Node | undefined => {
 /** Whether an expression is one of the global objects, however it is cast, or the page's own window reached through its document (`document.defaultView`). */
 const isGlobalScope = (n: unknown): boolean => {
   const x = unwrapped(n);
-  return GLOBAL_SCOPES.has(nameOf(x)) || (x?.type === 'MemberExpression' && (GLOBAL_SCOPES.has(propertyName(x)) || propertyName(x) === 'defaultView'));
+  return (
+    GLOBAL_SCOPES.has(nameOf(x)) ||
+    (x?.type === 'MemberExpression' && (GLOBAL_SCOPES.has(propertyName(x)) || propertyName(x) === 'defaultView'))
+  );
 };
 
 /** Every name a file binds: its variables, however taken apart, its functions, classes, parameters and imports. */
@@ -289,23 +368,32 @@ function bindingsOf(program: unknown): Set<string> {
   const add = (n: Node | null | undefined): void => {
     if (!n) return;
     if (n.type === 'Identifier') out.add(String(n.name));
-    else if (n.type === 'ObjectPattern') for (const q of n.properties as Node[]) add(q.type === 'RestElement' ? q.argument as Node : q.value as Node);
+    else if (n.type === 'ObjectPattern')
+      for (const q of n.properties as Node[]) add(q.type === 'RestElement' ? (q.argument as Node) : (q.value as Node));
     else if (n.type === 'ArrayPattern') for (const e of n.elements as (Node | null)[]) add(e);
     else if (n.type === 'RestElement') add(n.argument as Node);
     else if (n.type === 'AssignmentPattern') add(n.left as Node);
   };
   for (const { node } of walk(program)) {
     if (node.type === 'VariableDeclarator') add(node.id as Node);
-    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) { add(node.id as Node); for (const q of (node.params as Node[]) ?? []) add(q); }
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
+      add(node.id as Node);
+      for (const q of (node.params as Node[]) ?? []) add(q);
+    }
     if (node.type === 'ClassDeclaration') add(node.id as Node);
-    if (['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier'].includes(node.type)) add(node.local as Node);
+    if (['ImportSpecifier', 'ImportDefaultSpecifier', 'ImportNamespaceSpecifier'].includes(node.type))
+      add(node.local as Node);
     if (node.type === 'CatchClause') add(node.param as Node);
   }
   return out;
 }
 /** A string written in the code, in quotes or as a template with nothing in it, or null. */
-const literalText = (n: Node | undefined): string | null => n?.type === 'Literal' && typeof n.value === 'string' ? n.value
-  : n?.type === 'TemplateLiteral' && (n.expressions as unknown[]).length === 0 ? textOf(n) : null;
+const literalText = (n: Node | undefined): string | null =>
+  n?.type === 'Literal' && typeof n.value === 'string'
+    ? n.value
+    : n?.type === 'TemplateLiteral' && (n.expressions as unknown[]).length === 0
+      ? textOf(n)
+      : null;
 
 /*
  * HOW A BROWSER PAGE TALKS TO ANYTHING OUTSIDE IT: the service over the
@@ -318,10 +406,42 @@ const literalText = (n: Node | undefined): string | null => n?.type === 'Literal
  * a page that reads one talks to that wallet directly. The person's own
  * account is reached through the adapters, and no other wallet is reached at all.
  */
-export const WALLET_GLOBALS: ReadonlySet<string> = new Set(['midnight', 'cardano', 'ethereum', 'solana', 'phantom', 'keplr', 'bitcoin', 'unisat', 'tronWeb',
-  'aptos', 'sui', 'starknet', 'okxwallet', 'coinbaseWalletExtension', 'web3']);
-const TALKS_OUT = new Set(['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'importScripts', 'Worker', 'SharedWorker', 'MessageChannel', 'BroadcastChannel', 'postMessage',
-  'RTCPeerConnection', 'WebTransport', 'eval', 'Function', 'Image', 'Audio', ...WALLET_GLOBALS]);
+export const WALLET_GLOBALS: ReadonlySet<string> = new Set([
+  'midnight',
+  'cardano',
+  'ethereum',
+  'solana',
+  'phantom',
+  'keplr',
+  'bitcoin',
+  'unisat',
+  'tronWeb',
+  'aptos',
+  'sui',
+  'starknet',
+  'okxwallet',
+  'coinbaseWalletExtension',
+  'web3'
+]);
+const TALKS_OUT = new Set([
+  'fetch',
+  'XMLHttpRequest',
+  'WebSocket',
+  'EventSource',
+  'importScripts',
+  'Worker',
+  'SharedWorker',
+  'MessageChannel',
+  'BroadcastChannel',
+  'postMessage',
+  'RTCPeerConnection',
+  'WebTransport',
+  'eval',
+  'Function',
+  'Image',
+  'Audio',
+  ...WALLET_GLOBALS
+]);
 /** Reached through a global object only, since a name like `open` is also an ordinary name. */
 const TALKS_OUT_ON_A_GLOBAL = new Set([...TALKS_OUT, 'open']);
 /*
@@ -331,22 +451,39 @@ const TALKS_OUT_ON_A_GLOBAL = new Set([...TALKS_OUT, 'open']);
  * button or input that submits one, sends its fields to it.
  */
 export const LOADS_BY_ADDRESS: Readonly<Record<string, readonly string[]>> = {
-  iframe: ['src', 'srcDoc'], frame: ['src'], img: ['src', 'srcSet'], script: ['src'], embed: ['src'], object: ['data'],
-  source: ['src', 'srcSet'], video: ['src', 'poster'], audio: ['src'], track: ['src'], link: ['href'], form: ['action'], button: ['formAction'], input: ['formAction', 'src'],
+  iframe: ['src', 'srcDoc'],
+  frame: ['src'],
+  img: ['src', 'srcSet'],
+  script: ['src'],
+  embed: ['src'],
+  object: ['data'],
+  source: ['src', 'srcSet'],
+  video: ['src', 'poster'],
+  audio: ['src'],
+  track: ['src'],
+  link: ['href'],
+  form: ['action'],
+  button: ['formAction'],
+  input: ['formAction', 'src']
 };
 /** A module named by an address on another server, rather than a file the bundler serves. */
 const isRemote = (spec: string): boolean => /^[a-z][a-z\d+.-]*:/i.test(spec) || spec.startsWith('//');
 /** Moving the page: what `location` does when it is written to or told to go. */
 const MOVES_THE_PAGE = new Set(['assign', 'replace', 'reload']);
 /** The one way through, said with every breach of the rule below, so whoever meets one knows what to do. */
-export const THE_WAY_THROUGH = 'Move it into an adapter, under the adapters folder, and hand the screen only what the adapter returns.';
+export const THE_WAY_THROUGH =
+  'Move it into an adapter, under the adapters folder, and hand the screen only what the adapter returns.';
 /** Whatever it is reached on. */
 const TALKS_OUT_ON_ANYTHING = new Set(['postMessage', 'contentWindow', 'sendBeacon', 'onmessage', 'serviceWorker']);
 
 /** A property's name as written: `a.b` and `a['b']` are both `b`; a name built at run time is ''. */
 const propertyName = (m: Node): string => {
   const prop = m.property as Node;
-  return prop.type === 'Identifier' && !m.computed ? String(prop.name) : prop.type === 'Literal' ? String(prop.value) : '';
+  return prop.type === 'Identifier' && !m.computed
+    ? String(prop.name)
+    : prop.type === 'Literal'
+      ? String(prop.value)
+      : '';
 };
 
 const inside = (path: string, dir: string): boolean => (path + sep).toLowerCase().startsWith((dir + sep).toLowerCase());
@@ -379,7 +516,12 @@ const inside = (path: string, dir: string): boolean => (path + sep).toLowerCase(
 /** Where the kit's components are, whose elements take the props their callers give them. */
 const KIT_COMPONENTS = 'packages/ui/src/components/';
 
-export async function waysIntoSharedCode(files: readonly Source[], root: string, own: string, adapters: string | null): Promise<Breach[]> {
+export async function waysIntoSharedCode(
+  files: readonly Source[],
+  root: string,
+  own: string,
+  adapters: string | null
+): Promise<Breach[]> {
   const ownDir = resolve(root, own);
   const out: Breach[] = [];
   for (const f of files) {
@@ -388,7 +530,9 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
     for (const { specifier, line } of await everySpecifierOf(f)) {
       if (isRemote(specifier)) breach(line, `imports ${specifier} from another server`);
       else if (isPath(specifier)) {
-        const target = specifier.startsWith('.') ? resolve(root, dirname(f.path), specifier) : resolve(root, `.${specifier}`);
+        const target = specifier.startsWith('.')
+          ? resolve(root, dirname(f.path), specifier)
+          : resolve(root, `.${specifier}`);
         if (!inside(target, ownDir)) breach(line, `reaches ${specifier}`);
       } else if (SHARED_PACKAGES.has(packageOf(specifier))) breach(line, `imports ${specifier}`);
     }
@@ -398,32 +542,71 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
     for (const { node, up } of walkDown(program)) {
       const at = lineOf(f.text, node.start);
       const p = up[up.length - 1];
-      const isName = (p?.type === 'MemberExpression' && p.property === node && !p.computed) || (p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand);
+      const isName =
+        (p?.type === 'MemberExpression' && p.property === node && !p.computed) ||
+        (p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand);
       const typeOnly = up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type));
-      if (node.type === 'Identifier' && TALKS_OUT.has(String(node.name)) && !bound.has(String(node.name)) && !isName && !typeOnly) breach(at, String(node.name));
-      const aGlobal = (node.type === 'Identifier' && GLOBAL_SCOPES.has(String(node.name)) && !isName) || (node.type === 'MemberExpression' && isGlobalScope(node));
+      if (
+        node.type === 'Identifier' &&
+        TALKS_OUT.has(String(node.name)) &&
+        !bound.has(String(node.name)) &&
+        !isName &&
+        !typeOnly
+      )
+        breach(at, String(node.name));
+      const aGlobal =
+        (node.type === 'Identifier' && GLOBAL_SCOPES.has(String(node.name)) && !isName) ||
+        (node.type === 'MemberExpression' && isGlobalScope(node));
       if (aGlobal && !typeOnly) {
         /*
          * A global object is read here only as the object of a property, asked
          * about (`typeof window`), compared (`event.source === window`, `'x' in
          * window`), or taken apart into plain names that reach nothing above.
          */
-        const q = [...up].reverse().find((u) => !['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'ParenthesizedExpression', 'SequenceExpression'].includes(u.type));
+        const q = [...up]
+          .reverse()
+          .find(
+            (u) =>
+              ![
+                'TSAsExpression',
+                'TSSatisfiesExpression',
+                'TSNonNullExpression',
+                'TSTypeAssertion',
+                'ParenthesizedExpression',
+                'SequenceExpression'
+              ].includes(u.type)
+          );
         const named = q?.type === 'MemberExpression' && unwrapped(q.object) === node;
         const asked = q?.type === 'UnaryExpression' && q.operator === 'typeof';
-        const compared = q?.type === 'BinaryExpression' && (['===', '!==', '==', '!='].includes(String(q.operator)) || (q.operator === 'in' && unwrapped(q.right) === node));
-        const plainKey = (x: Node): boolean => x.type === 'Property' && !x.computed && (x.value as Node).type === 'Identifier'
-          && !TALKS_OUT_ON_A_GLOBAL.has(nameOf(x.key)) && !TALKS_OUT_ON_ANYTHING.has(nameOf(x.key)) && !GLOBAL_SCOPES.has(nameOf(x.key)) && nameOf(x.key) !== 'defaultView';
-        const takenApart = q?.type === 'VariableDeclarator' && unwrapped(q.init) === node && (q.id as Node).type === 'ObjectPattern' && ((q.id as Node).properties as Node[]).every(plainKey);
+        const compared =
+          q?.type === 'BinaryExpression' &&
+          (['===', '!==', '==', '!='].includes(String(q.operator)) ||
+            (q.operator === 'in' && unwrapped(q.right) === node));
+        const plainKey = (x: Node): boolean =>
+          x.type === 'Property' &&
+          !x.computed &&
+          (x.value as Node).type === 'Identifier' &&
+          !TALKS_OUT_ON_A_GLOBAL.has(nameOf(x.key)) &&
+          !TALKS_OUT_ON_ANYTHING.has(nameOf(x.key)) &&
+          !GLOBAL_SCOPES.has(nameOf(x.key)) &&
+          nameOf(x.key) !== 'defaultView';
+        const takenApart =
+          q?.type === 'VariableDeclarator' &&
+          unwrapped(q.init) === node &&
+          (q.id as Node).type === 'ObjectPattern' &&
+          ((q.id as Node).properties as Node[]).every(plainKey);
         const label = node.type === 'Identifier' ? String(node.name) : propertyName(node);
         if (!named && !asked && !compared && !takenApart) breach(at, `${label} handed on`);
       }
-      if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && propertyName(node) === '') breach(at, 'a global reached by a built name');
-      if (node.type === 'ImportExpression' && literalText(node.source as Node) === null) breach(at, 'import() of a module worked out at run time');
+      if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && propertyName(node) === '')
+        breach(at, 'a global reached by a built name');
+      if (node.type === 'ImportExpression' && literalText(node.source as Node) === null)
+        breach(at, 'import() of a module worked out at run time');
       if (node.type === 'JSXOpeningElement') {
         const element = nameOf(node.name);
         for (const a of (node.attributes as Node[]) ?? []) {
-          if (a.type === 'JSXAttribute' && (LOADS_BY_ADDRESS[element] ?? []).includes(nameOf(a.name))) breach(lineOf(f.text, a.start), `<${element} ${nameOf(a.name)}>`);
+          if (a.type === 'JSXAttribute' && (LOADS_BY_ADDRESS[element] ?? []).includes(nameOf(a.name)))
+            breach(lineOf(f.text, a.start), `<${element} ${nameOf(a.name)}>`);
           /*
            * A spread onto an element that loads by its address can carry the
            * address: an object written in place is read for it, and anything
@@ -436,8 +619,13 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
             if (spread?.type !== 'ObjectExpression') breach(lineOf(f.text, a.start), `<${element} {...}>`);
             else {
               for (const k of (spread.properties as Node[]) ?? []) {
-                const key = k.type === 'Property' ? (literalText(k.key as Node) ?? ((k.key as Node).type === 'Identifier' && !k.computed ? nameOf(k.key) : null)) : null;
-                if (key === null || LOADS_BY_ADDRESS[element]!.includes(key)) breach(lineOf(f.text, k.start), `<${element} {...${key ?? ''}}>`);
+                const key =
+                  k.type === 'Property'
+                    ? (literalText(k.key as Node) ??
+                      ((k.key as Node).type === 'Identifier' && !k.computed ? nameOf(k.key) : null))
+                    : null;
+                if (key === null || LOADS_BY_ADDRESS[element]!.includes(key))
+                  breach(lineOf(f.text, k.start), `<${element} {...${key ?? ''}}>`);
               }
             }
           }
@@ -451,10 +639,25 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
       const isLocation = (n: Node | undefined): boolean => {
         const u = n === undefined ? undefined : unwrapped(n);
         if (u?.type === 'Identifier') return u.name === 'location' && !bound.has('location');
-        return u?.type === 'MemberExpression' && propertyName(u) === 'location' && (isGlobalScope(u.object) || nameOf(unwrapped(u.object as Node)) === 'document');
+        return (
+          u?.type === 'MemberExpression' &&
+          propertyName(u) === 'location' &&
+          (isGlobalScope(u.object) || nameOf(unwrapped(u.object as Node)) === 'document')
+        );
       };
-      if (node.type === 'AssignmentExpression' && (isLocation(node.left as Node) || ((node.left as Node).type === 'MemberExpression' && isLocation(((node.left as Node).object) as Node)))) breach(at, 'location written to');
-      if (node.type === 'CallExpression' && (node.callee as Node).type === 'MemberExpression' && isLocation(((node.callee as Node).object) as Node) && MOVES_THE_PAGE.has(propertyName(node.callee as Node))) breach(at, `location.${propertyName(node.callee as Node)}`);
+      if (
+        node.type === 'AssignmentExpression' &&
+        (isLocation(node.left as Node) ||
+          ((node.left as Node).type === 'MemberExpression' && isLocation((node.left as Node).object as Node)))
+      )
+        breach(at, 'location written to');
+      if (
+        node.type === 'CallExpression' &&
+        (node.callee as Node).type === 'MemberExpression' &&
+        isLocation((node.callee as Node).object as Node) &&
+        MOVES_THE_PAGE.has(propertyName(node.callee as Node))
+      )
+        breach(at, `location.${propertyName(node.callee as Node)}`);
       if (node.type === 'ImportExpression') {
         const spec = literalText(node.source as Node);
         if (spec !== null && isRemote(spec)) breach(at, `import() of ${spec} from another server`);
@@ -462,30 +665,56 @@ export async function waysIntoSharedCode(files: readonly Source[], root: string,
       if (node.type === 'MemberExpression') {
         const name = propertyName(node);
         const onGlobal = isGlobalScope(node.object);
-        if ((onGlobal && TALKS_OUT_ON_A_GLOBAL.has(name)) || TALKS_OUT_ON_ANYTHING.has(name)) breach(at, onGlobal ? `${nameOf(unwrapped(node.object)) || 'window'}.${name}` : `.${name}`);
+        if ((onGlobal && TALKS_OUT_ON_A_GLOBAL.has(name)) || TALKS_OUT_ON_ANYTHING.has(name))
+          breach(at, onGlobal ? `${nameOf(unwrapped(node.object)) || 'window'}.${name}` : `.${name}`);
       }
       /* Taken apart from a global object: `const { fetch } = window`. */
-      if (node.type === 'VariableDeclarator' && (node.id as Node).type === 'ObjectPattern' && isGlobalScope(node.init)) {
+      if (
+        node.type === 'VariableDeclarator' &&
+        (node.id as Node).type === 'ObjectPattern' &&
+        isGlobalScope(node.init)
+      ) {
         for (const q of (node.id as Node).properties as Node[]) {
-          const key = q.type === 'Property' ? (q.computed && (q.key as Node).type !== 'Literal' ? '' : nameOf(q.key)) : '';
-          if (TALKS_OUT_ON_A_GLOBAL.has(key) || TALKS_OUT_ON_ANYTHING.has(key)) breach(lineOf(f.text, q.start), `${nameOf(unwrapped(node.init)) || 'window'}.${key}`);
+          const key =
+            q.type === 'Property' ? (q.computed && (q.key as Node).type !== 'Literal' ? '' : nameOf(q.key)) : '';
+          if (TALKS_OUT_ON_A_GLOBAL.has(key) || TALKS_OUT_ON_ANYTHING.has(key))
+            breach(lineOf(f.text, q.start), `${nameOf(unwrapped(node.init)) || 'window'}.${key}`);
         }
       }
-      if (node.type === 'CallExpression' && ['setTimeout', 'setInterval'].includes(nameOf((node.callee as Node).property ?? node.callee))) {
+      if (
+        node.type === 'CallExpression' &&
+        ['setTimeout', 'setInterval'].includes(nameOf((node.callee as Node).property ?? node.callee))
+      ) {
         const [first] = node.arguments as Node[];
-        if (first !== undefined && (first.type === 'TemplateLiteral' || (first.type === 'Literal' && typeof first.value === 'string') || first.type === 'BinaryExpression')) breach(at, `${nameOf((node.callee as Node).property ?? node.callee)} given code as text`);
+        if (
+          first !== undefined &&
+          (first.type === 'TemplateLiteral' ||
+            (first.type === 'Literal' && typeof first.value === 'string') ||
+            first.type === 'BinaryExpression')
+        )
+          breach(at, `${nameOf((node.callee as Node).property ?? node.callee)} given code as text`);
       }
-      if (node.type === 'CallExpression' && nameOf((node.callee as Node).property ?? node.callee) === 'addEventListener') {
+      if (
+        node.type === 'CallExpression' &&
+        nameOf((node.callee as Node).property ?? node.callee) === 'addEventListener'
+      ) {
         const [first] = node.arguments as Node[];
         if (literalText(first) === 'message') breach(at, "addEventListener('message')");
       }
-      if (node.type === 'CallExpression' && (node.callee as Node).type === 'MemberExpression' && ((node.callee as Node).object as Node).type === 'MetaProperty' && nameOf((node.callee as Node).property) === 'glob') {
+      if (
+        node.type === 'CallExpression' &&
+        (node.callee as Node).type === 'MemberExpression' &&
+        ((node.callee as Node).object as Node).type === 'MetaProperty' &&
+        nameOf((node.callee as Node).property) === 'glob'
+      ) {
         for (const a of node.arguments as Node[]) {
           const patterns = a.type === 'Literal' ? [a] : a.type === 'ArrayExpression' ? (a.elements as Node[]) : [];
           for (const g of patterns) {
             if (g?.type !== 'Literal' || typeof g.value !== 'string') continue;
             const pattern = String(g.value).replace(/^!/, '');
-            const target = pattern.startsWith('/') ? resolve(root, `.${pattern}`) : resolve(root, dirname(f.path), pattern);
+            const target = pattern.startsWith('/')
+              ? resolve(root, `.${pattern}`)
+              : resolve(root, dirname(f.path), pattern);
             if (!inside(target, ownDir)) breach(at, `import.meta.glob ${pattern}`);
           }
         }
@@ -507,7 +736,11 @@ export const AMOUNT_MAKERS: ReadonlySet<string> = new Set(['publicAmount', 'priv
  * would say private of money anyone can look up.
  * `adapters` is the folder allowed; null allows none.
  */
-export function amountsMadeOutsideTheAdapters(files: readonly Source[], root: string, adapters: string | null): Breach[] {
+export function amountsMadeOutsideTheAdapters(
+  files: readonly Source[],
+  root: string,
+  adapters: string | null
+): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
     if (adapters !== null && inside(resolve(root, f.path), resolve(root, adapters))) continue;
@@ -517,10 +750,15 @@ export function amountsMadeOutsideTheAdapters(files: readonly Source[], root: st
       const p = up[up.length - 1];
       const grand = up[up.length - 2];
       /* A key of an object the file writes is a name of its own; a key taken out of one (`const { publicAmount: m } = kit`) is the maker. */
-      const ownKey = p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand && grand?.type === 'ObjectExpression';
+      const ownKey =
+        p?.type === 'Property' && p.key === node && !p.computed && !p.shorthand && grand?.type === 'ObjectExpression';
       const asProperty = p?.type === 'MemberExpression' && p.property === node;
-      const name = node.type === 'Identifier' && !ownKey && !asProperty ? String(node.name)
-        : node.type === 'MemberExpression' ? propertyName(node) : '';
+      const name =
+        node.type === 'Identifier' && !ownKey && !asProperty
+          ? String(node.name)
+          : node.type === 'MemberExpression'
+            ? propertyName(node)
+            : '';
       if (!AMOUNT_MAKERS.has(name) || seen.has(`${node.start}:${node.end}`)) continue;
       seen.add(`${node.start}:${node.end}`);
       out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
@@ -551,22 +789,31 @@ const withoutComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, (c) =>
 function cssOf(s: Source): { css: string; at: number }[] {
   if (s.path.endsWith('.css')) return [{ css: withoutComments(s.text), at: 0 }];
   const out: { css: string; at: number }[] = [];
-  for (const m of s.text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) out.push({ css: withoutComments(m[1]!), at: m.index });
-  for (const m of s.text.matchAll(new RegExp(String.raw`\sstyle` + ATTRIBUTE_VALUE, 'gi'))) out.push({ css: `{${valueOf(m, 2)}}`, at: m.index });
+  for (const m of s.text.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
+    out.push({ css: withoutComments(m[1]!), at: m.index });
+  for (const m of s.text.matchAll(new RegExp(String.raw`\sstyle` + ATTRIBUTE_VALUE, 'gi')))
+    out.push({ css: `{${valueOf(m, 2)}}`, at: m.index });
   return out;
 }
 
 /** Every declaration in some CSS: `color: red` is `color`, `red`. */
 function declarationsOf(css: string): { property: string; value: string; at: number }[] {
-  return [...css.matchAll(/(?:^|[{;])\s*(--?[A-Za-z][\w-]*|[A-Za-z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|$)/gm)]
-    .map((m) => ({ property: m[1]!.toLowerCase(), value: m[2]!.trim(), at: m.index }));
+  return [...css.matchAll(/(?:^|[{;])\s*(--?[A-Za-z][\w-]*|[A-Za-z][\w-]*)\s*:\s*([^;{}]*)(?=[;}]|$)/gm)].map((m) => ({
+    property: m[1]!.toLowerCase(),
+    value: m[2]!.trim(),
+    at: m.index
+  }));
 }
 
 /** The class words a stylesheet or page writes: every word of an `@apply`, and of a page's `class` attribute. */
 function markupClassWordsOf(s: Source): { word: string; at: number }[] {
   const out: { word: string; at: number }[] = [];
-  for (const { css, at } of cssOf(s)) for (const m of css.matchAll(/@apply\s+([^;]+);/g)) for (const w of m[1]!.split(/\s+/)) if (w) out.push({ word: w, at: at + m.index });
-  if (s.path.endsWith('.html')) for (const m of s.text.matchAll(new RegExp(String.raw`\sclass` + ATTRIBUTE_VALUE, 'gi'))) for (const w of valueOf(m, 2).split(/\s+/)) if (w) out.push({ word: w, at: m.index });
+  for (const { css, at } of cssOf(s))
+    for (const m of css.matchAll(/@apply\s+([^;]+);/g))
+      for (const w of m[1]!.split(/\s+/)) if (w) out.push({ word: w, at: at + m.index });
+  if (s.path.endsWith('.html'))
+    for (const m of s.text.matchAll(new RegExp(String.raw`\sclass` + ATTRIBUTE_VALUE, 'gi')))
+      for (const w of valueOf(m, 2).split(/\s+/)) if (w) out.push({ word: w, at: m.index });
   return out;
 }
 
@@ -580,8 +827,12 @@ export function stringWordsOf(s: Source): { word: string; at: number }[] {
   if (isMarkup(s.path)) return markupClassWordsOf(s);
   const out: { word: string; at: number }[] = [];
   for (const { node } of walk(parse(s).program)) {
-    const text = node.type === 'Literal' && typeof node.value === 'string' ? node.value
-      : node.type === 'TemplateElement' ? (node.value as { raw: string }).raw : null;
+    const text =
+      node.type === 'Literal' && typeof node.value === 'string'
+        ? node.value
+        : node.type === 'TemplateElement'
+          ? (node.value as { raw: string }).raw
+          : null;
     if (text === null) continue;
     for (const w of text.split(/\s+/)) if (w) out.push({ word: w, at: node.start });
   }
@@ -590,13 +841,15 @@ export function stringWordsOf(s: Source): { word: string; at: number }[] {
 
 /* ------------------------------------------------------------------ colours */
 
-const COLOUR_VALUE = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/g;
+const COLOUR_VALUE =
+  /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/g;
 
 /** RULE: no colour value in a component or in the application; colours come from the theme's tokens. */
 export function colourValues(files: readonly Source[]): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
-    for (const m of f.text.matchAll(COLOUR_VALUE)) out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
+    for (const m of f.text.matchAll(COLOUR_VALUE))
+      out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
   }
   return out;
 }
@@ -611,8 +864,19 @@ export function colourValues(files: readonly Source[]): Breach[] {
 export function classWordsOf(s: Source): { word: string; at: number }[] {
   const roots: Node[] = [];
   for (const { node } of walk(parse(s).program)) {
-    if (node.type === 'JSXAttribute' && (node.name as Node).type === 'JSXIdentifier' && (node.name as Node).name === 'className' && node.value) roots.push(node.value as Node);
-    if (node.type === 'CallExpression' && (node.callee as Node).type === 'Identifier' && ['cn', 'cva'].includes(String((node.callee as Node).name))) roots.push(...(node.arguments as Node[]));
+    if (
+      node.type === 'JSXAttribute' &&
+      (node.name as Node).type === 'JSXIdentifier' &&
+      (node.name as Node).name === 'className' &&
+      node.value
+    )
+      roots.push(node.value as Node);
+    if (
+      node.type === 'CallExpression' &&
+      (node.callee as Node).type === 'Identifier' &&
+      ['cn', 'cva'].includes(String((node.callee as Node).name))
+    )
+      roots.push(...(node.arguments as Node[]));
   }
   const seen = new Set<number>();
   const out: { word: string; at: number }[] = [];
@@ -633,7 +897,8 @@ export function classWordsOf(s: Source): { word: string; at: number }[] {
 
 /** The utility a class name applies, without its variants, `!` or leading `-`: `hover:-ml-2!` is `ml-2`. */
 export function utilityOf(word: string): string {
-  let depth = 0; let last = 0;
+  let depth = 0;
+  let last = 0;
   for (let i = 0; i < word.length; i += 1) {
     const c = word[i];
     if (c === '[' || c === '(') depth += 1;
@@ -644,11 +909,17 @@ export function utilityOf(word: string): string {
 }
 
 const wordBreaches = (files: readonly Source[], bad: (utility: string) => boolean): Breach[] =>
-  files.flatMap((f) => stringWordsOf(f).filter(({ word }) => bad(utilityOf(word)))
-    .map(({ word, at }) => ({ path: f.path, line: lineOf(f.text, at), what: word })));
+  files.flatMap((f) =>
+    stringWordsOf(f)
+      .filter(({ word }) => bad(utilityOf(word)))
+      .map(({ word, at }) => ({ path: f.path, line: lineOf(f.text, at), what: word }))
+  );
 
-const PALETTE = 'red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe|black|white';
-const COLOUR_UTILITY = new RegExp(`^(?:bg|text|border(?:-[xytrblse])?|ring|ring-offset|outline|fill|stroke|decoration|divide|from|via|to|shadow|inset-shadow|inset-ring|accent|caret|placeholder)-(?:${PALETTE})(?:-\\d+)?(?:\\/\\S+)?$`);
+const PALETTE =
+  'red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe|black|white';
+const COLOUR_UTILITY = new RegExp(
+  `^(?:bg|text|border(?:-[xytrblse])?|ring|ring-offset|outline|fill|stroke|decoration|divide|from|via|to|shadow|inset-shadow|inset-ring|accent|caret|placeholder)-(?:${PALETTE})(?:-\\d+)?(?:\\/\\S+)?$`
+);
 
 /**
  * RULE: no Tailwind palette colour (`bg-red-500`, `text-white`) in any string
@@ -665,19 +936,25 @@ export function paletteClasses(files: readonly Source[]): Breach[] {
  * requires every entry to name a declaration that exists.
  */
 export const SIDE_NAMES: Readonly<Record<string, string>> = {
-  'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the popup library places a popup by left and right only, so this is the one place the reading direction\'s start and end are turned into them',
+  'packages/ui/src/lib/direction.ts#POPUP_SIDE':
+    "the popup library places a popup by left and right only, so this is the one place the reading direction's start and end are turned into them"
 };
 
 /** Where in a file each declaration named in `registry` stands, as start and end offsets. */
 export function spansOf(f: Source, registry: Readonly<Record<string, string>>): [number, number][] {
   const out: [number, number][] = [];
   for (const { node } of walk(parse(f).program)) {
-    if ((node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') && `${f.path}#${nameOf(node.id)}` in registry) out.push([node.start, node.end]);
+    if (
+      (node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') &&
+      `${f.path}#${nameOf(node.id)}` in registry
+    )
+      out.push([node.start, node.end]);
   }
   return out;
 }
 
-const PHYSICAL = /^(?:m[lr]|p[lr]|scroll-m[lr]|scroll-p[lr]|left|right|border-[lr]|rounded-(?:[lr]|tl|tr|bl|br)|text-(?:left|right)|float-(?:left|right)|clear-(?:left|right)|bg-(?:left|right)|object-(?:left|right)|origin-(?:top-|bottom-)?(?:left|right)|(?:top|bottom)-(?:left|right))(?:-|$)/;
+const PHYSICAL =
+  /^(?:m[lr]|p[lr]|scroll-m[lr]|scroll-p[lr]|left|right|border-[lr]|rounded-(?:[lr]|tl|tr|bl|br)|text-(?:left|right)|float-(?:left|right)|clear-(?:left|right)|bg-(?:left|right)|object-(?:left|right)|origin-(?:top-|bottom-)?(?:left|right)|(?:top|bottom)-(?:left|right))(?:-|$)/;
 const LEFT_OR_RIGHT = /(?:^|[^\w])(?:left|right)(?:$|[^\w])/i;
 
 /**
@@ -694,12 +971,15 @@ export function physicalClasses(files: readonly Source[]): Breach[] {
   for (const f of files) {
     const spans = isMarkup(f.path) ? [] : spansOf(f, SIDE_NAMES);
     for (const { word, at } of stringWordsOf(f)) {
-      if (PHYSICAL.test(utilityOf(word)) && !spans.some(([a, b]) => at >= a && at < b)) out.push({ path: f.path, line: lineOf(f.text, at), what: word });
+      if (PHYSICAL.test(utilityOf(word)) && !spans.some(([a, b]) => at >= a && at < b))
+        out.push({ path: f.path, line: lineOf(f.text, at), what: word });
     }
   }
   for (const f of files) {
     for (const { css, at } of cssOf(f)) {
-      for (const d of declarationsOf(css)) if (LEFT_OR_RIGHT.test(`${d.property} ${d.value}`)) out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
+      for (const d of declarationsOf(css))
+        if (LEFT_OR_RIGHT.test(`${d.property} ${d.value}`))
+          out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
     }
   }
   return out;
@@ -716,9 +996,10 @@ export const ARBITRARY_VALUE_PARTS: Readonly<Record<string, string>> = {
   'calc, min, max, clamp': 'arithmetic on sizes and tokens',
   'color-mix(in_oklch|in_oklab|in_srgb, ...)': 'a blend of theme tokens, in a named colour space',
   'a number, bare or in px, rem, em, ch, vh, vw, dvh, svh, lh, %, deg, ms, s or fr': 'a size, a time or an angle',
-  'auto, fr': 'a grid track sized by its content or its share of the space',
+  'auto, fr': 'a grid track sized by its content or its share of the space'
 };
-const VALUE_PART = /var\(--[\w-]+\)|--[\w-]+|\b(?:calc|min|max|clamp|color-mix)(?=\()|\bin_(?:oklch|oklab|srgb)\b|-?\d*\.?\d+(?:px|rem|em|ch|vh|vw|dvh|svh|lh|%|deg|ms|s|fr)?|(?<![A-Za-z])(?:auto|fr)(?![A-Za-z])/g;
+const VALUE_PART =
+  /var\(--[\w-]+\)|--[\w-]+|\b(?:calc|min|max|clamp|color-mix)(?=\()|\bin_(?:oklch|oklab|srgb)\b|-?\d*\.?\d+(?:px|rem|em|ch|vh|vw|dvh|svh|lh|%|deg|ms|s|fr)?|(?<![A-Za-z])(?:auto|fr)(?![A-Za-z])/g;
 
 /*
  * THE CSS PROPERTIES A CLASS MAY SET BY NAME (`[mask-type:luminance]`). None
@@ -726,9 +1007,9 @@ const VALUE_PART = /var\(--[\w-]+\)|--[\w-]+|\b(?:calc|min|max|clamp|color-mix)(
  * utility or token allows, so each one a screen needs is added here with why.
  */
 export const ARBITRARY_PROPERTIES: Readonly<Record<string, string>> = {
-  '--sidebar-width': 'the left menu\'s width, a size, read by the menu\'s own classes',
-  '--sidebar-width-icon': 'the left menu\'s width folded to its icons, a size, read the same way',
-  '--card-spacing': 'the space inside a card, a spacing step, read by the card\'s own classes',
+  '--sidebar-width': "the left menu's width, a size, read by the menu's own classes",
+  '--sidebar-width-icon': "the left menu's width folded to its icons, a size, read the same way",
+  '--card-spacing': "the space inside a card, a spacing step, read by the card's own classes"
 };
 
 /**
@@ -757,9 +1038,11 @@ export function arbitraryValues(files: readonly Source[]): Breach[] {
 export const INLINE_STYLE_PROPERTIES: Readonly<Record<string, string>> = {};
 
 /** A property whose value is, or may carry, a colour. */
-const COLOUR_PROPERTY = /^(?:color|fill|stroke|background(?:-image)?|border(?:-(?:top|bottom|left|right|block|inline|block-start|block-end|inline-start|inline-end))?|outline|box-shadow|text-shadow|column-rule|text-decoration)$|-color$/;
+const COLOUR_PROPERTY =
+  /^(?:color|fill|stroke|background(?:-image)?|border(?:-(?:top|bottom|left|right|block|inline|block-start|block-end|inline-start|inline-end))?|outline|box-shadow|text-shadow|column-rule|text-decoration)$|-color$/;
 /** What a colour-bearing value may be made of: a theme token, a size, and the words that name no colour. */
-const COLOUR_WORD = /^(?:var\(--[\w-]+\),?|transparent|currentcolor|inherit|initial|unset|none|solid|dashed|dotted|double|inset|-?\d*\.?\d+(?:px|rem|em|%)?,?)$/i;
+const COLOUR_WORD =
+  /^(?:var\(--[\w-]+\),?|transparent|currentcolor|inherit|initial|unset|none|solid|dashed|dotted|double|inset|-?\d*\.?\d+(?:px|rem|em|%)?,?)$/i;
 
 /**
  * RULE: no inline style sets anything not named in `INLINE_STYLE_PROPERTIES`:
@@ -777,10 +1060,14 @@ export function inlineStyles(files: readonly Source[]): Breach[] {
   const out: Breach[] = [];
   const allowed = (key: string) => key in INLINE_STYLE_PROPERTIES;
   const objectBreaches = (f: Source, v: Node): void => {
-    if (v.type !== 'ObjectExpression') { out.push({ path: f.path, line: lineOf(f.text, v.start), what: 'style' }); return; }
+    if (v.type !== 'ObjectExpression') {
+      out.push({ path: f.path, line: lineOf(f.text, v.start), what: 'style' });
+      return;
+    }
     for (const p of v.properties as Node[]) {
       const key = p.type === 'Property' && !p.computed ? nameOf(p.key) : '';
-      if (!allowed(key)) out.push({ path: f.path, line: lineOf(f.text, p.start), what: `style ${key || f.text.slice(p.start, p.end)}` });
+      if (!allowed(key))
+        out.push({ path: f.path, line: lineOf(f.text, p.start), what: `style ${key || f.text.slice(p.start, p.end)}` });
     }
   };
   for (const f of files) {
@@ -790,7 +1077,8 @@ export function inlineStyles(files: readonly Source[]): Breach[] {
         for (const d of declarationsOf(css)) {
           if (sheet && d.property.startsWith('--')) continue;
           const colour = COLOUR_PROPERTY.test(d.property) && !d.value.split(/\s+/).every((w) => COLOUR_WORD.test(w));
-          if ((!sheet && !allowed(d.property)) || colour) out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
+          if ((!sheet && !allowed(d.property)) || colour)
+            out.push({ path: f.path, line: lineOf(f.text, at + d.at), what: `${d.property}: ${d.value}` });
         }
       }
       continue;
@@ -798,17 +1086,24 @@ export function inlineStyles(files: readonly Source[]): Breach[] {
     for (const { node, parent } of walk(parse(f).program)) {
       if (node.type === 'JSXAttribute' && nameOf(node.name) === 'style' && node.value) {
         const v = node.value as Node;
-        objectBreaches(f, v.type === 'JSXExpressionContainer' ? v.expression as Node : v);
+        objectBreaches(f, v.type === 'JSXExpressionContainer' ? (v.expression as Node) : v);
       }
       /* A style is an object; a `style` that is a word (`{ style: 'percent' }`, a formatter's option) is not one. */
       const value = node.value as Node | undefined;
-      if (node.type === 'Property' && nameOf(node.key) === 'style' && parent?.type === 'ObjectExpression' && !(value?.type === 'Literal' && typeof value.value === 'string')) objectBreaches(f, value!);
+      if (
+        node.type === 'Property' &&
+        nameOf(node.key) === 'style' &&
+        parent?.type === 'ObjectExpression' &&
+        !(value?.type === 'Literal' && typeof value.value === 'string')
+      )
+        objectBreaches(f, value!);
       if (node.type === 'MemberExpression' && ['style', 'cssText'].includes(nameOf(node.property))) {
         out.push({ path: f.path, line: lineOf(f.text, node.start), what: `.${nameOf(node.property)}` });
       }
       if (node.type === 'CallExpression' && nameOf((node.callee as Node).property) === 'setAttribute') {
         const [first] = node.arguments as Node[];
-        if (first?.type === 'Literal' && String(first.value).toLowerCase() === 'style') out.push({ path: f.path, line: lineOf(f.text, node.start), what: "setAttribute('style')" });
+        if (first?.type === 'Literal' && String(first.value).toLowerCase() === 'style')
+          out.push({ path: f.path, line: lineOf(f.text, node.start), what: "setAttribute('style')" });
       }
     }
   }
@@ -820,12 +1115,16 @@ export function inlineStyles(files: readonly Source[]): Breach[] {
 /** The variants of a class word, in order: `md:*:[&_p]:hidden` has `md`, `*` and `[&_p]`. Brackets and parentheses are read whole. */
 export function variantsOf(word: string): string[] {
   const out: string[] = [];
-  let depth = 0; let from = 0;
+  let depth = 0;
+  let from = 0;
   for (let i = 0; i < word.length; i += 1) {
     const c = word[i]!;
     if (c === '[' || c === '(') depth += 1;
     else if (c === ']' || c === ')') depth -= 1;
-    else if (c === ':' && depth === 0) { out.push(word.slice(from, i)); from = i + 1; }
+    else if (c === ':' && depth === 0) {
+      out.push(word.slice(from, i));
+      from = i + 1;
+    }
   }
   return out;
 }
@@ -857,17 +1156,26 @@ const STYLESHEET_LINE = /^@(?:import|source(?:\s+not)?)\s+(?:"[^"]*"|'[^']*')\s*
 export function stylesReachingIntoComponents(files: readonly Source[]): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
-    for (const m of f.text.matchAll(/data-slot/gi)) out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
+    for (const m of f.text.matchAll(/data-slot/gi))
+      out.push({ path: f.path, line: lineOf(f.text, m.index), what: m[0] });
     if (f.path.endsWith('.css')) {
       // Comments blanked, and only comments: a glob in quotes, such as the one that leaves out every test file, holds the same characters.
-      const plain = f.text.replace(/"[^"\n]*"|'[^'\n]*'|\/\*[\s\S]*?\*\//g, (c) => (c.startsWith('/*') ? c.replace(/[^\n]/g, ' ') : c));
+      const plain = f.text.replace(/"[^"\n]*"|'[^'\n]*'|\/\*[\s\S]*?\*\//g, (c) =>
+        c.startsWith('/*') ? c.replace(/[^\n]/g, ' ') : c
+      );
       for (const statement of plain.matchAll(/[^;{}]+(?:;|\{[^}]*\})/g)) {
         const text = statement[0].trim();
-        if (text !== '' && !STYLESHEET_LINE.test(text)) out.push({ path: f.path, line: lineOf(f.text, statement.index + statement[0].indexOf(text)), what: text.split('\n')[0]! });
+        if (text !== '' && !STYLESHEET_LINE.test(text))
+          out.push({
+            path: f.path,
+            line: lineOf(f.text, statement.index + statement[0].indexOf(text)),
+            what: text.split('\n')[0]!
+          });
       }
       continue;
     }
-    for (const { word, at } of stringWordsOf(f)) if (variantsOf(word).some(reaches)) out.push({ path: f.path, line: lineOf(f.text, at), what: word });
+    for (const { word, at } of stringWordsOf(f))
+      if (variantsOf(word).some(reaches)) out.push({ path: f.path, line: lineOf(f.text, at), what: word });
   }
   return out;
 }
@@ -882,7 +1190,8 @@ export function namedOutside(files: readonly Source[], name: string, allowed: re
   for (const f of files) {
     if (allowed.includes(f.path)) continue;
     for (const { node } of walk(parse(f).program)) {
-      if ((node.type === 'Identifier' || node.type === 'JSXIdentifier') && node.name === name) out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
+      if ((node.type === 'Identifier' || node.type === 'JSXIdentifier') && node.name === name)
+        out.push({ path: f.path, line: lineOf(f.text, node.start), what: name });
     }
   }
   return out;
@@ -892,29 +1201,45 @@ export function namedOutside(files: readonly Source[], name: string, allowed: re
 
 const hasLetter = (t: string) => /\p{L}/u.test(t);
 
-const isCreateElement = (callee: Node): boolean => (callee.type === 'Identifier' && ['createElement', 'jsx', 'jsxs'].includes(String(callee.name)))
-  || (callee.type === 'MemberExpression' && (callee.property as Node).type === 'Identifier' && (callee.property as Node).name === 'createElement');
+const isCreateElement = (callee: Node): boolean =>
+  (callee.type === 'Identifier' && ['createElement', 'jsx', 'jsxs'].includes(String(callee.name))) ||
+  (callee.type === 'MemberExpression' &&
+    (callee.property as Node).type === 'Identifier' &&
+    (callee.property as Node).name === 'createElement');
 
 /** Every name a translation function goes by in a file: `t`, and whatever `useText()`, `t` itself or a destructured `t` is given to. */
 function translatorsOf(program: unknown): Set<string> {
   const names = new Set(['t']);
   for (const { node } of walk(program)) {
     if (node.type !== 'VariableDeclarator') continue;
-    const id = node.id as Node; const init = node.init as Node | null;
-    if (id.type === 'Identifier' && init !== null && ((init.type === 'CallExpression' && (init.callee as Node).type === 'Identifier' && (init.callee as Node).name === 'useText')
-      || (init.type === 'Identifier' && names.has(String(init.name))))) names.add(String(id.name));
+    const id = node.id as Node;
+    const init = node.init as Node | null;
+    if (
+      id.type === 'Identifier' &&
+      init !== null &&
+      ((init.type === 'CallExpression' &&
+        (init.callee as Node).type === 'Identifier' &&
+        (init.callee as Node).name === 'useText') ||
+        (init.type === 'Identifier' && names.has(String(init.name))))
+    )
+      names.add(String(id.name));
     if (id.type === 'ObjectPattern') {
       for (const p of id.properties as Node[]) {
-        const key = p.key as Node | undefined; const value = p.value as Node | undefined;
-        if (key?.type === 'Identifier' && key.name === 't' && value?.type === 'Identifier') names.add(String(value.name));
+        const key = p.key as Node | undefined;
+        const value = p.value as Node | undefined;
+        if (key?.type === 'Identifier' && key.name === 't' && value?.type === 'Identifier')
+          names.add(String(value.name));
       }
     }
   }
   return names;
 }
 
-const isTranslator = (callee: Node, names: ReadonlySet<string>): boolean => (callee.type === 'Identifier' && names.has(String(callee.name)))
-  || (callee.type === 'MemberExpression' && (callee.property as Node).type === 'Identifier' && (callee.property as Node).name === 't');
+const isTranslator = (callee: Node, names: ReadonlySet<string>): boolean =>
+  (callee.type === 'Identifier' && names.has(String(callee.name))) ||
+  (callee.type === 'MemberExpression' &&
+    (callee.property as Node).type === 'Identifier' &&
+    (callee.property as Node).name === 't');
 
 /*
  * THE ATTRIBUTES AND PROPS WHOSE VALUE IS NEVER SHOWN, each with why. A value
@@ -923,17 +1248,97 @@ const isTranslator = (callee: Node, names: ReadonlySet<string>): boolean => (cal
  * entry for every attribute that starts so. `on` limits an entry to the
  * elements or components named; `page` limits it to a page's own markup.
  */
-export interface Attribute { why: string; on?: readonly string[]; page?: true; values?: readonly string[] }
+export interface Attribute {
+  why: string;
+  on?: readonly string[];
+  page?: true;
+  values?: readonly string[];
+}
 /** The values `aria-current` takes, from WAI-ARIA 1.2. */
 export const ARIA_CURRENT: readonly string[] = ['page', 'step', 'location', 'date', 'time', 'true', 'false'];
 /** The roles an element may be given, from WAI-ARIA 1.2, without the abstract ones and the deprecated `directory`. */
 export const ARIA_ROLES: readonly string[] = [
-  'alert', 'alertdialog', 'application', 'article', 'banner', 'blockquote', 'button', 'caption', 'cell', 'checkbox', 'code', 'columnheader', 'combobox',
-  'complementary', 'contentinfo', 'definition', 'deletion', 'dialog', 'document', 'emphasis', 'feed', 'figure', 'form', 'generic', 'grid', 'gridcell',
-  'group', 'heading', 'img', 'insertion', 'link', 'list', 'listbox', 'listitem', 'log', 'main', 'marquee', 'math', 'menu', 'menubar', 'menuitem',
-  'menuitemcheckbox', 'menuitemradio', 'meter', 'navigation', 'none', 'note', 'option', 'paragraph', 'presentation', 'progressbar', 'radio', 'radiogroup',
-  'region', 'row', 'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator', 'slider', 'spinbutton', 'status', 'strong', 'subscript',
-  'superscript', 'switch', 'tab', 'table', 'tablist', 'tabpanel', 'term', 'textbox', 'time', 'timer', 'toolbar', 'tooltip', 'tree', 'treegrid', 'treeitem',
+  'alert',
+  'alertdialog',
+  'application',
+  'article',
+  'banner',
+  'blockquote',
+  'button',
+  'caption',
+  'cell',
+  'checkbox',
+  'code',
+  'columnheader',
+  'combobox',
+  'complementary',
+  'contentinfo',
+  'definition',
+  'deletion',
+  'dialog',
+  'document',
+  'emphasis',
+  'feed',
+  'figure',
+  'form',
+  'generic',
+  'grid',
+  'gridcell',
+  'group',
+  'heading',
+  'img',
+  'insertion',
+  'link',
+  'list',
+  'listbox',
+  'listitem',
+  'log',
+  'main',
+  'marquee',
+  'math',
+  'menu',
+  'menubar',
+  'menuitem',
+  'menuitemcheckbox',
+  'menuitemradio',
+  'meter',
+  'navigation',
+  'none',
+  'note',
+  'option',
+  'paragraph',
+  'presentation',
+  'progressbar',
+  'radio',
+  'radiogroup',
+  'region',
+  'row',
+  'rowgroup',
+  'rowheader',
+  'scrollbar',
+  'search',
+  'searchbox',
+  'separator',
+  'slider',
+  'spinbutton',
+  'status',
+  'strong',
+  'subscript',
+  'superscript',
+  'switch',
+  'tab',
+  'table',
+  'tablist',
+  'tabpanel',
+  'term',
+  'textbox',
+  'time',
+  'timer',
+  'toolbar',
+  'tooltip',
+  'tree',
+  'treegrid',
+  'treeitem'
 ];
 export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   className: { why: 'class names, which the colour and left-or-right rules read word by word' },
@@ -944,19 +1349,38 @@ export const ATTRIBUTES: Readonly<Record<string, Attribute>> = {
   lang: { why: 'a language tag' },
   id: { why: 'the name code and labels find an element by' },
   src: { why: 'the address a script or a picture is loaded from' },
-  charset: { why: 'how the page\'s bytes are read', page: true },
+  charset: { why: "how the page's bytes are read", page: true },
   name: { why: 'the name a meta tag is read under', page: true },
-  content: { why: 'on the viewport meta tag only, how the browser lays the page out', page: true, on: ['meta name=viewport'] },
-  variant: { why: 'which of a component\'s looks it takes' },
-  size: { why: 'which of a component\'s sizes it takes' },
+  content: {
+    why: 'on the viewport meta tag only, how the browser lays the page out',
+    page: true,
+    on: ['meta name=viewport']
+  },
+  variant: { why: "which of a component's looks it takes" },
+  size: { why: "which of a component's sizes it takes" },
   align: { why: 'where a popup lines up against what opened it' },
-  kind: { why: 'whether a public amount is a payment made, a payment to be made or a balance, which the Public pill turns into words', on: ['Amount', 'PublicPill'] },
-  activationMode: { why: 'whether a tab opens when it is focused or only when it is pressed', on: ['Tabs'], values: ['automatic', 'manual'] },
+  kind: {
+    why: 'whether a public amount is a payment made, a payment to be made or a balance, which the Public pill turns into words',
+    on: ['Amount', 'PublicPill']
+  },
+  activationMode: {
+    why: 'whether a tab opens when it is focused or only when it is pressed',
+    on: ['Tabs'],
+    values: ['automatic', 'manual']
+  },
   orientation: { why: 'which way a separator or a group of controls runs' },
-  side: { why: 'which edge a panel or a popup opens from; the left-or-right rule still reads the value, so it is start, end, top or bottom' },
+  side: {
+    why: 'which edge a panel or a popup opens from; the left-or-right rule still reads the value, so it is start, end, top or bottom'
+  },
   collapsible: { why: 'how the left menu folds away: to its icons, off the page, or not at all' },
-  'aria-current': { why: 'which item is the current one (the page shown, the step being taken), a word from assistive technology\'s fixed vocabulary that it announces in the person\'s own language', values: ARIA_CURRENT },
-  role: { why: 'what an element is to assistive technology, a word from its fixed vocabulary that it announces in the person\'s own language', values: ARIA_ROLES },
+  'aria-current': {
+    why: "which item is the current one (the page shown, the step being taken), a word from assistive technology's fixed vocabulary that it announces in the person's own language",
+    values: ARIA_CURRENT
+  },
+  role: {
+    why: "what an element is to assistive technology, a word from its fixed vocabulary that it announces in the person's own language",
+    values: ARIA_ROLES
+  }
 };
 /**
  * Whether `name`'s value `text` is never shown when written in code on
@@ -968,7 +1392,14 @@ const isQuietAttribute = (name: string, element: string | null, text: string): b
   if (name.startsWith('data-')) return true;
   const a = ATTRIBUTES[name];
   if (a === undefined || a.page === true) return false;
-  if (a.values !== undefined && !text.trim().split(/\s+/).every((w) => a.values!.includes(w))) return false;
+  if (
+    a.values !== undefined &&
+    !text
+      .trim()
+      .split(/\s+/)
+      .every((w) => a.values!.includes(w))
+  )
+    return false;
   return a.on === undefined || (element !== null && a.on.includes(element));
 };
 
@@ -980,240 +1411,443 @@ const isQuietAttribute = (name: string, element: string | null, text: string): b
 export const CODES: Readonly<Record<string, string>> = {
   'packages/ui/src/i18n/languages.ts#FALLBACK': 'a language tag',
   'packages/ui/src/i18n/languages.ts#RTL_SCRIPTS': 'script codes, compared with the script of a language',
-  'packages/ui/src/i18n/languages.ts#directionOf': 'a text direction, set as the page\'s `dir`',
-  'packages/ui/src/theme/base-colors.ts#BASE_COLORS': 'the names of the stylesheet\'s theme blocks, matched against it by the theme check',
+  'packages/ui/src/i18n/languages.ts#directionOf': "a text direction, set as the page's `dir`",
+  'packages/ui/src/theme/base-colors.ts#BASE_COLORS':
+    "the names of the stylesheet's theme blocks, matched against it by the theme check",
   'packages/ui/src/theme/base-colors.ts#DEFAULT_BASE_COLOR': 'one of those names',
-  'packages/ui/src/theme/base-colors.ts#THEMES': 'the value of the root element\'s `data-theme`',
-  'packages/ui/src/format/token-amount.ts#visibilityOf': 'whether an amount is public or private, a value the code compares and the amount component turns into the pill',
-  'packages/ui/src/components/sidebar.tsx#STATE': 'the values of the left menu\'s `data-state`, which its classes are written against',
-  'packages/ui/src/components/public-pill.tsx#AMOUNT_KIND': 'the kinds of amount the Public pill explains, which a screen names and the pill turns into words',
+  'packages/ui/src/theme/base-colors.ts#THEMES': "the value of the root element's `data-theme`",
+  'packages/ui/src/format/token-amount.ts#visibilityOf':
+    'whether an amount is public or private, a value the code compares and the amount component turns into the pill',
+  'packages/ui/src/components/sidebar.tsx#STATE':
+    "the values of the left menu's `data-state`, which its classes are written against",
+  'packages/ui/src/components/public-pill.tsx#AMOUNT_KIND':
+    'the kinds of amount the Public pill explains, which a screen names and the pill turns into words',
   'packages/ui/src/hooks/use-mobile.ts#NARROW_SCREEN': 'a media query, read by the browser',
-  'packages/ui/src/lib/direction.ts#POPUP_SIDE': 'the side names the popup library places by, chosen from the reading direction',
-  'packages/ui/src/components/data-table.tsx#DATA_TABLE': 'the ids of the table\'s own columns and the primitive\'s name for a box partly ticked, compared by the code',
-  'packages/ui/src/components/data-table.tsx#COLUMN_SIZE': 'how much of a table\'s width a column takes, compared by the code and never shown',
-  'packages/ui/src/components/stat-tile.tsx#CHANGE': 'which way a figure moved, compared by the code and set as a mark tests find it by',
-  'packages/ui/src/components/select.tsx#SELECT_POSITION': 'the names of the two places the choice primitive opens its list, read by the primitive',
-  'apps/web/src/pages.ts#PAGES': 'each page\'s address, menu group, audience and the page it sits inside; its name and what it will be are asked for by key',
+  'packages/ui/src/lib/direction.ts#POPUP_SIDE':
+    'the side names the popup library places by, chosen from the reading direction',
+  'packages/ui/src/components/data-table.tsx#DATA_TABLE':
+    "the ids of the table's own columns and the primitive's name for a box partly ticked, compared by the code",
+  'packages/ui/src/components/data-table.tsx#COLUMN_SIZE':
+    "how much of a table's width a column takes, compared by the code and never shown",
+  'packages/ui/src/components/stat-tile.tsx#CHANGE':
+    'which way a figure moved, compared by the code and set as a mark tests find it by',
+  'packages/ui/src/components/select.tsx#SELECT_POSITION':
+    'the names of the two places the choice primitive opens its list, read by the primitive',
+  'apps/web/src/pages.ts#PAGES':
+    "each page's address, menu group, audience and the page it sits inside; its name and what it will be are asked for by key",
   'apps/web/src/pages.ts#VIEWS': 'the names of the two views, compared by the code',
   'apps/web/src/pages.ts#HOME': 'the ids of the pages each view begins at',
-  'apps/web/src/pages.ts#SETTINGS_OF': 'the ids of each view\'s settings page',
+  'apps/web/src/pages.ts#SETTINGS_OF': "the ids of each view's settings page",
   'apps/web/src/router.tsx#BROWSER_EVENTS': 'the name of the browser event the router listens for',
   'apps/web/src/router.tsx#RESOLVED': 'what an address opens, compared by the code',
-  'apps/web/src/shortcuts.ts#SHORTCUTS': 'the keys of each shortcut, which are the same in every language; what each does is asked for by key',
+  'apps/web/src/shortcuts.ts#SHORTCUTS':
+    'the keys of each shortcut, which are the same in every language; what each does is asked for by key',
   'apps/web/src/shortcuts.ts#BROWSER_EVENTS': 'the name of the browser event the shortcuts listen for',
   'apps/web/src/preferences.ts#KEPT': 'where a choice is kept in the browser, and a media query',
-  'apps/web/src/preferences.ts#MODES': 'the names of the appearance modes, kept and compared by the code; each is shown by its key',
+  'apps/web/src/preferences.ts#MODES':
+    'the names of the appearance modes, kept and compared by the code; each is shown by its key',
   'apps/web/src/app.tsx#LOADING': 'the state of the page before the service has answered, compared by the code',
-  'apps/web/src/adapters/session.ts#SERVICE': 'the service\'s addresses and the words of its protocol, sent and compared, never shown',
-  'apps/web/src/adapters/session.ts#REFUSAL': 'why signing in did not happen, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/adapters/session.ts#SERVICE':
+    "the service's addresses and the words of its protocol, sent and compared, never shown",
+  'apps/web/src/adapters/session.ts#REFUSAL':
+    'why signing in did not happen, one of a fixed set that a screen turns into its own phrase',
   'apps/web/src/adapters/session.ts#OF': 'what an answer from the adapter is, compared by the code',
   'apps/web/src/shell/command-bar.tsx#COMPARED': 'the Unicode form text is compared in',
-  'apps/web/src/faults.ts#FAULT': 'the code a mistake in the application\'s own code carries, read out from the console and reported; it names a place, not wording',
-  'apps/web/src/screens/home.tsx#PASSED': 'the ids of the recently passed table\'s columns and filters, and the two statuses it filters by, compared by the code; each is shown by its key',
+  'apps/web/src/faults.ts#FAULT':
+    "the code a mistake in the application's own code carries, read out from the console and reported; it names a place, not wording",
+  'apps/web/src/screens/home.tsx#PASSED':
+    "the ids of the recently passed table's columns and filters, and the two statuses it filters by, compared by the code; each is shown by its key",
   'apps/web/src/adapters/kept-folds.ts#KEPT': 'where the folded setup cards are kept in the browser',
   'apps/web/src/setup/step-ids.ts#STEP': 'the id of each setup step, which is its key in the list of steps',
-  'apps/web/src/setup/steps.ts#SETUP_STEPS': 'each setup step\'s id and the page it is also done from; its name, line and what it will be are asked for by key',
-  'apps/web/src/setup/standing.ts#STANDING': 'where a setup step stands, compared by the code and set as a mark tests find it by',
-  'apps/web/src/adapters/refusal-codes.ts#ACT_REFUSAL': 'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
-  'apps/web/src/adapters/refusal-codes.ts#ACTED': 'what an action\'s answer is, compared by the code',
-  'apps/web/src/adapters/handover-state.ts#HANDOVER': 'where a company stands on being held by its committee, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/vault-private-money.ts#MONEY_READ': 'the store and the vault records a vault\'s private money is read from, and the name of the view\'s layer it is kept in, asked for and never shown',
-  'apps/web/src/adapters/committee-change.ts#CHANGE': 'where a committee change and its signatures are written through the view, and the two writes of it, sent and never shown',
-  'apps/web/src/adapters/reader-judge.ts#ENDED': 'why the reader\'s page ends a view, as the view says it to whoever reads through it afterwards',
-  'apps/web/src/adapters/handover-state.ts#SERVICE': 'the service\'s word for the chain\'s answer, compared and never shown',
-  'apps/web/src/adapters/create-company.ts#FIRST_SIGNER': 'the role of the person creating a company, on its roster, a word of the service\'s protocol',
-  'apps/web/src/adapters/finish-company.ts#FINISH': 'what a look at a company being finished comes to, compared by the code and never shown',
-  'apps/web/src/adapters/finish-company.ts#DEPLOY_LANDED': 'the keyring\'s own words for where creating a company stands once its account is on the chain, compared and never shown',
-  'apps/web/src/adapters/start-again.ts#AGAIN': 'why a kept creation was not started again, compared by the code and never shown',
-  'apps/web/src/adapters/creation-standing.ts#STAGE': 'which stage a company being finished waits on, compared by the code and set as a mark tests find it by; each is shown by its key',
-  'apps/web/src/adapters/creation-standing.ts#READ_FAILURE': 'why the service could not be read for a company, signed out or failed, compared by the code and turned into words by a screen',
-  'apps/web/src/adapters/creation-standing.ts#CREATION_MARK': 'the mark a company carries in a list, compared by the code and turned into words by a screen',
-  'apps/web/src/adapters/creation-standing.ts#CREATION_STANDINGS': 'the keyring\'s own words for where creating a company stands, each with whether it owes the chain a step, needs the saved keys and which stage it waits on; compared and never shown',
-  'apps/web/src/adapters/view-asks.ts#LIST': 'the names of the company\'s lists, as its view is asked for them, sent and never shown',
-  'apps/web/src/adapters/view-asks.ts#PROVEN': 'the stores and kinds of the records a read proves, as the view is asked for them, sent and never shown',
-  'apps/web/src/adapters/filing-judge.ts#ENDED': 'why a view of a company was ended, said to code that reads through it afterwards, never shown',
-  'apps/web/src/adapters/company-rows.ts#SERVICE': 'the service\'s addresses, the purposes a record is sealed for, and the words of its answers, sent and compared, never shown',
-  'apps/web/src/adapters/reads.ts#OPENED': 'whether a company\'s records opened, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/company-rows.ts#UNREADABLE': 'what a proposal that could not be read is marked as, compared by the code and turned into words by a screen',
-  'apps/web/src/adapters/proposal-standing-on-chain.ts#PROPOSAL_STANDING': 'the service\'s words for a proposal that waits for approvals and one that has them, compared and returned, never shown',
-  'apps/web/src/adapters/company-rows.ts#PAID': 'how a payment is made, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/company-rows.ts#STANDING': 'where a person on the payroll stands, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/company-rows.ts#ADMIT_BY': 'what admits a person, the fingerprint they read out or their wallet\'s signed claim, compared by the code and chosen by the address they were added at',
-  'apps/web/src/adapters/company-records.ts#INVITED': 'who an invitation is for, the service\'s words compared, and a screen\'s phrase chosen by them',
+  'apps/web/src/setup/steps.ts#SETUP_STEPS':
+    "each setup step's id and the page it is also done from; its name, line and what it will be are asked for by key",
+  'apps/web/src/setup/standing.ts#STANDING':
+    'where a setup step stands, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/refusal-codes.ts#ACT_REFUSAL':
+    'why an action on a company did not happen, one of a fixed set that a screen turns into its own phrase',
+  'apps/web/src/adapters/refusal-codes.ts#ACTED': "what an action's answer is, compared by the code",
+  'apps/web/src/adapters/handover-state.ts#HANDOVER':
+    'where a company stands on being held by its committee, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/vault-private-money.ts#MONEY_READ':
+    "the store and the vault records a vault's private money is read from, and the name of the view's layer it is kept in, asked for and never shown",
+  'apps/web/src/adapters/committee-change.ts#CHANGE':
+    'where a committee change and its signatures are written through the view, and the two writes of it, sent and never shown',
+  'apps/web/src/adapters/reader-judge.ts#ENDED':
+    "why the reader's page ends a view, as the view says it to whoever reads through it afterwards",
+  'apps/web/src/adapters/handover-state.ts#SERVICE':
+    "the service's word for the chain's answer, compared and never shown",
+  'apps/web/src/adapters/create-company.ts#FIRST_SIGNER':
+    "the role of the person creating a company, on its roster, a word of the service's protocol",
+  'apps/web/src/adapters/finish-company.ts#FINISH':
+    'what a look at a company being finished comes to, compared by the code and never shown',
+  'apps/web/src/adapters/finish-company.ts#DEPLOY_LANDED':
+    "the keyring's own words for where creating a company stands once its account is on the chain, compared and never shown",
+  'apps/web/src/adapters/start-again.ts#AGAIN':
+    'why a kept creation was not started again, compared by the code and never shown',
+  'apps/web/src/adapters/creation-standing.ts#STAGE':
+    'which stage a company being finished waits on, compared by the code and set as a mark tests find it by; each is shown by its key',
+  'apps/web/src/adapters/creation-standing.ts#READ_FAILURE':
+    'why the service could not be read for a company, signed out or failed, compared by the code and turned into words by a screen',
+  'apps/web/src/adapters/creation-standing.ts#CREATION_MARK':
+    'the mark a company carries in a list, compared by the code and turned into words by a screen',
+  'apps/web/src/adapters/creation-standing.ts#CREATION_STANDINGS':
+    "the keyring's own words for where creating a company stands, each with whether it owes the chain a step, needs the saved keys and which stage it waits on; compared and never shown",
+  'apps/web/src/adapters/view-asks.ts#LIST':
+    "the names of the company's lists, as its view is asked for them, sent and never shown",
+  'apps/web/src/adapters/view-asks.ts#PROVEN':
+    'the stores and kinds of the records a read proves, as the view is asked for them, sent and never shown',
+  'apps/web/src/adapters/filing-judge.ts#ENDED':
+    'why a view of a company was ended, said to code that reads through it afterwards, never shown',
+  'apps/web/src/adapters/company-rows.ts#SERVICE':
+    "the service's addresses, the purposes a record is sealed for, and the words of its answers, sent and compared, never shown",
+  'apps/web/src/adapters/reads.ts#OPENED':
+    "whether a company's records opened, one of a fixed set a screen turns into its own phrase",
+  'apps/web/src/adapters/company-rows.ts#UNREADABLE':
+    'what a proposal that could not be read is marked as, compared by the code and turned into words by a screen',
+  'apps/web/src/adapters/proposal-standing-on-chain.ts#PROPOSAL_STANDING':
+    "the service's words for a proposal that waits for approvals and one that has them, compared and returned, never shown",
+  'apps/web/src/adapters/company-rows.ts#PAID':
+    'how a payment is made, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/company-rows.ts#STANDING':
+    'where a person on the payroll stands, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/company-rows.ts#ADMIT_BY':
+    "what admits a person, the fingerprint they read out or their wallet's signed claim, compared by the code and chosen by the address they were added at",
+  'apps/web/src/adapters/company-records.ts#INVITED':
+    "who an invitation is for, the service's words compared, and a screen's phrase chosen by them",
   'apps/web/src/adapters/reads.ts#READ': 'what a read is, compared by the code',
-  'apps/web/src/adapters/kept-skips.ts#KEPT': 'where the skipped setup steps are kept in the tab\'s storage',
-  'apps/web/src/shell/company-facts.tsx#STARTED_ON': 'the style the day a company started is written in, which the browser\'s date format turns into the person\'s language',
-  'apps/web/src/records/parts.tsx#DAY': 'the style a day is written in, which the browser\'s date format turns into the person\'s language',
-  'apps/web/src/records/parts.tsx#MONTH': 'the style a run\'s month is written in, and the time zone it is read in, which the browser\'s date format turns into the person\'s language',
-  'apps/web/src/records/parts.tsx#MOMENT': 'the style a moment is written in, date and time, which the browser\'s date format turns into the person\'s language and zone',
-  'apps/web/src/records/parts.tsx#KIND_SAYS': 'each kind of proposal by the word the service\'s record names it by; what it does is asked for by key',
-  'apps/web/src/screens/proposals.tsx#COLUMN': 'the ids of the proposals table\'s columns, compared by the code and never shown',
-  'apps/web/src/screens/proposals.tsx#FILTER': 'the ids of the proposals table\'s filters, compared by the code and set as a mark tests find them by',
-  'apps/web/src/screens/people.tsx#COLUMN': 'the ids of the people table\'s columns, compared by the code and never shown',
-  'apps/web/src/screens/payroll.tsx#COLUMN': 'the ids of the runs table\'s columns, compared by the code and never shown',
-  'apps/web/src/screens/invitations.tsx#TABS': 'the ids of the invitations page\'s tabs, compared by the code and set as a mark tests find them by',
-  'packages/ui/src/format/intl.ts#UNIT': 'the browser\'s names for the units a time ago is said in, passed to its formatter and never shown',
-  'apps/web/src/records/parts.tsx#MONEY': 'where one side of a vault\'s money shown stands, compared by the code and set as a mark tests find it by',
-  'apps/web/src/records/vault-pending.tsx#DOES': 'what a pending vault\'s pill does when pressed, compared by the code and set as a mark tests find it by',
-  'apps/web/src/screens/vault.tsx#HELD': 'the ids of a vault\'s money table\'s columns and filters, compared by the code and never shown',
-  'apps/web/src/adapters/vault-private-money.ts#LEDGER': 'the shared code\'s names for the pool\'s record and for private money on the ledger, passed and never shown',
-  'apps/web/src/adapters/create-vault.ts#CREATING': 'where creating a vault has got to, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/create-vault.ts#WALLET': 'the names of the wallet\'s create-vault and give-vault-keys actions and the keys of what the first tells the page when it ends, sent and compared, never shown',
-  'apps/web/src/adapters/create-vault.ts#READY': 'whether a vault can be created now, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/create-vault.ts#STARTING': 'a vault sent whose start is not finished or waits on approvals, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/create-vault.ts#STOPPED': 'what stopped the start of a vault and what resolves it, one of a fixed set a screen turns into its own phrase',
-  'apps/web/src/adapters/kept-sign-in.ts#KEPT': 'where the sign-in is kept in the tab\'s storage',
+  'apps/web/src/adapters/kept-skips.ts#KEPT': "where the skipped setup steps are kept in the tab's storage",
+  'apps/web/src/shell/company-facts.tsx#STARTED_ON':
+    "the style the day a company started is written in, which the browser's date format turns into the person's language",
+  'apps/web/src/records/parts.tsx#DAY':
+    "the style a day is written in, which the browser's date format turns into the person's language",
+  'apps/web/src/records/parts.tsx#MONTH':
+    "the style a run's month is written in, and the time zone it is read in, which the browser's date format turns into the person's language",
+  'apps/web/src/records/parts.tsx#MOMENT':
+    "the style a moment is written in, date and time, which the browser's date format turns into the person's language and zone",
+  'apps/web/src/records/parts.tsx#KIND_SAYS':
+    "each kind of proposal by the word the service's record names it by; what it does is asked for by key",
+  'apps/web/src/screens/proposals.tsx#COLUMN':
+    "the ids of the proposals table's columns, compared by the code and never shown",
+  'apps/web/src/screens/proposals.tsx#FILTER':
+    "the ids of the proposals table's filters, compared by the code and set as a mark tests find them by",
+  'apps/web/src/screens/people.tsx#COLUMN':
+    "the ids of the people table's columns, compared by the code and never shown",
+  'apps/web/src/screens/payroll.tsx#COLUMN':
+    "the ids of the runs table's columns, compared by the code and never shown",
+  'apps/web/src/screens/invitations.tsx#TABS':
+    "the ids of the invitations page's tabs, compared by the code and set as a mark tests find them by",
+  'packages/ui/src/format/intl.ts#UNIT':
+    "the browser's names for the units a time ago is said in, passed to its formatter and never shown",
+  'apps/web/src/records/parts.tsx#MONEY':
+    "where one side of a vault's money shown stands, compared by the code and set as a mark tests find it by",
+  'apps/web/src/records/vault-pending.tsx#DOES':
+    "what a pending vault's pill does when pressed, compared by the code and set as a mark tests find it by",
+  'apps/web/src/screens/vault.tsx#HELD':
+    "the ids of a vault's money table's columns and filters, compared by the code and never shown",
+  'apps/web/src/adapters/vault-private-money.ts#LEDGER':
+    "the shared code's names for the pool's record and for private money on the ledger, passed and never shown",
+  'apps/web/src/adapters/create-vault.ts#CREATING':
+    'where creating a vault has got to, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#WALLET':
+    "the names of the wallet's create-vault and give-vault-keys actions and the keys of what the first tells the page when it ends, sent and compared, never shown",
+  'apps/web/src/adapters/create-vault.ts#READY':
+    'whether a vault can be created now, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#STARTING':
+    'a vault sent whose start is not finished or waits on approvals, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/create-vault.ts#STOPPED':
+    'what stopped the start of a vault and what resolves it, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/kept-sign-in.ts#KEPT': "where the sign-in is kept in the tab's storage",
   'apps/web/src/actions/create-vault.tsx#ASKING': 'which confirmation is being asked for, compared by the code',
-  'apps/web/src/actions/start-again.tsx#NOW': 'what the last press of Start it again came to, kept and compared by the code; each is turned into its own phrase by a key',
-  'apps/web/src/adapters/usual-times.ts#COMPANY_PHASE': 'which part of finishing a company is running, compared by the code and never shown; each is turned into its own phrase by a key',
-  'apps/web/src/adapters/usual-times.ts#VAULT_USUAL_SECONDS': 'the name of each stage of creating a vault, the key of how long it usually takes, compared by the code and never shown',
-  'apps/web/src/adapters/usual-times.ts#DEPOSIT_USUAL_SECONDS': 'the name of each step of a deposit, the key of how long it usually takes, compared by the code and never shown',
-  'apps/web/src/adapters/deposit.ts#DEPOSIT_KIND': 'whether money goes into a vault privately or publicly, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/deposit.ts#DEPOSIT_METHODS': 'the id of each way money can be put into a vault, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/deposit.ts#DEPOSIT_STEP': 'the id of each step of a deposit, compared by the code; each is shown by its key',
+  'apps/web/src/actions/start-again.tsx#NOW':
+    'what the last press of Start it again came to, kept and compared by the code; each is turned into its own phrase by a key',
+  'apps/web/src/adapters/usual-times.ts#COMPANY_PHASE':
+    'which part of finishing a company is running, compared by the code and never shown; each is turned into its own phrase by a key',
+  'apps/web/src/adapters/usual-times.ts#VAULT_USUAL_SECONDS':
+    'the name of each stage of creating a vault, the key of how long it usually takes, compared by the code and never shown',
+  'apps/web/src/adapters/usual-times.ts#DEPOSIT_USUAL_SECONDS':
+    'the name of each step of a deposit, the key of how long it usually takes, compared by the code and never shown',
+  'apps/web/src/adapters/deposit.ts#DEPOSIT_KIND':
+    'whether money goes into a vault privately or publicly, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/deposit.ts#DEPOSIT_METHODS':
+    'the id of each way money can be put into a vault, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/deposit.ts#DEPOSIT_STEP':
+    'the id of each step of a deposit, compared by the code; each is shown by its key',
   'apps/web/src/adapters/invite.ts#INVITE_KIND': 'who can be invited, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/invite.ts#INVITE_WAY': 'how an employee or a vendor joins, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/invite.ts#ROLE': 'the roles a signer is offered, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/invite.ts#INVITE_WAY':
+    'how an employee or a vendor joins, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/invite.ts#ROLE':
+    'the roles a signer is offered, compared by the code; each is shown by its key',
   'apps/web/src/adapters/invite.ts#TERMS': 'how a vendor is paid, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/invite.ts#DECIMAL_KEYPAD': 'the keypad an amount field asks a phone for; it is an attribute value, not wording',
-  'apps/web/src/adapters/invite.ts#FIELD': 'the name of each field of the invite form, as the draft names it, compared by the code',
+  'apps/web/src/adapters/invite.ts#DECIMAL_KEYPAD':
+    'the keypad an amount field asks a phone for; it is an attribute value, not wording',
+  'apps/web/src/adapters/invite.ts#FIELD':
+    'the name of each field of the invite form, as the draft names it, compared by the code',
   'apps/web/src/adapters/invite.ts#FORM': 'what the invite form is doing, compared by the code',
-  'apps/web/src/adapters/invite.ts#SCOPE': 'which vaults a signer is invited for, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/invite.ts#SCOPE':
+    'which vaults a signer is invited for, compared by the code; each is shown by its key',
   'apps/web/src/adapters/invite.ts#MADE': 'what an ask made from the form is, compared by the code',
-  'apps/web/src/adapters/invite.ts#PROBLEM': 'what is wrong with the invite form, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/invite.ts#WHY': 'why the wallet stopped an invitation, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/join.ts#WAY': 'which wallet act a person takes an invitation with, compared by the code; each is told by its key',
-  'apps/web/src/adapters/join.ts#CLOSED': 'why an invitation is not offered, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/invite.ts#PROBLEM':
+    'what is wrong with the invite form, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/invite.ts#WHY':
+    'why the wallet stopped an invitation, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/join.ts#WAY':
+    'which wallet act a person takes an invitation with, compared by the code; each is told by its key',
+  'apps/web/src/adapters/join.ts#CLOSED':
+    'why an invitation is not offered, one of a fixed set that a screen turns into its own words by key',
   'apps/web/src/adapters/join.ts#OPENED': 'whether an invitation was offered or closed, compared by the code',
-  'apps/web/src/adapters/join.ts#SEAT_KIND': 'the service\'s word for an invitation to a seat, compared by the code',
-  'apps/web/src/adapters/join.ts#ACT': 'the wallet\'s name for the action that takes a seat, sent and never shown',
-  'apps/web/src/adapters/join.ts#AFTER': 'what an action that did not finish is called in the adapter\'s answer, compared by the code',
-  'apps/web/src/adapters/join.ts#STOPPED': 'why the wallet stopped a join, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/screens/join.tsx#STATE': 'what the joining page is showing, compared by the code and set as a mark tests find it by',
-  'apps/web/src/adapters/invite.ts#APPROVALS': 'which sentence about the approvals adding a signer needs is said, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/join.ts#SEAT_KIND': "the service's word for an invitation to a seat, compared by the code",
+  'apps/web/src/adapters/join.ts#ACT': "the wallet's name for the action that takes a seat, sent and never shown",
+  'apps/web/src/adapters/join.ts#AFTER':
+    "what an action that did not finish is called in the adapter's answer, compared by the code",
+  'apps/web/src/adapters/join.ts#STOPPED':
+    'why the wallet stopped a join, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/screens/join.tsx#STATE':
+    'what the joining page is showing, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/invite.ts#APPROVALS':
+    'which sentence about the approvals adding a signer needs is said, compared by the code; each is shown by its key',
   'apps/web/src/adapters/invite.ts#INVITED': 'how an invitation ended, compared by the code',
-  'apps/web/src/adapters/invite.ts#DONE': 'what the wallet\'s end answer is called when the action is done, compared by the code',
+  'apps/web/src/adapters/invite.ts#DONE':
+    "what the wallet's end answer is called when the action is done, compared by the code",
   'apps/web/src/adapters/invite.ts#STATE': 'the name of the outcome the wallet gives of where an invitation got to',
-  'apps/web/src/adapters/invite.ts#ALREADY_FILED': 'the outcome the wallet gives when the invitation was filed before, compared by the code',
-  'apps/web/src/actions/person-panel.tsx#FIELD': 'the marks the forms that are a person\'s panel\'s own find each field by, which tests and the page\'s focus read and a person never sees',
-  'apps/web/src/fields/form-fields.tsx#DATE': 'the two dates a form sets or takes off, compared by the code and never shown',
-  'apps/web/src/records/parts.tsx#BELIEF': 'the marks the notice of what the belief check left out is found by on the People and Vendors pages, which tests read and a person never sees',
-  'apps/web/src/fields/form-fields.tsx#DAY_FORM': 'the marks the end and leaving date forms and their set and clear buttons are found by, which tests read and a person never sees',
-  'apps/web/src/screens/vendors.tsx#COLUMN': 'the ids of the vendors table\'s columns, compared by the code and never shown',
-  'apps/web/src/actions/signers.tsx#STANDING': 'where a signer stands on the signers page, one of a fixed set that is shown by its key and set as a mark tests find it by',
-  'apps/web/src/actions/signers.tsx#OPEN': 'the standing the service gives a proposal that waits for approvals, compared by the code and never shown',
-  'apps/web/src/actions/signers.tsx#NEXT': 'what comes next on an invitation waiting for approvals, one of a fixed set that is shown by its key and set as a mark tests find it by',
-  'apps/web/src/adapters/signer-acts.ts#SIGNER_ACT': 'the names of the wallet\'s approve-proposal and admit-signer actions, sent and compared, never shown',
-  'apps/web/src/adapters/signer-acts.ts#WHY': 'why the wallet stopped approving or finishing adding a signer, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/signer-acts.ts#SIGNER_ACTED': 'how approving or finishing adding a signer ended, compared by the code',
-  'apps/web/src/adapters/signer-acts.ts#OUTCOME': 'the names of the outcomes the wallet gives of where an act got to, read by the code',
-  'apps/web/src/adapters/person-acts.ts#PERSON_ACT': 'the names of the wallet\'s admit-person and change-person actions, sent and compared, never shown',
-  'apps/web/src/adapters/person-acts.ts#WHY': 'why the wallet stopped admitting or changing a person, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/person-acts.ts#SEAT': 'the wallet\'s refusal keys common to both person acts, each to the page\'s code for it, read by the code and never shown',
-  'apps/web/src/adapters/person-acts.ts#WRONGLY': 'the wallet\'s refusal keys for a person the page named wrongly, read by the code and never shown',
-  'apps/web/src/adapters/person-acts.ts#CODE_OF': 'each wallet refusal key of a person act, to the page\'s code for it, read by the code and never shown',
+  'apps/web/src/adapters/invite.ts#ALREADY_FILED':
+    'the outcome the wallet gives when the invitation was filed before, compared by the code',
+  'apps/web/src/actions/person-panel.tsx#FIELD':
+    "the marks the forms that are a person's panel's own find each field by, which tests and the page's focus read and a person never sees",
+  'apps/web/src/fields/form-fields.tsx#DATE':
+    'the two dates a form sets or takes off, compared by the code and never shown',
+  'apps/web/src/records/parts.tsx#BELIEF':
+    'the marks the notice of what the belief check left out is found by on the People and Vendors pages, which tests read and a person never sees',
+  'apps/web/src/fields/form-fields.tsx#DAY_FORM':
+    'the marks the end and leaving date forms and their set and clear buttons are found by, which tests read and a person never sees',
+  'apps/web/src/screens/vendors.tsx#COLUMN':
+    "the ids of the vendors table's columns, compared by the code and never shown",
+  'apps/web/src/actions/signers.tsx#STANDING':
+    'where a signer stands on the signers page, one of a fixed set that is shown by its key and set as a mark tests find it by',
+  'apps/web/src/actions/signers.tsx#OPEN':
+    'the standing the service gives a proposal that waits for approvals, compared by the code and never shown',
+  'apps/web/src/actions/signers.tsx#NEXT':
+    'what comes next on an invitation waiting for approvals, one of a fixed set that is shown by its key and set as a mark tests find it by',
+  'apps/web/src/adapters/signer-acts.ts#SIGNER_ACT':
+    "the names of the wallet's approve-proposal and admit-signer actions, sent and compared, never shown",
+  'apps/web/src/adapters/signer-acts.ts#WHY':
+    'why the wallet stopped approving or finishing adding a signer, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/signer-acts.ts#SIGNER_ACTED':
+    'how approving or finishing adding a signer ended, compared by the code',
+  'apps/web/src/adapters/signer-acts.ts#OUTCOME':
+    'the names of the outcomes the wallet gives of where an act got to, read by the code',
+  'apps/web/src/adapters/person-acts.ts#PERSON_ACT':
+    "the names of the wallet's admit-person and change-person actions, sent and compared, never shown",
+  'apps/web/src/adapters/person-acts.ts#WHY':
+    'why the wallet stopped admitting or changing a person, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/person-acts.ts#SEAT':
+    "the wallet's refusal keys common to both person acts, each to the page's code for it, read by the code and never shown",
+  'apps/web/src/adapters/person-acts.ts#WRONGLY':
+    "the wallet's refusal keys for a person the page named wrongly, read by the code and never shown",
+  'apps/web/src/adapters/person-acts.ts#CODE_OF':
+    "each wallet refusal key of a person act, to the page's code for it, read by the code and never shown",
   'apps/web/src/adapters/person-acts.ts#PERSON_ACTED': 'how admitting or changing a person ended, compared by the code',
-  'apps/web/src/adapters/person-acts.ts#PROBLEM': 'what is wrong with what was typed to admit or change a person, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/person-acts.ts#PROBLEM':
+    'what is wrong with what was typed to admit or change a person, one of a fixed set that a screen turns into its own words by key',
   'apps/web/src/adapters/person-acts.ts#STATE': 'the name of the outcome the wallet gives of where an act got to',
-  'apps/web/src/adapters/person-acts.ts#WIRE': 'the wallet\'s word for a person made a leaver, sent and never shown',
-  'apps/web/src/adapters/person-acts.ts#PERSON_KIND': 'the wallet\'s words for the kind of record an act is for, sent and compared, never shown',
-  'apps/web/src/adapters/person-acts.ts#VENDOR_CHANGE': 'the ways a vendor\'s record is changed, compared by the code and never shown',
-  'apps/web/src/adapters/person-acts.ts#CHANGE': 'the ways a person\'s record is changed, compared by the code and never shown',
-  'apps/web/src/adapters/deposit.ts#PRIVATE_DEPOSIT': 'the key of what the wallet\'s private deposit tells the page when it ends, and its own words for where the deposit got to, compared and never shown',
-  'apps/web/src/adapters/deposit.ts#STEP_OF_STAGE': 'the shared deposit\'s own words for its stages, compared and never shown, each to the step a screen says',
-  'apps/web/src/adapters/deposit.ts#STOPPED': 'the kind of stop the wallet\'s refusal names for a private deposit, compared by the page and shown only by its own key',
-  'apps/web/src/adapters/deposit.ts#AMOUNT_REFUSAL': 'why a typed amount is not put into a vault, one of a fixed set a screen turns into its own phrase',
+  'apps/web/src/adapters/person-acts.ts#WIRE': "the wallet's word for a person made a leaver, sent and never shown",
+  'apps/web/src/adapters/person-acts.ts#PERSON_KIND':
+    "the wallet's words for the kind of record an act is for, sent and compared, never shown",
+  'apps/web/src/adapters/person-acts.ts#VENDOR_CHANGE':
+    "the ways a vendor's record is changed, compared by the code and never shown",
+  'apps/web/src/adapters/person-acts.ts#CHANGE':
+    "the ways a person's record is changed, compared by the code and never shown",
+  'apps/web/src/adapters/deposit.ts#PRIVATE_DEPOSIT':
+    "the key of what the wallet's private deposit tells the page when it ends, and its own words for where the deposit got to, compared and never shown",
+  'apps/web/src/adapters/deposit.ts#STEP_OF_STAGE':
+    "the shared deposit's own words for its stages, compared and never shown, each to the step a screen says",
+  'apps/web/src/adapters/deposit.ts#STOPPED':
+    "the kind of stop the wallet's refusal names for a private deposit, compared by the page and shown only by its own key",
+  'apps/web/src/adapters/deposit.ts#AMOUNT_REFUSAL':
+    'why a typed amount is not put into a vault, one of a fixed set a screen turns into its own phrase',
   'apps/web/src/adapters/deposit.ts#PUT_IN': 'what a press of Put money in came to, compared by the code',
   'apps/web/src/adapters/deposit.ts#DEPOSITED': 'where a deposit in this tab stands, compared by the code',
-  'apps/web/src/adapters/deposit.ts#AMOUNT_UNSHOWN': 'why a check shows no amount for the deposit it judged, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/deposit.ts#CHECKED': 'what a check of this browser\'s last deposit came to, compared by the code',
-  'apps/web/src/adapters/account-balances.ts#ACCOUNT_BALANCES': 'what an ask for the account\'s balances came to, compared by the code',
+  'apps/web/src/adapters/deposit.ts#AMOUNT_UNSHOWN':
+    'why a check shows no amount for the deposit it judged, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/deposit.ts#CHECKED':
+    "what a check of this browser's last deposit came to, compared by the code",
+  'apps/web/src/adapters/account-balances.ts#ACCOUNT_BALANCES':
+    "what an ask for the account's balances came to, compared by the code",
   'apps/web/src/adapters/account-balances.ts#SIDE': 'whether one side of the account was read, compared by the code',
-  'apps/web/src/adapters/account-balances.ts#VISIBILITY': 'the names of the two sides of an account, compared by the code',
-  'apps/web/src/adapters/account-balances.ts#FORM': 'the ledger\'s word for each side of an account, compared with the asset registry\'s',
-  'apps/web/src/adapters/vault-private-money.ts#PRIVATE_MONEY': 'which of four things a read of a vault\'s private money found, compared by the code; each is shown by its key',
-  'apps/web/src/actions/deposit.tsx#UNTIL': 'the style the time a deposit on its way is waited for until is written in, which the browser\'s date format turns into the person\'s language',
-  'apps/web/src/shell/account-frame.tsx#BROWSER': 'the attributes an open panel\'s library marks the rest of the page hidden with, and the name of the event a focus guard hears, both read by the browser',
-  'apps/web/src/shell/right-panel.tsx#HEARD': 'the names of the browser events about focus the panel hears before its own library does',
-  'apps/web/src/adapters/vault-private-money.ts#COULD_NOT_READ': 'why a vault\'s private money could not be read, one of a fixed set that a screen turns into its own phrase',
-  'apps/web/src/actions/signers.tsx#VAULTS': 'the mark the vault secrets\' press is found by, which tests read and a person never sees',
-  'apps/web/src/actions/signers.tsx#ROTATED_PARTLY': 'the state the wallet gives a press of the vault secrets that left some vault owing its change, compared by the code',
-  'apps/web/src/actions/signers.tsx#COUNT': 'the marks the lines of how many vaults ended in each state are found by, which tests read and a person never sees',
-  'apps/web/src/adapters/signer-acts.ts#REMOVAL_STATE': 'where the wallet says a removal stands, compared by the code and never shown',
-  'apps/web/src/adapters/signer-acts.ts#ROTATION': 'the codes the wallet gives for the change of the vault secrets after a removal, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/signer-acts.ts#VAULT_SECRETS_NOT_STARTED': 'the code the wallet gives when the vault secrets\' change could not start, compared by the code',
-  'apps/web/src/adapters/filing-judge.ts#QUIETLY': 'the way the shared judges are told not to ask the wallet on a page load, a word of theirs that is never shown',
-  'apps/web/src/records/parts.tsx#PART': 'where the notice of a company the wallet has not opened stands, compared by the code and set as a mark tests find it by',
-  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_CHANGE': 'the shared change\'s word for a change of the super admins, passed and never shown',
-  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_WHY': 'why a super admin\'s step was refused, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_WARNING': 'which warning a committee of super admins carries, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/super-admins.ts#JOINING_KEY': 'the kind of key a super admin joins with, as the chain names it, passed and never shown',
-  'apps/web/src/screens/super-admins.tsx#NOT_YET': 'what the super admins\' page shows before the chain is read and before the company is named, compared by the code and never shown',
-  'apps/web/src/adapters/refusal-codes.ts#SEAT_REFUSALS': 'the wallet\'s codes for a stop because a person\'s seat could not act for the company, read by the code and never shown',
+  'apps/web/src/adapters/account-balances.ts#VISIBILITY':
+    'the names of the two sides of an account, compared by the code',
+  'apps/web/src/adapters/account-balances.ts#FORM':
+    "the ledger's word for each side of an account, compared with the asset registry's",
+  'apps/web/src/adapters/vault-private-money.ts#PRIVATE_MONEY':
+    "which of four things a read of a vault's private money found, compared by the code; each is shown by its key",
+  'apps/web/src/actions/deposit.tsx#UNTIL':
+    "the style the time a deposit on its way is waited for until is written in, which the browser's date format turns into the person's language",
+  'apps/web/src/shell/account-frame.tsx#BROWSER':
+    "the attributes an open panel's library marks the rest of the page hidden with, and the name of the event a focus guard hears, both read by the browser",
+  'apps/web/src/shell/right-panel.tsx#HEARD':
+    'the names of the browser events about focus the panel hears before its own library does',
+  'apps/web/src/adapters/vault-private-money.ts#COULD_NOT_READ':
+    "why a vault's private money could not be read, one of a fixed set that a screen turns into its own phrase",
+  'apps/web/src/actions/signers.tsx#VAULTS':
+    "the mark the vault secrets' press is found by, which tests read and a person never sees",
+  'apps/web/src/actions/signers.tsx#ROTATED_PARTLY':
+    'the state the wallet gives a press of the vault secrets that left some vault owing its change, compared by the code',
+  'apps/web/src/actions/signers.tsx#COUNT':
+    'the marks the lines of how many vaults ended in each state are found by, which tests read and a person never sees',
+  'apps/web/src/adapters/signer-acts.ts#REMOVAL_STATE':
+    'where the wallet says a removal stands, compared by the code and never shown',
+  'apps/web/src/adapters/signer-acts.ts#ROTATION':
+    'the codes the wallet gives for the change of the vault secrets after a removal, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/signer-acts.ts#VAULT_SECRETS_NOT_STARTED':
+    "the code the wallet gives when the vault secrets' change could not start, compared by the code",
+  'apps/web/src/adapters/filing-judge.ts#QUIETLY':
+    'the way the shared judges are told not to ask the wallet on a page load, a word of theirs that is never shown',
+  'apps/web/src/records/parts.tsx#PART':
+    'where the notice of a company the wallet has not opened stands, compared by the code and set as a mark tests find it by',
+  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_CHANGE':
+    "the shared change's word for a change of the super admins, passed and never shown",
+  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_WHY':
+    "why a super admin's step was refused, one of a fixed set that a screen turns into its own words by key",
+  'apps/web/src/adapters/super-admins.ts#SUPER_ADMIN_WARNING':
+    'which warning a committee of super admins carries, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/super-admins.ts#JOINING_KEY':
+    'the kind of key a super admin joins with, as the chain names it, passed and never shown',
+  'apps/web/src/screens/super-admins.tsx#NOT_YET':
+    "what the super admins' page shows before the chain is read and before the company is named, compared by the code and never shown",
+  'apps/web/src/adapters/refusal-codes.ts#SEAT_REFUSALS':
+    "the wallet's codes for a stop because a person's seat could not act for the company, read by the code and never shown",
   'apps/web/src/adapters/grants-here.ts#GRANTS_READ': 'whether the grants were read, compared by the code',
-  'apps/web/src/adapters/grants-here.ts#GRANT_WHY': 'why the wallet stopped a change of who reads, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/grants-here.ts#WHY_OF_CODE': 'the wallet\'s refusal codes for a change of who reads, each to the page\'s code for it, read by the code and never shown',
+  'apps/web/src/adapters/grants-here.ts#GRANT_WHY':
+    'why the wallet stopped a change of who reads, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/grants-here.ts#WHY_OF_CODE':
+    "the wallet's refusal codes for a change of who reads, each to the page's code for it, read by the code and never shown",
   'apps/web/src/adapters/grants-here.ts#GRANT_ACTED': 'how a change of who reads ended, compared by the code',
-  'apps/web/src/adapters/grants-here.ts#GRANT_PROBLEM': 'what is wrong with a give typed on the page, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/grants-here.ts#CARRIES': 'what the grants show after a seat signed a waiting change, compared by the code',
-  'apps/web/src/adapters/policy-acts.ts#POLICY_ACTED': 'how a change of a spending policy or its bar ended, compared by the code',
+  'apps/web/src/adapters/grants-here.ts#GRANT_PROBLEM':
+    'what is wrong with a give typed on the page, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/grants-here.ts#CARRIES':
+    'what the grants show after a seat signed a waiting change, compared by the code',
+  'apps/web/src/adapters/policy-acts.ts#POLICY_ACTED':
+    'how a change of a spending policy or its bar ended, compared by the code',
   'apps/web/src/adapters/policy-acts.ts#POLICIES_READ': 'whether the spending policies were read, compared by the code',
-  'apps/web/src/adapters/policy-acts.ts#POLICY_HELD': 'whether a vault holds a policy for a currency, compared by the code; each is shown by its key',
-  'apps/web/src/adapters/policy-acts.ts#POLICY_WHY': 'why the wallet stopped a change of a spending policy, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/policy-acts.ts#WHY_OF_CODE': 'the wallet\'s refusal codes for a policy act, each to the page\'s code for it, read by the code and never shown',
-  'apps/web/src/adapters/policy-acts.ts#NOT_A_POLICY': 'what is wrong with a policy whose terms cannot be set as typed, compared by the code and shown by its key',
-  'apps/web/src/adapters/policy-acts.ts#OUTCOME': 'the name of the outcome the wallet gives of the proposal an act raised, read by the code',
-  'apps/web/src/adapters/policy-acts.ts#STATE_RECORD': 'the kind of the company\'s state record, as the service files it, sent and never shown',
+  'apps/web/src/adapters/policy-acts.ts#POLICY_HELD':
+    'whether a vault holds a policy for a currency, compared by the code; each is shown by its key',
+  'apps/web/src/adapters/policy-acts.ts#POLICY_WHY':
+    'why the wallet stopped a change of a spending policy, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/policy-acts.ts#WHY_OF_CODE':
+    "the wallet's refusal codes for a policy act, each to the page's code for it, read by the code and never shown",
+  'apps/web/src/adapters/policy-acts.ts#NOT_A_POLICY':
+    'what is wrong with a policy whose terms cannot be set as typed, compared by the code and shown by its key',
+  'apps/web/src/adapters/policy-acts.ts#OUTCOME':
+    'the name of the outcome the wallet gives of the proposal an act raised, read by the code',
+  'apps/web/src/adapters/policy-acts.ts#STATE_RECORD':
+    "the kind of the company's state record, as the service files it, sent and never shown",
   'apps/web/src/adapters/recovery-window.ts#WINDOW_READ': 'whether the recovery window was read, compared by the code',
-  'apps/web/src/adapters/recovery-window.ts#WINDOW_WHY': 'why the wallet stopped setting the recovery window, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/recovery-window.ts#WHY_OF_CODE': 'the wallet\'s refusal codes for setting the recovery window, each to the page\'s code for it, read by the code and never shown',
-  'apps/web/src/adapters/recovery-window.ts#WINDOW_ACTED': 'how setting the recovery window ended, compared by the code',
-  'apps/web/src/adapters/service-acts.ts#SERVICE_READ': 'whether the company\'s choice of service was read, compared by the code',
-  'apps/web/src/adapters/service-acts.ts#SERVICE_WHY': 'why the wallet stopped a choice of service, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/service-acts.ts#WHY_OF_CODE': 'the wallet\'s refusal codes for a choice of service, each to the page\'s code for it, read by the code and never shown',
+  'apps/web/src/adapters/recovery-window.ts#WINDOW_WHY':
+    'why the wallet stopped setting the recovery window, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/recovery-window.ts#WHY_OF_CODE':
+    "the wallet's refusal codes for setting the recovery window, each to the page's code for it, read by the code and never shown",
+  'apps/web/src/adapters/recovery-window.ts#WINDOW_ACTED':
+    'how setting the recovery window ended, compared by the code',
+  'apps/web/src/adapters/service-acts.ts#SERVICE_READ':
+    "whether the company's choice of service was read, compared by the code",
+  'apps/web/src/adapters/service-acts.ts#SERVICE_WHY':
+    'why the wallet stopped a choice of service, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/service-acts.ts#WHY_OF_CODE':
+    "the wallet's refusal codes for a choice of service, each to the page's code for it, read by the code and never shown",
   'apps/web/src/adapters/service-acts.ts#SERVICE_ACTED': 'how a choice of service ended, compared by the code',
-  'apps/web/src/adapters/service-acts.ts#SERVICE_PROBLEM': 'what is wrong with a choice of service asked of the page, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/service-acts.ts#SERVICE_CHOICE': 'the three services a company can choose, by the wallet\'s word for each, compared and sent, never shown; each is shown by its key',
-  'apps/web/src/adapters/change-asked.ts#CHANGE_ASKED': 'the core\'s name for each kind of change it prices, passed and never shown',
-  'apps/web/src/adapters/change-asked.ts#SEAT_CHANGE': 'the three changes of who is seated the core tells apart, passed and never shown',
-  'apps/web/src/adapters/roles-here.ts#ROLES_READ': 'whether the company\'s roles and seats were read, compared by the code',
-  'apps/web/src/adapters/roles-here.ts#ROLE_PROBLEM': 'what is wrong with a change of role before the wallet is asked, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/roles-here.ts#ROLE_WHY': 'why the wallet stopped a change of role, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/roles-here.ts#WHY_OF_CODE': 'the wallet\'s refusal codes for a change of role, each to the page\'s code for it, read by the code and never shown',
-  'apps/web/src/adapters/roles-here.ts#DROP_ROLE_CHANGE': 'the wallet\'s name for the act that drops a role change it keeps, and the name of its outcome, sent and read, never shown',
+  'apps/web/src/adapters/service-acts.ts#SERVICE_PROBLEM':
+    'what is wrong with a choice of service asked of the page, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/service-acts.ts#SERVICE_CHOICE':
+    "the three services a company can choose, by the wallet's word for each, compared and sent, never shown; each is shown by its key",
+  'apps/web/src/adapters/change-asked.ts#CHANGE_ASKED':
+    "the core's name for each kind of change it prices, passed and never shown",
+  'apps/web/src/adapters/change-asked.ts#SEAT_CHANGE':
+    'the three changes of who is seated the core tells apart, passed and never shown',
+  'apps/web/src/adapters/roles-here.ts#ROLES_READ':
+    "whether the company's roles and seats were read, compared by the code",
+  'apps/web/src/adapters/roles-here.ts#ROLE_PROBLEM':
+    'what is wrong with a change of role before the wallet is asked, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/roles-here.ts#ROLE_WHY':
+    'why the wallet stopped a change of role, one of a fixed set that a screen turns into its own words by key',
+  'apps/web/src/adapters/roles-here.ts#WHY_OF_CODE':
+    "the wallet's refusal codes for a change of role, each to the page's code for it, read by the code and never shown",
+  'apps/web/src/adapters/roles-here.ts#DROP_ROLE_CHANGE':
+    "the wallet's name for the act that drops a role change it keeps, and the name of its outcome, sent and read, never shown",
   'apps/web/src/adapters/roles-here.ts#CHANGE_ACTED': 'how a change of role ended, compared by the code',
-  'apps/web/src/adapters/reader-open.ts#READER_WHY': 'why a reader\'s company did not open, one of a fixed set that a screen turns into its own words by key',
-  'apps/web/src/adapters/reader-open.ts#FROM_THE_WALLET': 'the wallet\'s refusal codes for a reader\'s keys, each to the page\'s code for it, read by the code and never shown',
-  'apps/web/src/adapters/reader-open.ts#READER_KEYS': 'whether the wallet gave a reader\'s keys or the company stayed closed, compared by the code',
-  'apps/web/src/adapters/reader-records.ts#NOT_IN_ACCESS': 'a read the service answered as not found, outside a reader\'s access, compared by the code',
-  'apps/web/src/adapters/reader-records.ts#READER_OF': 'whether a reader\'s company opened, compared by the code',
-  'apps/web/src/adapters/reader-records.ts#READER_REFUSED': 'why a reader\'s company did not open, compared by the code',
-  'apps/web/src/adapters/signer-acts.ts#NO_RETIREMENT_TO_FILE': 'the code the wallet gives when no retirement is kept to file, compared by the code',
-  'apps/web/src/adapters/signer-acts.ts#UPKEEP_PARTIAL': 'the wallet\'s word for a repair whose upkeep went part of the way, compared by the code',
-  'apps/web/src/adapters/signer-acts.ts#ROLE_OF_A_CODE': 'the role a signer added by a code is given, a word of the wallet\'s protocol, sent and never shown',
-  'apps/web/src/adapters/proposal-acts.ts#RETIRE_VAULT_ACT': 'the name of the wallet\'s act that retires a vault, sent and never shown',
-  'apps/web/src/adapters/reader-join-code.ts#READER_PARTS': 'what a reader\'s join code is for, in the wallet\'s words, sent and never shown',
-  'apps/web/src/adapters/company-records.ts#RETIRE_ASKS': 'the name of the ask a retire\'s record carries the vault it retired under, read by the code and never shown',
-  'apps/web/src/actions/signers.tsx#REPAIR': 'the mark the repair of the company\'s key is found by, which tests read and a person never sees',
-  'apps/web/src/adapters/vault-secrets-owed.ts#OWED_READ': 'whether the read of the vaults owing a new secret read anything, compared by the code',
-  'apps/web/src/records/policy-review.tsx#REVIEW_OF': 'which change a review is of, a spending policy or the policy bar, compared by the code and set as a mark tests find it by',
-  'apps/web/src/screens/policies.tsx#FIELD': 'the marks the policy form\'s amount fields are found by, which tests read and a person never sees',
-  'apps/web/src/screens/reader.tsx#SHOWN': 'what the reader\'s page is showing, compared by the code and never shown',
-  'apps/web/src/fields/form-fields.tsx#WHOLE_KEYPAD': 'the keypad a whole number asks a phone for; it is an attribute value, not wording',
+  'apps/web/src/adapters/reader-open.ts#READER_WHY':
+    "why a reader's company did not open, one of a fixed set that a screen turns into its own words by key",
+  'apps/web/src/adapters/reader-open.ts#FROM_THE_WALLET':
+    "the wallet's refusal codes for a reader's keys, each to the page's code for it, read by the code and never shown",
+  'apps/web/src/adapters/reader-open.ts#READER_KEYS':
+    "whether the wallet gave a reader's keys or the company stayed closed, compared by the code",
+  'apps/web/src/adapters/reader-records.ts#NOT_IN_ACCESS':
+    "a read the service answered as not found, outside a reader's access, compared by the code",
+  'apps/web/src/adapters/reader-records.ts#READER_OF': "whether a reader's company opened, compared by the code",
+  'apps/web/src/adapters/reader-records.ts#READER_REFUSED': "why a reader's company did not open, compared by the code",
+  'apps/web/src/adapters/signer-acts.ts#NO_RETIREMENT_TO_FILE':
+    'the code the wallet gives when no retirement is kept to file, compared by the code',
+  'apps/web/src/adapters/signer-acts.ts#UPKEEP_PARTIAL':
+    "the wallet's word for a repair whose upkeep went part of the way, compared by the code",
+  'apps/web/src/adapters/signer-acts.ts#ROLE_OF_A_CODE':
+    "the role a signer added by a code is given, a word of the wallet's protocol, sent and never shown",
+  'apps/web/src/adapters/proposal-acts.ts#RETIRE_VAULT_ACT':
+    "the name of the wallet's act that retires a vault, sent and never shown",
+  'apps/web/src/adapters/reader-join-code.ts#READER_PARTS':
+    "what a reader's join code is for, in the wallet's words, sent and never shown",
+  'apps/web/src/adapters/company-records.ts#RETIRE_ASKS':
+    "the name of the ask a retire's record carries the vault it retired under, read by the code and never shown",
+  'apps/web/src/actions/signers.tsx#REPAIR':
+    "the mark the repair of the company's key is found by, which tests read and a person never sees",
+  'apps/web/src/adapters/vault-secrets-owed.ts#OWED_READ':
+    'whether the read of the vaults owing a new secret read anything, compared by the code',
+  'apps/web/src/records/policy-review.tsx#REVIEW_OF':
+    'which change a review is of, a spending policy or the policy bar, compared by the code and set as a mark tests find it by',
+  'apps/web/src/screens/policies.tsx#FIELD':
+    "the marks the policy form's amount fields are found by, which tests read and a person never sees",
+  'apps/web/src/screens/reader.tsx#SHOWN': "what the reader's page is showing, compared by the code and never shown",
+  'apps/web/src/fields/form-fields.tsx#WHOLE_KEYPAD':
+    'the keypad a whole number asks a phone for; it is an attribute value, not wording'
 };
 
 /** The part of `CODES` naming declarations in files under `dir`. Each package's check holds its own entries to declarations it has. */
-export const codesUnder = (dir: string): string[] => Object.keys(CODES).filter((k) => k.startsWith(`${dir}/`)).sort();
+export const codesUnder = (dir: string): string[] =>
+  Object.keys(CODES)
+    .filter((k) => k.startsWith(`${dir}/`))
+    .sort();
 
 /** TypeScript nodes that stay in the code a browser runs; every other `TS...` node is a type, gone before the page is served. */
-const RUNTIME_TS = new Set(['TSAsExpression', 'TSSatisfiesExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSInstantiationExpression', 'TSEnumDeclaration', 'TSEnumBody', 'TSEnumMember', 'TSModuleDeclaration', 'TSModuleBlock', 'TSParameterProperty', 'TSExportAssignment']);
+const RUNTIME_TS = new Set([
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+  'TSNonNullExpression',
+  'TSTypeAssertion',
+  'TSInstantiationExpression',
+  'TSEnumDeclaration',
+  'TSEnumBody',
+  'TSEnumMember',
+  'TSModuleDeclaration',
+  'TSModuleBlock',
+  'TSParameterProperty',
+  'TSExportAssignment'
+]);
 
-interface Reading { path: string; translators: ReadonlySet<string>; elements: ReadonlySet<string>; codes: ReadonlySet<string> }
+interface Reading {
+  path: string;
+  translators: ReadonlySet<string>;
+  elements: ReadonlySet<string>;
+  codes: ReadonlySet<string>;
+}
 
 /** A place a string may stand without being wording, and why nothing there reaches a person. */
-export interface Position { why: string; allows: (node: Node, up: readonly Node[], r: Reading, text: string) => boolean }
+export interface Position {
+  why: string;
+  allows: (node: Node, up: readonly Node[], r: Reading, text: string) => boolean;
+}
 
-const someParent = (node: Node, up: readonly Node[], test: (parent: Node, child: Node, above: Node | undefined) => boolean): boolean => {
+const someParent = (
+  node: Node,
+  up: readonly Node[],
+  test: (parent: Node, child: Node, above: Node | undefined) => boolean
+): boolean => {
   for (const { parent, child, above } of parentsOf(node, up)) if (test(parent, child, above)) return true;
   return false;
 };
@@ -1228,79 +1862,157 @@ const someParent = (node: Node, up: readonly Node[], test: (parent: Node, child:
 export const WORDING_POSITIONS: Readonly<Record<string, Position>> = {
   'translation key': {
     why: 'the key of a phrase, asked for by `t(...)`; what is shown is the phrase, and the key rule checks the English file has it',
-    allows: (n, up, r) => someParent(n, up, (p, c) => p.type === 'CallExpression' && isTranslator(p.callee as Node, r.translators) && c === (p.arguments as Node[])[0]),
+    allows: (n, up, r) =>
+      someParent(
+        n,
+        up,
+        (p, c) =>
+          p.type === 'CallExpression' &&
+          isTranslator(p.callee as Node, r.translators) &&
+          c === (p.arguments as Node[])[0]
+      )
   },
   module: {
     why: 'the name of a module, in an import, an export or `import.meta.glob`; it tells the bundler which file to load',
-    allows: (n, up) => someParent(n, up, (p, c) => (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration', 'ImportExpression'].includes(p.type) && c === p.source)
-      || (p.type === 'CallExpression' && (p.callee as Node).type === 'MemberExpression' && ((p.callee as Node).object as Node).type === 'MetaProperty' && nameOf((p.callee as Node).property) === 'glob')),
+    allows: (n, up) =>
+      someParent(
+        n,
+        up,
+        (p, c) =>
+          (['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration', 'ImportExpression'].includes(
+            p.type
+          ) &&
+            c === p.source) ||
+          (p.type === 'CallExpression' &&
+            (p.callee as Node).type === 'MemberExpression' &&
+            ((p.callee as Node).object as Node).type === 'MetaProperty' &&
+            nameOf((p.callee as Node).property) === 'glob')
+      )
   },
   class: {
     why: 'a class string, inside `className`, `cn(...)` or `cva(...)`; the colour and left-or-right rules read it word by word',
-    allows: (n, up) => someParent(n, up, (p) => (p.type === 'JSXAttribute' && nameOf(p.name) === 'className')
-      || (p.type === 'CallExpression' && (p.callee as Node).type === 'Identifier' && ['cn', 'cva'].includes(nameOf(p.callee)))),
+    allows: (n, up) =>
+      someParent(
+        n,
+        up,
+        (p) =>
+          (p.type === 'JSXAttribute' && nameOf(p.name) === 'className') ||
+          (p.type === 'CallExpression' &&
+            (p.callee as Node).type === 'Identifier' &&
+            ['cn', 'cva'].includes(nameOf(p.callee)))
+      )
   },
   attribute: {
     why: 'the value of an attribute or prop named in `ATTRIBUTES`, on an element it names, or its default where a component takes it',
-    allows: (n, up, _r, text) => someParent(n, up, (p, c, above) => {
-      if (p.type === 'JSXAttribute' && c === p.value) return isQuietAttribute(nameOf(p.name), nameOf((above as Node | undefined)?.name), text);
-      if (p.type !== 'Property' || c !== p.value) return false;
-      if (above?.type === 'ObjectPattern') return isQuietAttribute(nameOf(p.key), null, text);
-      const call = up.find((u) => u.type === 'CallExpression' && isCreateElement(u.callee as Node) && (u.arguments as Node[])[1] === above);
-      return call !== undefined && isQuietAttribute(nameOf(p.key), nameOf((call.arguments as Node[])[0]), text);
-    }),
+    allows: (n, up, _r, text) =>
+      someParent(n, up, (p, c, above) => {
+        if (p.type === 'JSXAttribute' && c === p.value)
+          return isQuietAttribute(nameOf(p.name), nameOf((above as Node | undefined)?.name), text);
+        if (p.type !== 'Property' || c !== p.value) return false;
+        if (above?.type === 'ObjectPattern') return isQuietAttribute(nameOf(p.key), null, text);
+        const call = up.find(
+          (u) =>
+            u.type === 'CallExpression' && isCreateElement(u.callee as Node) && (u.arguments as Node[])[1] === above
+        );
+        return call !== undefined && isQuietAttribute(nameOf(p.key), nameOf((call.arguments as Node[])[0]), text);
+      })
   },
   type: {
     why: 'a type, which is gone before the page is served',
-    allows: (_n, up) => up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type)),
+    allows: (_n, up) => up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type))
   },
   directive: {
-    why: 'a directive to the bundler, such as `\'use client\'`',
-    allows: (n, up) => someParent(n, up, (p) => p.type === 'ExpressionStatement' && typeof p.directive === 'string'),
+    why: "a directive to the bundler, such as `'use client'`",
+    allows: (n, up) => someParent(n, up, (p) => p.type === 'ExpressionStatement' && typeof p.directive === 'string')
   },
   comparison: {
     why: 'a value compared with `===`, `!==`, `==` or `!=`, or a `case` of a `switch`; it is tested, not shown',
-    allows: (n, up) => someParent(n, up, (p, c) => (p.type === 'BinaryExpression' && ['===', '!==', '==', '!='].includes(String(p.operator)) && (c === p.left || c === p.right))
-      || (p.type === 'SwitchCase' && c === p.test)),
+    allows: (n, up) =>
+      someParent(
+        n,
+        up,
+        (p, c) =>
+          (p.type === 'BinaryExpression' &&
+            ['===', '!==', '==', '!='].includes(String(p.operator)) &&
+            (c === p.left || c === p.right)) ||
+          (p.type === 'SwitchCase' && c === p.test)
+      )
   },
   element: {
     why: 'the tag a component renders as, spelled as a tag (`span`, `my-tag`): the first argument of `createElement`, or the value of a capitalised variable written as a JSX tag, itself or one branch of a `?:` or `||`',
     allows: (n, up, r, text) => {
       if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(text)) return false;
       const [parent, grand] = [up[up.length - 1], up[up.length - 2]];
-      if (parent?.type === 'CallExpression' && isCreateElement(parent.callee as Node) && (parent.arguments as Node[])[0] === n) return true;
-      const declarator = parent?.type === 'VariableDeclarator' ? parent
-        : (parent?.type === 'ConditionalExpression' && (parent.consequent === n || parent.alternate === n)) || (parent?.type === 'LogicalExpression')
-          ? (grand?.type === 'VariableDeclarator' && grand.init === parent ? grand : undefined) : undefined;
-      return declarator !== undefined && (declarator.init === n || declarator.init === parent) && r.elements.has(nameOf(declarator.id));
-    },
+      if (
+        parent?.type === 'CallExpression' &&
+        isCreateElement(parent.callee as Node) &&
+        (parent.arguments as Node[])[0] === n
+      )
+        return true;
+      const declarator =
+        parent?.type === 'VariableDeclarator'
+          ? parent
+          : (parent?.type === 'ConditionalExpression' && (parent.consequent === n || parent.alternate === n)) ||
+              parent?.type === 'LogicalExpression'
+            ? grand?.type === 'VariableDeclarator' && grand.init === parent
+              ? grand
+              : undefined
+            : undefined;
+      return (
+        declarator !== undefined &&
+        (declarator.init === n || declarator.init === parent) &&
+        r.elements.has(nameOf(declarator.id))
+      );
+    }
   },
   'element id': {
     why: 'the id `getElementById` looks an element up by',
-    allows: (n, up) => someParent(n, up, (p, c) => p.type === 'CallExpression' && nameOf((p.callee as Node).property) === 'getElementById' && c === (p.arguments as Node[])[0]),
+    allows: (n, up) =>
+      someParent(
+        n,
+        up,
+        (p, c) =>
+          p.type === 'CallExpression' &&
+          nameOf((p.callee as Node).property) === 'getElementById' &&
+          c === (p.arguments as Node[])[0]
+      )
   },
   'formatter option': {
-    why: 'an argument to one of the browser\'s own formatters, `new Intl.*(...)`: a language tag, or an option naming a style; the formatter writes the words in the person\'s language',
-    allows: (n, up) => someParent(n, up, (p) => p.type === 'NewExpression' && nameOf(((p.callee as Node).object as Node | undefined)) === 'Intl'),
+    why: "an argument to one of the browser's own formatters, `new Intl.*(...)`: a language tag, or an option naming a style; the formatter writes the words in the person's language",
+    allows: (n, up) =>
+      someParent(
+        n,
+        up,
+        (p) => p.type === 'NewExpression' && nameOf((p.callee as Node).object as Node | undefined) === 'Intl'
+      )
   },
   'kit error': {
-    why: 'in the kit only, the message of an error it throws at a caller that used it wrongly; the kit shows no error\'s message, so it is read by whoever wrote the call',
-    allows: (n, up, r) => r.path.startsWith('packages/ui/') && someParent(n, up, (p) => p.type === 'ThrowStatement'),
+    why: "in the kit only, the message of an error it throws at a caller that used it wrongly; the kit shows no error's message, so it is read by whoever wrote the call",
+    allows: (n, up, r) => r.path.startsWith('packages/ui/') && someParent(n, up, (p) => p.type === 'ThrowStatement')
   },
   code: {
-    why: 'a string in a declaration named in `CODES`, and not inside a function written within it: a function there, such as a page\'s name, asks for its words by key',
+    why: "a string in a declaration named in `CODES`, and not inside a function written within it: a function there, such as a page's name, asks for its words by key",
     allows: (n, up, r) => {
       for (const { parent } of parentsOf(n, up)) {
-        if ((parent.type === 'VariableDeclarator' || parent.type === 'FunctionDeclaration') && `${r.path}#${nameOf(parent.id)}` in CODES) return true;
-        if (parent.type === 'ArrowFunctionExpression' || parent.type === 'FunctionExpression' || parent.type === 'FunctionDeclaration') return false;
+        if (
+          (parent.type === 'VariableDeclarator' || parent.type === 'FunctionDeclaration') &&
+          `${r.path}#${nameOf(parent.id)}` in CODES
+        )
+          return true;
+        if (
+          parent.type === 'ArrowFunctionExpression' ||
+          parent.type === 'FunctionExpression' ||
+          parent.type === 'FunctionDeclaration'
+        )
+          return false;
       }
       return false;
-    },
+    }
   },
   'asset symbol': {
     why: 'the symbol of an asset from the asset registry, written the same in every language',
-    allows: (_n, _up, r, text) => r.codes.has(text),
-  },
+    allows: (_n, _up, r, text) => r.codes.has(text)
+  }
 };
 
 /** The first position that lets `node` stand, or null when it is wording. */
@@ -1314,18 +2026,33 @@ function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: n
   const program = parse(s).program;
   const elements = new Set<string>();
   /* Only a capitalised name is a variable: `<span>` is the element, never a variable called span. */
-  for (const { node } of walk(program)) if (node.type === 'JSXOpeningElement' && (node.name as Node).type === 'JSXIdentifier' && /^\p{Lu}/u.test(nameOf(node.name))) elements.add(nameOf(node.name));
+  for (const { node } of walk(program))
+    if (
+      node.type === 'JSXOpeningElement' &&
+      (node.name as Node).type === 'JSXIdentifier' &&
+      /^\p{Lu}/u.test(nameOf(node.name))
+    )
+      elements.add(nameOf(node.name));
   const r: Reading = { path: s.path, translators: translatorsOf(program), elements, codes };
   const out: { text: string; at: number; position: string | null }[] = [];
   for (const { node, up } of walkDown(program)) {
-    const raw = node.type === 'Literal' && typeof node.value === 'string' ? node.value
-      : node.type === 'TemplateElement' ? (node.value as { raw: string }).raw
-        : node.type === 'JSXText' ? String(node.value) : null;
+    const raw =
+      node.type === 'Literal' && typeof node.value === 'string'
+        ? node.value
+        : node.type === 'TemplateElement'
+          ? (node.value as { raw: string }).raw
+          : node.type === 'JSXText'
+            ? String(node.value)
+            : null;
     if (raw === null) continue;
     const text = raw.trim();
     if (!hasLetter(text)) continue;
     /* Text between tags stands in no position; only an asset's code may be written there as it is. */
-    out.push({ text, at: node.start, position: node.type === 'JSXText' ? (codes.has(text) ? 'asset symbol' : null) : positionOf(node, up, r, text) });
+    out.push({
+      text,
+      at: node.start,
+      position: node.type === 'JSXText' ? (codes.has(text) ? 'asset symbol' : null) : positionOf(node, up, r, text)
+    });
   }
   return out;
 }
@@ -1342,8 +2069,12 @@ function stringsOf(s: Source, codes: ReadonlySet<string>): { text: string; at: n
 export function wordingInCode(files: readonly Source[], codes: ReadonlySet<string>): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
-    if (isMarkup(f.path)) { out.push(...wordingInMarkup(f)); continue; }
-    for (const s of stringsOf(f, codes)) if (s.position === null) out.push({ path: f.path, line: lineOf(f.text, s.at), what: s.text });
+    if (isMarkup(f.path)) {
+      out.push(...wordingInMarkup(f));
+      continue;
+    }
+    for (const s of stringsOf(f, codes))
+      if (s.position === null) out.push({ path: f.path, line: lineOf(f.text, s.at), what: s.text });
   }
   return out;
 }
@@ -1353,15 +2084,25 @@ export function wordingInCode(files: readonly Source[], codes: ReadonlySet<strin
  * many each position let stand: so a rule that reads nothing, or a position
  * nothing uses any more, shows.
  */
-export function wordingCensus(files: readonly Source[], codes: ReadonlySet<string>): { read: number; byPosition: Record<string, number>; codes: string[] } {
+export function wordingCensus(
+  files: readonly Source[],
+  codes: ReadonlySet<string>
+): { read: number; byPosition: Record<string, number>; codes: string[] } {
   const byPosition: Record<string, number> = {};
   const used = new Set<string>();
   let read = 0;
   for (const f of files) {
     if (isMarkup(f.path)) continue;
-    for (const s of stringsOf(f, codes)) { read += 1; if (s.position !== null) byPosition[s.position] = (byPosition[s.position] ?? 0) + 1; }
+    for (const s of stringsOf(f, codes)) {
+      read += 1;
+      if (s.position !== null) byPosition[s.position] = (byPosition[s.position] ?? 0) + 1;
+    }
     for (const { node } of walk(parse(f).program)) {
-      if ((node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') && `${f.path}#${nameOf(node.id)}` in CODES) used.add(`${f.path}#${nameOf(node.id)}`);
+      if (
+        (node.type === 'VariableDeclarator' || node.type === 'FunctionDeclaration') &&
+        `${f.path}#${nameOf(node.id)}` in CODES
+      )
+        used.add(`${f.path}#${nameOf(node.id)}`);
     }
   }
   return { read, byPosition, codes: [...used].sort() };
@@ -1372,21 +2113,45 @@ function wordingInMarkup(f: Source): Breach[] {
   const out: Breach[] = [];
   const at = (i: number) => lineOf(f.text, i);
   if (f.path.endsWith('.html')) {
-    const text = f.text.replace(/<!--[\s\S]*?-->/g, (c) => ' '.repeat(c.length)).replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, (c) => ' '.repeat(c.length));
-    for (const m of text.matchAll(/>([^<]+)</g)) if (hasLetter(m[1]!)) out.push({ path: f.path, line: at(m.index), what: m[1]!.trim() });
+    const text = f.text
+      .replace(/<!--[\s\S]*?-->/g, (c) => ' '.repeat(c.length))
+      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, (c) => ' '.repeat(c.length));
+    for (const m of text.matchAll(/>([^<]+)</g))
+      if (hasLetter(m[1]!)) out.push({ path: f.path, line: at(m.index), what: m[1]!.trim() });
     for (const tag of text.matchAll(/<([a-zA-Z][\w-]*)\b([^>]*)>/g)) {
       const attrs = tag[2]!;
       for (const a of attrs.matchAll(new RegExp(String.raw`([\w:-]+)` + ATTRIBUTE_VALUE, 'g'))) {
-        const name = a[1]!; const value = valueOf(a, 3);
-        const quiet = name === 'content' ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']?viewport["']?(?=[\s/>]|$)/i.test(attrs)
-          : name.startsWith('data-') || (name in ATTRIBUTES && ATTRIBUTES[name]!.on === undefined
-            && (ATTRIBUTES[name]!.values === undefined || value.trim().split(/\s+/).every((w) => ATTRIBUTES[name]!.values!.includes(w))));
+        const name = a[1]!;
+        const value = valueOf(a, 3);
+        const quiet =
+          name === 'content'
+            ? tag[1]!.toLowerCase() === 'meta' && /\bname\s*=\s*["']?viewport["']?(?=[\s/>]|$)/i.test(attrs)
+            : name.startsWith('data-') ||
+              (name in ATTRIBUTES &&
+                ATTRIBUTES[name]!.on === undefined &&
+                (ATTRIBUTES[name]!.values === undefined ||
+                  value
+                    .trim()
+                    .split(/\s+/)
+                    .every((w) => ATTRIBUTES[name]!.values!.includes(w))));
         if (hasLetter(value) && !quiet) out.push({ path: f.path, line: at(tag.index), what: `${name}="${value}"` });
       }
     }
   }
   for (const { css, at: from } of cssOf(f)) {
-    for (const d of declarationsOf(css)) if (d.property === 'content' && hasLetter(d.value.replace(/var\(--[\w-]+\)/g, '').replace(/\b(?:attr|counter|counters|open-quote|close-quote|no-open-quote|no-close-quote|none|normal)\b/g, ''))) out.push({ path: f.path, line: at(from + d.at), what: `content: ${d.value}` });
+    for (const d of declarationsOf(css))
+      if (
+        d.property === 'content' &&
+        hasLetter(
+          d.value
+            .replace(/var\(--[\w-]+\)/g, '')
+            .replace(
+              /\b(?:attr|counter|counters|open-quote|close-quote|no-open-quote|no-close-quote|none|normal)\b/g,
+              ''
+            )
+        )
+      )
+        out.push({ path: f.path, line: at(from + d.at), what: `content: ${d.value}` });
   }
   return out;
 }
@@ -1401,9 +2166,17 @@ export function englishSentences(files: readonly Source[]): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
     for (const { node } of walk(parse(f).program)) {
-      const text = node.type === 'Literal' && typeof node.value === 'string' ? node.value
-        : node.type === 'TemplateLiteral' ? textOf(node) : null;
-      if (text !== null && (/^\s*\p{Lu}\p{Ll}*[\p{L}']*\s+\p{L}/u.test(text) || /\p{L}[\p{L}']*\s+\p{L}[\p{L}']*\s+\p{L}/u.test(text))) out.push({ path: f.path, line: lineOf(f.text, node.start), what: text.slice(0, 80) });
+      const text =
+        node.type === 'Literal' && typeof node.value === 'string'
+          ? node.value
+          : node.type === 'TemplateLiteral'
+            ? textOf(node)
+            : null;
+      if (
+        text !== null &&
+        (/^\s*\p{Lu}\p{Ll}*[\p{L}']*\s+\p{L}/u.test(text) || /\p{L}[\p{L}']*\s+\p{L}[\p{L}']*\s+\p{L}/u.test(text))
+      )
+        out.push({ path: f.path, line: lineOf(f.text, node.start), what: text.slice(0, 80) });
     }
   }
   return out;
@@ -1419,8 +2192,12 @@ export function keysAskedFor(s: Source): { key: string | null; line: number }[] 
   for (const { node } of walk(program)) {
     if (node.type !== 'CallExpression' || !isTranslator(node.callee as Node, names)) continue;
     const arg = (node.arguments as Node[])[0];
-    const key = arg?.type === 'Literal' && typeof arg.value === 'string' ? arg.value
-      : arg?.type === 'TemplateLiteral' && (arg.expressions as unknown[]).length === 0 ? textOf(arg) : null;
+    const key =
+      arg?.type === 'Literal' && typeof arg.value === 'string'
+        ? arg.value
+        : arg?.type === 'TemplateLiteral' && (arg.expressions as unknown[]).length === 0
+          ? textOf(arg)
+          : null;
     out.push({ key, line: lineOf(s.text, node.start) });
   }
   return out;
@@ -1435,8 +2212,10 @@ export function keysAskedFor(s: Source): { key: string | null; line: number }[] 
  * values are amounts.
  */
 export const AMOUNT_HOMES: Readonly<Record<string, string>> = {
-  'packages/ui/src/components/amount.tsx': 'the amount component, which writes an amount with its code and, when anyone can look it up, the Public pill',
-  'packages/ui/src/format/token-amount.ts': 'the token-amount helper the component writes with, exactly and in the person\'s language',
+  'packages/ui/src/components/amount.tsx':
+    'the amount component, which writes an amount with its code and, when anyone can look it up, the Public pill',
+  'packages/ui/src/format/token-amount.ts':
+    "the token-amount helper the component writes with, exactly and in the person's language"
 };
 
 /** The plain-number formatter, which may call the browser's number formatter and nothing else refused below. */
@@ -1471,7 +2250,11 @@ const FORMATTERS = new Set(['NumberFormat', 'toLocaleString', 'toFixed', 'toPrec
  * (a prop, a function's result) is not read either, and needs no rule: `+` on
  * an amount throws.
  */
-export function amountsOutsideTheComponent(files: readonly Source[], homes: Readonly<Record<string, string>> = AMOUNT_HOMES, adapters: string | null = null): Breach[] {
+export function amountsOutsideTheComponent(
+  files: readonly Source[],
+  homes: Readonly<Record<string, string>> = AMOUNT_HOMES,
+  adapters: string | null = null
+): Breach[] {
   const out: Breach[] = [];
   for (const f of files) {
     if (f.path in homes) continue;
@@ -1480,12 +2263,19 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
     const kit = f.path.startsWith('packages/ui/');
     const program = parse(f).program;
     const translators = translatorsOf(program);
-    const isPhrase = (n: Node | undefined): boolean => n?.type === 'CallExpression' && isTranslator(n.callee as Node, translators);
-    const isText = (n: Node | undefined): boolean => n?.type === 'TemplateLiteral' || (n?.type === 'Literal' && typeof n.value === 'string') || isPhrase(n);
+    const isPhrase = (n: Node | undefined): boolean =>
+      n?.type === 'CallExpression' && isTranslator(n.callee as Node, translators);
+    const isText = (n: Node | undefined): boolean =>
+      n?.type === 'TemplateLiteral' || (n?.type === 'Literal' && typeof n.value === 'string') || isPhrase(n);
     /* The names this file gives a string, a template or a phrase. */
     const textNames = new Set<string>();
     for (const { node } of walk(program)) {
-      if (node.type === 'VariableDeclarator' && (node.id as Node).type === 'Identifier' && isText(node.init as Node | undefined)) textNames.add(nameOf(node.id));
+      if (
+        node.type === 'VariableDeclarator' &&
+        (node.id as Node).type === 'Identifier' &&
+        isText(node.init as Node | undefined)
+      )
+        textNames.add(nameOf(node.id));
     }
     const heldText = (n: Node | undefined): boolean => n?.type === 'Identifier' && textNames.has(String(n.name));
     for (const { node, up } of walkDown(program)) {
@@ -1493,36 +2283,106 @@ export function amountsOutsideTheComponent(files: readonly Source[], homes: Read
       const at = `${node.type}:${node.start}:${node.end}`;
       if (seen.has(at)) continue;
       seen.add(at);
-      const breach = (what: string) => { if (!(kit && up.some((u) => u.type === 'ThrowStatement'))) out.push({ path: f.path, line: lineOf(f.text, node.start), what }); };
+      const breach = (what: string) => {
+        if (!(kit && up.some((u) => u.type === 'ThrowStatement')))
+          out.push({ path: f.path, line: lineOf(f.text, node.start), what });
+      };
       const callee = node.callee as Node | undefined;
       if (node.type === 'Identifier' && node.name === 'formatTokenAmount') breach('formatTokenAmount');
       if (node.type === 'MemberExpression') {
         const prop = node.property as Node;
-        const name = prop.type === 'Identifier' && !node.computed ? String(prop.name) : prop.type === 'Literal' ? String(prop.value) : '';
+        const name =
+          prop.type === 'Identifier' && !node.computed
+            ? String(prop.name)
+            : prop.type === 'Literal'
+              ? String(prop.value)
+              : '';
         if (FORMATTERS.has(name) && !(f.path === NUMBER_FORMATTER && name === 'NumberFormat')) breach(name);
         const aBody = talksToTheService && name === 'stringify' && nameOf(node.object) === 'JSON' && !node.computed;
-        if ((['toString', 'stringify', 'join', 'concat'].includes(name) && !aBody) || ((name === 'parseInt' || name === 'parseFloat' || name === 'String' || name === 'Number') && nameOf(node.object) !== '')) breach(name);
+        if (
+          (['toString', 'stringify', 'join', 'concat'].includes(name) && !aBody) ||
+          ((name === 'parseInt' || name === 'parseFloat' || name === 'String' || name === 'Number') &&
+            nameOf(node.object) !== '')
+        )
+          breach(name);
       }
-      if (node.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(node.name))) {
+      if (
+        node.type === 'Identifier' &&
+        ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(node.name))
+      ) {
         const p = up[up.length - 1];
         const called = (p?.type === 'CallExpression' || p?.type === 'NewExpression') && p.callee === node;
         const named = p?.type === 'MemberExpression' && p.object === node;
         const typeOnly = up.some((u) => u.type.startsWith('TS') && !RUNTIME_TS.has(u.type));
-        if (!called && !named && !typeOnly && !(p?.type === 'MemberExpression' && p.property === node)) breach(`${String(node.name)} as a value`);
+        if (!called && !named && !typeOnly && !(p?.type === 'MemberExpression' && p.property === node))
+          breach(`${String(node.name)} as a value`);
       }
-      if (node.type === 'AssignmentExpression' && ['textContent', 'innerText', 'innerHTML'].includes(nameOf((node.left as Node).property))) breach(nameOf((node.left as Node).property));
-      if (node.type === 'AssignmentExpression' && node.operator === '+=' && ((node.right as Node).type === 'TemplateLiteral' || ((node.right as Node).type === 'Literal' && typeof (node.right as Node).value === 'string'))) breach('+= with a string');
-      if (node.type === 'Property' && nameOf(node.key) === 'NumberFormat' && !(f.path === NUMBER_FORMATTER)) breach('NumberFormat');
+      if (
+        node.type === 'AssignmentExpression' &&
+        ['textContent', 'innerText', 'innerHTML'].includes(nameOf((node.left as Node).property))
+      )
+        breach(nameOf((node.left as Node).property));
+      if (
+        node.type === 'AssignmentExpression' &&
+        node.operator === '+=' &&
+        ((node.right as Node).type === 'TemplateLiteral' ||
+          ((node.right as Node).type === 'Literal' && typeof (node.right as Node).value === 'string'))
+      )
+        breach('+= with a string');
+      if (node.type === 'Property' && nameOf(node.key) === 'NumberFormat' && !(f.path === NUMBER_FORMATTER))
+        breach('NumberFormat');
       /* A conversion taken out of an object by name (`const { stringify } = JSON`) is the conversion. */
-      if (node.type === 'Property' && up[up.length - 1]?.type === 'ObjectPattern' && ['toString', 'stringify', 'join', 'concat'].includes(nameOf(node.key)) && !talksToTheService) breach(`${nameOf(node.key)} taken out`);
-      if ((node.type === 'CallExpression' || node.type === 'NewExpression') && callee?.type === 'Identifier' && ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(callee.name))) breach(`${String(callee.name)}(...)`);
+      if (
+        node.type === 'Property' &&
+        up[up.length - 1]?.type === 'ObjectPattern' &&
+        ['toString', 'stringify', 'join', 'concat'].includes(nameOf(node.key)) &&
+        !talksToTheService
+      )
+        breach(`${nameOf(node.key)} taken out`);
+      if (
+        (node.type === 'CallExpression' || node.type === 'NewExpression') &&
+        callee?.type === 'Identifier' &&
+        ['Number', 'String', 'parseInt', 'parseFloat', 'encodeURIComponent'].includes(String(callee.name))
+      )
+        breach(`${String(callee.name)}(...)`);
       if (node.type === 'UnaryExpression' && node.operator === '+') breach('unary +');
-      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((s) => (s as Node).type === 'TemplateLiteral' || ((s as Node).type === 'Literal' && typeof (s as Node).value === 'string'))) breach('+ with a string');
-      if (node.type === 'TemplateLiteral' && (node.expressions as unknown[]).length > 0) breach('template with a value');
-      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((x) => heldText(x as Node))) breach('+ with a string held in a name');
-      if (node.type === 'BinaryExpression' && node.operator === '+' && [node.left, node.right].some((x) => isPhrase(x as Node))) breach('+ with a phrase');
-      if (node.type === 'AssignmentExpression' && node.operator === '+=' && (heldText(node.left as Node) || heldText(node.right as Node) || isPhrase(node.right as Node))) breach('+= with a string held in a name');
-      if (node.type === 'MemberExpression' && node.computed && isGlobalScope(node.object) && (node.property as Node).type !== 'Literal') breach('a global reached by a built name');
+      if (
+        node.type === 'BinaryExpression' &&
+        node.operator === '+' &&
+        [node.left, node.right].some(
+          (s) =>
+            (s as Node).type === 'TemplateLiteral' ||
+            ((s as Node).type === 'Literal' && typeof (s as Node).value === 'string')
+        )
+      )
+        breach('+ with a string');
+      if (node.type === 'TemplateLiteral' && (node.expressions as unknown[]).length > 0)
+        breach('template with a value');
+      if (
+        node.type === 'BinaryExpression' &&
+        node.operator === '+' &&
+        [node.left, node.right].some((x) => heldText(x as Node))
+      )
+        breach('+ with a string held in a name');
+      if (
+        node.type === 'BinaryExpression' &&
+        node.operator === '+' &&
+        [node.left, node.right].some((x) => isPhrase(x as Node))
+      )
+        breach('+ with a phrase');
+      if (
+        node.type === 'AssignmentExpression' &&
+        node.operator === '+=' &&
+        (heldText(node.left as Node) || heldText(node.right as Node) || isPhrase(node.right as Node))
+      )
+        breach('+= with a string held in a name');
+      if (
+        node.type === 'MemberExpression' &&
+        node.computed &&
+        isGlobalScope(node.object) &&
+        (node.property as Node).type !== 'Literal'
+      )
+        breach('a global reached by a built name');
     }
   }
   return out;
@@ -1540,17 +2400,25 @@ export function pluralOf(key: string): { base: string; category: string | null }
 }
 
 /** The named gaps of a phrase, sorted: `{name} paid {count}` has `count`, `name`. */
-export const gapsOf = (phrase: string): string[] => [...new Set([...phrase.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!))].sort();
+export const gapsOf = (phrase: string): string[] =>
+  [...new Set([...phrase.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!))].sort();
 
 /**
  * RULE: every language file has every phrase of the English one, with one entry
  * for each plural category the language needs, and nothing the English one has
  * not. A phrase is plural in every language when it is plural in English.
  */
-export function missingPhrases(english: Readonly<Record<string, string>>, tag: string, messages: Readonly<Record<string, string>>): string[] {
+export function missingPhrases(
+  english: Readonly<Record<string, string>>,
+  tag: string,
+  messages: Readonly<Record<string, string>>
+): string[] {
   const categories = new Intl.PluralRules(tag).resolvedOptions().pluralCategories as string[];
   const bases = new Map<string, boolean>();
-  for (const k of Object.keys(english)) { const { base, category } = pluralOf(k); bases.set(base, (bases.get(base) ?? false) || category !== null); }
+  for (const k of Object.keys(english)) {
+    const { base, category } = pluralOf(k);
+    bases.set(base, (bases.get(base) ?? false) || category !== null);
+  }
   const out: string[] = [];
   for (const [base, plural] of bases) {
     const want = plural ? categories.map((c) => `${base}_${c}`) : [base];
@@ -1559,14 +2427,20 @@ export function missingPhrases(english: Readonly<Record<string, string>>, tag: s
   for (const k of Object.keys(messages)) {
     const { base, category } = pluralOf(k);
     if (!bases.has(base)) out.push(`${tag}: ${k} is not in the English file`);
-    else if (category !== null && !categories.includes(category)) out.push(`${tag}: ${k} is a plural form ${tag} does not have`);
-    else if (category === null && bases.get(base) === true) out.push(`${tag}: ${k} is plural in English and has no plural forms here`);
+    else if (category !== null && !categories.includes(category))
+      out.push(`${tag}: ${k} is a plural form ${tag} does not have`);
+    else if (category === null && bases.get(base) === true)
+      out.push(`${tag}: ${k} is plural in English and has no plural forms here`);
   }
   return out.sort();
 }
 
 /** RULE: every phrase has the same named gaps in every language, and in each of its plural forms. */
-export function gapsThatDiffer(english: Readonly<Record<string, string>>, tag: string, messages: Readonly<Record<string, string>>): string[] {
+export function gapsThatDiffer(
+  english: Readonly<Record<string, string>>,
+  tag: string,
+  messages: Readonly<Record<string, string>>
+): string[] {
   const want = new Map<string, string>();
   for (const [k, v] of Object.entries(english)) {
     const { base } = pluralOf(k);
@@ -1578,7 +2452,8 @@ export function gapsThatDiffer(english: Readonly<Record<string, string>>, tag: s
   for (const [k, v] of Object.entries(messages)) {
     const { base } = pluralOf(k);
     const w = want.get(base);
-    if (w !== undefined && gapsOf(v).join(',') !== w) out.push(`${tag}: ${k} has gaps {${gapsOf(v).join('}, {')}} where English has {${w.split(',').join('}, {')}}`);
+    if (w !== undefined && gapsOf(v).join(',') !== w)
+      out.push(`${tag}: ${k} has gaps {${gapsOf(v).join('}, {')}} where English has {${w.split(',').join('}, {')}}`);
   }
   return out.sort();
 }
@@ -1586,7 +2461,10 @@ export function gapsThatDiffer(english: Readonly<Record<string, string>>, tag: s
 /** Whether the English file has a phrase for `key`: the key itself, or its plural forms. */
 export function hasPhrase(english: Readonly<Record<string, string>>, key: string): boolean {
   if (key in english) return pluralOf(key).category === null;
-  return Object.keys(english).some((e) => { const { base, category } = pluralOf(e); return category !== null && base === key; });
+  return Object.keys(english).some((e) => {
+    const { base, category } = pluralOf(e);
+    return category !== null && base === key;
+  });
 }
 
 /**
@@ -1597,11 +2475,14 @@ export function hasPhrase(english: Readonly<Record<string, string>>, key: string
  */
 export const RADIX_STATES: Readonly<Record<string, { states: readonly string[]; packages: readonly string[] }>> = {
   Tooltip: { states: ['closed', 'delayed-open', 'instant-open'], packages: ['react-tooltip'] },
-  DropdownMenu: { states: ['open', 'closed', 'checked', 'unchecked', 'indeterminate'], packages: ['react-dropdown-menu', 'react-menu'] },
+  DropdownMenu: {
+    states: ['open', 'closed', 'checked', 'unchecked', 'indeterminate'],
+    packages: ['react-dropdown-menu', 'react-menu']
+  },
   Dialog: { states: ['open', 'closed'], packages: ['react-dialog'] },
   Popover: { states: ['open', 'closed'], packages: ['react-popover'] },
   RadioGroup: { states: ['checked', 'unchecked'], packages: ['react-radio-group'] },
-  Tabs: { states: ['active', 'inactive'], packages: ['react-tabs'] },
+  Tabs: { states: ['active', 'inactive'], packages: ['react-tabs'] }
 };
 
 /**
@@ -1610,7 +2491,7 @@ export const RADIX_STATES: Readonly<Record<string, { states: readonly string[]; 
  * file, which the kit's own test checks.
  */
 export const OWN_STATES: Readonly<Record<string, readonly string[]>> = {
-  'packages/ui/src/components/sidebar.tsx': ['expanded', 'collapsed'],
+  'packages/ui/src/components/sidebar.tsx': ['expanded', 'collapsed']
 };
 
 /** The values a file's classes name in a bracketed state variant (`data-[state=open]:`, `peer-data-[state=collapsed]:`), in the order written. */
@@ -1629,8 +2510,12 @@ export function bracketedStatesOf(s: Source): string[] {
  * class matches nothing, so it silently never applies.
  */
 export function statesNothingSets(s: Source): string[] {
-  const imported = [...s.text.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']radix-ui["']/g)]
-    .flatMap((m) => m[1]!.split(',').map((n) => n.trim().split(/\s+as\s+/)[0]!).filter((n) => n !== ''));
+  const imported = [...s.text.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']radix-ui["']/g)].flatMap((m) =>
+    m[1]!
+      .split(',')
+      .map((n) => n.trim().split(/\s+as\s+/)[0]!)
+      .filter((n) => n !== '')
+  );
   const set = new Set([...imported.flatMap((n) => RADIX_STATES[n]?.states ?? []), ...(OWN_STATES[s.path] ?? [])]);
   return [...new Set(bracketedStatesOf(s).filter((v) => !set.has(v)))];
 }

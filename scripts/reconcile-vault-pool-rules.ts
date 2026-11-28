@@ -24,7 +24,10 @@
  * treasury of zero, and the two must never be written down as the same thing.
  */
 import type {
-  PoolRecovery, NoteDescribedTwice, SettledByTheChain, RecordOfANote,
+  PoolRecovery,
+  NoteDescribedTwice,
+  SettledByTheChain,
+  RecordOfANote
 } from '../src/midnight/vault-recovery.js';
 import { nameTheRecord } from '../src/midnight/vault-recovery.js';
 import { theTransactionTheseEventsAreFrom } from '../src/midnight/note-index.js';
@@ -93,9 +96,7 @@ export const decideWhetherToWrite = (input: {
    * about. Additively that is the newest version plus what was recovered; with
    * dropping it is exactly what the chain holds and this machine can name.
    */
-  const wouldHold = input.alsoDropStaleNotes
-    ? r.held.length
-    : input.notesTheNewestVersionClaims + r.recovered.length;
+  const wouldHold = input.alsoDropStaleNotes ? r.held.length : input.notesTheNewestVersionClaims + r.recovered.length;
 
   /*
    * **THE REFUSAL THAT OUTRANKS THE REST, AND IT IS KEYED ON WHAT WOULD BE
@@ -113,24 +114,26 @@ export const decideWhetherToWrite = (input: {
   if (wouldHold === 0 && (input.notesTheNewestVersionClaims > 0 || r.unexplained.length > 0)) {
     return {
       do: 'refuse',
-      why: 'what this would write is an EMPTY POOL, and this vault is not empty: '
-        + `${input.notesTheNewestVersionClaims} note(s) are claimed by the pool's newest version `
-        + `and the chain holds ${r.unexplained.length} note(s) the rebuild could not explain. `
-        + '**An empty pool is a claim that this vault has no money**, and it is indistinguishable '
-        + 'afterwards from the truth. This is not that: it is this machine holding no record of '
-        + 'notes the chain does hold, or the chain not having answered properly. Nothing is '
-        + 'written. If the chain reported no notes at all, read it again before believing it -- a '
-        + 'state that decoded without its note set reads exactly like a vault with nothing in it. '
-        + 'Otherwise find the records first: a pool version from a backup, or the deposits that '
-        + 'created those notes -- because a commitment cannot be inverted and no rebuild can '
-        + 'invent what a note is worth.',
+      why:
+        'what this would write is an EMPTY POOL, and this vault is not empty: ' +
+        `${input.notesTheNewestVersionClaims} note(s) are claimed by the pool's newest version ` +
+        `and the chain holds ${r.unexplained.length} note(s) the rebuild could not explain. ` +
+        '**An empty pool is a claim that this vault has no money**, and it is indistinguishable ' +
+        'afterwards from the truth. This is not that: it is this machine holding no record of ' +
+        'notes the chain does hold, or the chain not having answered properly. Nothing is ' +
+        'written. If the chain reported no notes at all, read it again before believing it -- a ' +
+        'state that decoded without its note set reads exactly like a vault with nothing in it. ' +
+        'Otherwise find the records first: a pool version from a backup, or the deposits that ' +
+        'created those notes -- because a commitment cannot be inverted and no rebuild can ' +
+        'invent what a note is worth.'
     };
   }
   if (wouldHold === 0) {
     return {
       do: 'nothing',
-      why: 'the chain holds no notes for this vault and no filed version claims any, so there is '
-        + 'nothing to reconcile. A vault that has never been funded looks exactly like this.',
+      why:
+        'the chain holds no notes for this vault and no filed version claims any, so there is ' +
+        'nothing to reconcile. A vault that has never been funded looks exactly like this.'
     };
   }
   const drops = input.alsoDropStaleNotes ? r.stale.length : 0;
@@ -151,17 +154,18 @@ export const decideWhetherToWrite = (input: {
   if (r.recovered.length === 0 && drops === 0 && records === 0 && settlements === 0) {
     return {
       do: 'nothing',
-      why: r.stale.length > 0
-        ? `every note the chain holds is already in this pool (${r.held.length}), and `
-          + `${r.stale.length} note(s) the pool claims are not on chain. **Those are not written `
-          + 'away here.** Removing one is only safe when nothing is paying out of this vault, '
-          + 'because the note being removed may be the one a payment in flight is about to write '
-          + 'its change against. Nothing is lost by leaving them: a payment that chose one is '
-          + 'refused by the circuit after two fees, which is a cost and not a loss.'
-        : `every note the chain holds is already in this pool's newest version (${r.held.length}) `
-          + 'and it claims nothing the chain does not. The pool is the chain\'s pool. Nothing is '
-          + 'written, because a rewrite of the money is a chance to write half of it and there is '
-          + 'no reason here to take it.',
+      why:
+        r.stale.length > 0
+          ? `every note the chain holds is already in this pool (${r.held.length}), and ` +
+            `${r.stale.length} note(s) the pool claims are not on chain. **Those are not written ` +
+            'away here.** Removing one is only safe when nothing is paying out of this vault, ' +
+            'because the note being removed may be the one a payment in flight is about to write ' +
+            'its change against. Nothing is lost by leaving them: a payment that chose one is ' +
+            'refused by the circuit after two fees, which is a cost and not a loss.'
+          : `every note the chain holds is already in this pool's newest version (${r.held.length}) ` +
+            "and it claims nothing the chain does not. The pool is the chain's pool. Nothing is " +
+            'written, because a rewrite of the money is a chance to write half of it and there is ' +
+            'no reason here to take it.'
     };
   }
   return {
@@ -170,21 +174,21 @@ export const decideWhetherToWrite = (input: {
       r.recovered.length > 0
         ? `${r.recovered.length} note(s) the chain holds are missing from the pool's newest version`
         : '',
-      drops > 0
-        ? `${drops} note(s) the pool claims are not on chain and would be refused at the spend`
-        : '',
+      drops > 0 ? `${drops} note(s) the pool claims are not on chain and would be refused at the spend` : '',
       records > 0
         ? `${records} note(s) gain the transaction that created them, which is what lets a payment spend them`
         : '',
       settlements > 0
-        ? `${settlements} note(s) described more than one way were settled by the chain, and no version `
-          + 'records the answer yet; once such a coin is spent the chain can no longer give it'
-        : '',
-    ].filter(Boolean).join('; '),
+        ? `${settlements} note(s) described more than one way were settled by the chain, and no version ` +
+          'records the answer yet; once such a coin is spent the chain can no longer give it'
+        : ''
+    ]
+      .filter(Boolean)
+      .join('; '),
     recovers: r.recovered.length,
     drops,
     unexplained: r.unexplained.length,
-    records,
+    records
   };
 };
 
@@ -227,17 +231,16 @@ export { assertNoSignerWouldLoseAccess } from '../src/midnight/vault-pool.js';
  * So a rebuild that finds the pool has moved says so and asks to be run again,
  * which costs one chain read and is always correct.
  */
-export const assertThePoolHasNotMovedSinceTheRebuild = (
-  rebuiltFrom: number, storedNow: number,
-): void => {
+export const assertThePoolHasNotMovedSinceTheRebuild = (rebuiltFrom: number, storedNow: number): void => {
   if (rebuiltFrom === storedNow) return;
   throw new Error(
-    `this rebuild was worked out from version ${rebuiltFrom} of the pool and the pool is at version `
-    + `${storedNow} now: another writer filed one while the chain was being read. **Nothing has `
-    + 'been written**, so what that writer recorded is still there. A rebuild replaces the whole '
-    + 'record rather than adding to it, so it cannot be applied to a pool that has moved -- there '
-    + 'is no correct merge of two disagreeing records of which notes exist. Run this again; it '
-    + 'reads the chain once more and works out the rebuild from what the pool holds now.');
+    `this rebuild was worked out from version ${rebuiltFrom} of the pool and the pool is at version ` +
+      `${storedNow} now: another writer filed one while the chain was being read. **Nothing has ` +
+      'been written**, so what that writer recorded is still there. A rebuild replaces the whole ' +
+      'record rather than adding to it, so it cannot be applied to a pool that has moved -- there ' +
+      'is no correct merge of two disagreeing records of which notes exist. Run this again; it ' +
+      'reads the chain once more and works out the rebuild from what the pool holds now.'
+  );
 };
 
 /* ------------------------------------------------------------------ *
@@ -263,10 +266,21 @@ export interface NotYetSpendable {
  */
 export const settlementsNotYetRecorded = (
   settled: readonly SettledByTheChain[],
-  versions: readonly { readonly settled?: readonly SettledByTheChain[] }[],
-): SettledByTheChain[] => settled.filter((s) => s.chainHolds !== undefined && !versions.some((v) =>
-  (v.settled ?? []).some((w) => w.nonce === s.nonce && w.chainHolds !== undefined
-    && w.chainHolds.token === s.chainHolds!.token && w.chainHolds.value === s.chainHolds!.value)));
+  versions: readonly { readonly settled?: readonly SettledByTheChain[] }[]
+): SettledByTheChain[] =>
+  settled.filter(
+    (s) =>
+      s.chainHolds !== undefined &&
+      !versions.some((v) =>
+        (v.settled ?? []).some(
+          (w) =>
+            w.nonce === s.nonce &&
+            w.chainHolds !== undefined &&
+            w.chainHolds.token === s.chainHolds!.token &&
+            w.chainHolds.value === s.chainHolds!.value
+        )
+      )
+  );
 
 /**
  * **THE CREATING TRANSACTION A FILED VERSION RECORDS FOR THIS NOTE, NEWEST
@@ -277,11 +291,12 @@ export const settlementsNotYetRecorded = (
  */
 const recordedCreatingTransaction = (
   versions: readonly { version: number; notes: readonly Note[] }[],
-  note: { nonce: string; token: string; value: bigint },
+  note: { nonce: string; token: string; value: bigint }
 ): Hex | undefined => {
   for (const v of [...versions].sort((a, b) => b.version - a.version)) {
-    const same = v.notes.find((n) => n.nonce === note.nonce
-      && n.token === note.token && n.value === note.value && isAHash(n.createdIn));
+    const same = v.notes.find(
+      (n) => n.nonce === note.nonce && n.token === note.token && n.value === note.value && isAHash(n.createdIn)
+    );
     if (same) return same.createdIn;
   }
   return undefined;
@@ -395,8 +410,9 @@ export const whatTheRebuildWrites = (input: {
   }
 
   /* Counted over what is actually written, so a note is counted once whatever it replaced. */
-  const established = [...byNonce.values()].filter((n) =>
-    n.createdIn !== undefined && recordedCreatingTransaction(input.versions, n) === undefined).length;
+  const established = [...byNonce.values()].filter(
+    (n) => n.createdIn !== undefined && recordedCreatingTransaction(input.versions, n) === undefined
+  ).length;
 
   const notYetSpendable: NotYetSpendable[] = [];
   for (const n of byNonce.values()) {
@@ -405,10 +421,11 @@ export const whatTheRebuildWrites = (input: {
     notYetSpendable.push({
       nonce: n.nonce,
       value: n.value,
-      why: answer !== undefined && 'unresolved' in answer
-        ? answer.unresolved
-        : 'the chain was not asked which transaction created it',
-      candidates: answer !== undefined && 'unresolved' in answer ? answer.candidates : [],
+      why:
+        answer !== undefined && 'unresolved' in answer
+          ? answer.unresolved
+          : 'the chain was not asked which transaction created it',
+      candidates: answer !== undefined && 'unresolved' in answer ? answer.candidates : []
     });
   }
   return { notes: [...byNonce.values()], notYetSpendable, established };
@@ -430,19 +447,17 @@ export const linesForAnOperator = (
   /** Notes that would be written and that a payment cannot spend yet. */
   notYetSpendable: readonly NotYetSpendable[] = [],
   /** Nonces records here describe more than one way, and what the chain said of each. */
-  settled: readonly SettledByTheChain[] = [],
+  settled: readonly SettledByTheChain[] = []
 ): string[] => {
   const lines = [
     `notes the chain holds and this machine can name        ${r.held.length}`,
     `of those, notes the pool had lost                      ${r.recovered.length}`,
     `notes the pool claimed and the chain does not hold     ${r.stale.length}`,
     `notes the chain holds that nothing here explains       ${r.unexplained.length}`,
-    ...(settled.length > 0
-      ? [`notes described two ways, settled by the chain         ${settled.length}`]
-      : []),
+    ...(settled.length > 0 ? [`notes described two ways, settled by the chain         ${settled.length}`] : []),
     ...((r.unnamedWithoutTheSecret?.length ?? 0) > 0
       ? [`calls whose new coins were not named, for want of the secret  ${r.unnamedWithoutTheSecret!.length}`]
-      : []),
+      : [])
   ];
   /*
    * **EVERY LIST IS BOUNDED THE SAME WAY, AND THIS ONE WAS NOT.** `recovered` was
@@ -455,10 +470,9 @@ export const linesForAnOperator = (
    */
   const bounded = <T>(all: readonly T[], show: (one: T) => string): string[] => [
     ...all.slice(0, 8).map(show),
-    ...(all.length > 8 ? [`    … and ${all.length - 8} more`] : []),
+    ...(all.length > 8 ? [`    … and ${all.length - 8} more`] : [])
   ];
-  const aNote = (n: { nonce: string; value: bigint }) =>
-    `    ${n.nonce.slice(0, 16)}…   ${n.value.toLocaleString()}`;
+  const aNote = (n: { nonce: string; value: bigint }) => `    ${n.nonce.slice(0, 16)}…   ${n.value.toLocaleString()}`;
 
   /*
    * **"THEY CAN BE SPENT AGAIN" IS SAID ONLY OF NOTES IT IS TRUE OF.** It used to
@@ -486,12 +500,16 @@ export const linesForAnOperator = (
       `${d.records.map(nameTheRecord).join(', ')} say${d.records.length === 1 ? 's' : ''} ${d.value.toLocaleString()}`;
     for (const x of settled.slice(0, 8)) {
       lines.push(`    ${x.nonce.slice(0, 16)}…`);
-      lines.push(x.chainHolds
-        ? `      the chain holds this one:  ${described(x.chainHolds)}`
-        : '      the chain holds none of them, so no record here describes money this vault holds now');
+      lines.push(
+        x.chainHolds
+          ? `      the chain holds this one:  ${described(x.chainHolds)}`
+          : '      the chain holds none of them, so no record here describes money this vault holds now'
+      );
       if (!x.chainHolds && x.heldWhenFiled) {
-        lines.push(`      when version ${x.heldWhenFiled.version} was filed the chain held the one worth `
-          + `${x.heldWhenFiled.value.toLocaleString()}; it has been spent since`);
+        lines.push(
+          `      when version ${x.heldWhenFiled.version} was filed the chain held the one worth ` +
+            `${x.heldWhenFiled.value.toLocaleString()}; it has been spent since`
+        );
       }
       for (const d of x.setAside) lines.push(`      set aside:                 ${described(d)}`);
     }
@@ -530,7 +548,12 @@ export const linesForAnOperator = (
     lines.push('', 'THE POOL CLAIMED THESE AND THE CHAIN DOES NOT HOLD THEM. They are spent, or the');
     lines.push('call that would have created them never landed. Left in, every payment that chose');
     lines.push('one would be proposed, approved, paid for and then refused inside the circuit:');
-    lines.push(...bounded(r.stale.filter((n) => !settledNonces.has(n.nonce)), aNote));
+    lines.push(
+      ...bounded(
+        r.stale.filter((n) => !settledNonces.has(n.nonce)),
+        aNote
+      )
+    );
   }
   /*
    * **A CALL WHOSE NEW COINS WERE NOT NAMED IS SAID, NOT LEFT OUT.** A payment's
@@ -539,12 +562,17 @@ export const linesForAnOperator = (
    * otherwise read as notes nothing explains.
    */
   if ((r.unnamedWithoutTheSecret?.length ?? 0) > 0) {
-    lines.push('', 'SOME CALLS MADE COINS THIS REBUILD DID NOT NAME, BECAUSE THE VAULT\x27S NONCE SECRET WAS NOT GIVEN.');
+    lines.push(
+      '',
+      'SOME CALLS MADE COINS THIS REBUILD DID NOT NAME, BECAUSE THE VAULT\x27S NONCE SECRET WAS NOT GIVEN.'
+    );
     lines.push('The change a payment left and the pieces a split kept take their nonces from that secret,');
     lines.push('so without it they are counted among the notes nothing here explains. What resolves it:');
     lines.push('put the company\x27s nonce-secret record for this vault on this machine and run this again.');
-    lines.push(`The calls, by their place in the history proposed:  ${r.unnamedWithoutTheSecret!.slice(0, 8).join(', ')}`
-      + (r.unnamedWithoutTheSecret!.length > 8 ? ` … and ${r.unnamedWithoutTheSecret!.length - 8} more` : ''));
+    lines.push(
+      `The calls, by their place in the history proposed:  ${r.unnamedWithoutTheSecret!.slice(0, 8).join(', ')}` +
+        (r.unnamedWithoutTheSecret!.length > 8 ? ` … and ${r.unnamedWithoutTheSecret!.length - 8} more` : '')
+    );
   }
   if (r.unexplained.length > 0) {
     lines.push('', 'THE VAULT HOLDS MONEY THIS MACHINE CANNOT NAME, AND A REBUILD CANNOT FIX IT.');
@@ -572,16 +600,18 @@ export const whereTheRecordsAre = (
     poolVersion: (version: number) => string;
     depositJournal: string;
     paymentJournal: string;
-  },
-): string[] => refused.descriptions.map((d) => {
-  const where = d.record.kind === 'pool version'
-    ? files.poolVersion(d.record.version)
-    : d.record.kind === 'company records'
-      ? 'the amounts the company recorded depositing and paying, with its deposit key'
-      : `${d.record.kind === 'deposit journal' ? files.depositJournal : files.paymentJournal}`
-        + ' and its numbered versions';
-  return `${nameTheRecord(d.record)}${d.onChain ? ' (the chain holds this one)' : ''}: ${where}`;
-});
+  }
+): string[] =>
+  refused.descriptions.map((d) => {
+    const where =
+      d.record.kind === 'pool version'
+        ? files.poolVersion(d.record.version)
+        : d.record.kind === 'company records'
+          ? 'the amounts the company recorded depositing and paying, with its deposit key'
+          : `${d.record.kind === 'deposit journal' ? files.depositJournal : files.paymentJournal}` +
+            ' and its numbered versions';
+    return `${nameTheRecord(d.record)}${d.onChain ? ' (the chain holds this one)' : ''}: ${where}`;
+  });
 
 /**
  * **THE VAULT'S NONCE SECRETS FOR A REBUILD, FROM THE COMPANY'S NONCE-SECRET
@@ -608,13 +638,15 @@ export const nonceSecretsForTheRebuild = (input: {
   if (/^0{64}$/u.test(commitment)) return null;
   if (input.sealed === null) {
     throw new Error(
-      `this vault has no nonce secret on this machine: ${input.where} does not exist. The change its payments `
-      + 'left and the pieces its splits kept are named only with the vault\x27s nonce secret, which the company\x27s '
-      + 'nonce-secret record holds, so a rebuild without it would name none of them. Nothing was written. '
-      + 'Put the company\x27s nonce-secret record for this vault there and run this again.');
+      `this vault has no nonce secret on this machine: ${input.where} does not exist. The change its payments ` +
+        'left and the pieces its splits kept are named only with the vault\x27s nonce secret, which the company\x27s ' +
+        'nonce-secret record holds, so a rebuild without it would name none of them. Nothing was written. ' +
+        'Put the company\x27s nonce-secret record for this vault there and run this again.'
+    );
   }
   const opened = openNonceSecrets(input.sealed, input.vault, {
-    secret: input.signer.wrappingSecret, publicKey: toHex(x25519.getPublicKey(fromHex(input.signer.wrappingSecret))),
+    secret: input.signer.wrappingSecret,
+    publicKey: toHex(x25519.getPublicKey(fromHex(input.signer.wrappingSecret)))
   });
   return { secrets: [...opened.secrets] as Hex[], commitment: commitment as Hex };
 };

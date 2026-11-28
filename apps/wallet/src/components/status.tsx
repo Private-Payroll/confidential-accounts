@@ -20,14 +20,14 @@ const TONE: Record<AlertTone, string> = {
   info: '*:[svg]:text-primary',
   success: 'border-good/45 bg-good-dim *:[svg]:text-good',
   warning: 'border-warn-border bg-warn-dim *:[svg]:text-warn',
-  danger: 'border-destructive/40 bg-destructive/10',
+  danger: 'border-destructive/40 bg-destructive/10'
 };
 
 const SEVERITY_GLYPH: Record<AlertTone, IconSvgElement> = {
   info: GLYPH.info,
   success: GLYPH.success,
   warning: GLYPH.warning,
-  danger: GLYPH.danger,
+  danger: GLYPH.danger
 };
 
 /*
@@ -39,10 +39,16 @@ const DEFAULT_ROLE: Record<AlertTone, string | undefined> = {
   info: undefined,
   success: undefined,
   warning: 'status',
-  danger: 'alert',
+  danger: 'alert'
 };
 
-export function StatusAlert({ tone = 'info', title, children, role, className }: {
+export function StatusAlert({
+  tone = 'info',
+  title,
+  children,
+  role,
+  className
+}: {
   readonly tone?: AlertTone;
   readonly title?: ReactNode;
   readonly children?: ReactNode;
@@ -71,13 +77,14 @@ const BADGE: Record<BadgeTone, { readonly variant: 'outline' | 'secondary' | 'de
   pending: { variant: 'outline', look: 'border-pending-border bg-pending-dim text-pending' },
   sent: { variant: 'outline', look: 'border-good/45 bg-good-dim text-good' },
   failed: { variant: 'destructive', look: '' },
-  warning: { variant: 'outline', look: 'border-warn-border bg-warn-dim text-warn-text' },
+  warning: { variant: 'outline', look: 'border-warn-border bg-warn-dim text-warn-text' }
 };
 
-export function StatusBadge(
-  { tone = 'neutral', className, ...rest }:
-  { readonly tone?: BadgeTone } & HTMLAttributes<HTMLSpanElement>,
-): ReactNode {
+export function StatusBadge({
+  tone = 'neutral',
+  className,
+  ...rest
+}: { readonly tone?: BadgeTone } & HTMLAttributes<HTMLSpanElement>): ReactNode {
   const { variant, look } = BADGE[tone];
   return <Badge variant={variant} data-tone={tone} className={cn(look, className)} {...rest} />;
 }

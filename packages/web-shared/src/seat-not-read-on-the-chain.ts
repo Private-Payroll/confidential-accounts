@@ -11,7 +11,7 @@ import { JoinedAsks } from './company-view-batch.js';
 /** The seat each proposal asked about took on the chain, by its identity, null where none: the door every reader asks through. */
 export type InvitedSeatsRead = (proposals: readonly string[]) => Promise<Readonly<Record<string, string | null>>>;
 
-const LEFT_OUT = 'the chain\'s read of the seats invitations took left a proposal out, so none of its answers is kept';
+const LEFT_OUT = "the chain's read of the seats invitations took left a proposal out, so none of its answers is kept";
 
 /**
  * `read` with the proposals asked through it joined: every proposal asked in one turn goes in one ask of at most 256,
@@ -19,11 +19,15 @@ const LEFT_OUT = 'the chain\'s read of the seats invitations took left a proposa
  * that leaves a proposal out, keeps nothing, and its failure reaches every reader that asked, as it was thrown.
  */
 export const seatsAskedTogether = (read: InvitedSeatsRead): InvitedSeatsRead => {
-  const joined = new JoinedAsks<string, string | null>((p) => p, async (part) => {
-    const answered = await read(part);
-    if (typeof answered !== 'object' || answered === null || part.some((p) => !Object.hasOwn(answered, p))) throw new Error(LEFT_OUT);
-    return part.map((p) => answered[p] ?? null);
-  });
+  const joined = new JoinedAsks<string, string | null>(
+    (p) => p,
+    async (part) => {
+      const answered = await read(part);
+      if (typeof answered !== 'object' || answered === null || part.some((p) => !Object.hasOwn(answered, p)))
+        throw new Error(LEFT_OUT);
+      return part.map((p) => answered[p] ?? null);
+    }
+  );
   return async (proposals) => {
     const seats = await joined.many(proposals);
     return Object.freeze(Object.fromEntries(proposals.map((p, i) => [p, seats[i] ?? null])));
@@ -32,7 +36,10 @@ export const seatsAskedTogether = (read: InvitedSeatsRead): InvitedSeatsRead => 
 
 /** The names each stop is noted under; a name crosses the vault worker with its words, where a class does not. */
 export const SEAT_READ_STOP = {
-  notRead: 'SeatNotReadOnTheChain', noIndexer: 'NoIndexerToReadTheChain', refused: 'SeatingRefusedOnTheChain', proposalsNotRead: 'proposals-not-read',
+  notRead: 'SeatNotReadOnTheChain',
+  noIndexer: 'NoIndexerToReadTheChain',
+  refused: 'SeatingRefusedOnTheChain',
+  proposalsNotRead: 'proposals-not-read'
 } as const;
 
 /** What stopped a waiting seat from being read when the company's proposals could not be read from the service. */
@@ -45,8 +52,11 @@ export const PROPOSALS_NOT_READ = SEAT_READ_STOP.proposalsNotRead;
  */
 export class SeatNotReadOnTheChain extends Error {
   constructor(said?: string) {
-    super(said ?? ('This device could not read from the network which seat this invitation\'s proposal took, so nobody was admitted yet. '
-      + 'Nothing was sent. Press again to read the network again.'));
+    super(
+      said ??
+        "This device could not read from the network which seat this invitation's proposal took, so nobody was admitted yet. " +
+          'Nothing was sent. Press again to read the network again.'
+    );
     this.name = SEAT_READ_STOP.notRead;
   }
 }
@@ -54,8 +64,10 @@ export class SeatNotReadOnTheChain extends Error {
 /** Thrown when the person's wallet names no indexer to read the chain through: pressing again cannot resolve it. */
 export class NoIndexerToReadTheChain extends Error {
   constructor() {
-    super('your wallet did not name the indexer it reads the network through, so which seat an invitation\'s proposal took was not '
-      + 'read. Nothing was changed. Open your wallet, check its network, and reload the page');
+    super(
+      "your wallet did not name the indexer it reads the network through, so which seat an invitation's proposal took was not " +
+        'read. Nothing was changed. Open your wallet, check its network, and reload the page'
+    );
     this.name = SEAT_READ_STOP.noIndexer;
   }
 }
@@ -72,13 +84,15 @@ export class SeatingRefusedOnTheChain extends Error {
 }
 
 /** Two seatings closed one proposal. */
-export const TWO_SEATINGS = 'two seats were taken on the account under one invitation\'s proposal, so which is the invited person\'s was not '
-  + 'decided, and reading again will not change it. The company removes the seat it did not mean, then reads again';
+export const TWO_SEATINGS =
+  "two seats were taken on the account under one invitation's proposal, so which is the invited person's was not " +
+  'decided, and reading again will not change it. The company removes the seat it did not mean, then reads again';
 
 /** A seating transaction that does not read as one closed proposal and one seat. */
-export const UNREAD_SEATING = 'a seat taken on the account was read from a transaction that does not show one invitation and one seat, so '
-  + 'which invitation it answered was not decided, and reading again will not change it. The company removes that seat and invites '
-  + 'the person again';
+export const UNREAD_SEATING =
+  'a seat taken on the account was read from a transaction that does not show one invitation and one seat, so ' +
+  'which invitation it answered was not decided, and reading again will not change it. The company removes that seat and invites ' +
+  'the person again';
 
 /**
  * Whether anything that stopped the read of the seats people wait for was a read this device could not make, told by
@@ -94,7 +108,9 @@ export const aReadNotMade = (stopped: readonly string[]): boolean =>
  * good are passed on as they were thrown, told by their name, which the vault worker keeps.
  */
 export const seatsTakenAsked = async (
-  door: InvitedSeatsRead | undefined, proposals: readonly string[], said?: string,
+  door: InvitedSeatsRead | undefined,
+  proposals: readonly string[],
+  said?: string
 ): Promise<Readonly<Record<string, string | null>>> => {
   if (door === undefined) throw new SeatNotReadOnTheChain(said);
   let answered: Readonly<Record<string, string | null>>;
@@ -106,6 +122,7 @@ export const seatsTakenAsked = async (
     throw new SeatNotReadOnTheChain(said);
   }
   /* A read of the chain answers every proposal asked about, null where it shows no seat taken; one that answers less did not read it. */
-  if (typeof answered !== 'object' || answered === null || proposals.some((p) => !Object.hasOwn(answered, p))) throw new SeatNotReadOnTheChain(said);
+  if (typeof answered !== 'object' || answered === null || proposals.some((p) => !Object.hasOwn(answered, p)))
+    throw new SeatNotReadOnTheChain(said);
   return answered;
 };

@@ -30,11 +30,19 @@ export type AsksUnread = (typeof ASKS_UNREAD)[keyof typeof ASKS_UNREAD];
  * proposal's body the asks are read from, and the wallet's words for how a leg pays.
  */
 const ASKED = {
-  body: { oneOff: 'oneOff', leaf: 'leaf', newThreshold: 'newThreshold', vault: 'vault', newPolicyBar: 'newPolicyBar', invited: 'invited' },
-  form: { private: 'private', public: 'public' },
+  body: {
+    oneOff: 'oneOff',
+    leaf: 'leaf',
+    newThreshold: 'newThreshold',
+    vault: 'vault',
+    newPolicyBar: 'newPolicyBar',
+    invited: 'invited'
+  },
+  form: { private: 'private', public: 'public' }
 } as const;
 const HEX64 = /^[0-9a-f]{64}$/u;
-const hex64Of = (v: unknown): string | null => (typeof v === 'string' && HEX64.test(v.toLowerCase()) ? v.toLowerCase() : null);
+const hex64Of = (v: unknown): string | null =>
+  typeof v === 'string' && HEX64.test(v.toLowerCase()) ? v.toLowerCase() : null;
 const wholeOf = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 1 ? v : null);
 
 /** The one-off payment a proposal raises, as this device believes its record: its version and what it pays. */
@@ -54,7 +62,10 @@ export interface AsksReads {
  * payment's asks come with its payment leaf (`leaf`), as the worker built it from the record those asks were read from, when it built one; it is never one
  * of the asks the wallet is handed, only what the page asks the account about to say whether the payment is made.
  */
-export type Asked = { readonly asks: ProposalAsks; readonly unread: null; readonly leaf?: string } | { readonly asks: null; readonly unread: AsksUnread } | null;
+export type Asked =
+  | { readonly asks: ProposalAsks; readonly unread: null; readonly leaf?: string }
+  | { readonly asks: null; readonly unread: AsksUnread }
+  | null;
 export const NOT_READ: Asked = { asks: null, unread: ASKS_UNREAD.notRead };
 const asked = (asks: ProposalAsks | undefined): Asked => (asks === undefined ? NOT_READ : { asks, unread: null });
 
@@ -68,17 +79,26 @@ function payrollAsks(p: Proposal, runs: readonly PayrollRun[]): ProposalAsks | u
   const vault = hex64Of(p.vault);
   for (const run of runs) {
     const main = Object.entries(run.proposalIds ?? {}).find(([, id]) => id === p.id)?.[0];
-    const retried = main !== undefined ? undefined
-      : Object.entries(run.payout ?? {}).flatMap(([leg, paid]) => (paid.retries ?? []).filter((r) => r.proposalId === p.id).map((r) => [leg, r] as const))[0];
+    const retried =
+      main !== undefined
+        ? undefined
+        : Object.entries(run.payout ?? {}).flatMap(([leg, paid]) =>
+            (paid.retries ?? []).filter((r) => r.proposalId === p.id).map((r) => [leg, r] as const)
+          )[0];
     const leg = main ?? retried?.[0];
     if (leg === undefined) continue;
     const onTheLeg = isRunLeg(leg) ? legEmployees(run, leg) : [];
     const people = retried === undefined ? onTheLeg : retried[1].originalIndices.map((i) => onTheLeg[i]);
     if (vault === null || people.length === 0 || people.some((e) => e === undefined)) return undefined;
     return {
-      run: run.id, period: run.period, list: listOfRun(run), vault, token: ledgerTokenOf(assetOfLeg(leg), formOfLeg(leg)),
+      run: run.id,
+      period: run.period,
+      list: listOfRun(run),
+      vault,
+      token: ledgerTokenOf(assetOfLeg(leg), formOfLeg(leg)),
       form: formOfLeg(leg) === 'shielded' ? ASKED.form.private : ASKED.form.public,
-      payees: people.length, total: people.reduce((a, e) => a + BigInt(e!.amount), 0n),
+      payees: people.length,
+      total: people.reduce((a, e) => a + BigInt(e!.amount), 0n)
     };
   }
   return undefined;
@@ -88,20 +108,36 @@ function payrollAsks(p: Proposal, runs: readonly PayrollRun[]): ProposalAsks | u
  * A one-off payment's asks: what its believed record pays, and to whom, when that record says this proposal raised it;
  * with that record's payment leaf when the worker built one and it is thirty-two bytes.
  */
-async function oneOffAsks(rec: SealedProposal, body: Readonly<Record<string, unknown>>, reads: AsksReads): Promise<Asked> {
+async function oneOffAsks(
+  rec: SealedProposal,
+  body: Readonly<Record<string, unknown>>,
+  reads: AsksReads
+): Promise<Asked> {
   const named = body[ASKED.body.oneOff] as { readonly id?: unknown; readonly version?: unknown } | null | undefined;
   if (typeof named?.id !== 'string') return NOT_READ;
   const read = await reads.oneOff(named.id);
   const o = read?.oneOff;
-  if (read == null || o === undefined || read.version !== named.version || o.proposal.id !== rec.id || o.proposal.chainId.toLowerCase() !== rec.chainId.toLowerCase()) return NOT_READ;
+  if (
+    read == null ||
+    o === undefined ||
+    read.version !== named.version ||
+    o.proposal.id !== rec.id ||
+    o.proposal.chainId.toLowerCase() !== rec.chainId.toLowerCase()
+  )
+    return NOT_READ;
   const leaf = hex64Of(o.leaf);
   return {
     asks: {
-      vault: o.vault.toLowerCase(), token: o.token, amount: o.amount, payee: o.payee.address, reason: o.reason,
-      ...(o.payee.ref === null ? {} : { vendor: o.payee.ref }), ...(o.payee.name === null ? {} : { payeeName: o.payee.name }),
+      vault: o.vault.toLowerCase(),
+      token: o.token,
+      amount: o.amount,
+      payee: o.payee.address,
+      reason: o.reason,
+      ...(o.payee.ref === null ? {} : { vendor: o.payee.ref }),
+      ...(o.payee.name === null ? {} : { payeeName: o.payee.name })
     },
     unread: null,
-    ...(leaf === null ? {} : { leaf }),
+    ...(leaf === null ? {} : { leaf })
   };
 }
 
@@ -112,8 +148,12 @@ function addSignerAsks(rec: SealedProposal, reads: AsksReads): ProposalAsks | un
   const invite = terms?.invite;
   if (opened == null || terms === undefined || invite === undefined || opened.coinPublicKey === null) return undefined;
   return {
-    personName: terms.name, role: terms.role, address: invite.address, scope: invite.scope, coinKey: opened.coinPublicKey,
-    ...(invite.threshold === undefined ? {} : { threshold: invite.threshold }),
+    personName: terms.name,
+    role: terms.role,
+    address: invite.address,
+    scope: invite.scope,
+    coinKey: opened.coinPublicKey,
+    ...(invite.threshold === undefined ? {} : { threshold: invite.threshold })
   };
 }
 
@@ -121,7 +161,8 @@ function addSignerAsks(rec: SealedProposal, reads: AsksReads): ProposalAsks | un
 function removalAsks(body: Readonly<Record<string, unknown>>): ProposalAsks | undefined {
   const leaf = hex64Of(body[ASKED.body.leaf]);
   const t = body[ASKED.body.newThreshold];
-  if (leaf === null || (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0))) return undefined;
+  if (leaf === null || (t !== undefined && (typeof t !== 'number' || !Number.isSafeInteger(t) || t < 0)))
+    return undefined;
   return { leaf, ...(typeof t === 'number' && t > 0 ? { threshold: t } : {}) };
 }
 
@@ -131,31 +172,47 @@ function removalAsks(body: Readonly<Record<string, unknown>>): ProposalAsks | un
  * terms open only with a signer's own key, held in their wallet, so its asks name the vault alone: the wallet reads the
  * terms itself and shows them for the signer to confirm before it approves.
  */
-export async function proposalAsksHere(here: { readonly rec: SealedProposal; readonly opened: Proposal }, viewingKey: KeysHeld, runs: readonly PayrollRun[], reads: AsksReads): Promise<Asked> {
+export async function proposalAsksHere(
+  here: { readonly rec: SealedProposal; readonly opened: Proposal },
+  viewingKey: KeysHeld,
+  runs: readonly PayrollRun[],
+  reads: AsksReads
+): Promise<Asked> {
   const { rec, opened: p } = here;
   const kind = p.kind as string;
   if (kind === 'payroll') return asked(payrollAsks(p, runs));
   if (kind === 'pay-key') return { asks: {}, unread: null };
-  const body = parseCanonical<Record<string, unknown> | null>(unseal(p.sealedPayload, keyOf(viewingKey, rec.keyEpoch))) ?? {};
+  const body =
+    parseCanonical<Record<string, unknown> | null>(unseal(p.sealedPayload, keyOf(viewingKey, rec.keyEpoch))) ?? {};
   const vault = hex64Of(body[ASKED.body.vault]);
   const threshold = wholeOf(body[ASKED.body.newThreshold]);
   switch (kind) {
     case 'add-signer': {
       /* An invitation by address names the address it seats in its signed terms; one that names none is not approved here. */
-      const terms = (body[ASKED.body.invited] as { readonly terms?: { readonly invite?: unknown } } | null | undefined)?.terms;
+      const terms = (body[ASKED.body.invited] as { readonly terms?: { readonly invite?: unknown } } | null | undefined)
+        ?.terms;
       return terms?.invite === undefined ? null : asked(addSignerAsks(rec, reads));
     }
-    case 'transfer': return oneOffAsks(rec, body, reads);
-    case 'remove-signer': return asked(removalAsks(body));
-    case 'set-threshold': return asked(threshold === null ? undefined : { threshold });
-    case 'set-vault-threshold': return asked(threshold === null || vault === null ? undefined : { threshold, vault });
-    case 'set-spending-policy': return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
+    case 'transfer':
+      return oneOffAsks(rec, body, reads);
+    case 'remove-signer':
+      return asked(removalAsks(body));
+    case 'set-threshold':
+      return asked(threshold === null ? undefined : { threshold });
+    case 'set-vault-threshold':
+      return asked(threshold === null || vault === null ? undefined : { threshold, vault });
+    case 'set-spending-policy':
+      return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
     case 'set-policy-bar': {
       const bar = wholeOf(body[ASKED.body.newPolicyBar]);
       return asked(bar === null ? undefined : { kind: WALLET_KIND[kind]!, bar });
     }
-    case 'adopt-vault': case 'vault-secret': return asked(vault === null ? undefined : { vault });
-    case 'retire-vault': return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
-    default: return null;
+    case 'adopt-vault':
+    case 'vault-secret':
+      return asked(vault === null ? undefined : { vault });
+    case 'retire-vault':
+      return asked(vault === null ? undefined : { kind: WALLET_KIND[kind]!, vault });
+    default:
+      return null;
   }
 }

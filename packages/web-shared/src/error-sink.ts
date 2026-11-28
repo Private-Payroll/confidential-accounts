@@ -149,8 +149,11 @@ const reasonOf = (body: string): string => {
   let text = body;
   try {
     const parsed = JSON.parse(body);
-    if (parsed && typeof parsed.error === 'string') text = typeof parsed.code === 'string' ? `[${parsed.code}] ${parsed.error}` : parsed.error;
-  } catch { /* not JSON, so whatever arrived is what the service said */ }
+    if (parsed && typeof parsed.error === 'string')
+      text = typeof parsed.code === 'string' ? `[${parsed.code}] ${parsed.error}` : parsed.error;
+  } catch {
+    /* not JSON, so whatever arrived is what the service said */
+  }
   return redactSecrets(text).slice(0, BODY_CHARS);
 };
 
@@ -158,8 +161,11 @@ const reasonOf = (body: string): string => {
 const asText = (value: unknown): string => {
   if (typeof value === 'string') return value;
   if (value instanceof Error) return `${value.name}: ${value.message}`;
-  try { return JSON.stringify(value) ?? String(value); }
-  catch { return String(value); }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 };
 
 /**
@@ -168,29 +174,30 @@ const asText = (value: unknown): string => {
  * `post` is injectable so the tests can read exactly what would have crossed
  * the wire. In a browser it defaults to the `fetch` captured before wrapping.
  */
-export const installErrorSink = (
-  w: SinkWindow,
-  post?: (body: SinkPost) => void,
-): void => {
+export const installErrorSink = (w: SinkWindow, post?: (body: SinkPost) => void): void => {
   /* TAKEN BEFORE THE WRAPPER GOES ON. See the note at the top. */
   const originalFetch = w.fetch.bind(w);
   const originalError = w.console.error.bind(w.console);
   const originalWarn = w.console.warn.bind(w.console);
 
-  const send = post ?? ((body: SinkPost) => {
-    /*
-     * ITS OWN FAILURES ARE ITS OWN. A service that is not up must not turn into
-     * an error in the page, and must not be recorded — see the loop above.
-     */
-    try {
-      void originalFetch(sinkUrlFor(w.location.href), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        keepalive: true,
-      }).catch(() => {});
-    } catch { /* nothing the page can do about it, and nothing it should see */ }
-  });
+  const send =
+    post ??
+    ((body: SinkPost) => {
+      /*
+       * ITS OWN FAILURES ARE ITS OWN. A service that is not up must not turn into
+       * an error in the page, and must not be recorded — see the loop above.
+       */
+      try {
+        void originalFetch(sinkUrlFor(w.location.href), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          keepalive: true
+        }).catch(() => {});
+      } catch {
+        /* nothing the page can do about it, and nothing it should see */
+      }
+    });
 
   let queue: SinkEntry[] = [];
   let scheduled = false;
@@ -200,11 +207,19 @@ export const installErrorSink = (
     if (queue.length === 0) return;
     const entries = queue;
     queue = [];
-    try { send({ page: w.location.href, entries }); } catch { /* never the app's problem */ }
+    try {
+      send({ page: w.location.href, entries });
+    } catch {
+      /* never the app's problem */
+    }
   };
 
   /* A window that closes right after its last line (the wallet's action window does) sends what it holds as it goes. */
-  try { w.addEventListener('pagehide', () => flush()); } catch { /* never the app's problem */ }
+  try {
+    w.addEventListener('pagehide', () => flush());
+  } catch {
+    /* never the app's problem */
+  }
 
   const record = (level: string, message: unknown, stack?: unknown) => {
     try {
@@ -212,11 +227,19 @@ export const installErrorSink = (
       queue.push({
         level,
         message: redactSecrets(asText(message)),
-        ...(stack === undefined ? {} : { stack: redactSecrets(String(stack)) }),
+        ...(stack === undefined ? {} : { stack: redactSecrets(String(stack)) })
       });
-      if (queue.length >= FLUSH_AT) { flush(); return; }
-      if (!scheduled) { scheduled = true; w.setTimeout(flush, FLUSH_AFTER_MS); }
-    } catch { /* recording may never change what the app does */ }
+      if (queue.length >= FLUSH_AT) {
+        flush();
+        return;
+      }
+      if (!scheduled) {
+        scheduled = true;
+        w.setTimeout(flush, FLUSH_AFTER_MS);
+      }
+    } catch {
+      /* recording may never change what the app does */
+    }
   };
 
   /*
@@ -228,18 +251,20 @@ export const installErrorSink = (
    * listener registered without `capture` sees uncaught exceptions and misses
    * exactly the failure that leaves a page blank with nothing else to say.
    */
-  w.addEventListener('error', (event: any) => {
-    const target = event?.target;
-    if (target && target !== w && (target.src || target.href)) {
-      record('resource', `failed to load — ${asText(target.src ?? target.href)}`);
-      return;
-    }
-    const error = event?.error;
-    const where = event?.filename
-      ? ` (${event.filename}:${event.lineno ?? '?'}:${event.colno ?? '?'})`
-      : '';
-    record('error', `${asText(error ?? event?.message ?? 'unknown error')}${where}`, error?.stack);
-  }, true);
+  w.addEventListener(
+    'error',
+    (event: any) => {
+      const target = event?.target;
+      if (target && target !== w && (target.src || target.href)) {
+        record('resource', `failed to load — ${asText(target.src ?? target.href)}`);
+        return;
+      }
+      const error = event?.error;
+      const where = event?.filename ? ` (${event.filename}:${event.lineno ?? '?'}:${event.colno ?? '?'})` : '';
+      record('error', `${asText(error ?? event?.message ?? 'unknown error')}${where}`, error?.stack);
+    },
+    true
+  );
 
   w.addEventListener('unhandledrejection', (event: any) => {
     const reason = event?.reason;
@@ -282,11 +307,16 @@ export const installErrorSink = (
     let body: Promise<string> | null = null;
     try {
       if (typeof response.clone === 'function') body = response.clone().text();
-    } catch { body = null; }
-    if (!body) { record('fetch', line); return; }
+    } catch {
+      body = null;
+    }
+    if (!body) {
+      record('fetch', line);
+      return;
+    }
     void body.then(
       (text: string) => record('fetch', text ? `${line} — ${reasonOf(text)}` : line),
-      () => record('fetch', line),
+      () => record('fetch', line)
     );
   };
 

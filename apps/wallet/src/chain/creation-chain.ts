@@ -28,7 +28,9 @@ export interface CreationChain {
 }
 
 /** The chain as this wallet's own indexer answers it. */
-export function liveCreationChain(indexer = { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL }): CreationChain {
+export function liveCreationChain(
+  indexer = { indexerUri: INDEXER_HTTP_URL, indexerWsUri: INDEXER_WS_URL }
+): CreationChain {
   let reader: ReturnType<typeof publicDataProviderFor> | null = null;
   return {
     presence: async (account) => {
@@ -41,10 +43,11 @@ export function liveCreationChain(indexer = { indexerUri: INDEXER_HTTP_URL, inde
       if (at === null) return null;
       /* The read is the states as bytes with the era that wrote them; the circuits on the account are read decoded. */
       return {
-        state: at.account.serialize(), parameters: at.parameters.serialize(),
-        finished: secondStepIsOn(decodedState(at.account, ContractState)),
+        state: at.account.serialize(),
+        parameters: at.parameters.serialize(),
+        finished: secondStepIsOn(decodedState(at.account, ContractState))
       };
-    },
+    }
   };
 }
 

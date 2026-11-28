@@ -20,8 +20,12 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  derivedPrivateState, signerHalfOf, SignerMaterialHeldInMemory,
-  type AccountHalfStore, type SignerMaterial, type StorableHalf,
+  derivedPrivateState,
+  signerHalfOf,
+  SignerMaterialHeldInMemory,
+  type AccountHalfStore,
+  type SignerMaterial,
+  type StorableHalf
 } from './private-state.js';
 import { fromHex, toHex } from '../../../src/core/crypto.js';
 
@@ -35,7 +39,7 @@ const bytes32 = (seed: number): string => {
 const ADA: SignerMaterial = {
   signingSecret: bytes32(1),
   blinding: bytes32(2),
-  scope: bytes32(3),
+  scope: bytes32(3)
 };
 
 const A_CONTRACT = 'aa'.padEnd(64, '0');
@@ -56,15 +60,27 @@ const aStore = (initial: unknown = undefined) => {
   const cleared: string[] = [];
   let held = initial;
   const store: AccountHalfStore = {
-    get: async (address, id) => { reads.push({ address, id }); return held; },
-    set: async (address, id, half) => { writes.push({ address, id, half }); held = half; },
+    get: async (address, id) => {
+      reads.push({ address, id });
+      return held;
+    },
+    set: async (address, id, half) => {
+      writes.push({ address, id, half });
+      held = half;
+    },
     /*
      * **NO ENTRY IN `writes`, AND THAT IS NOT AN OVERSIGHT.** A removal is not
      * a write of an empty half, and recording it as one would give any case
      * that removes and then reads `writes` a phantom entry it did not cause.
      */
-    remove: async (address, id) => { removed.push({ address, id }); held = undefined; },
-    clear: async (address) => { cleared.push(address); held = undefined; },
+    remove: async (address, id) => {
+      removed.push({ address, id });
+      held = undefined;
+    },
+    clear: async (address) => {
+      cleared.push(address);
+      held = undefined;
+    }
   };
   return { store, reads, writes, removed, cleared, held: () => held };
 };
@@ -77,7 +93,7 @@ const aDevice = (opts: { material?: SignerMaterial | null; stored?: unknown } = 
   const backing = aStore(opts.stored);
   const provider = derivedPrivateState({
     signerMaterial: (id) => memory.for(id),
-    accountHalf: backing.store,
+    accountHalf: backing.store
   });
   return { provider, memory, ...backing };
 };
@@ -93,8 +109,11 @@ describe('what a keyring entry becomes when a circuit asks for it', () => {
    */
   it('reads each of the three off the field it is named for', () => {
     const half = signerHalfOf(ADA);
-    expect([toHex(half.secretKey), toHex(half.blinding), toHex(half.scope)])
-      .toEqual([ADA.signingSecret, ADA.blinding, ADA.scope]);
+    expect([toHex(half.secretKey), toHex(half.blinding), toHex(half.scope)]).toEqual([
+      ADA.signingSecret,
+      ADA.blinding,
+      ADA.scope
+    ]);
   });
 
   /**
@@ -139,8 +158,7 @@ describe('what a keyring entry becomes when a circuit asks for it', () => {
    * Watched.
    */
   it('REFUSES a signing key that is not thirty-two bytes, naming the width', () => {
-    expect(() => signerHalfOf({ ...ADA, signingSecret: 'aabbcc' }))
-      .toThrow(/3 bytes and a signer's is thirty-two/);
+    expect(() => signerHalfOf({ ...ADA, signingSecret: 'aabbcc' })).toThrow(/3 bytes and a signer's is thirty-two/);
   });
 });
 
@@ -152,7 +170,7 @@ describe('the record a governed call is handed', () => {
    * instead of from memory - the assertion on `secretKey` then reports the
    * store's value. Watched, with a store answering with Bruno's.
    */
-  it('composes the signer\'s own three with what the account staged', async () => {
+  it("composes the signer's own three with what the account staged", async () => {
     const d = aDevice({ stored: { assetId: new Uint8Array([7]), changeAmount: 500n } });
     const v = d.provider.forContract(A_CONTRACT);
 
@@ -160,7 +178,7 @@ describe('the record a governed call is handed', () => {
     expect({
       secretKey: toHex(record.secretKey),
       assetId: record.assetId === undefined ? 'absent' : [...record.assetId].join(),
-      changeAmount: record.changeAmount,
+      changeAmount: record.changeAmount
     }).toEqual({ secretKey: ADA.signingSecret, assetId: '7', changeAmount: 500n });
   });
 
@@ -182,8 +200,11 @@ describe('the record a governed call is handed', () => {
     const v = d.provider.forContract(A_CONTRACT);
 
     const record = (await v.get(ID))!;
-    expect([toHex(record.secretKey), toHex(record.blinding), toHex(record.scope)])
-      .toEqual([ADA.signingSecret, ADA.blinding, ADA.scope]);
+    expect([toHex(record.secretKey), toHex(record.blinding), toHex(record.scope)]).toEqual([
+      ADA.signingSecret,
+      ADA.blinding,
+      ADA.scope
+    ]);
   });
 
   /**
@@ -226,8 +247,8 @@ describe('the record a governed call is handed', () => {
         scope: new Uint8Array(32).fill(9),
         pinnedPath: { leaf: new Uint8Array(32), path: [] },
         pinAnyLeaf: true,
-        assetId: new Uint8Array([7]),
-      },
+        assetId: new Uint8Array([7])
+      }
     });
     const v = d.provider.forContract(A_CONTRACT);
 
@@ -235,7 +256,7 @@ describe('the record a governed call is handed', () => {
     expect({
       pinnedPath: record.pinnedPath,
       pinAnyLeaf: 'pinAnyLeaf' in record,
-      secretKey: toHex(record.secretKey),
+      secretKey: toHex(record.secretKey)
     }).toEqual({ pinnedPath: null, pinAnyLeaf: false, secretKey: ADA.signingSecret });
   });
 });
@@ -267,7 +288,7 @@ describe('what the write-back after a settled call is allowed to keep', () => {
       pinnedPath: { leaf: new Uint8Array(32), path: [] },
       pinAnyLeaf: true,
       assetId: new Uint8Array([7]),
-      changeAmount: 500n,
+      changeAmount: 500n
     } as never);
 
     expect(Object.keys(d.writes[0]!.half).sort()).toEqual(['assetId', 'changeAmount']);
@@ -290,14 +311,16 @@ describe('what the write-back after a settled call is allowed to keep', () => {
    * RED WHEN: the comparison against this device's own material is removed -
    * the write then succeeds and the store holds the key. Watched.
    */
-  it('REFUSES a write whose allowed field carries the signer\'s own key', async () => {
+  it("REFUSES a write whose allowed field carries the signer's own key", async () => {
     const d = aDevice();
     const v = d.provider.forContract(A_CONTRACT);
 
-    await expect(v.set(ID, {
-      assetBlinding: fromHex(ADA.signingSecret),
-      assetId: new Uint8Array([7]),
-    } as never)).rejects.toThrow(/own key material to storage under the name "assetBlinding"/);
+    await expect(
+      v.set(ID, {
+        assetBlinding: fromHex(ADA.signingSecret),
+        assetId: new Uint8Array([7])
+      } as never)
+    ).rejects.toThrow(/own key material to storage under the name "assetBlinding"/);
     expect(d.writes).toEqual([]);
   });
 
@@ -313,8 +336,7 @@ describe('what the write-back after a settled call is allowed to keep', () => {
     const v = d.provider.forContract(A_CONTRACT);
     await v.set(ID, { assetId: new Uint8Array([7]) } as never);
 
-    expect(d.writes.map((w) => [w.address, w.id, [...(w.half.assetId ?? [])].join()]))
-      .toEqual([[A_CONTRACT, ID, '7']]);
+    expect(d.writes.map((w) => [w.address, w.id, [...(w.half.assetId ?? [])].join()])).toEqual([[A_CONTRACT, ID, '7']]);
   });
 });
 
@@ -355,7 +377,7 @@ describe('which company a read is about', () => {
     expect(() => d.provider.forContract(`0200${A_CONTRACT}`)).toThrow(/is not a contract address/);
   });
 
-  it('names the store\'s entry in lower case, whatever case the address arrived in', async () => {
+  it("names the store's entry in lower case, whatever case the address arrived in", async () => {
     const d = aDevice();
     const view = d.provider.forContract(A_CONTRACT.toUpperCase());
     await view.set(ID, { assetId: new Uint8Array([7]) } as never);
@@ -409,25 +431,40 @@ describe('the ways a record could leave this device, and the fact that none of t
      * than handed a record.
      */
     const outcomes = await Promise.all(
-      [['exportPrivateStates', view], ['importPrivateStates', view], ['exportSigningKeys', p], ['importSigningKeys', p],
-        ['setSigningKey', p], ['getSigningKey', p], ['removeSigningKey', p], ['clearSigningKeys', p], ['clearAll', p]]
-        .map(async ([name, on]) => {
-          if (typeof on[name] !== 'function') return `${name}: NOT THERE AT ALL`;
-          try { await on[name](); return `${name}: ANSWERED`; } catch (e: any) {
-            const said = String(e?.message ?? e);
-            return /is not something this device can do/.test(said)
-              ? `${name}: refused, saying why`
-              : `${name}: failed without saying why - ${said}`;
-          }
-        }),
+      [
+        ['exportPrivateStates', view],
+        ['importPrivateStates', view],
+        ['exportSigningKeys', p],
+        ['importSigningKeys', p],
+        ['setSigningKey', p],
+        ['getSigningKey', p],
+        ['removeSigningKey', p],
+        ['clearSigningKeys', p],
+        ['clearAll', p]
+      ].map(async ([name, on]) => {
+        if (typeof on[name] !== 'function') return `${name}: NOT THERE AT ALL`;
+        try {
+          await on[name]();
+          return `${name}: ANSWERED`;
+        } catch (e: any) {
+          const said = String(e?.message ?? e);
+          return /is not something this device can do/.test(said)
+            ? `${name}: refused, saying why`
+            : `${name}: failed without saying why - ${said}`;
+        }
+      })
     );
 
     expect(outcomes).toEqual([
-      'exportPrivateStates: refused, saying why', 'importPrivateStates: refused, saying why',
-      'exportSigningKeys: refused, saying why', 'importSigningKeys: refused, saying why',
-      'setSigningKey: refused, saying why', 'getSigningKey: refused, saying why',
-      'removeSigningKey: refused, saying why', 'clearSigningKeys: refused, saying why',
-      'clearAll: refused, saying why',
+      'exportPrivateStates: refused, saying why',
+      'importPrivateStates: refused, saying why',
+      'exportSigningKeys: refused, saying why',
+      'importSigningKeys: refused, saying why',
+      'setSigningKey: refused, saying why',
+      'getSigningKey: refused, saying why',
+      'removeSigningKey: refused, saying why',
+      'clearSigningKeys: refused, saying why',
+      'clearAll: refused, saying why'
     ]);
     expect(d.cleared, 'clearing every company reached the store').toEqual([]);
   });
@@ -453,18 +490,24 @@ describe('the ways a record could leave this device, and the fact that none of t
 });
 
 describe('the rights a seat was given reach every run it proves', () => {
-  it('a seat\'s rights record is handed to the circuit, and one its scope does not commit to is refused', async () => {
+  it("a seat's rights record is handed to the circuit, and one its scope does not commit to is refused", async () => {
     const { rightsOfRole, rightsScopeOf } = await import('../../../src/core/seat-rights.js');
     const { signerMaterialOf } = await import('./private-state.js');
     const record = rightsOfRole('approver', ['9a'.repeat(32) as never]);
-    const seat = { signingSecret: ADA.signingSecret, blinding: ADA.blinding, scope: rightsScopeOf(record), rights: record };
+    const seat = {
+      signingSecret: ADA.signingSecret,
+      blinding: ADA.blinding,
+      scope: rightsScopeOf(record),
+      rights: record
+    };
     /* RED WHEN: a seat seated with its role's rights proves runs with no record, and every approval it gives fails inside the proof. */
     const half = signerHalfOf(signerMaterialOf(seat));
     expect(half.rights).toMatchObject({ mayRaise: false, mayApprove: true, mayHold: true, everyVault: false });
     expect(toHex(half.rights!.vaults[0]!)).toBe('9a'.repeat(32));
     /* RED WHEN: a record the seat's leaf does not commit to is proved with, and the seat seems to hold rights it does not. */
-    expect(() => signerHalfOf(signerMaterialOf({ ...seat, rights: rightsOfRole('admin', ['9a'.repeat(32) as never]) })))
-      .toThrow(/not the ones this seat's leaf commits to/u);
+    expect(() =>
+      signerHalfOf(signerMaterialOf({ ...seat, rights: rightsOfRole('admin', ['9a'.repeat(32) as never]) }))
+    ).toThrow(/not the ones this seat's leaf commits to/u);
     /* A seat on every vault holds no record. */
     expect(signerHalfOf(ADA).rights).toBeNull();
   });

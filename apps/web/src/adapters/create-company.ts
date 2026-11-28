@@ -19,8 +19,7 @@ import { ACT_REFUSAL, ACTED, refusalOf, type ActRefusal } from './refusals.js';
 
 /** What the first press comes to: the company is founded and kept and its wallet-drawn label is handed on, or a reason. */
 export type Created =
-  | { of: typeof ACTED.done; companyId: string; label: string }
-  | { of: typeof ACTED.refused; why: ActRefusal };
+  { of: typeof ACTED.done; companyId: string; label: string } | { of: typeof ACTED.refused; why: ActRefusal };
 
 /** The company's name, and the name its roster gives the person creating it. Both are sent to the service as typed, which seals them into the company's record. */
 export interface NewCompany {
@@ -41,7 +40,9 @@ export async function createCompany(personId: string, company: NewCompany): Prom
   try {
     if (!(await keyringFor(personId))) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
     const { accountId, label } = await startCompanyHeldFromTheStart(
-      { name: company.name, signers: [{ name: company.firstSigner, role: FIRST_SIGNER.role }], threshold: 1 }, ACCOUNT_ORIGIN);
+      { name: company.name, signers: [{ name: company.firstSigner, role: FIRST_SIGNER.role }], threshold: 1 },
+      ACCOUNT_ORIGIN
+    );
     return { of: ACTED.done, companyId: accountId, label };
   } catch (e) {
     return { of: ACTED.refused, why: refusalOf(e) };

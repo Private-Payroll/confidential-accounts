@@ -18,29 +18,54 @@
  */
 import type { ActIntent } from 'midnight-identity/profile/request';
 import type { RoundOnChain, OpenedRound } from '../../../../packages/web-shared/src/governed-call-builder.js';
-import { nothingWasSentBy, SentAndNotYetSeen, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
+import {
+  nothingWasSentBy,
+  SentAndNotYetSeen,
+  withCompanyKeys
+} from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { governedCallServiceThrough } from '../../../../packages/web-shared/src/governed-call-through-the-view.js';
-import { WithdrawalRefused, withdrawOnDevice, type WithdrawalOutcome } from '../../../../packages/web-shared/src/proposal-withdrawn-on-device.js';
+import {
+  WithdrawalRefused,
+  withdrawOnDevice,
+  type WithdrawalOutcome
+} from '../../../../packages/web-shared/src/proposal-withdrawn-on-device.js';
 import { NotOpenedOnThisDevice } from '../../../../packages/web-shared/src/round-opened-here.js';
-import { KINDS_IN_THE_WALLET, kindInTheWallet, neverWithdrawn, type KindInTheWallet } from '../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js';
+import {
+  KINDS_IN_THE_WALLET,
+  kindInTheWallet,
+  neverWithdrawn,
+  type KindInTheWallet
+} from '../../../../packages/web-shared/src/proposal-kinds-in-the-wallet.js';
 import { chainTimeOf } from './chain-time.js';
 import { companyReachFor, keptReach } from './company-reach.js';
 import { companyRecordsFor, pureCircuits } from './company-records-in-the-wallet.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { governedDoorsFor, type OneOffPaymentReach } from './one-off-payment.js';
 import { ActionStopped } from './run.js';
 
 export type WithdrawProposalReach = OneOffPaymentReach;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.withdraw-proposal.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.withdraw-proposal.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e).replace(/\.\s*$/u, '');
 
 /** The sealed kinds refused whatever the chain holds: a vault's set-up, never withdrawn once raised. */
-const SEALED_NEVER: Readonly<Record<string, string>> = Object.fromEntries(Object.values(KINDS_IN_THE_WALLET)
-  .flatMap((k) => (k.sealedAs !== undefined && k.never !== undefined && neverWithdrawn(k) ? [[k.sealedAs, k.never] as const] : [])));
+const SEALED_NEVER: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.values(KINDS_IN_THE_WALLET).flatMap((k) =>
+    k.sealedAs !== undefined && k.never !== undefined && neverWithdrawn(k) ? [[k.sealedAs, k.never] as const] : []
+  )
+);
 
 const NAMED = ['record', 'proposal', 'kind'] as const;
 const kindAsked = (intent: ActIntent): KindInTheWallet | null => kindInTheWallet(intent.fields['kind'] ?? '');
@@ -51,13 +76,16 @@ const kindAsked = (intent: ActIntent): KindInTheWallet | null => kindInTheWallet
  * the company's pay-record key is withdrawn only once the chain shows a removal has outrun it: until then it can still be
  * carried out, and raised again it would carry the same identity, whose approvals given before cannot be given again.
  */
-const kindRefusal = (shown: KindInTheWallet) => (opened: OpenedRound, onChain: RoundOnChain): void => {
-  const sealed = String(opened.kind ?? '');
-  if (SEALED_NEVER[sealed] !== undefined) throw new StepRefused(why(SEALED_NEVER[sealed]!));
-  if (sealed !== shown.sealedAs) throw new StepRefused(why('not-as-shown'));
-  if (sealed === 'transfer' && onChain.held !== 'never') throw new StepRefused(why('one-off-held'));
-  if (shown.unlessOutrun === true && shown.never !== undefined && onChain.outrun !== true) throw new StepRefused(why(shown.never));
-};
+const kindRefusal =
+  (shown: KindInTheWallet) =>
+  (opened: OpenedRound, onChain: RoundOnChain): void => {
+    const sealed = String(opened.kind ?? '');
+    if (SEALED_NEVER[sealed] !== undefined) throw new StepRefused(why(SEALED_NEVER[sealed]!));
+    if (sealed !== shown.sealedAs) throw new StepRefused(why('not-as-shown'));
+    if (sealed === 'transfer' && onChain.held !== 'never') throw new StepRefused(why('one-off-held'));
+    if (shown.unlessOutrun === true && shown.never !== undefined && onChain.outrun !== true)
+      throw new StepRefused(why(shown.never));
+  };
 
 /**
  * The action. Its outcome tells the page `state`, where the chain shows the proposal after the withdrawal
@@ -67,16 +95,20 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
   return Object.freeze({
     headline: 'act.withdraw-proposal.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
-      { key: 'act.withdraw-proposal.shown.proposal', values: { proposal: intent.fields['proposal'] ?? '' }, from: 'page' as const },
+      {
+        key: 'act.withdraw-proposal.shown.proposal',
+        values: { proposal: intent.fields['proposal'] ?? '' },
+        from: 'page' as const
+      },
       { key: 'act.withdraw-proposal.shown.kind', values: { kind: intent.fields['kind'] ?? '' }, from: 'page' as const },
       { key: 'act.withdraw-proposal.shown.who', from: 'action' as const },
       { key: 'act.withdraw-proposal.shown.final', from: 'action' as const },
-      { key: 'act.withdraw-proposal.shown.nothing-else', from: 'action' as const },
+      { key: 'act.withdraw-proposal.shown.nothing-else', from: 'action' as const }
     ],
     checks: [
       { key: 'act.withdraw-proposal.check.seat' },
       { key: 'act.withdraw-proposal.check.same' },
-      { key: 'act.withdraw-proposal.check.chain' },
+      { key: 'act.withdraw-proposal.check.chain' }
     ],
     check: async (intent) => {
       const empty = (k: string) => intent.fields[k] === undefined || intent.fields[k] === '';
@@ -87,10 +119,14 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
     steps: (intent) => {
       const kind = kindAsked(intent);
       if (kind === null || neverWithdrawn(kind) || kind.sealedAs === undefined) return [];
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.withdraw-proposal.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const withdraw: ActionStep = {
         title: { key: 'act.withdraw-proposal.step.withdraw' },
@@ -105,27 +141,38 @@ export function withdrawProposalAction(reach: WithdrawProposalReach): ActionDefi
             const records = companyRecordsFor(r, reach, await pureCircuits());
             const doors = governedDoorsFor(ctx, r, reach, records, handed);
             const service = governedCallServiceThrough(r.stepView);
-            const done = await withdrawOnDevice({
-              ...doors,
-              service: {
-                ...doors.service,
-                /* A withdrawal carrying a proven call is handed to the chain; one without changes only the company's records. */
-                cancel: (id, body) => { if (body.tx !== undefined) handed.over = true; return service.cancel!(id, body); },
+            const done = await withdrawOnDevice(
+              {
+                ...doors,
+                service: {
+                  ...doors.service,
+                  /* A withdrawal carrying a proven call is handed to the chain; one without changes only the company's records. */
+                  cancel: (id, body) => {
+                    if (body.tx !== undefined) handed.over = true;
+                    return service.cancel!(id, body);
+                  }
+                }
               },
-            }, withCompanyKeys({ round: { id: proposal }, chainTime, check: kindRefusal(kind) }, r.companyKeys));
+              withCompanyKeys({ round: { id: proposal }, chainTime, check: kindRefusal(kind) }, r.companyKeys)
+            );
             state = done.withdrawal;
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             const code = codeOfError(e);
-            if (e instanceof WithdrawalRefused) throw new StepRefused(why(e.why, e.until === undefined ? undefined : { until: e.until }), code);
-            if (e instanceof NotOpenedOnThisDevice) throw new StepRefused(why('not-withdrawn', { says: said(e) }), code);
+            if (e instanceof WithdrawalRefused)
+              throw new StepRefused(why(e.why, e.until === undefined ? undefined : { until: e.until }), code);
+            if (e instanceof NotOpenedOnThisDevice)
+              throw new StepRefused(why('not-withdrawn', { says: said(e) }), code);
             if (e instanceof SentAndNotYetSeen) throw new StepRefused(why('may-be-sent', { says: said(e) }), code);
-            throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-withdrawn' : 'may-be-sent', { says: said(e) }), code);
+            throw new StepRefused(
+              why(!handed.over || nothingWasSentBy(e) ? 'not-withdrawn' : 'may-be-sent', { says: said(e) }),
+              code
+            );
           }
           ctx.tell({ state, proposal });
-        },
+        }
       };
       return [seat, withdraw];
-    },
+    }
   } satisfies ActionDefinition);
 }

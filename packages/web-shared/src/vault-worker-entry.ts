@@ -43,7 +43,11 @@ import { chainReadsAnswered } from './chain-reads-answered.js';
 
 export { loadDeps, type WorkerDeps } from './vault-worker-deps.js';
 export {
-  VAULT_ARTEFACT_BASE, checkedAccountKeys, provingWarmed, thisBuildsSources, type ThisBuild,
+  VAULT_ARTEFACT_BASE,
+  checkedAccountKeys,
+  provingWarmed,
+  thisBuildsSources,
+  type ThisBuild
 } from './this-builds-proving-material.js';
 export { readsGoFirst } from './reads-go-first.js';
 export { provingToldOf, toldOfEachCall } from './proving-told-to-the-page.js';
@@ -51,8 +55,14 @@ export { creatingTransactionOfNote } from './deposits-and-notes-answered.js';
 
 /** Every answerer an ask not answered in this file is handed to, in turn, until one answers it. */
 const ANSWERED_ELSEWHERE = [
-  creationAnswered, chainReadsAnswered, depositsAndNotesAnswered, payoutsAnswered, accountReadsAnswered,
-  accountCallsAnswered, accountHistoryAnswered, vaultNotesAnswered,
+  creationAnswered,
+  chainReadsAnswered,
+  depositsAndNotesAnswered,
+  payoutsAnswered,
+  accountReadsAnswered,
+  accountCallsAnswered,
+  accountHistoryAnswered,
+  vaultNotesAnswered
 ] as const;
 
 /**
@@ -68,13 +78,22 @@ const ANSWERED_ELSEWHERE = [
 async function roundsOnChainHere(
   d: Pick<WorkerDeps, 'accountPure' | 'accountLedger' | 'runtimeState' | 'historyAt' | 'ledger'>,
   ask: {
-    readonly account: string; readonly indexer: { indexerUri: string; indexerWsUri: string }; readonly chainIds: readonly string[];
+    readonly account: string;
+    readonly indexer: { indexerUri: string; indexerWsUri: string };
+    readonly chainIds: readonly string[];
     readonly seat?: string;
-  },
+  }
 ): Promise<Record<string, RoundOnChain>> {
-  const { steps } = await historyHere(d, ask, 'where the company\'s proposals stand on the chain was');
-  return Object.fromEntries(roundsOnChainIn(d, steps, ask.chainIds,
-    ask.seat === undefined ? undefined : { account: ask.account, signingSecret: ask.seat }, ask.account));
+  const { steps } = await historyHere(d, ask, "where the company's proposals stand on the chain was");
+  return Object.fromEntries(
+    roundsOnChainIn(
+      d,
+      steps,
+      ask.chainIds,
+      ask.seat === undefined ? undefined : { account: ask.account, signingSecret: ask.seat },
+      ask.account
+    )
+  );
 }
 
 /**
@@ -86,15 +105,21 @@ const failureFor = (id: number, e: unknown): { id: number; ok: false; error: str
   const name = (e as { name?: unknown } | null)?.name;
   let kind: string | undefined;
   const seen = new Set<unknown>();
-  for (let at: unknown = e; at !== null && typeof at === 'object' && !seen.has(at) && kind === undefined; at = (at as { cause?: unknown }).cause) {
+  for (
+    let at: unknown = e;
+    at !== null && typeof at === 'object' && !seen.has(at) && kind === undefined;
+    at = (at as { cause?: unknown }).cause
+  ) {
     seen.add(at);
-    const k = (at as { name?: unknown; kind?: unknown });
+    const k = at as { name?: unknown; kind?: unknown };
     if (k.name === 'ProvingMaterialRefused' && typeof k.kind === 'string') kind = k.kind;
   }
   return {
-    id, ok: false, error: whyItFailed(e),
+    id,
+    ok: false,
+    error: whyItFailed(e),
     ...(typeof name === 'string' && name !== 'Error' ? { name } : {}),
-    ...(kind === undefined ? {} : { kind }),
+    ...(kind === undefined ? {} : { kind })
   };
 };
 
@@ -111,10 +136,7 @@ const failureFor = (id: number, e: unknown): { id: number; ok: false; error: str
 const giveTheRuntimeABuffer = (): void => ensureBuffer();
 
 /** One answer for one ask, built with `deps`; `startVaultWorker` turns a throw into a failure carrying its whole chain of reasons. Exported so it can be driven without a Worker. */
-export const answerVaultAsk = async (
-  deps: () => Promise<WorkerDeps>,
-  ask: VaultAsk,
-): Promise<VaultAnswer> => {
+export const answerVaultAsk = async (deps: () => Promise<WorkerDeps>, ask: VaultAsk): Promise<VaultAnswer> => {
   giveTheRuntimeABuffer();
   const d = await deps();
   /*
@@ -123,28 +145,48 @@ export const answerVaultAsk = async (
    * does not build steps that are short of life from the moment they are made.
    */
   const offset = (ask as { clockOffsetMs?: unknown }).clockOffsetMs;
-  const byTheirClock = typeof offset === 'number' && Number.isFinite(offset) && offset !== 0 ? { now: () => Date.now() + offset } : {};
+  const byTheirClock =
+    typeof offset === 'number' && Number.isFinite(offset) && offset !== 0 ? { now: () => Date.now() + offset } : {};
   /* The network travels with each ask into what it builds; nothing in this worker holds a network of its own. */
   const withNetwork = { ...d, network: ask.network, ...byTheirClock } as VaultBuilderDeps;
   switch (ask.ask) {
     case 'address-claim-refusal': {
       const { signedClaimRefusal } = await import('./signed-claim-refusal.js');
-      return { id: ask.id, ok: true, ask: 'address-claim-refusal', refusal: await signedClaimRefusal(ask.claim, ask.for) };
+      return {
+        id: ask.id,
+        ok: true,
+        ask: 'address-claim-refusal',
+        refusal: await signedClaimRefusal(ask.claim, ask.for)
+      };
     }
     case 'one-off-opened': {
       const [{ openOneOff }, { oneOffBuiltHere }, { buildOneOffRun }] = await Promise.all([
-        import('../../../src/midnight/one-off-record.js'), import('./one-off-here.js'), import('../../../src/midnight/payout-tree.js'),
+        import('../../../src/midnight/one-off-record.js'),
+        import('./one-off-here.js'),
+        import('../../../src/midnight/payout-tree.js')
       ]);
       const o = openOneOff(ask.rec, ask.key as Hex);
-      const leaf = d.vaultDetails === undefined ? null
-        : oneOffBuiltHere(o, { detailsOf: d.vaultDetails, treeOf: buildOneOffRun }).tree.tree.leaves[0]?.toLowerCase() ?? null;
+      const leaf =
+        d.vaultDetails === undefined
+          ? null
+          : (oneOffBuiltHere(o, {
+              detailsOf: d.vaultDetails,
+              treeOf: buildOneOffRun
+            }).tree.tree.leaves[0]?.toLowerCase() ?? null);
       return {
-        id: ask.id, ok: true, ask: 'one-off-opened',
+        id: ask.id,
+        ok: true,
+        ask: 'one-off-opened',
         oneOff: {
-          vault: o.vault, asset: o.asset, token: o.token, amount: o.amount.toString(), reason: o.reason,
-          payee: { ref: o.payee.ref, name: o.payee.name, address: o.payee.address }, proposal: { id: o.proposal.id, chainId: o.proposal.chainId },
-          leaf,
-        },
+          vault: o.vault,
+          asset: o.asset,
+          token: o.token,
+          amount: o.amount.toString(),
+          reason: o.reason,
+          payee: { ref: o.payee.ref, name: o.payee.name, address: o.payee.address },
+          proposal: { id: o.proposal.id, chainId: o.proposal.chainId },
+          leaf
+        }
       };
     }
     case 'rounds-on-chain':
@@ -165,7 +207,7 @@ export const answerVaultAsk = async (
       /* The one definition of a signer's leaf, the one every writer of a seat calls, over this signer's own material. */
       const [{ storedSignerLeaf }, { MidnightCommitments }] = await Promise.all([
         import('../../../src/core/signer-leaf.js'),
-        import('../../../src/midnight/commitments.js'),
+        import('../../../src/midnight/commitments.js')
       ]);
       const m = ask.material;
       if (!/^[0-9a-f]{64}$/iu.test(m?.signingSecret ?? '') || !/^[0-9a-f]{64}$/iu.test(m?.blinding ?? '')) {
@@ -182,13 +224,22 @@ export const answerVaultAsk = async (
     case 'super-admin-joined':
       return superAdminAnswered(d, ask);
     case 'transaction-read':
-      return { id: ask.id, ok: true, ask: 'transaction-read', read: readTransaction(withNetwork, fromBase64(ask.transaction)) };
+      return {
+        id: ask.id,
+        ok: true,
+        ask: 'transaction-read',
+        read: readTransaction(withNetwork, fromBase64(ask.transaction))
+      };
     default: {
       for (const answered of ANSWERED_ELSEWHERE) {
         const answer = await answered(d, withNetwork, ask);
         if (answer !== undefined) return answer;
       }
-      return { id: (ask as { id: number }).id, ok: false, error: 'this worker was asked for something it does not build.' };
+      return {
+        id: (ask as { id: number }).id,
+        ok: false,
+        error: 'this worker was asked for something it does not build.'
+      };
     }
   }
 };
@@ -220,31 +271,45 @@ export const startVaultWorker = (scope: any, deps: () => Promise<WorkerDeps> = l
     let bound: ReturnType<typeof setTimeout> | undefined;
     const noLongerCounted = (): void => {
       clearTimeout(bound);
-      if (counted) { counted = false; aReadEnded(); }
+      if (counted) {
+        counted = false;
+        aReadEnded();
+      }
     };
     if (counted) aReadArrived();
     let told = false;
-    const loaded = (): Promise<WorkerDeps> => deps().then((d) => {
-      if (!told) {
-        told = true;
-        say({ kind: ASK_STARTED, started: ask.id });
-        if (counted) bound = setTimeout(noLongerCounted, SERVICE_READ_BOUND_MS);
-      }
-      return d;
-    });
-    void answerVaultAsk(provingToldOf(loaded, ask, say), ask).then(
-      (answer) => {
-        try { scope.postMessage(answer); } catch (e) { say(failureFor(ask.id, e)); }
-      },
-      (e: unknown) => say(failureFor(ask.id, e)),
-    ).finally(noLongerCounted);
+    const loaded = (): Promise<WorkerDeps> =>
+      deps().then((d) => {
+        if (!told) {
+          told = true;
+          say({ kind: ASK_STARTED, started: ask.id });
+          if (counted) bound = setTimeout(noLongerCounted, SERVICE_READ_BOUND_MS);
+        }
+        return d;
+      });
+    void answerVaultAsk(provingToldOf(loaded, ask, say), ask)
+      .then(
+        (answer) => {
+          try {
+            scope.postMessage(answer);
+          } catch (e) {
+            say(failureFor(ask.id, e));
+          }
+        },
+        (e: unknown) => say(failureFor(ask.id, e))
+      )
+      .finally(noLongerCounted);
   });
   scope.postMessage({ kind: 'vault-worker-ready' });
 };
 
 /* A worker the person's wallet starts under its own builder's name starts this builder itself, with the wallet's own keys and prover, so it is not also started here with the page's. */
 declare const self: any;
-if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof self.window === 'undefined'
-  && self.name !== WALLET_VAULT_BUILDER) {
+if (
+  typeof self !== 'undefined' &&
+  typeof self.postMessage === 'function' &&
+  typeof self.window === 'undefined' &&
+  self.name !== WALLET_VAULT_BUILDER
+) {
   startVaultWorker(self);
 }

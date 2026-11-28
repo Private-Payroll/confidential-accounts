@@ -32,15 +32,38 @@ const NEW = '6f'.repeat(32) as Hex;
 const offerSealedUnder = async (viewingKey: Hex): Promise<VaultKeysOffer> => {
   let kept: VaultKeysOffer | null = null;
   const statement = signRecordsKey(me, CO, 'c0'.repeat(32) as never, companyKey, SEAT);
-  await offerVaultKeysHere('acc_1', {
-    committeeKey: committeeKey as never, companyKey: toHex(companyKey), signingSecret: signing.secret, signerId: 's1',
-    recordsKey: statement, entry: ENTRY, viewingKey,
-  }, viewOver(readRoutesOver(async (_p, init) => { kept = { ...JSON.parse(String(init?.body)).offer, person: 'p' }; return {}; }, { directory: 'empty', newest: 'none-entered' }), 'acc_1'));
+  await offerVaultKeysHere(
+    'acc_1',
+    {
+      committeeKey: committeeKey as never,
+      companyKey: toHex(companyKey),
+      signingSecret: signing.secret,
+      signerId: 's1',
+      recordsKey: statement,
+      entry: ENTRY,
+      viewingKey
+    },
+    viewOver(
+      readRoutesOver(
+        async (_p, init) => {
+          kept = { ...JSON.parse(String(init?.body)).offer, person: 'p' };
+          return {};
+        },
+        { directory: 'empty', newest: 'none-entered' }
+      ),
+      'acc_1'
+    )
+  );
   return kept!;
 };
-const keysAt = (epoch: number, key: Hex, older: Hex): CompanyKeys => ({
-  epoch, key, newest: epoch, keyAt: (e: number) => (e === epoch ? key : older), sealing: () => ({ key, epoch }),
-}) as never;
+const keysAt = (epoch: number, key: Hex, older: Hex): CompanyKeys =>
+  ({
+    epoch,
+    key,
+    newest: epoch,
+    keyAt: (e: number) => (e === epoch ? key : older),
+    sealing: () => ({ key, epoch })
+  }) as never;
 
 describe('A KEPT VAULT-KEYS OFFER, OPENED AND CHECKED ONCE FOR EVERY CALLER', () => {
   it('OPENS AN OFFER SEALED UNDER AN EARLIER KEY OF THE COMPANY THIS DEVICE STILL HOLDS', async () => {
@@ -67,13 +90,21 @@ describe('A KEPT VAULT-KEYS OFFER, OPENED AND CHECKED ONCE FOR EVERY CALLER', ()
 });
 
 describe('NO CALLER OPENS AN OFFER BY ITS OWN STEPS', () => {
-  it('NEITHER THE ROSTER FOLD NOR THE PAGE\'S READINESS NAMES THE OPENING OR THE REFUSAL CHECK: BOTH CALL `vaultKeysOfferOpened`', () => {
+  it("NEITHER THE ROSTER FOLD NOR THE PAGE'S READINESS NAMES THE OPENING OR THE REFUSAL CHECK: BOTH CALL `vaultKeysOfferOpened`", () => {
     const files = ['packages/web-shared/src/roster-filed-here.ts', 'apps/web/src/adapters/vault-keys.ts'];
     for (const f of files) {
-      const code = readFileSync(join(process.cwd(), f), 'utf8').split('\n').filter((l) => !/^\s*(\*|\/\/|\/\*)/u.test(l));
+      const code = readFileSync(join(process.cwd(), f), 'utf8')
+        .split('\n')
+        .filter((l) => !/^\s*(\*|\/\/|\/\*)/u.test(l));
       /* RED WHEN: a second copy of the open-and-check is written beside the shared step. */
-      expect(code.filter((l) => /\b(openVaultKeysOffer|vaultKeysOfferRefusal)\b/u.test(l)), f).toEqual([]);
-      expect(code.some((l) => /\bvaultKeysOfferOpened\(/u.test(l)), f).toBe(true);
+      expect(
+        code.filter((l) => /\b(openVaultKeysOffer|vaultKeysOfferRefusal)\b/u.test(l)),
+        f
+      ).toEqual([]);
+      expect(
+        code.some((l) => /\bvaultKeysOfferOpened\(/u.test(l)),
+        f
+      ).toBe(true);
     }
   });
 });

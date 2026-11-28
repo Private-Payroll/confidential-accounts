@@ -57,8 +57,12 @@ export function CompanyRecordsProvider({ children }: { children?: ReactNode }) {
   useEffect(() => {
     let alive = true;
     setCompany(null);
-    void companyNamesFor(person.id).then((n) => { if (alive) setNames(n); });
-    return () => { alive = false; };
+    void companyNamesFor(person.id).then((n) => {
+      if (alive) setNames(n);
+    });
+    return () => {
+      alive = false;
+    };
   }, [person.id, shown, reads, asked]);
 
   /*
@@ -79,11 +83,19 @@ export function CompanyRecordsProvider({ children }: { children?: ReactNode }) {
         if (again) setRenewed((n) => n + 1);
         else setView(null);
       });
-      close = () => { stop(); mine.end(ENDED.movedOn); };
+      close = () => {
+        stop();
+        mine.end(ENDED.movedOn);
+      };
       setView(mine);
-      void readCompany(person.id, mine).then((c) => { if (alive) setCompany(c); });
+      void readCompany(person.id, mine).then((c) => {
+        if (alive) setCompany(c);
+      });
     });
-    return () => { alive = false; close(); };
+    return () => {
+      alive = false;
+      close();
+    };
   }, [person.id, shown, reads, asked, place, renewed]);
 
   const openKeys = useCallback(async (): Promise<ActRefusal | null> => {
@@ -92,7 +104,10 @@ export function CompanyRecordsProvider({ children }: { children?: ReactNode }) {
     return r.of === 'done' ? null : r.why;
   }, [person.id, reload]);
 
-  const value = useMemo<Records>(() => ({ company: reads ? company : null, view: reads ? view : null, names, reload, openKeys }), [reads, company, view, names, reload, openKeys]);
+  const value = useMemo<Records>(
+    () => ({ company: reads ? company : null, view: reads ? view : null, names, reload, openKeys }),
+    [reads, company, view, names, reload, openKeys]
+  );
   return <RecordsContext.Provider value={value}>{children}</RecordsContext.Provider>;
 }
 

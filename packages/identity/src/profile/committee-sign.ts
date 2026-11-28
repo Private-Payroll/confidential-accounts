@@ -4,7 +4,11 @@ import { usableOrigin } from './origin.js';
 import { readAccountAddress, readCompanyLabel } from './company-label.js';
 import type { AccountAddress, CompanyLabel } from './company-label.js';
 import type {
-  CommitteeKeyOnTheWire, CommitteeOnTheWire, CommitteeRequest, SuperAdminChangeOnTheWire, SuperAdminRequestAsk,
+  CommitteeKeyOnTheWire,
+  CommitteeOnTheWire,
+  CommitteeRequest,
+  SuperAdminChangeOnTheWire,
+  SuperAdminRequestAsk
 } from './request.js';
 
 /**
@@ -49,9 +53,15 @@ const hexOf = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).pad
 const same = (a: { value: string }, b: { value: string }): boolean => a.value.toLowerCase() === b.value.toLowerCase();
 const sameKey = (a: Key, b: Key): boolean => a.tag.toLowerCase() === b.tag.toLowerCase() && same(a, b);
 const keyIn = (keys: readonly Key[], k: Key): boolean => keys.some((x) => sameKey(x, k));
-const sameCommittee = (a: { committee: readonly Key[]; threshold: number }, b: { committee: readonly Key[]; threshold: number }): boolean =>
-  a.threshold === b.threshold && a.committee.length === b.committee.length && a.committee.every((k, i) => sameKey(k, b.committee[i]!));
-const wireKey = (k: Key): CommitteeKeyOnTheWire => Object.freeze({ tag: 'schnorr', value: k.value.toLowerCase() }) as CommitteeKeyOnTheWire;
+const sameCommittee = (
+  a: { committee: readonly Key[]; threshold: number },
+  b: { committee: readonly Key[]; threshold: number }
+): boolean =>
+  a.threshold === b.threshold &&
+  a.committee.length === b.committee.length &&
+  a.committee.every((k, i) => sameKey(k, b.committee[i]!));
+const wireKey = (k: Key): CommitteeKeyOnTheWire =>
+  Object.freeze({ tag: 'schnorr', value: k.value.toLowerCase() }) as CommitteeKeyOnTheWire;
 
 /* ── A CHANGE OF THE SUPER ADMINS: ITS BYTES, AND A JOINING KEY'S SIGNATURE OVER THEM ── */
 
@@ -66,22 +76,43 @@ export const SUPER_ADMIN_CHANGE_TAG = 'confidential-accounts:super-admin-change:
  * one definition: every device and every wallet makes them here.
  */
 export function superAdminChangeBytes(
-  company: string, account: string, salt: string,
-  change: Pick<SuperAdminChangeOnTheWire, 'from' | 'committee' | 'threshold' | 'contracts'>,
+  company: string,
+  account: string,
+  salt: string,
+  change: Pick<SuperAdminChangeOnTheWire, 'from' | 'committee' | 'threshold' | 'contracts'>
 ): Uint8Array {
   const out: number[] = [];
-  const u32 = (n: number) => { out.push((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255); };
-  const text = (t: string) => { const b = new TextEncoder().encode(t); u32(b.length); out.push(...b); };
-  const hex = (h: string) => { const b = bytesOfHex(h.toLowerCase()); u32(b.length); out.push(...b); };
-  const committee = (c: { readonly committee: readonly Key[]; readonly threshold: number }) => {
-    u32(c.threshold); u32(c.committee.length);
-    for (const k of c.committee) { text(k.tag.toLowerCase()); hex(k.value); }
+  const u32 = (n: number) => {
+    out.push((n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
   };
-  text(SUPER_ADMIN_CHANGE_TAG); text(company); hex(account); hex(salt);
-  committee(change.from); committee(change);
+  const text = (t: string) => {
+    const b = new TextEncoder().encode(t);
+    u32(b.length);
+    out.push(...b);
+  };
+  const hex = (h: string) => {
+    const b = bytesOfHex(h.toLowerCase());
+    u32(b.length);
+    out.push(...b);
+  };
+  const committee = (c: { readonly committee: readonly Key[]; readonly threshold: number }) => {
+    u32(c.threshold);
+    u32(c.committee.length);
+    for (const k of c.committee) {
+      text(k.tag.toLowerCase());
+      hex(k.value);
+    }
+  };
+  text(SUPER_ADMIN_CHANGE_TAG);
+  text(company);
+  hex(account);
+  hex(salt);
+  committee(change.from);
+  committee(change);
   u32(change.contracts.length);
   for (const c of change.contracts) {
-    text(c.contract); hex(c.address);
+    text(c.contract);
+    hex(c.address);
     const n = BigInt(c.counter);
     for (let i = 7; i >= 0; i -= 1) out.push(Number((n >> BigInt(i * 8)) & 255n));
   }
@@ -103,8 +134,13 @@ export function joinedBy(ledger: SignatureCheck, bytes: Uint8Array, key: Key, si
   const tag = key.tag.toLowerCase();
   if (tag !== 'schnorr' || !HEX64.test(key.value.toLowerCase()) || !HEX128.test(signature.toLowerCase())) return false;
   try {
-    return ledger.verifySignature({ tag, value: key.value.toLowerCase() } as never, bytes, { tag, value: signature.toLowerCase() } as never);
-  } catch { return false; }
+    return ledger.verifySignature({ tag, value: key.value.toLowerCase() } as never, bytes, {
+      tag,
+      value: signature.toLowerCase()
+    } as never);
+  } catch {
+    return false;
+  }
 }
 
 /* ── ONE BUILDER OF A COMMITTEE UPDATE ── */
@@ -119,8 +155,8 @@ export const LARGEST_COUNTER = 0xffff_ffffn;
 
 /** Why no update is built at `counter`, which is `LARGEST_COUNTER` or above: the one sentence every builder gives. */
 export const largestCounterRefusal = (counter: bigint): string =>
-  `this contract's maintenance counter is ${counter}, the largest the chain holds, and a contract at it never moves past it, `
-  + 'so a signature on any of its updates would stay good for ever. Nothing was built.';
+  `this contract's maintenance counter is ${counter}, the largest the chain holds, and a contract at it never moves past it, ` +
+  'so a signature on any of its updates would stay good for ever. Nothing was built.';
 
 /** The ledger classes a committee update is built from. `@midnightntwrk/ledger-v9` satisfies it. */
 export interface CommitteeUpdateLedger {
@@ -142,15 +178,25 @@ export interface CommitteeUpdateLedger {
  */
 export function committeeUpdateOf<P extends CommitteeUpdateLedger>(
   P: P,
-  input: { readonly address: string; readonly counter: bigint; readonly to: { readonly committee: readonly Key[]; readonly threshold: number } },
+  input: {
+    readonly address: string;
+    readonly counter: bigint;
+    readonly to: { readonly committee: readonly Key[]; readonly threshold: number };
+  }
 ): InstanceType<P['MaintenanceUpdate']> {
   const address = input.address.toLowerCase();
-  if (!HEX64.test(address)) throw new Error('a contract is named by its sixty-four character address, and this is not one.');
-  if (typeof input.counter !== 'bigint' || input.counter < 0n) throw new Error('a maintenance counter is never below zero.');
+  if (!HEX64.test(address))
+    throw new Error('a contract is named by its sixty-four character address, and this is not one.');
+  if (typeof input.counter !== 'bigint' || input.counter < 0n)
+    throw new Error('a maintenance counter is never below zero.');
   if (input.counter >= LARGEST_COUNTER) throw new Error(largestCounterRefusal(input.counter));
   const committee = input.to.committee.map((k) => ({ tag: k.tag, value: k.value }));
   const authority = new P.ContractMaintenanceAuthority(committee as never[], input.to.threshold, input.counter + 1n);
-  return new P.MaintenanceUpdate(address, [new P.ReplaceAuthority(authority as never) as never], input.counter) as InstanceType<P['MaintenanceUpdate']>;
+  return new P.MaintenanceUpdate(
+    address,
+    [new P.ReplaceAuthority(authority as never) as never],
+    input.counter
+  ) as InstanceType<P['MaintenanceUpdate']>;
 }
 
 /* ── WHAT THIS WALLET READ FROM THE CHAIN ── */
@@ -158,15 +204,15 @@ export function committeeUpdateOf<P extends CommitteeUpdateLedger>(
 /** One contract as this wallet read it at its own indexer. */
 export type ContractOnTheChain =
   | {
-    readonly of: 'read';
-    readonly committee: readonly Key[];
-    readonly threshold: number;
-    readonly counter: bigint;
-    /** The account a vault's constructor pinned it to; null for the company's account itself. */
-    readonly pinnedTo: string | null;
-    /** On the account only, where this wallet read them: every vault it lists, adopted and retired. */
-    readonly vaults?: readonly string[];
-  }
+      readonly of: 'read';
+      readonly committee: readonly Key[];
+      readonly threshold: number;
+      readonly counter: bigint;
+      /** The account a vault's constructor pinned it to; null for the company's account itself. */
+      readonly pinnedTo: string | null;
+      /** On the account only, where this wallet read them: every vault it lists, adopted and retired. */
+      readonly vaults?: readonly string[];
+    }
   | { readonly of: 'unreadable'; readonly why: string };
 
 /** Every contract an ask names, and the company's account, as this wallet read them, by address in lower case. */
@@ -185,7 +231,9 @@ export class CommitteeSignError extends Error {
   }
 }
 
-const refuse = (why: string): never => { throw new CommitteeSignError(`${why} Nothing has been signed.`); };
+const refuse = (why: string): never => {
+  throw new CommitteeSignError(`${why} Nothing has been signed.`);
+};
 
 /* ── WHAT THE SCREEN SHOWS ── */
 
@@ -216,21 +264,29 @@ export interface CommitteeChangeShown {
   readonly contracts: readonly ContractChangeShown[];
 }
 
-const named = (address: string, account: string): string => (address === account ? 'the company\'s account' : `vault ${address}`);
+const named = (address: string, account: string): string =>
+  address === account ? "the company's account" : `vault ${address}`;
 
 /** One contract read off the chain and judged: readable, the kind its address says, and a vault pinned to this account. */
 function onTheChain(chain: ChainRead, account: string, address: string): Extract<ContractOnTheChain, { of: 'read' }> {
   const read = chain.get(address.toLowerCase());
   if (read === undefined || read.of !== 'read') {
     const why = read !== undefined && read.of === 'unreadable' ? ` (${read.why.replace(/\.$/u, '')})` : '';
-    return refuse(`this wallet could not read who holds ${named(address, account)} on the chain through its own indexer${why}.`);
+    return refuse(
+      `this wallet could not read who holds ${named(address, account)} on the chain through its own indexer${why}.`
+    );
   }
-  if (address === account && read.pinnedTo !== null) return refuse('what this wallet read at the account\'s address is not the company\'s account.');
+  if (address === account && read.pinnedTo !== null)
+    return refuse("what this wallet read at the account's address is not the company's account.");
   if (address !== account && read.pinnedTo !== account) {
-    return refuse(`vault ${address} is pinned to another account on the chain, not this company's, so this wallet will not sign for it.`);
+    return refuse(
+      `vault ${address} is pinned to another account on the chain, not this company's, so this wallet will not sign for it.`
+    );
   }
   if (address === account && read.counter < 1n) {
-    return refuse('the company\'s account is not finished being created on the chain, so who holds it cannot be changed yet.');
+    return refuse(
+      "the company's account is not finished being created on the chain, so who holds it cannot be changed yet."
+    );
   }
   return read;
 }
@@ -241,17 +297,25 @@ function onTheChain(chain: ChainRead, account: string, address: string): Extract
  * committee, counter and pinned account comes from `chain`; `L` checks the
  * joining keys' signatures.
  */
-export function committeeChangeShown(L: SignatureCheck, identity: Identity, request: CommitteeRequest, chain: ChainRead): CommitteeChangeShown {
+export function committeeChangeShown(
+  L: SignatureCheck,
+  identity: Identity,
+  request: CommitteeRequest,
+  chain: ChainRead
+): CommitteeChangeShown {
   const mine = committeeKeyFor(identity, request.company) as unknown as CommitteeKeyOnTheWire;
   const account = onTheChain(chain, request.account, request.account);
   if (request.press === 'hand-over') {
     if (!sameCommittee(request.to, account)) {
-      refuse('the committee this asks to install is not the committee holding the company\'s account on the chain, and a hand-over '
-        + 'only ever brings a contract to that one: a key joins the company only through a change of its super admins that the key signs itself.');
+      refuse(
+        "the committee this asks to install is not the committee holding the company's account on the chain, and a hand-over " +
+          'only ever brings a contract to that one: a key joins the company only through a change of its super admins that the key signs itself.'
+      );
     }
   } else {
     const rebuilt = hexOf(superAdminChangeBytes(request.company, request.account, request.salt, request.change));
-    if (rebuilt !== request.changeBytes) refuse('the bytes the page sent are not the change it asks to be signed, as this wallet rebuilt it.');
+    if (rebuilt !== request.changeBytes)
+      refuse('the bytes the page sent are not the change it asks to be signed, as this wallet rebuilt it.');
     /*
      * The account counter the change was raised at is in its bytes. The change
      * is the account's next one only while the account still sits there, held
@@ -263,19 +327,25 @@ export function committeeChangeShown(L: SignatureCheck, identity: Identity, requ
     const atFrom = sameCommittee(account, request.change.from) && account.counter === raisedAt;
     const atTo = sameCommittee(account, request.to) && account.counter === raisedAt + 1n;
     if (!atFrom && !atTo) {
-      refuse(`this change was raised when the account was at counter ${raisedAt}, held by the committee it replaces, and the account on the chain `
-        + `is at counter ${account.counter}, neither there nor one step on held by the committee it installs: a change that ran or was turned `
-        + 'down is never signed again.');
+      refuse(
+        `this change was raised when the account was at counter ${raisedAt}, held by the committee it replaces, and the account on the chain ` +
+          `is at counter ${account.counter}, neither there nor one step on held by the committee it installs: a change that ran or was turned ` +
+          'down is never signed again.'
+      );
     }
     /* Every change names every contract of the company, so landing it moves every counter and voids every older signature. */
     const named = new Set(request.change.contracts.map((c) => c.address.toLowerCase()));
     const left = (account.vaults ?? []).find((v) => !named.has(v.toLowerCase()));
     if (left !== undefined) {
-      refuse(`this change leaves out vault ${left}, which the company's account lists on the chain. Every change names every contract of the `
-        + 'company, so that no update signed for an earlier change can still land on one it leaves out.');
+      refuse(
+        `this change leaves out vault ${left}, which the company's account lists on the chain. Every change names every contract of the ` +
+          'company, so that no update signed for an earlier change can still land on one it leaves out.'
+      );
     }
     if (request.press === 'join' && !keyIn(request.to.committee, mine)) {
-      refuse('your key for this company is not one this change installs, so there is nothing for you to sign as a joining key.');
+      refuse(
+        'your key for this company is not one this change installs, so there is nothing for you to sign as a joining key.'
+      );
     }
   }
   const asked = request.press === 'join' ? request.change.contracts : request.contracts;
@@ -283,11 +353,15 @@ export function committeeChangeShown(L: SignatureCheck, identity: Identity, requ
     const address = c.address.toLowerCase();
     const read = onTheChain(chain, request.account, address);
     if (request.press !== 'join' && c.counter !== read.counter.toString()) {
-      refuse(`the page names counter ${c.counter} for ${named(address, request.account)}, and the chain holds it at ${read.counter}, so the change would be signed against the wrong counter.`);
+      refuse(
+        `the page names counter ${c.counter} for ${named(address, request.account)}, and the chain holds it at ${read.counter}, so the change would be signed against the wrong counter.`
+      );
     }
     const seats = read.committee.flatMap((k, i) => (sameKey(k, mine) ? [i] : []));
     if (request.press !== 'join' && seats.length === 0) {
-      refuse(`your key for this company is not on the committee that holds ${named(address, request.account)} on the chain, so this wallet cannot sign a change to it.`);
+      refuse(
+        `your key for this company is not on the committee that holds ${named(address, request.account)} on the chain, so this wallet cannot sign a change to it.`
+      );
     }
     return Object.freeze({
       contract: c.contract,
@@ -298,7 +372,7 @@ export function committeeChangeShown(L: SignatureCheck, identity: Identity, requ
       keysNow: read.committee.length,
       thresholdNow: read.threshold,
       thresholdAfter: request.to.threshold,
-      seats: Object.freeze(seats),
+      seats: Object.freeze(seats)
     });
   });
   if (request.press === 'super-admins') {
@@ -307,14 +381,20 @@ export function committeeChangeShown(L: SignatureCheck, identity: Identity, requ
       for (const k of c.joins) {
         const signed = request.joined.find((j) => sameKey(j.key, k));
         if (signed === undefined || !joinedBy(L, bytes, k, signed.signature)) {
-          refuse(`key ${k.value} joins ${named(c.address, request.account)} and has not signed the change with its own key, so no key nobody holds `
-            + 'is put on the company\'s contracts.');
+          refuse(
+            `key ${k.value} joins ${named(c.address, request.account)} and has not signed the change with its own key, so no key nobody holds ` +
+              "is put on the company's contracts."
+          );
         }
       }
     }
   }
   return Object.freeze({
-    press: request.press, mine, staysOn: keyIn(request.to.committee, mine), to: request.to, contracts: Object.freeze(contracts),
+    press: request.press,
+    mine,
+    staysOn: keyIn(request.to.committee, mine),
+    to: request.to,
+    contracts: Object.freeze(contracts)
   });
 }
 
@@ -375,12 +455,17 @@ export type CommitteeSignatures = CommitteeUpdateSignatures | CommitteeJoinSigna
  * order. The signing key is worked out here, used, and not kept or returned.
  */
 export function committeeSignaturesFor(
-  L: CommitteeSigningLedger, identity: Identity, request: CommitteeRequest, chain: ChainRead, at: number,
+  L: CommitteeSigningLedger,
+  identity: Identity,
+  request: CommitteeRequest,
+  chain: ChainRead,
+  at: number
 ): CommitteeUpdateSignatures {
   if (!usableOrigin(request.requester.origin)) {
     throw new CommitteeSignError('this wallet could not tell who asked, so nothing has been signed.');
   }
-  if (request.press === 'join') refuse('this asks for a joining key\'s own signature over the change, not for a signature on any contract.');
+  if (request.press === 'join')
+    refuse("this asks for a joining key's own signature over the change, not for a signature on any contract.");
   const shown = committeeChangeShown(L, identity, request, chain);
   const signingKey = committeeSigningKeyFor(identity, request.company);
   const signatures: CommitteeSeatSignature[] = [];
@@ -388,9 +473,14 @@ export function committeeSignaturesFor(
     const update = committeeUpdateOf(L, { address: c.address, counter: BigInt(c.counter), to: request.to });
     const signature = L.signData(signingKey as never, update.dataToSign);
     for (const seat of c.seats) {
-      signatures.push(Object.freeze({
-        address: c.address, counter: c.counter, seat, signature: Object.freeze({ tag: signature.tag, value: signature.value }),
-      }));
+      signatures.push(
+        Object.freeze({
+          address: c.address,
+          counter: c.counter,
+          seat,
+          signature: Object.freeze({ tag: signature.tag, value: signature.value })
+        })
+      );
     }
   }
   return Object.freeze({
@@ -402,7 +492,7 @@ export function committeeSignaturesFor(
     at,
     signer: shown.mine,
     to: request.to,
-    signatures: Object.freeze(signatures),
+    signatures: Object.freeze(signatures)
   });
 }
 
@@ -412,12 +502,16 @@ export function committeeSignaturesFor(
  * as rebuilt here, with the ledger's own signer, so `joinedBy` takes it.
  */
 export function committeeJoinFor(
-  L: CommitteeSigningLedger, identity: Identity, request: CommitteeRequest, chain: ChainRead, at: number,
+  L: CommitteeSigningLedger,
+  identity: Identity,
+  request: CommitteeRequest,
+  chain: ChainRead,
+  at: number
 ): CommitteeJoinSignature {
   if (!usableOrigin(request.requester.origin)) {
     throw new CommitteeSignError('this wallet could not tell who asked, so nothing has been signed.');
   }
-  if (request.press !== 'join') refuse('this asks for signatures on contracts, not for a joining key\'s own signature.');
+  if (request.press !== 'join') refuse("this asks for signatures on contracts, not for a joining key's own signature.");
   const shown = committeeChangeShown(L, identity, request, chain);
   const join = request as Extract<CommitteeRequest, { press: 'join' }>;
   const bytes = superAdminChangeBytes(join.company, join.account, join.salt, join.change);
@@ -430,7 +524,7 @@ export function committeeJoinFor(
     nonce: join.nonce,
     at,
     signer: shown.mine,
-    signature: signature.value.toLowerCase(),
+    signature: signature.value.toLowerCase()
   });
 }
 
@@ -442,7 +536,9 @@ export function committeeJoinFor(
  */
 export const SUPER_ADMIN_REQUEST_DOMAIN = 'confidential-accounts/super-admin-request/v1';
 export const superAdminRequestBytes = (company: string, userId: string, account: string): Uint8Array =>
-  new TextEncoder().encode(JSON.stringify({ account: account.toLowerCase(), company, domain: SUPER_ADMIN_REQUEST_DOMAIN, user: userId }));
+  new TextEncoder().encode(
+    JSON.stringify({ account: account.toLowerCase(), company, domain: SUPER_ADMIN_REQUEST_DOMAIN, user: userId })
+  );
 
 /** A wallet's signature on a super admin's request: the key it holds for the company, and its signature over the request's bytes. */
 export interface CommitteeRequestSignature {
@@ -466,11 +562,19 @@ interface SignsWithTheCommitteeKey {
   signData(signingKey: ReturnType<typeof committeeSigningKeyFor>, data: Uint8Array): { tag: string; value: string };
 }
 
-export function committeeRequestFor(L: SignsWithTheCommitteeKey, identity: Identity, request: SuperAdminRequestAsk, at: number): CommitteeRequestSignature {
+export function committeeRequestFor(
+  L: SignsWithTheCommitteeKey,
+  identity: Identity,
+  request: SuperAdminRequestAsk,
+  at: number
+): CommitteeRequestSignature {
   if (!usableOrigin(request.requester.origin)) {
     throw new CommitteeSignError('this wallet could not tell who asked, so nothing has been signed.');
   }
-  const signature = L.signData(committeeSigningKeyFor(identity, request.company), superAdminRequestBytes(request.record, request.user, request.account));
+  const signature = L.signData(
+    committeeSigningKeyFor(identity, request.company),
+    superAdminRequestBytes(request.record, request.user, request.account)
+  );
   return Object.freeze({
     schema: COMMITTEE_REQUEST_SCHEMA,
     origin: request.requester.origin,
@@ -479,14 +583,18 @@ export function committeeRequestFor(L: SignsWithTheCommitteeKey, identity: Ident
     nonce: request.nonce,
     at,
     signer: wireKey({ tag: 'schnorr', value: String(committeeKeyFor(identity, request.company).value) }),
-    signature: signature.value.toLowerCase(),
+    signature: signature.value.toLowerCase()
   });
 }
 
 /** A key's own signature as a page reads it from the wallet's answer, or why the answer is refused. */
 export type KeySignatureRead =
   | { readonly ok: true; readonly signer: CommitteeKeyOnTheWire; readonly signature: string }
-  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-change'; readonly says: string };
+  | {
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-change';
+      readonly says: string;
+    };
 
 /**
  * **A PAGE READS A JOINING KEY'S OR A REQUEST'S SIGNATURE**: the answer of the kind asked, for this page, this ask
@@ -497,35 +605,58 @@ export function readKeySignature(
   message: unknown,
   expecting: {
     readonly schema: typeof COMMITTEE_JOIN_SCHEMA | typeof COMMITTEE_REQUEST_SCHEMA;
-    readonly atOrigin: string; readonly expectingNonce: string; readonly company: CompanyLabel; readonly account: AccountAddress;
-  },
+    readonly atOrigin: string;
+    readonly expectingNonce: string;
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
+  }
 ): KeySignatureRead {
   const body = message as Partial<CommitteeRequestSignature> | null;
   if (typeof body !== 'object' || body === null || body.schema !== expecting.schema) {
-    return { ok: false, code: 'not-an-answer', says: 'that is not a key\'s signature this page asked for.' };
+    return { ok: false, code: 'not-an-answer', says: "that is not a key's signature this page asked for." };
   }
   if (body.origin !== expecting.atOrigin) {
-    return { ok: false, code: 'origin-mismatch', says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
+    };
   }
-  if (body.nonce !== expecting.expectingNonce) return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
+  if (body.nonce !== expecting.expectingNonce)
+    return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
-    return { ok: false, code: 'other-change', says: 'this is signed for a different company from the one asked about. It is refused.' };
+    return {
+      ok: false,
+      code: 'other-change',
+      says: 'this is signed for a different company from the one asked about. It is refused.'
+    };
   }
   const signer = body.signer;
-  if (typeof signer !== 'object' || signer === null || signer.tag !== 'schnorr' || !HEX64.test(String(signer.value).toLowerCase())
-    || typeof body.signature !== 'string' || !HEX128.test(body.signature.toLowerCase()) || typeof body.at !== 'number') {
+  if (
+    typeof signer !== 'object' ||
+    signer === null ||
+    signer.tag !== 'schnorr' ||
+    !HEX64.test(String(signer.value).toLowerCase()) ||
+    typeof body.signature !== 'string' ||
+    !HEX128.test(body.signature.toLowerCase()) ||
+    typeof body.at !== 'number'
+  ) {
     return { ok: false, code: 'not-an-answer', says: 'this answer does not carry a key and its signature.' };
   }
   return { ok: true, signer: wireKey(signer), signature: body.signature.toLowerCase() };
 }
 
 export type CommitteeSignaturesRead =
-  | { readonly ok: true; readonly signer: CommitteeKeyOnTheWire; readonly signatures: readonly CommitteeSeatSignature[] }
   | {
-    readonly ok: false;
-    readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-change';
-    readonly says: string;
-  };
+      readonly ok: true;
+      readonly signer: CommitteeKeyOnTheWire;
+      readonly signatures: readonly CommitteeSeatSignature[];
+    }
+  | {
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-change';
+      readonly says: string;
+    };
 
 /** Whether a list of signatures has no gap and, on each contract, places in strictly increasing order: what the chain counts. */
 const placesInOrder = (list: readonly unknown[]): boolean => {
@@ -558,38 +689,69 @@ export function readCommitteeSignatures(
     readonly account: AccountAddress;
     readonly to: CommitteeOnTheWire;
     readonly contracts: ReadonlyArray<{ readonly address: string; readonly counter: string }>;
-  },
+  }
 ): CommitteeSignaturesRead {
   const body = message as Partial<CommitteeUpdateSignatures> | null;
   if (typeof body !== 'object' || body === null || body.schema !== COMMITTEE_SIGNATURES_SCHEMA) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed committee change.' };
   }
   if (body.origin !== expecting.atOrigin) {
-    return { ok: false, code: 'origin-mismatch', says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
+    };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
   const to = body.to;
-  const sameTo = typeof to === 'object' && to !== null && to.threshold === expecting.to.threshold
-    && Array.isArray(to.committee) && to.committee.length === expecting.to.committee.length
-    && to.committee.every((k, i) => same(k, expecting.to.committee[i]!));
-  if (readCompanyLabel(body.company) !== expecting.company
-    || readAccountAddress(body.account) !== expecting.account || !sameTo) {
-    return { ok: false, code: 'other-change', says: 'this signs a change to a different company or committee from the one asked about. It is refused.' };
+  const sameTo =
+    typeof to === 'object' &&
+    to !== null &&
+    to.threshold === expecting.to.threshold &&
+    Array.isArray(to.committee) &&
+    to.committee.length === expecting.to.committee.length &&
+    to.committee.every((k, i) => same(k, expecting.to.committee[i]!));
+  if (
+    readCompanyLabel(body.company) !== expecting.company ||
+    readAccountAddress(body.account) !== expecting.account ||
+    !sameTo
+  ) {
+    return {
+      ok: false,
+      code: 'other-change',
+      says: 'this signs a change to a different company or committee from the one asked about. It is refused.'
+    };
   }
   const signer = body.signer;
   if (typeof signer !== 'object' || signer === null || signer.tag !== 'schnorr' || !HEX64.test(String(signer.value))) {
     return { ok: false, code: 'not-an-answer', says: 'this answer does not say which key signed.' };
   }
   const asked = new Map(expecting.contracts.map((c) => [c.address.toLowerCase(), c.counter]));
-  if (!Array.isArray(body.signatures) || body.signatures.length === 0 || !placesInOrder(body.signatures) || !body.signatures.every((s) =>
-    typeof s === 'object' && s !== null
-    && asked.get(String(s.address).toLowerCase()) === s.counter && DIGITS.test(String(s.counter))
-    && Number.isInteger(s.seat) && s.seat >= 0
-    && typeof s.signature === 'object' && s.signature !== null
-    && typeof s.signature.tag === 'string' && HEX.test(String(s.signature.value)))) {
-    return { ok: false, code: 'other-change', says: 'this answer carries a signature for a contract or counter that was not asked about, or a list out of order. It is refused.' };
+  if (
+    !Array.isArray(body.signatures) ||
+    body.signatures.length === 0 ||
+    !placesInOrder(body.signatures) ||
+    !body.signatures.every(
+      (s) =>
+        typeof s === 'object' &&
+        s !== null &&
+        asked.get(String(s.address).toLowerCase()) === s.counter &&
+        DIGITS.test(String(s.counter)) &&
+        Number.isInteger(s.seat) &&
+        s.seat >= 0 &&
+        typeof s.signature === 'object' &&
+        s.signature !== null &&
+        typeof s.signature.tag === 'string' &&
+        HEX.test(String(s.signature.value))
+    )
+  ) {
+    return {
+      ok: false,
+      code: 'other-change',
+      says: 'this answer carries a signature for a contract or counter that was not asked about, or a list out of order. It is refused.'
+    };
   }
   if (typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed committee change.' };
@@ -598,8 +760,10 @@ export function readCommitteeSignatures(
     ok: true,
     signer: { tag: 'schnorr', value: signer.value.toLowerCase() },
     signatures: body.signatures.map((s) => ({
-      address: s.address.toLowerCase(), counter: s.counter, seat: s.seat,
-      signature: { tag: s.signature.tag, value: s.signature.value },
-    })),
+      address: s.address.toLowerCase(),
+      counter: s.counter,
+      seat: s.seat,
+      signature: { tag: s.signature.tag, value: s.signature.value }
+    }))
   };
 }

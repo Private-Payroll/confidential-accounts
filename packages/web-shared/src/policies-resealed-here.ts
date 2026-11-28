@@ -9,7 +9,13 @@ import { sealSpendingPolicy, SPENDING_POLICY_KIND } from '../../../src/midnight/
 import type { SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
 import { mayFileHere } from './may-file-here.js';
 import { kindAsked, namedHere, readersOf } from './vault-page-doors.js';
-import { believedSigners, policiesInForceHere, policiesOf, type SpendingPoliciesHere, type SpendingPolicyDoors } from './spending-policy-read-here.js';
+import {
+  believedSigners,
+  policiesInForceHere,
+  policiesOf,
+  type SpendingPoliciesHere,
+  type SpendingPolicyDoors
+} from './spending-policy-read-here.js';
 
 /** What sealing the policies in force to the signers seated since needs of this device: its own filing key, and the key epoch a bare key names. */
 type PolicyResealDoors = SpendingPolicyDoors & { readonly keyEpoch: number; readonly filingKey: string };
@@ -29,8 +35,9 @@ export interface PoliciesResealed {
 }
 
 /** Why a policy in force is not sealed again from a device that cannot open the version the chain commits to. */
-export const POLICY_NOT_OPENED_HERE = 'no version of it this device can open makes the commitment the chain holds, so it is '
-  + 'not sealed again from here; a signer who may set spending policies and can open it seals it again from their own device';
+export const POLICY_NOT_OPENED_HERE =
+  'no version of it this device can open makes the commitment the chain holds, so it is ' +
+  'not sealed again from here; a signer who may set spending policies and can open it seals it again from their own device';
 
 /**
  * **EVERY SPENDING POLICY IN FORCE, SEALED TO EVERY SIGNER WHO STAYS AND EVERY POLICY READER**, from a
@@ -68,11 +75,16 @@ export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Pr
   const skipped: { id: string; why: string }[] = [];
   const owed: string[] = [];
   const resealed: { readonly id: string; readonly rec: SealedCompanyRecord }[] = [];
-  for (const policy of await policiesInForceHere(doors, namedHere(here, 'company', SPENDING_POLICY_KIND), { judged: true })) {
+  for (const policy of await policiesInForceHere(doors, namedHere(here, 'company', SPENDING_POLICY_KIND), {
+    judged: true
+  })) {
     const { id } = policy;
     try {
       if (policy.state === 'refused') throw policy.why;
-      if (policy.state === 'not-held') { skipped.push({ id, why: 'the chain holds no commitment for it, so no version of it is in force' }); continue; }
+      if (policy.state === 'not-held') {
+        skipped.push({ id, why: 'the chain holds no commitment for it, so no version of it is in force' });
+        continue;
+      }
       if (policy.state === 'opened-by-none') {
         if (mayFile) refused.push({ id, why: POLICY_NOT_OPENED_HERE });
         else skipped.push({ id, why: 'this device cannot open the version in force, and its seat files no policy' });
@@ -80,18 +92,36 @@ export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Pr
       }
       const inForce = policy.version;
       const readers = readersOf(inForce.rec);
-      if (policy.versions.believed.includes(inForce.rec) && staying.every((x) => readers.has(x))) { skipped.push({ id, why: 'every signer and policy reader already opens it' }); continue; }
-      if (!mayFile) { owed.push(id); continue; }
+      if (policy.versions.believed.includes(inForce.rec) && staying.every((x) => readers.has(x))) {
+        skipped.push({ id, why: 'every signer and policy reader already opens it' });
+        continue;
+      }
+      if (!mayFile) {
+        owed.push(id);
+        continue;
+      }
       const newest = (await policies.versions(id)).reduce((n, r) => Math.max(n, r.version), 0);
-      resealed.push({ id, rec: sealSpendingPolicy({
-        company: doors.accountId, id: id as Hex, version: newest + 1, keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
-        secrets: { vault: inForce.secrets.vault, asset: inForce.secrets.asset, opening: inForce.secrets.opening }, signers,
-      }) });
+      resealed.push({
+        id,
+        rec: sealSpendingPolicy({
+          company: doors.accountId,
+          id: id as Hex,
+          version: newest + 1,
+          keyEpoch: epochInForce(doors.viewingKey, doors.keyEpoch),
+          secrets: { vault: inForce.secrets.vault, asset: inForce.secrets.asset, opening: inForce.secrets.opening },
+          signers
+        })
+      });
     } catch (e) {
       (mayFile ? refused : skipped).push({ id, why: String((e as Error)?.message ?? e) });
     }
   }
-  for (const [i, outcome] of (await filedAgain(policies, resealed.map((x) => x.rec))).entries()) {
+  for (const [i, outcome] of (
+    await filedAgain(
+      policies,
+      resealed.map((x) => x.rec)
+    )
+  ).entries()) {
     const { id } = resealed[i]!;
     if (outcome.status === 'fulfilled') sealed.push(id);
     else refused.push({ id, why: String((outcome.reason as Error)?.message ?? outcome.reason) });
@@ -105,7 +135,10 @@ export async function sealPoliciesToNewSignersHere(doors: PolicyResealDoors): Pr
  * time. Each is answered on its own, in order: one refused, or filed first by another seat, is said and left for the
  * next seat action, and stops no other filed before it.
  */
-const filedAgain = async (policies: SpendingPoliciesHere, recs: readonly SealedCompanyRecord[]): Promise<readonly PromiseSettledResult<void>[]> => {
+const filedAgain = async (
+  policies: SpendingPoliciesHere,
+  recs: readonly SealedCompanyRecord[]
+): Promise<readonly PromiseSettledResult<void>[]> => {
   if (recs.length === 0) return [];
   if (policies.fileEach !== undefined) {
     try {

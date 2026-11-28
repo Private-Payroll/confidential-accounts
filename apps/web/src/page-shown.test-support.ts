@@ -21,7 +21,9 @@ export async function untilShown<T extends Element>(find: () => T | null, what: 
     const found = find();
     if (found !== null) return found;
     if (Date.now() >= end) throw new Error(`not on screen after ${ms} ms: ${what}`);
-    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+    });
   }
 }
 
@@ -31,8 +33,11 @@ export async function untilShown<T extends Element>(find: () => T | null, what: 
  */
 export function untilPageShown(container: ParentNode, ms = WAIT_MS): Promise<HTMLElement> {
   return untilShown(
-    () => (container.querySelector('[data-loading], [data-reading]') === null ? container.querySelector<HTMLElement>('[data-screen]') : null),
+    () =>
+      container.querySelector('[data-loading], [data-reading]') === null
+        ? container.querySelector<HTMLElement>('[data-screen]')
+        : null,
     'a page with its screen drawn and nothing still loading or being read',
-    ms,
+    ms
   );
 }

@@ -48,10 +48,12 @@ interface FakeWiring {
  * deliberately untouched (the seam's promise). Tests of the LIVE surface
  * pass `live: true` and, optionally, their own terms door.
  */
-function fakeWiring(options: {
-  live?: boolean;
-  fetchTerms?: () => Promise<{ hash: string; url: string }>;
-} = {}): FakeWiring {
+function fakeWiring(
+  options: {
+    live?: boolean;
+    fetchTerms?: () => Promise<{ hash: string; url: string }>;
+  } = {}
+): FakeWiring {
   const plans: SendPlan[] = [];
   const stops: number[] = [];
   const confirms: number[] = [];
@@ -61,9 +63,13 @@ function fakeWiring(options: {
   let onState: ((s: SendState) => void) | null = null;
   const doorsFor = (): SendDoors & { stop: () => Promise<void> } => ({
     facade: () => Promise.reject(new Error('the fake engine never opens doors')),
-    signSegment: () => { throw new Error('the fake engine never signs'); },
+    signSegment: () => {
+      throw new Error('the fake engine never signs');
+    },
     ownUnshieldedHex: 'unused',
-    stop: async () => { stops.push(stops.length + 1); },
+    stop: async () => {
+      stops.push(stops.length + 1);
+    }
   });
   return {
     plans,
@@ -72,18 +78,24 @@ function fakeWiring(options: {
     cancels,
     detaches,
     termsFetches,
-    emit: (state) => { act(() => { onState?.(state); }); },
+    emit: (state) => {
+      act(() => {
+        onState?.(state);
+      });
+    },
     wiring: {
       live: options.live
         ? {
-          doorsFor,
-          fetchTerms: () => {
-            termsFetches.push(termsFetches.length + 1);
-            return options.fetchTerms
-              ? options.fetchTerms()
-              : new Promise(() => { /* never answers unless a test says so */ });
-          },
-        }
+            doorsFor,
+            fetchTerms: () => {
+              termsFetches.push(termsFetches.length + 1);
+              return options.fetchTerms
+                ? options.fetchTerms()
+                : new Promise(() => {
+                    /* never answers unless a test says so */
+                  });
+            }
+          }
         : null,
       rehearsalDoorsFor: doorsFor,
       start: (_doors, plan, tell) => {
@@ -92,19 +104,19 @@ function fakeWiring(options: {
         return {
           confirm: () => confirms.push(confirms.length + 1),
           cancel: () => cancels.push(cancels.length + 1),
-          detach: () => detaches.push(detaches.length + 1),
+          detach: () => detaches.push(detaches.length + 1)
         };
-      },
-    },
+      }
+    }
   };
 }
 
-const renderSend = (wiring: SendWiring, secret: Secret = newSecret()):
-ReturnType<typeof render> => render(
-  <SendContext.Provider value={wiring}>
-    <Send identity={identityFromWords(TEST_MNEMONIC)} secret={secret} />
-  </SendContext.Provider>,
-);
+const renderSend = (wiring: SendWiring, secret: Secret = newSecret()): ReturnType<typeof render> =>
+  render(
+    <SendContext.Provider value={wiring}>
+      <Send identity={identityFromWords(TEST_MNEMONIC)} secret={secret} />
+    </SendContext.Provider>
+  );
 
 const typeRecipient = (value: string): void => {
   fireEvent.change(screen.getByLabelText(/The recipient/u), { target: { value } });
@@ -112,8 +124,7 @@ const typeRecipient = (value: string): void => {
 const typeAmount = (value: string): void => {
   fireEvent.change(screen.getByLabelText(/The amount/u), { target: { value } });
 };
-const checkButton = (): HTMLButtonElement =>
-  screen.getByText('Check this payment') as HTMLButtonElement;
+const checkButton = (): HTMLButtonElement => screen.getByText('Check this payment') as HTMLButtonElement;
 
 const facts: SendFacts = {
   kind: 'unshielded',
@@ -124,7 +135,7 @@ const facts: SendFacts = {
   nightBefore: 5_000_000_000n,
   nightAfter: 4_750_000_000n,
   dustBefore: 400_000_000_000_000_000n,
-  dustAfter: 398_907_451_369_877_858n,
+  dustAfter: 398_907_451_369_877_858n
 };
 
 beforeEach(() => {
@@ -222,8 +233,10 @@ describe('the confirmation shows what WILL happen, read back — §4', () => {
   it('recipient with both ends, amount with exact STARs, fee in DUST, balances after', () => {
     toConfirm();
     /* Both ends of the address — the standing habit. */
-    const shortForm = screen.getByText((text) => text.includes('…')
-      && text.startsWith(unshieldedRecipient.slice(0, unshieldedRecipient.lastIndexOf('1') + 1)));
+    const shortForm = screen.getByText(
+      (text) =>
+        text.includes('…') && text.startsWith(unshieldedRecipient.slice(0, unshieldedRecipient.lastIndexOf('1') + 1))
+    );
     expect(shortForm.textContent?.endsWith(unshieldedRecipient.slice(-8))).toBe(true);
     /* The amount, exact, and WHERE it was read from. */
     expect(screen.getByText(/^250/u)).toBeTruthy();
@@ -243,7 +256,7 @@ describe('the confirmation shows what WILL happen, read back — §4', () => {
     expect(screen.getByText(/cannot be undone/u)).toBeTruthy();
   });
 
-  it('a shielded amount says it is the builder\'s input, not a read-back', () => {
+  it("a shielded amount says it is the builder's input, not a read-back", () => {
     const fake = fakeWiring();
     renderSend(fake.wiring);
     typeRecipient(shieldedRecipient);
@@ -258,8 +271,8 @@ describe('the confirmation shows what WILL happen, read back — §4', () => {
         stars: 40_000_000n,
         readBack: 'builder-input',
         nightBefore: 100_000_000n,
-        nightAfter: 60_000_000n,
-      },
+        nightAfter: 60_000_000n
+      }
     });
     expect(screen.getByText(/cannot be read back off the transaction/u)).toBeTruthy();
     expect(screen.getByText(/the privacy working/u)).toBeTruthy();
@@ -303,11 +316,12 @@ describe('the endings say exactly what is known — and no more', () => {
     expect(screen.getByText(/coins it had set aside are released/u)).toBeTruthy();
   });
 
-  it('refused: the engine\'s words verbatim, and a way to start again', () => {
+  it("refused: the engine's words verbatim, and a way to start again", () => {
     const fake = start();
     fake.emit({ name: 'refused', message: 'the fee cannot be paid: no DUST. Nothing was sent and no money moved.' });
-    expect(screen.getByRole('alert').textContent)
-      .toBe('the fee cannot be paid: no DUST. Nothing was sent and no money moved.');
+    expect(screen.getByRole('alert').textContent).toBe(
+      'the fee cannot be paid: no DUST. Nothing was sent and no money moved.'
+    );
     fireEvent.click(screen.getByText('Start again'));
     expect(screen.getByLabelText(/The recipient/u)).toBeTruthy();
   });
@@ -319,7 +333,7 @@ describe('the endings say exactly what is known — and no more', () => {
       identifiers: ['id-one', 'id-two'],
       facts,
       stillWaiting: true,
-      message: 'the network has not answered in 45 seconds. Do not send again on the assumption it failed.',
+      message: 'the network has not answered in 45 seconds. Do not send again on the assumption it failed.'
     });
     expect(screen.getByText(/Whether this sent is not known\./u)).toBeTruthy();
     expect(screen.getByText('id-one')).toBeTruthy();
@@ -334,18 +348,19 @@ describe('the endings say exactly what is known — and no more', () => {
     expect(screen.queryByText(/refused/iu)).toBeNull();
   });
 
-  it('a RESOLVED middle says failed in the engine\'s words, with the identifiers', () => {
+  it("a RESOLVED middle says failed in the engine's words, with the identifiers", () => {
     const fake = start();
     fake.emit({
       name: 'failed',
       identifiers: ['id-one'],
       facts,
-      message: 'this payment did not go through: the transaction\'s own deadline has '
-        + 'passed and it never appeared on the chain as far as this wallet could see, '
-        + 'so it can no longer be included and this payment is over. Whether it went '
-        + 'through BEFORE the deadline and was simply never visible from here is NOT '
-        + 'known — the only thing that said no was a silence. Check this payment on a '
-        + 'block explorer before sending it again.',
+      message:
+        "this payment did not go through: the transaction's own deadline has " +
+        'passed and it never appeared on the chain as far as this wallet could see, ' +
+        'so it can no longer be included and this payment is over. Whether it went ' +
+        'through BEFORE the deadline and was simply never visible from here is NOT ' +
+        'known — the only thing that said no was a silence. Check this payment on a ' +
+        'block explorer before sending it again.'
     });
     expect(screen.getByText(/This payment did not go through\./u)).toBeTruthy();
     expect(screen.getByRole('alert').textContent).toMatch(/can no longer be included/u);
@@ -452,11 +467,11 @@ describe('the live surface — real by default, rehearsal one quiet click away',
   });
 });
 
-describe('the network\'s terms — shown once, recorded, blocking nothing', () => {
+describe("the network's terms — shown once, recorded, blocking nothing", () => {
   it('first live visit fetches, shows the url and the hash, and records', async () => {
     const fake = fakeWiring({
       live: true,
-      fetchTerms: () => Promise.resolve({ hash: 'ab12'.repeat(16), url: 'https://terms.example/t' }),
+      fetchTerms: () => Promise.resolve({ hash: 'ab12'.repeat(16), url: 'https://terms.example/t' })
     });
     renderSend(fake.wiring);
     expect(fake.termsFetches).toHaveLength(1);
@@ -470,8 +485,10 @@ describe('the network\'s terms — shown once, recorded, blocking nothing', () =
   });
 
   it('a second visit shows no terms card at all', async () => {
-    localStorage.setItem(`midnight-identity:terms:${NETWORK}`,
-      JSON.stringify({ hash: 'seen', url: 'https://terms.example/t', seenAt: 1 }));
+    localStorage.setItem(
+      `midnight-identity:terms:${NETWORK}`,
+      JSON.stringify({ hash: 'seen', url: 'https://terms.example/t', seenAt: 1 })
+    );
     const fake = fakeWiring({ live: true });
     renderSend(fake.wiring);
     expect(screen.queryByText(/network’s terms/u)).toBeNull();
@@ -481,7 +498,7 @@ describe('the network\'s terms — shown once, recorded, blocking nothing', () =
   it('a failed fetch blocks nothing and says so quietly', async () => {
     const fake = fakeWiring({
       live: true,
-      fetchTerms: () => Promise.reject(new Error('the indexer is away')),
+      fetchTerms: () => Promise.reject(new Error('the indexer is away'))
     });
     renderSend(fake.wiring);
     expect(await screen.findByText(/could not be fetched right now/u)).toBeTruthy();
@@ -522,7 +539,9 @@ describe('the network\'s terms — shown once, recorded, blocking nothing', () =
 
 /** A wake lock that answers, and a record of what was asked of it. */
 function grantingWakeLock(): {
-  readonly requests: string[]; readonly releases: number[]; readonly install: () => void;
+  readonly requests: string[];
+  readonly releases: number[];
+  readonly install: () => void;
 } {
   const requests: string[] = [];
   const releases: number[] = [];
@@ -536,12 +555,15 @@ function grantingWakeLock(): {
           request: (kind: string) => {
             requests.push(kind);
             return Promise.resolve({
-              release: () => { releases.push(releases.length + 1); return Promise.resolve(); },
+              release: () => {
+                releases.push(releases.length + 1);
+                return Promise.resolve();
+              }
             });
-          },
-        },
+          }
+        }
       });
-    },
+    }
   };
 }
 
@@ -549,7 +571,7 @@ function grantingWakeLock(): {
 const refusingWakeLock = (): void => {
   Object.defineProperty(navigator, 'wakeLock', {
     configurable: true,
-    value: { request: () => Promise.reject(new Error('NotAllowedError')) },
+    value: { request: () => Promise.reject(new Error('NotAllowedError')) }
   });
 };
 
@@ -559,7 +581,11 @@ const noWakeLockAtAll = (): void => {
 
 /** Let the wake-lock promise settle inside `act`, so React has re-rendered
  * before anything is asserted about what the screen says. */
-const settle = async (): Promise<void> => { await act(async () => { await Promise.resolve(); }); };
+const settle = async (): Promise<void> => {
+  await act(async () => {
+    await Promise.resolve();
+  });
+};
 
 describe('§1 — the waiting behaviour: stay on this screen, awake', () => {
   const started = (): FakeWiring => {
@@ -613,8 +639,7 @@ describe('§1 — the waiting behaviour: stay on this screen, awake', () => {
     fireEvent.click(checkButton());
     fake.emit({ name: 'working', stage: 'proving', forMs: 1_000 });
     await settle();
-    expect(screen.getByText(/On a laptop this usually finishes in around/u).textContent)
-      .toContain(stated as string);
+    expect(screen.getByText(/On a laptop this usually finishes in around/u).textContent).toContain(stated as string);
   });
 
   /**
@@ -718,7 +743,10 @@ describe('§1 — the waiting behaviour: stay on this screen, awake', () => {
     one.emit({ name: 'working', stage: 'proving', forMs: 0 });
     await settle();
     one.emit({
-      name: 'failed', identifiers: ['id-one'], facts, message: 'it did not go through.',
+      name: 'failed',
+      identifiers: ['id-one'],
+      facts,
+      message: 'it did not go through.'
     });
     await settle();
     expect(failing.releases).toHaveLength(1);
@@ -790,10 +818,11 @@ describe('§1 — the waiting behaviour: stay on this screen, awake', () => {
  * would have gone red.
  */
 describe('the order of things, pinned', () => {
-  const positionsOf = (...texts: readonly (string | RegExp)[]): number[] => texts.map((text) => {
-    const found = screen.getByText(text as RegExp);
-    return [...document.querySelectorAll('*')].indexOf(found);
-  });
+  const positionsOf = (...texts: readonly (string | RegExp)[]): number[] =>
+    texts.map((text) => {
+      const found = screen.getByText(text as RegExp);
+      return [...document.querySelectorAll('*')].indexOf(found);
+    });
 
   const toConfirm = (kind: 'unshielded' | 'shielded' = 'unshielded'): FakeWiring => {
     const fake = fakeWiring();
@@ -812,8 +841,7 @@ describe('the order of things, pinned', () => {
    */
   it('the confirmation reads To, then Amount, then the fee, then what is left', () => {
     toConfirm();
-    const [to, amount, fee, after] = positionsOf(
-      /^To$/u, /^Amount$/u, /^The fee, in DUST$/u, /afterwards$/u);
+    const [to, amount, fee, after] = positionsOf(/^To$/u, /^Amount$/u, /^The fee, in DUST$/u, /afterwards$/u);
     expect(to).toBeLessThan(amount as number);
     expect(amount as number).toBeLessThan(fee as number);
     expect(fee as number).toBeLessThan(after as number);
@@ -825,7 +853,10 @@ describe('the order of things, pinned', () => {
   it('everything a person is told comes before the control they are told about', () => {
     toConfirm();
     const [after, undo, wait] = positionsOf(
-      /afterwards$/u, /cannot be undone/u, /this screen has to stay open the whole time/u);
+      /afterwards$/u,
+      /cannot be undone/u,
+      /this screen has to stay open the whole time/u
+    );
     const send = [...document.querySelectorAll('*')].indexOf(screen.getByText('Send it'));
     expect(after as number).toBeLessThan(undo as number);
     expect(undo as number).toBeLessThan(wait as number);
@@ -849,7 +880,7 @@ describe('the order of things, pinned', () => {
     for (const state of [
       { name: 'working', stage: 'proving', forMs: 0 },
       { name: 'confirm', facts },
-      { name: 'unknown', identifiers: ['id'], facts, stillWaiting: true, message: 'not known.' },
+      { name: 'unknown', identifiers: ['id'], facts, stillWaiting: true, message: 'not known.' }
     ] as SendState[]) {
       fake.emit(state);
       expect(screen.queryByLabelText(/The recipient/u)).toBeNull();
@@ -865,12 +896,15 @@ describe('the order of things, pinned', () => {
     typeRecipient(unshieldedRecipient);
     typeAmount('250');
     fireEvent.click(checkButton());
-    const picker = (): HTMLFieldSetElement =>
-      document.querySelector('fieldset[data-scenarios]') as HTMLFieldSetElement;
+    const picker = (): HTMLFieldSetElement => document.querySelector('fieldset[data-scenarios]') as HTMLFieldSetElement;
     fake.emit({ name: 'confirm', facts });
     expect(picker().disabled).toBe(true);
     fake.emit({
-      name: 'unknown', identifiers: ['id'], facts, stillWaiting: true, message: 'not known.',
+      name: 'unknown',
+      identifiers: ['id'],
+      facts,
+      stillWaiting: true,
+      message: 'not known.'
     });
     expect(picker().disabled).toBe(true);
     /* And it comes back once the send is over and nothing can change. */

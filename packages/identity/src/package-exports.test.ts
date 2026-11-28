@@ -38,7 +38,7 @@ const targetsOf = (target: string | Record<string, string>): string[] =>
   typeof target === 'string' ? [target] : Object.values(target);
 
 const allTargets = Object.entries(pkg.exports).flatMap(([subpath, target]) =>
-  targetsOf(target).map((t) => ({ subpath, target: t })),
+  targetsOf(target).map((t) => ({ subpath, target: t }))
 );
 
 describe('the exports map', () => {
@@ -53,9 +53,7 @@ describe('the exports map', () => {
    * executed.
    */
   it('never points at raw TypeScript', () => {
-    const raw = allTargets.filter(
-      ({ target }) => target.endsWith('.ts') && !target.endsWith('.d.ts'),
-    );
+    const raw = allTargets.filter(({ target }) => target.endsWith('.ts') && !target.endsWith('.d.ts'));
     expect(raw).toEqual([]);
   });
 
@@ -108,6 +106,6 @@ describe('the exports map', () => {
     () => {
       const missing = allTargets.filter(({ target }) => !existsSync(join(root, target)));
       expect(missing).toEqual([]);
-    },
+    }
   );
 });

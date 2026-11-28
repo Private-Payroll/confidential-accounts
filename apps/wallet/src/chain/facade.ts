@@ -47,9 +47,9 @@ export const FACADE_CONFIG = {
   relayURL: new URL(NODE_RPC_URL),
   indexerClientConnection: {
     indexerHttpUrl: INDEXER_HTTP_URL,
-    indexerWsUrl: INDEXER_WS_URL,
+    indexerWsUrl: INDEXER_WS_URL
   },
-  forks: DefaultForkSchedule,
+  forks: DefaultForkSchedule
 } as const;
 
 /** The proving service the facade is handed: one proof per transaction, at the protocol version it was built for. */
@@ -59,9 +59,13 @@ export type FacadeProving = Awaited<ReturnType<NonNullable<InitParams<DefaultCon
  * estimating, testing construction. If anything reaches it, that is a
  * defect speaking, and it says so instead of proving silently nothing. */
 export const failingProving: FacadeProving = {
-  prove: () => Promise.reject(new Error(
-    'this facade was assembled without a prover on purpose — nothing on this '
-    + 'path should prove. Inject one of the SDK\'s proving services to move money.')),
+  prove: () =>
+    Promise.reject(
+      new Error(
+        'this facade was assembled without a prover on purpose — nothing on this ' +
+          "path should prove. Inject one of the SDK's proving services to move money."
+      )
+    )
 };
 
 /**
@@ -71,10 +75,12 @@ export const failingProving: FacadeProving = {
  * so an offline test (and only a test) injects inert ones here; the app and
  * the probe pass nothing and get the SDK's defaults.
  */
-export type FacadeServiceOverrides = Partial<Pick<
-  InitParams<DefaultConfiguration>,
-  'submissionService' | 'transactionLifecycleService' | 'fetchBlockData' | 'validationService' | 'clock'
->>;
+export type FacadeServiceOverrides = Partial<
+  Pick<
+    InitParams<DefaultConfiguration>,
+    'submissionService' | 'transactionLifecycleService' | 'fetchBlockData' | 'validationService' | 'clock'
+  >
+>;
 
 /**
  * The facade over ONE account's three wallets. The caller chooses the
@@ -94,12 +100,18 @@ export async function facadeFor(
   account: number,
   provingService: FacadeProving,
   overrides: FacadeServiceOverrides = {},
-  from: { readonly restoreShieldedFrom?: string } = {},
+  from: { readonly restoreShieldedFrom?: string } = {}
 ): Promise<WalletFacade> {
   const shielded = async () => {
-    if (from.restoreShieldedFrom !== undefined
-      && restorableAs(from.restoreShieldedFrom, coinPublicKeyOf(identity, account), NETWORK)) {
-      try { return walletRestoredFrom(from.restoreShieldedFrom); } catch { /* a cache miss: the cold door below */ }
+    if (
+      from.restoreShieldedFrom !== undefined &&
+      restorableAs(from.restoreShieldedFrom, coinPublicKeyOf(identity, account), NETWORK)
+    ) {
+      try {
+        return walletRestoredFrom(from.restoreShieldedFrom);
+      } catch {
+        /* a cache miss: the cold door below */
+      }
     }
     return walletFor(identity, account);
   };
@@ -108,13 +120,13 @@ export async function facadeFor(
      * no fact about payments enters any store through the facade either. */
     configuration: {
       ...FACADE_CONFIG,
-      txHistoryStorage: new NoOpTransactionHistoryStorage(),
+      txHistoryStorage: new NoOpTransactionHistoryStorage()
     },
     shielded,
     unshielded: () => unshieldedWalletFor(identity, account),
     dust: () => dustWalletFor(identity, account),
     provingService: () => provingService,
-    ...overrides,
+    ...overrides
   });
 }
 
@@ -131,12 +143,12 @@ export async function facadeFor(
  */
 export async function startForAPage(
   facade: Pick<WalletFacade, 'shielded' | 'unshielded' | 'transactionLifecycleService'>,
-  keys: { readonly shielded: ReturnType<typeof shieldedKeysFor> },
+  keys: { readonly shielded: ReturnType<typeof shieldedKeysFor> }
 ): Promise<void> {
   await Promise.all([
     facade.shielded.start(keys.shielded),
     facade.unshielded.start(),
-    facade.transactionLifecycleService.start(),
+    facade.transactionLifecycleService.start()
   ]);
 }
 
@@ -148,8 +160,10 @@ export async function startForAPage(
  */
 export const seedsFor = (identity: Identity, account: number): WalletSeeds => {
   if (!isWalletAccount(account)) {
-    throw new Error(`account ${account} is not a wallet this interface offers`
-      + (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${account} is not a wallet this interface offers` +
+        (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
   const money = identity.moneyAt(account);
   return { shielded: money.zswap, unshielded: money.night, dust: money.dust };

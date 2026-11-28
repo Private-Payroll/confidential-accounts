@@ -50,19 +50,16 @@ export function Unlock(): ReactNode {
         </p>
       )}
       <p className="lede">
-        This wallet is locked. Its keys are sealed in this browser and stay that way
-        until you unlock.{several && (
-          <>
-            {' '}This browser holds {wallets.length} wallets — your passkey says which
-            one opens.
-          </>
-        )}
+        This wallet is locked. Its keys are sealed in this browser and stay that way until you unlock.
+        {several && <> This browser holds {wallets.length} wallets — your passkey says which one opens.</>}
       </p>
       <div className="actions">
         <Button
           type="button"
           size="lg"
-          onClick={() => { void unlock(); }}
+          onClick={() => {
+            void unlock();
+          }}
           disabled={busy !== null}
         >
           Unlock with your passkey
@@ -71,27 +68,27 @@ export function Unlock(): ReactNode {
         <ErrorNote message={error} />
       </div>
       {/*
-        * **THE LIST MOVES UP, TO DIRECTLY BENEATH THE BUTTON.**
-        *
-        * It used to sit last, under two paragraphs of secondary doors, and on a
-        * normal window a person with three wallets met one `Unlock with your
-        * passkey` and had to scroll to discover the others existed at all. The
-        * lede two elements above already says *"This browser holds 3 wallets"*;
-        * a sentence that announces something the layout then hides is worse
-        * than saying nothing.
-        *
-        * ORDER IS THE WHOLE FIX, AND IT IS THE SMALLEST ONE AVAILABLE. The
-        * alternatives were a shorter hero (the moon and its 2.5rem of padding
-        * are the screen's identity, and the screenshot set's pictures are of it) or
-        * folding the list into a disclosure (which is `AddAnotherWallet`'s
-        * shape, chosen there because acquiring a wallet is not why you came —
-        * whereas choosing between wallets you already have IS). Nothing else on
-        * the screen moves: the button, the ceremony and the two secondary doors
-        * are exactly where they were, in the order they were.
-        *
-        * The list still renders only when there are at least two wallets, so a
-        * browser with one is character-for-character the screen it was.
-        */}
+       * **THE LIST MOVES UP, TO DIRECTLY BENEATH THE BUTTON.**
+       *
+       * It used to sit last, under two paragraphs of secondary doors, and on a
+       * normal window a person with three wallets met one `Unlock with your
+       * passkey` and had to scroll to discover the others existed at all. The
+       * lede two elements above already says *"This browser holds 3 wallets"*;
+       * a sentence that announces something the layout then hides is worse
+       * than saying nothing.
+       *
+       * ORDER IS THE WHOLE FIX, AND IT IS THE SMALLEST ONE AVAILABLE. The
+       * alternatives were a shorter hero (the moon and its 2.5rem of padding
+       * are the screen's identity, and the screenshot set's pictures are of it) or
+       * folding the list into a disclosure (which is `AddAnotherWallet`'s
+       * shape, chosen there because acquiring a wallet is not why you came —
+       * whereas choosing between wallets you already have IS). Nothing else on
+       * the screen moves: the button, the ceremony and the two secondary doors
+       * are exactly where they were, in the order they were.
+       *
+       * The list still renders only when there are at least two wallets, so a
+       * browser with one is character-for-character the screen it was.
+       */}
       <WalletsHere />
       <p className="faint small" style={{ marginTop: '2.5rem' }}>
         Passkey deleted or not offered any more?{' '}
@@ -99,15 +96,16 @@ export function Unlock(): ReactNode {
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => { void adoptPasskey(); }}
+          onClick={() => {
+            void adoptPasskey();
+          }}
           disabled={busy !== null}
         >
           Make a new passkey for this wallet
         </Button>
       </p>
       <p className="faint small">
-        <a href={hrefOf('recover')}>Recovery from your placed pieces</a> also gets
-        you back in.
+        <a href={hrefOf('recover')}>Recovery from your placed pieces</a> also gets you back in.
       </p>
       <AddAnotherWallet />
     </div>

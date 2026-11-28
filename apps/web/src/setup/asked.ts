@@ -26,7 +26,9 @@ let asked: SetupAsked | null = null;
  * asks for a new company, so the wizard sets up that one and not a company
  * the person already signs for.
  */
-export function startSetupAt(step: StepId, newCompany = false): void { asked = { step, newCompany }; }
+export function startSetupAt(step: StepId, newCompany = false): void {
+  asked = { step, newCompany };
+}
 
 /**
  * Open a company from a list of companies: choose it as the open one, the way the list does, and, when the creation
@@ -42,7 +44,6 @@ export function openCompany(id: string, choose: () => void): void {
     go(HOME.setup);
   });
 }
-
 
 /** What the wizard was asked for, once; null after. */
 export function takeAsked(): SetupAsked | null {

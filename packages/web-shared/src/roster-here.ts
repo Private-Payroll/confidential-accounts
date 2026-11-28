@@ -26,14 +26,50 @@ import { keysByPurpose } from './keys-by-purpose.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { canonical, signingPublicKeyOf, type Hex } from '../../../src/core/crypto.js';
 import { openAccount } from '../../../src/core/account.js';
-import { believedSigners, foundingRosterRefusal, oneEntryPerSeat, openRoster, ROSTER_ID, rosterEntryRefusal, seatsNotBelieved, seatsStaying as stayingIn, type DirectoryWitness, type RefusedEntry, type RosterEntryRefusal, type RosterWitnesses } from '../../../src/core/roster-record.js';
+import {
+  believedSigners,
+  foundingRosterRefusal,
+  oneEntryPerSeat,
+  openRoster,
+  ROSTER_ID,
+  rosterEntryRefusal,
+  seatsNotBelieved,
+  seatsStaying as stayingIn,
+  type DirectoryWitness,
+  type RefusedEntry,
+  type RosterEntryRefusal,
+  type RosterWitnesses
+} from '../../../src/core/roster-record.js';
 import { refuseASeatKeyNotFromTheInvitee, SeatKeyNotFromTheInvitee } from '../../../src/core/seat-invite-proof.js';
-import { approvedInvitationRefusal, proposalItsSaltMakes, seatInvitationRefusal, type ProposalIdentityOf, type SignedSeatInvitation } from '../../../src/core/invitation.js';
+import {
+  approvedInvitationRefusal,
+  proposalItsSaltMakes,
+  seatInvitationRefusal,
+  type ProposalIdentityOf,
+  type SignedSeatInvitation
+} from '../../../src/core/invitation.js';
 import { answerOpenedWith } from '../../../src/core/answer-opened.js';
-import { addSignerByAddressIn, invitationsByAddressIn, proposalFilingRefusal, seatInvitationIn, type AddSignerByAddress } from '../../../src/core/proposal-filing.js';
+import {
+  addSignerByAddressIn,
+  invitationsByAddressIn,
+  proposalFilingRefusal,
+  seatInvitationIn,
+  type AddSignerByAddress
+} from '../../../src/core/proposal-filing.js';
 import { seatOpeningRefusal, walletKeyProvedBy } from '../../../src/core/seat-opening.js';
-import type { Account, PendingSigner, PendingSignerPayload, SealedAccount, SealedProposal, Signer } from '../../../src/core/types.js';
-import { fromCompanyWire, verifiedCompanyFiler, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import type {
+  Account,
+  PendingSigner,
+  PendingSignerPayload,
+  SealedAccount,
+  SealedProposal,
+  Signer
+} from '../../../src/core/types.js';
+import {
+  fromCompanyWire,
+  verifiedCompanyFiler,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { heldStandingOf, type RecordsHeld } from '../../../src/midnight/records-held.js';
 import { companyRecordEntry, proposalEntry, type ManifestEntryBody } from '../../../src/midnight/record-manifest.js';
 import { FOUNDING_KEY_EPOCH, foundingStateRefusal, stateRecordId } from '../../../src/core/founding-state.js';
@@ -46,7 +82,15 @@ import { companyRecordKey, filingRefusalOf, type DirectorySeat } from '../../../
 import { refuseASeatWhoseFingerprintIsNotTheJoiners } from './seat-request-fingerprint.js';
 import { rosterServiceOf, type RosterViewHeld } from './roster-through-the-view.js';
 import { notePreparing } from './read-bound.js';
-import { directoryHere, filingRefusalCodeOf, judgeIn, listedHere, passedOverSaid, type DirectoryHere, type DirectoryHereDeps } from './vault-page-doors.js';
+import {
+  directoryHere,
+  filingRefusalCodeOf,
+  judgeIn,
+  listedHere,
+  passedOverSaid,
+  type DirectoryHere,
+  type DirectoryHereDeps
+} from './vault-page-doors.js';
 import { provedSeatsOf, rosterFilerJudged } from './roster-filer-here.js';
 
 export { provedSeatsOf };
@@ -80,18 +124,23 @@ export interface RosterDoors {
  * believed against. Nothing a device believed before is kept or read: an
  * older version, or other bytes under a version, is refused by the anchor.
  */
-export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'> & Partial<Pick<DirectoryHereDeps, 'invitedSeats' | 'proposalIdentity'>>;
+export type RosterReads = Pick<DirectoryHereDeps, 'filings' | 'holders' | 'anchored' | 'leaves'> &
+  Partial<Pick<DirectoryHereDeps, 'invitedSeats' | 'proposalIdentity'>>;
 
 /**
  * The company as this device believes it, with every seat the chain holds that
  * no believed entry names (`notBelieved`): a committee, a reader list or a count
  * of approvers is built only when that is empty.
  */
-export type BelievedAccount = Account & { readonly notBelieved: readonly string[]; readonly attesting?: readonly Signer[] };
+export type BelievedAccount = Account & {
+  readonly notBelieved: readonly string[];
+  readonly attesting?: readonly Signer[];
+};
 
 /** The fixed sentence for a company that has never filed its signers as a roster record: its signers are not read. */
-export const NO_ROSTER_RECORD = 'This company\'s signers have never been filed as a record a seat signed, so this device does '
-  + 'not read them. A signer of the company opens it on their own device to file them.';
+export const NO_ROSTER_RECORD =
+  "This company's signers have never been filed as a record a seat signed, so this device does " +
+  'not read them. A signer of the company opens it on their own device to file them.';
 
 /**
  * One read of a roster version, with everything it was held to: the directory
@@ -114,8 +163,14 @@ export interface RosterReadHeld {
  * served, so only this code, the classes of what stopped it and the code of a filer's reason are ever logged.
  */
 export const ROSTER_CHECK = {
-  noAccount: 'no-account', noRoster: 'no-roster', notOpened: 'roster-not-opened', filerNotChecked: 'filer-not-checked',
-  filerNotBelieved: 'filer-not-believed', seatUnnamed: 'seat-unnamed', chainUnread: 'chain-unread', seatingRefused: 'seating-refused',
+  noAccount: 'no-account',
+  noRoster: 'no-roster',
+  notOpened: 'roster-not-opened',
+  filerNotChecked: 'filer-not-checked',
+  filerNotBelieved: 'filer-not-believed',
+  seatUnnamed: 'seat-unnamed',
+  chainUnread: 'chain-unread',
+  seatingRefused: 'seating-refused'
 } as const;
 type RosterCheck = (typeof ROSTER_CHECK)[keyof typeof ROSTER_CHECK];
 
@@ -152,8 +207,15 @@ export class RosterNotBelieved extends Error {
    */
   readonly records: RecordsHeld | null;
   constructor(
-    why: string, followable: RosterReadHeld | null = null, ownUnentered: OwnUnentered | null = null,
-    said: { readonly check?: RosterCheck; readonly stoppedBy?: readonly string[]; readonly because?: string; readonly records?: RecordsHeld } = {},
+    why: string,
+    followable: RosterReadHeld | null = null,
+    ownUnentered: OwnUnentered | null = null,
+    said: {
+      readonly check?: RosterCheck;
+      readonly stoppedBy?: readonly string[];
+      readonly because?: string;
+      readonly records?: RecordsHeld;
+    } = {}
   ) {
     super(why);
     this.name = 'RosterNotBelieved';
@@ -183,11 +245,13 @@ export const signersCheckNoted = async <T>(read: () => Promise<T>, about?: strin
   try {
     return await read();
   } catch (e) {
-    const said = e instanceof Error && e.name === 'RosterNotBelieved' ? e as RosterNotBelieved : null;
+    const said = e instanceof Error && e.name === 'RosterNotBelieved' ? (e as RosterNotBelieved) : null;
     if (said?.check === ROSTER_CHECK.noAccount) {
       if (about === undefined || !saidNoAccount.has(about)) {
         if (about !== undefined) saidNoAccount.add(about);
-        notePreparing('checking the company\'s signers: not checked, because the company has no account on the network yet');
+        notePreparing(
+          "checking the company's signers: not checked, because the company has no account on the network yet"
+        );
       }
       throw e;
     }
@@ -203,20 +267,26 @@ export const signersCheckNoted = async <T>(read: () => Promise<T>, about?: strin
 const INVITATION_REFUSED = 'invitation-refused';
 
 /** A roster with a seat it leaves out, read while the chain or the company's proposals could not be read: nothing is built from it until a read is made. */
-const CHAIN_UNREAD = 'This page could not check the network for a signer who took a seat the company\'s list leaves out. Nothing was changed. '
-  + 'Reload the page to check again.';
+const CHAIN_UNREAD =
+  "This page could not check the network for a signer who took a seat the company's list leaves out. Nothing was changed. " +
+  'Reload the page to check again.';
 
 /** The same, where the person's wallet names no indexer to read the network through: reading again cannot resolve it. */
-const NO_INDEXER_TO_READ = 'Your wallet did not name the indexer it reads the network through, so whether someone invited to the company waits '
-  + 'for a seat its roster leaves out was not read, and nothing is built from the roster. Open your wallet, check its network, and reload the page.';
+const NO_INDEXER_TO_READ =
+  'Your wallet did not name the indexer it reads the network through, so whether someone invited to the company waits ' +
+  'for a seat its roster leaves out was not read, and nothing is built from the roster. Open your wallet, check its network, and reload the page.';
 
 /** A roster with a seat it leaves out, while the network shows a seating this device must not tell as any seat: reading again shows the same. */
-const SEATING_REFUSED = 'The network shows a seat taken on an invitation that this device cannot tie to that one invitation, so whether someone '
-  + 'invited waits for a seat the company\'s roster leaves out was not decided, and nothing is built from the roster. Reading again will not '
-  + 'change it: the company removes the seat it did not mean, then reads again.';
+const SEATING_REFUSED =
+  'The network shows a seat taken on an invitation that this device cannot tie to that one invitation, so whether someone ' +
+  "invited waits for a seat the company's roster leaves out was not decided, and nothing is built from the roster. Reading again will not " +
+  'change it: the company removes the seat it did not mean, then reads again.';
 
 /** A roster version this seat filed that the company's records never named: the version, and whether nothing is anchored yet. */
-interface OwnUnentered { readonly roster: SealedCompanyRecord; readonly nothingAnchored: boolean }
+interface OwnUnentered {
+  readonly roster: SealedCompanyRecord;
+  readonly nothingAnchored: boolean;
+}
 
 /** The roster as this device read it: the believed company, every entry as filed, its version, and the entries not believed. */
 interface RosterRead {
@@ -256,8 +326,12 @@ interface RosterRead {
  * not made (`aReadNotMade`), or a seating refused for good. A read that failed adds a stop word and no seat.
  */
 const seatsWaitedFor = async (
-  sealed: SealedAccount, viewingKey: KeysHeld, seating: SeatingReads, entered: readonly DirectorySeat[],
-  proposals: (() => Promise<readonly ProposalOpened[]>) | undefined, stopped: string[],
+  sealed: SealedAccount,
+  viewingKey: KeysHeld,
+  seating: SeatingReads,
+  entered: readonly DirectorySeat[],
+  proposals: (() => Promise<readonly ProposalOpened[]>) | undefined,
+  stopped: string[]
 ): Promise<Set<string>> => {
   const seats = new Set<string>();
   const admitted = (leaf: string): boolean => entered.some((x) => x.seat.toLowerCase() === leaf);
@@ -274,22 +348,40 @@ const seatsWaitedFor = async (
       stopped.push(classOf(e));
     }
   }
-  const unanswered = seating.onTheChain.map((x) => x.toLowerCase()).filter((leaf) => !seats.has(leaf) && !admitted(leaf));
+  const unanswered = seating.onTheChain
+    .map((x) => x.toLowerCase())
+    .filter((leaf) => !seats.has(leaf) && !admitted(leaf));
   /* The proposals are asked for only when a seat the chain holds is neither admitted nor answered for. */
   let served: readonly ProposalOpened[] = [];
   if (unanswered.length > 0 && proposals !== undefined) {
-    try { served = await proposals(); } catch { stopped.push(PROPOSALS_NOT_READ); }
+    try {
+      served = await proposals();
+    } catch {
+      stopped.push(PROPOSALS_NOT_READ);
+    }
   }
   for (const leaf of Array.isArray(served) ? unanswered : []) {
     const invited = seatInvitationIn(served, sealed.id, viewingKey, leaf);
-    if (invited !== null && invited.terms.company === sealed.id && signedByASeatHeld(invited, seating.seats, true)) seats.add(leaf);
+    if (invited !== null && invited.terms.company === sealed.id && signedByASeatHeld(invited, seating.seats, true))
+      seats.add(leaf);
   }
   /* A seat taken by address is waited for when the account's history shows it is the one an invitation's own proposal took. */
-  const byAddress = Array.isArray(served) && unanswered.some((leaf) => !seats.has(leaf))
-    ? invitationsByAddressIn(served, sealed.id, viewingKey).filter((x) => x.terms.company === sealed.id && signedByASeatHeld(x, seating.seats, true)) : [];
+  const byAddress =
+    Array.isArray(served) && unanswered.some((leaf) => !seats.has(leaf))
+      ? invitationsByAddressIn(served, sealed.id, viewingKey).filter(
+          (x) => x.terms.company === sealed.id && signedByASeatHeld(x, seating.seats, true)
+        )
+      : [];
   if (byAddress.length > 0) {
     let took: Readonly<Record<string, string | null>> = {};
-    try { took = await seatsTakenAsked(seating.invitedSeats, byAddress.map((x) => x.terms.proposal!.toLowerCase())); } catch (e) { stopped.push(classOf(e)); }
+    try {
+      took = await seatsTakenAsked(
+        seating.invitedSeats,
+        byAddress.map((x) => x.terms.proposal!.toLowerCase())
+      );
+    } catch (e) {
+      stopped.push(classOf(e));
+    }
     for (const x of byAddress) {
       const leaf = took[x.terms.proposal!.toLowerCase()]?.toLowerCase();
       if (leaf !== undefined && unanswered.includes(leaf)) seats.add(leaf);
@@ -309,12 +401,17 @@ const seatsWaitedFor = async (
  * the key only: every other reader takes the entries `believedSigners` believes.
  */
 const seatsAdmittedIn = (read: Pick<RosterRead, 'opened'>): ReadonlySet<string> =>
-  new Set(read.opened.signers.filter((x) => x.status === 'active' && typeof x.leafCommitment === 'string')
-    .map((x) => x.leafCommitment!.toLowerCase()));
+  new Set(
+    read.opened.signers
+      .filter((x) => x.status === 'active' && typeof x.leafCommitment === 'string')
+      .map((x) => x.leafCommitment!.toLowerCase())
+  );
 
 /** The seats the roster admitted (`seatsAdmittedIn`), read afresh: throws when the roster is not believed. */
 export async function seatsAdmittedHere(
-  sealed: Parameters<typeof rosterBelievedHere>[0], viewingKey: KeysHeld, d: Parameters<typeof rosterBelievedHere>[2],
+  sealed: Parameters<typeof rosterBelievedHere>[0],
+  viewingKey: KeysHeld,
+  d: Parameters<typeof rosterBelievedHere>[2]
 ): Promise<ReadonlySet<string>> {
   return seatsAdmittedIn(await rosterBelievedHere(sealed, viewingKey, d));
 }
@@ -347,9 +444,13 @@ export async function seatsAdmittedHere(
  * (`seating-refused`), keeping the signers it believed for the removal that clears it.
  */
 export async function rosterBelievedHere(
-  sealed: SealedAccount & { readonly roster?: SealedCompanyRecord | null }, viewingKey: KeysHeld,
+  sealed: SealedAccount & { readonly roster?: SealedCompanyRecord | null },
+  viewingKey: KeysHeld,
   d: {
-    readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress; readonly reads: RosterReads;
+    readonly accountId: string;
+    readonly label: CompanyLabel;
+    readonly account: AccountAddress;
+    readonly reads: RosterReads;
     /** This device's own signing key, and its own roster entry where it knows it. */
     readonly own?: { readonly signerId?: string | null; readonly signingPublicKey: string } | null;
     /**
@@ -357,7 +458,7 @@ export async function rosterBelievedHere(
      * signer. Without it a seat is waited for only through its answer in the inbox.
      */
     readonly proposals?: () => Promise<readonly ProposalOpened[]>;
-  },
+  }
 ): Promise<RosterRead> {
   const roster = sealed.roster ?? null;
   if (roster === null) throw new RosterNotBelieved(NO_ROSTER_RECORD, null, null, { check: ROSTER_CHECK.noRoster });
@@ -365,57 +466,103 @@ export async function rosterBelievedHere(
   try {
     opened = openAccount(sealed, viewingKey, roster);
   } catch (e) {
-    throw new RosterNotBelieved('This device cannot open the company\'s roster with the key it holds. Reload the page and try again.',
-      null, null, { check: ROSTER_CHECK.notOpened, stoppedBy: [classOf(e)] });
+    throw new RosterNotBelieved(
+      "This device cannot open the company's roster with the key it holds. Reload the page and try again.",
+      null,
+      null,
+      { check: ROSTER_CHECK.notOpened, stoppedBy: [classOf(e)] }
+    );
   }
   let read: Awaited<ReturnType<typeof directoryHere>>;
   try {
     /* The statements are taken below from the entries this device believes, never from the roster as filed. */
-    read = await directoryHere({ accountId: d.accountId, label: d.label, viewingKey, ...d.reads, attested: async () => [] }, {
-      records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }], founding: roster.version === 1,
-    });
+    read = await directoryHere(
+      { accountId: d.accountId, label: d.label, viewingKey, ...d.reads, attested: async () => [] },
+      {
+        records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }],
+        founding: roster.version === 1
+      }
+    );
   } catch (e) {
-    throw new RosterNotBelieved(`This device could not check who filed the company's roster (${(e as Error)?.message ?? String(e)}). Reload the page and try again.`,
-      null, null, { check: ROSTER_CHECK.filerNotChecked, stoppedBy: [classOf(e)] });
+    throw new RosterNotBelieved(
+      `This device could not check who filed the company's roster (${(e as Error)?.message ?? String(e)}). Reload the page and try again.`,
+      null,
+      null,
+      { check: ROSTER_CHECK.filerNotChecked, stoppedBy: [classOf(e)] }
+    );
   }
   const { witnesses, believed, refused, attesting, here, why } = rosterFilerJudged(opened, read, roster, d);
   /* Every seat the chain holds is in the roster, or waited for by someone the company invited to it. */
   const stopped: string[] = [];
-  const waited = await seatsWaitedFor(sealed, viewingKey, {
-    seats: witnesses.directory, onTheChain: read.holders.seats, leaves: d.reads.leaves,
-    ...(d.reads.invitedSeats === undefined ? {} : { invitedSeats: d.reads.invitedSeats }),
-  },
-    read.dir.seats, d.proposals, stopped);
+  const waited = await seatsWaitedFor(
+    sealed,
+    viewingKey,
+    {
+      seats: witnesses.directory,
+      onTheChain: read.holders.seats,
+      leaves: d.reads.leaves,
+      ...(d.reads.invitedSeats === undefined ? {} : { invitedSeats: d.reads.invitedSeats })
+    },
+    read.dir.seats,
+    d.proposals,
+    stopped
+  );
   const held: RosterReadHeld = { here, roster, refusedForItsFiler: false, opened, witnesses, waited };
   if (why !== null) {
-    throw new RosterNotBelieved(`This device does not believe the company's roster it was given (${why}).`,
+    throw new RosterNotBelieved(
+      `This device does not believe the company's roster it was given (${why}).`,
       roster.version !== 1 && refusedForItsFilerOnly(here, roster) ? { ...held, refusedForItsFiler: true } : null,
-      ownFilingNeverEntered(here, roster, d.own ?? null), { check: ROSTER_CHECK.filerNotBelieved, because: filingRefusalCodeOf(why), records: here.records });
+      ownFilingNeverEntered(here, roster, d.own ?? null),
+      { check: ROSTER_CHECK.filerNotBelieved, because: filingRefusalCodeOf(why), records: here.records }
+    );
   }
   const missing = unnamedIn(opened.signers, stayingIn(witnesses), waited);
   if (missing.length > 0 && stopped.includes(SEAT_READ_STOP.refused))
-    throw seatingRefusedHolding(new RosterNotBelieved(SEATING_REFUSED, null, null, { check: ROSTER_CHECK.seatingRefused, stoppedBy: stopped }), held, missing);
+    throw seatingRefusedHolding(
+      new RosterNotBelieved(SEATING_REFUSED, null, null, { check: ROSTER_CHECK.seatingRefused, stoppedBy: stopped }),
+      held,
+      missing
+    );
   if (missing.length > 0 && aReadNotMade(stopped)) {
-    throw new RosterNotBelieved(stopped.includes(SEAT_READ_STOP.noIndexer) ? NO_INDEXER_TO_READ : CHAIN_UNREAD, null, null,
-      { check: ROSTER_CHECK.chainUnread, stoppedBy: stopped });
+    throw new RosterNotBelieved(
+      stopped.includes(SEAT_READ_STOP.noIndexer) ? NO_INDEXER_TO_READ : CHAIN_UNREAD,
+      null,
+      null,
+      { check: ROSTER_CHECK.chainUnread, stoppedBy: stopped }
+    );
   }
   if (missing.length > 0) {
     const over = passedOverSaid(read);
-    throw new RosterNotBelieved(`This device does not believe the company's roster it was given (it has no entry for `
-      + `${missing.length} seat(s) the company's account holds on the chain, so it leaves a signer out). Nothing is `
-      + `built from it. ${over === null ? 'Ask a signer of the company to open it on their own device.' : `The way past it: ${over}.`}`, held,
-      null, { check: ROSTER_CHECK.seatUnnamed, stoppedBy: stopped });
+    throw new RosterNotBelieved(
+      `This device does not believe the company's roster it was given (it has no entry for ` +
+        `${missing.length} seat(s) the company's account holds on the chain, so it leaves a signer out). Nothing is ` +
+        `built from it. ${over === null ? 'Ask a signer of the company to open it on their own device.' : `The way past it: ${over}.`}`,
+      held,
+      null,
+      { check: ROSTER_CHECK.seatUnnamed, stoppedBy: stopped }
+    );
   }
   return {
     account: { ...opened, signers: believed, attesting, notBelieved: seatsNotBelieved(believed, stayingIn(witnesses)) },
-    opened, version: roster.version, refused, witnesses, held,
+    opened,
+    version: roster.version,
+    refused,
+    witnesses,
+    held
   };
 }
 
 /** The seats the chain holds that no seated entry of `signers` names and nobody invited to them waits for. */
-const unnamedIn = (signers: readonly Signer[], seatsOnTheChain: readonly string[], waited: ReadonlySet<string>): string[] =>
-  [...new Set(seatsOnTheChain.map((x) => x.toLowerCase()))].filter((seat) => !waited.has(seat)
-    && !signers.some((x) => x.status === 'active' && (x.leafCommitment ?? '').toLowerCase() === seat));
+const unnamedIn = (
+  signers: readonly Signer[],
+  seatsOnTheChain: readonly string[],
+  waited: ReadonlySet<string>
+): string[] =>
+  [...new Set(seatsOnTheChain.map((x) => x.toLowerCase()))].filter(
+    (seat) =>
+      !waited.has(seat) &&
+      !signers.some((x) => x.status === 'active' && (x.leafCommitment ?? '').toLowerCase() === seat)
+  );
 
 /**
  * Whether the seat whose filing key is `filer` may not file version `version`
@@ -423,11 +570,17 @@ const unnamedIn = (signers: readonly Signer[], seatsOnTheChain: readonly string[
  * files no roster, past its boundary, off the chain, or its own wallet has not
  * attested its records key. The one rule a roster's filer is judged by here.
  */
-export const filerRefusedHere = (here: Awaited<ReturnType<typeof directoryHere>>, filer: string, version: number): boolean => {
+export const filerRefusedHere = (
+  here: Awaited<ReturnType<typeof directoryHere>>,
+  filer: string,
+  version: number
+): boolean => {
   const key = filer.toLowerCase() as Hex;
   const seat = here.dir.seats.find((x) => x.signingKey.toLowerCase() === key);
-  return (seat !== undefined && here.another.has(seat.seat))
-    || filingRefusalOf(here.dir, here.holders, key, 'roster', companyRecordKey('roster', ROSTER_ID), version) !== null;
+  return (
+    (seat !== undefined && here.another.has(seat.seat)) ||
+    filingRefusalOf(here.dir, here.holders, key, 'roster', companyRecordKey('roster', ROSTER_ID), version) !== null
+  );
 };
 
 /**
@@ -439,12 +592,17 @@ export const filerRefusedHere = (here: Awaited<ReturnType<typeof directoryHere>>
  * withheld, changed, passed over or past a header this device cannot check is
  * the service's doing, and is never followed.
  */
-const refusedForItsFilerOnly = (here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord): boolean => {
+const refusedForItsFilerOnly = (
+  here: Awaited<ReturnType<typeof directoryHere>>,
+  roster: SealedCompanyRecord
+): boolean => {
   const filer = verifiedCompanyFiler(roster);
   if (filer === null || !filerRefusedHere(here, filer, roster.version)) return false;
   const s = heldStandingOf(here.records, companyRecordEntry(roster), filer);
-  return ((s.standing === 'not-yet-anchored' && s.version === roster.version) || s.standing === 'not-entered')
-    && s.newest <= roster.version;
+  return (
+    ((s.standing === 'not-yet-anchored' && s.version === roster.version) || s.standing === 'not-entered') &&
+    s.newest <= roster.version
+  );
 };
 
 /**
@@ -455,10 +613,18 @@ const refusedForItsFilerOnly = (here: Awaited<ReturnType<typeof directoryHere>>,
  * the entry the version carries, once something is anchored. Read from the records, never from a refusal's words.
  */
 const ownFilingNeverEntered = (
-  here: Awaited<ReturnType<typeof directoryHere>>, roster: SealedCompanyRecord, own: { readonly signingPublicKey: string } | null,
+  here: Awaited<ReturnType<typeof directoryHere>>,
+  roster: SealedCompanyRecord,
+  own: { readonly signingPublicKey: string } | null
 ): OwnUnentered | null => {
   const filer = verifiedCompanyFiler(roster);
-  if (roster.version === 1 || own === null || filer === null || filer.toLowerCase() !== own.signingPublicKey.toLowerCase()) return null;
+  if (
+    roster.version === 1 ||
+    own === null ||
+    filer === null ||
+    filer.toLowerCase() !== own.signingPublicKey.toLowerCase()
+  )
+    return null;
   const s = heldStandingOf(here.records, companyRecordEntry(roster), filer);
   if (s.standing !== 'not-entered' || s.newest >= roster.version) return null;
   return { roster, nothingAnchored: here.records.reached.seq < 0 && here.records.stopped === null };
@@ -469,7 +635,10 @@ const heldAsFiled = (here: Awaited<ReturnType<typeof directoryHere>>, rec: Seale
   const filer = verifiedCompanyFiler(rec);
   if (filer === null) return false;
   const s = heldStandingOf(here.records, companyRecordEntry(rec), filer);
-  return (s.standing === 'anchored' || s.standing === 'older-than-anchored' || s.standing === 'not-yet-anchored') && s.version === rec.version;
+  return (
+    (s.standing === 'anchored' || s.standing === 'older-than-anchored' || s.standing === 'not-yet-anchored') &&
+    s.version === rec.version
+  );
 };
 
 /** Why the roster was not read or not filed from this device. Nothing was filed. */
@@ -511,43 +680,74 @@ export async function rosterHere(d: RosterDoors): Promise<RosterHere> {
 
 const rosterReadHere = async (d: RosterDoors, mayEnter: boolean): Promise<RosterHere> => {
   const service = rosterServiceOf(d);
-  const sealed = await service.account() as SealedAccount & { roster?: SealedCompanyRecord | null };
+  const sealed = (await service.account()) as SealedAccount & { roster?: SealedCompanyRecord | null };
   let read: RosterRead;
   try {
     read = await rosterBelievedHere(sealed, d.viewingKey, {
-      ...d, own: { signingPublicKey: signingPublicKeyOf(d.signingSecret) },
-      proposals: async () => service.proposals() as Promise<readonly ProposalOpened[]>,
+      ...d,
+      own: { signingPublicKey: signingPublicKeyOf(d.signingSecret) },
+      proposals: async () => service.proposals() as Promise<readonly ProposalOpened[]>
     });
   } catch (e) {
     if (!(e instanceof RosterNotBelieved)) throw e;
     /* This seat's own filing whose entry was lost is entered again, once, and the roster read again. */
     if (e.ownUnentered !== null && mayEnter) {
-      await d.entered.enter(await withTheFoundingFirst(d, e.ownUnentered.nothingAnchored, companyRecordEntry(e.ownUnentered.roster)));
+      await d.entered.enter(
+        await withTheFoundingFirst(d, e.ownUnentered.nothingAnchored, companyRecordEntry(e.ownUnentered.roster))
+      );
       return rosterReadHere(d, false);
     }
     /* Another seat's filing whose entry was lost is entered with the entry it carries, once, and the roster read again. */
-    if (e.records !== null && mayEnter && sealed.roster != null
-      && (await carriedEntriesEntered({ accountId: d.accountId, manifest: service.manifest }, e.records, [sealed.roster])).entered > 0) return rosterReadHere(d, false);
+    if (
+      e.records !== null &&
+      mayEnter &&
+      sealed.roster != null &&
+      (await carriedEntriesEntered({ accountId: d.accountId, manifest: service.manifest }, e.records, [sealed.roster]))
+        .entered > 0
+    )
+      return rosterReadHere(d, false);
     if (e.followable === null) throw new RosterNotFiled(e.message);
     const held = e.followable;
     const { signers, above } = await carriedHere(d, held, true);
-    const carried: Account = { ...held.opened, signers: [...signers, ...held.opened.signers.filter((s) => s.status !== 'active')] };
+    const carried: Account = {
+      ...held.opened,
+      signers: [...signers, ...held.opened.signers.filter((s) => s.status !== 'active')]
+    };
     const { believed, refused, attesting } = believedSigners(carried.signers, held.witnesses);
     return {
-      sealed, opened: held.opened, version: above, refused, witnesses: held.witnesses, held, carried,
-      account: { ...carried, signers: believed, attesting, notBelieved: seatsNotBelieved(believed, stayingIn(held.witnesses)) },
-      followed: { version: held.roster.version, why: e.message },
+      sealed,
+      opened: held.opened,
+      version: above,
+      refused,
+      witnesses: held.witnesses,
+      held,
+      carried,
+      account: {
+        ...carried,
+        signers: believed,
+        attesting,
+        notBelieved: seatsNotBelieved(believed, stayingIn(held.witnesses))
+      },
+      followed: { version: held.roster.version, why: e.message }
     };
   }
   const { signers, above } = await carriedHere(d, read.held, false);
   return {
-    sealed, ...read, version: above, followed: null,
-    carried: { ...read.opened, signers: [...signers, ...read.opened.signers.filter((s) => s.status !== 'active')] },
+    sealed,
+    ...read,
+    version: above,
+    followed: null,
+    carried: { ...read.opened, signers: [...signers, ...read.opened.signers.filter((s) => s.status !== 'active')] }
   };
 };
 
 /** The refusals no later read can lift: an entry refused for one of them is dropped from every version filed from here. */
-const REFUSED_FOR_GOOD: ReadonlySet<RosterEntryRefusal> = new Set<RosterEntryRefusal>(['not-their-signing-key', 'not-their-person', 'vault-keys-not-theirs', 'seat-retired']);
+const REFUSED_FOR_GOOD: ReadonlySet<RosterEntryRefusal> = new Set<RosterEntryRefusal>([
+  'not-their-signing-key',
+  'not-their-person',
+  'vault-keys-not-theirs',
+  'seat-retired'
+]);
 
 /** Whether a version filed from here carries `s`: believed here, or refused only for what a later read can lift. */
 const carriedOn = (s: Signer, w: RosterWitnesses): boolean => {
@@ -582,26 +782,40 @@ const carriedOn = (s: Signer, w: RosterWitnesses): boolean => {
  * At most one entry stands for a seat (`oneEntryPerSeat`).
  */
 const carriedHere = async (
-  d: RosterDoors, held: RosterReadHeld, followed: boolean,
+  d: RosterDoors,
+  held: RosterReadHeld,
+  followed: boolean
 ): Promise<{ readonly signers: Signer[]; readonly above: number }> => {
   const seated = held.opened.signers.filter((s) => s.status === 'active');
   let signers = seated.filter((s) => carriedOn(s, held.witnesses));
   let unnamed = unnamedIn(signers, stayingIn(held.witnesses), held.waited);
   let above = held.roster.version;
-  const activeIn = (rec: SealedCompanyRecord) => openRoster(rec, keysByPurpose(d.viewingKey).at(rec.keyEpoch)).signers.filter((s) => s.status === 'active' && carriedOn(s, held.witnesses));
+  const activeIn = (rec: SealedCompanyRecord) =>
+    openRoster(rec, keysByPurpose(d.viewingKey).at(rec.keyEpoch)).signers.filter(
+      (s) => s.status === 'active' && carriedOn(s, held.witnesses)
+    );
   if (followed || unnamed.length > 0) {
-    const answer = await rosterServiceOf(d).rosterVersions() as { versions?: unknown } | null;
-    if (!Array.isArray(answer?.versions)) throw new RosterNotFiled('The company\'s earlier rosters could not be read.');
-    const served = (answer!.versions as unknown[]).map((m) => fromCompanyWire(m, { company: d.accountId, kind: 'roster', id: ROSTER_ID }).sealed);
+    const answer = (await rosterServiceOf(d).rosterVersions()) as { versions?: unknown } | null;
+    if (!Array.isArray(answer?.versions)) throw new RosterNotFiled("The company's earlier rosters could not be read.");
+    const served = (answer!.versions as unknown[]).map(
+      (m) => fromCompanyWire(m, { company: d.accountId, kind: 'roster', id: ROSTER_ID }).sealed
+    );
     above = Math.max(above, ...served.map((r) => r.version));
-    const older = served.filter((r) => r.version < held.roster.version && heldAsFiled(held.here, r)
-      && (!held.refusedForItsFiler || !filerRefusedHere(held.here, verifiedCompanyFiler(r)!, r.version)))
+    const older = served
+      .filter(
+        (r) =>
+          r.version < held.roster.version &&
+          heldAsFiled(held.here, r) &&
+          (!held.refusedForItsFiler || !filerRefusedHere(held.here, verifiedCompanyFiler(r)!, r.version))
+      )
       .sort((a, b) => b.version - a.version);
     if (held.refusedForItsFiler) {
       const base = older[0];
       if (base === undefined) {
-        throw new RosterNotFiled('No version of the company\'s roster filed by a seat that may file one can be read, so the version '
-          + 'every device refuses is not followed from here.');
+        throw new RosterNotFiled(
+          "No version of the company's roster filed by a seat that may file one can be read, so the version " +
+            'every device refuses is not followed from here.'
+        );
       }
       signers = activeIn(base).map((b) => boundFrom(b, seated, held.witnesses));
       unnamed = unnamedIn(signers, stayingIn(held.witnesses), held.waited);
@@ -622,8 +836,10 @@ const carriedHere = async (
   }
   unnamed = unnamedIn(signers, stayingIn(held.witnesses), held.waited);
   if (unnamed.length > 0) {
-    throw new RosterNotFiled(`No version of the company's roster this device can read names an entry for ${unnamed.length} `
-      + 'seat(s) the company\'s account holds on the chain, so a version filed from here would leave a signer out.');
+    throw new RosterNotFiled(
+      `No version of the company's roster this device can read names an entry for ${unnamed.length} ` +
+        "seat(s) the company's account holds on the chain, so a version filed from here would leave a signer out."
+    );
   }
   return { signers: oneEntryPerSeat(signers, held.witnesses), above };
 };
@@ -635,10 +851,18 @@ const carriedHere = async (
  * this device believes. Its name, sign-in and wrapping key are `b`'s.
  */
 const boundFrom = (b: Signer, refused: readonly Signer[], w: RosterWitnesses): Signer => {
-  const r = refused.find((x) => x.id === b.id && (x.leafCommitment ?? '').toLowerCase() === (b.leafCommitment ?? '').toLowerCase()
-    && x.signingPublicKey.toLowerCase() === b.signingPublicKey.toLowerCase());
+  const r = refused.find(
+    (x) =>
+      x.id === b.id &&
+      (x.leafCommitment ?? '').toLowerCase() === (b.leafCommitment ?? '').toLowerCase() &&
+      x.signingPublicKey.toLowerCase() === b.signingPublicKey.toLowerCase()
+  );
   if (r === undefined || rosterEntryRefusal(r, w) !== null) return b;
-  const bound: Signer = { ...b, vaultKeys: r.vaultKeys ?? b.vaultKeys, directoryEntry: r.directoryEntry ?? b.directoryEntry };
+  const bound: Signer = {
+    ...b,
+    vaultKeys: r.vaultKeys ?? b.vaultKeys,
+    directoryEntry: r.directoryEntry ?? b.directoryEntry
+  };
   return rosterEntryRefusal(bound, w) === null ? bound : b;
 };
 
@@ -653,7 +877,9 @@ const boundFrom = (b: Signer, refused: readonly Signer[], w: RosterWitnesses): S
  * Read before the roster is filed, so a version filed is always entered.
  */
 export const withTheFoundingFirst = async (
-  d: Pick<RosterDoors, 'accountId' | 'signingSecret' | 'view'>, nothingAnchored: boolean, entry: ManifestEntryBody,
+  d: Pick<RosterDoors, 'accountId' | 'signingSecret' | 'view'>,
+  nothingAnchored: boolean,
+  entry: ManifestEntryBody
 ): Promise<ManifestEntryBody[]> => {
   if (!nothingAnchored) return [entry];
   const mine = signingPublicKeyOf(d.signingSecret);
@@ -662,17 +888,19 @@ export const withTheFoundingFirst = async (
   let state: SealedCompanyRecord | null;
   let roster: SealedCompanyRecord | null;
   try {
-    [state, roster] = await Promise.all([first('state', stateRecordId(FOUNDING_KEY_EPOCH)), first('roster', ROSTER_ID)]);
+    [state, roster] = await Promise.all([
+      first('state', stateRecordId(FOUNDING_KEY_EPOCH)),
+      first('roster', ROSTER_ID)
+    ]);
   } catch {
     return [entry];
   }
   const founding = [
     state !== null && foundingStateRefusal(state, d.accountId, mine) === null ? state : null,
-    roster !== null && foundingRosterRefusal(roster, d.accountId, mine) === null ? roster : null,
+    roster !== null && foundingRosterRefusal(roster, d.accountId, mine) === null ? roster : null
   ].filter((r): r is SealedCompanyRecord => r !== null);
   return [...founding.map(companyRecordEntry), entry];
 };
-
 
 /** What an approving device reads to hold a seat request to the invitation behind it. */
 export interface SeatingReads {
@@ -688,7 +916,10 @@ export interface SeatingReads {
 
 /** Whether an invitation was made by address: it names the proposal raised for the address, and no leaf. */
 export const madeByAddress = (invited: SignedSeatInvitation | undefined): boolean =>
-  invited !== undefined && invited.terms.leaf === undefined && invited.terms.invite !== undefined && invited.terms.proposal !== undefined;
+  invited !== undefined &&
+  invited.terms.leaf === undefined &&
+  invited.terms.invite !== undefined &&
+  invited.terms.proposal !== undefined;
 
 /** Whether `leaf` is one of the seats the company's account holds now, as this device's own wallet read it. */
 const onTheChain = (leaf: string, reads: Pick<SeatingReads, 'onTheChain'>): boolean =>
@@ -696,7 +927,9 @@ const onTheChain = (leaf: string, reads: Pick<SeatingReads, 'onTheChain'>): bool
 
 /** Thrown with the sentence an approving device shows; nothing was raised, approved, carried out or filed. */
 export const notTheInvited = (why: string): SeatKeyNotFromTheInvitee =>
-  new SeatKeyNotFromTheInvitee(`${why} Nothing was sent. Do not give this person access: ask a seated signer to invite them again.`);
+  new SeatKeyNotFromTheInvitee(
+    `${why} Nothing was sent. Do not give this person access: ask a seated signer to invite them again.`
+  );
 
 /**
  * Thrown when the id the service gave a person waiting for a seat is also carried by another entry of the roster: a
@@ -705,15 +938,20 @@ export const notTheInvited = (why: string): SeatKeyNotFromTheInvitee =>
  */
 export class WaitingIdTaken extends Error {
   constructor() {
-    super('The service named the person waiting with the id of another signer on this company, so nobody was admitted. Nothing '
-      + 'was signed or sent. Do not give this person access: tell the company\'s other signers.');
+    super(
+      'The service named the person waiting with the id of another signer on this company, so nobody was admitted. Nothing ' +
+        "was signed or sent. Do not give this person access: tell the company's other signers."
+    );
     this.name = 'WaitingIdTaken';
   }
 }
 
 /** Whether an entry of `signers` other than the request waiting for `leaf` carries `signerId`. The service chooses the id, so it is never trusted to be free. */
-export const waitingIdTakenIn = (signers: readonly Pick<Signer, 'id' | 'leafCommitment'>[], signerId: string, leaf: string): boolean =>
-  signers.some((s) => s.id === signerId && (s.leafCommitment ?? '').toLowerCase() !== leaf.toLowerCase());
+export const waitingIdTakenIn = (
+  signers: readonly Pick<Signer, 'id' | 'leafCommitment'>[],
+  signerId: string,
+  leaf: string
+): boolean => signers.some((s) => s.id === signerId && (s.leafCommitment ?? '').toLowerCase() !== leaf.toLowerCase());
 
 /**
  * **A SEAT GOES TO THE PERSON INVITED, AND ITS LEAF TO THEIR WALLET**: refuses,
@@ -734,7 +972,11 @@ export const waitingIdTakenIn = (signers: readonly Pick<Signer, 'id' | 'leafComm
  * waiting.
  */
 export async function refuseASeatNotForTheInvited(
-  sealed: SealedAccount, viewingKey: KeysHeld, box: Pick<PendingSigner, 'id' | 'userId'>, payload: PendingSignerPayload, reads: SeatingReads,
+  sealed: SealedAccount,
+  viewingKey: KeysHeld,
+  box: Pick<PendingSigner, 'id' | 'userId'>,
+  payload: PendingSignerPayload,
+  reads: SeatingReads
 ): Promise<void> {
   const why = await invitationRefusalHere(sealed, box, payload, reads);
   if (why !== null) throw notTheInvited(why);
@@ -757,14 +999,18 @@ export async function refuseASeatNotForTheInvited(
     }
     /* One person waits for one seat: two requests for them, under two invitations, are one person's two votes. */
     if (theirs.invited!.terms.person === t.person) {
-      throw notTheInvited('Another seat request is waiting for the same person, so this device seats neither. Withdraw the one '
-        + 'that should not be seated first.');
+      throw notTheInvited(
+        'Another seat request is waiting for the same person, so this device seats neither. Withdraw the one ' +
+          'that should not be seated first.'
+      );
     }
   }
   /* A person holds one seat not retired: one this device believes already holds a seat is not seated again. */
   const leaf = payload.leafCommitment.toLowerCase();
   if (reads.seats.some((x) => !x.retired && x.person === t.person && x.seat.toLowerCase() !== leaf)) {
-    throw notTheInvited('The person this seat request is for already holds a seat on this company, so nobody is seated from it.');
+    throw notTheInvited(
+      'The person this seat request is for already holds a seat on this company, so nobody is seated from it.'
+    );
   }
 }
 
@@ -782,7 +1028,10 @@ export async function refuseASeatNotForTheInvited(
  * refused for good keeps its own words.
  */
 const invitationRefusalHere = async (
-  sealed: SealedAccount, box: Pick<PendingSigner, 'userId'>, payload: PendingSignerPayload, reads: SeatingReads,
+  sealed: SealedAccount,
+  box: Pick<PendingSigner, 'userId'>,
+  payload: PendingSignerPayload,
+  reads: SeatingReads
 ): Promise<string | null> => {
   const invited = payload.invited;
   if (seatInvitationRefusal(invited) !== null || invited === undefined) {
@@ -803,7 +1052,7 @@ const invitationRefusalHere = async (
     const proposal = t.proposal!.toLowerCase();
     const took = (await seatsTakenAsked(reads.invitedSeats, [proposal]))[proposal] ?? null;
     if (approvedInvitationRefusal(invited, null, { leaf: payload.leafCommitment, took }) !== null) {
-      return 'The seat in this request is not the one the network shows this invitation\'s proposal took, so nobody is seated from it.';
+      return "The seat in this request is not the one the network shows this invitation's proposal took, so nobody is seated from it.";
     }
   } else {
     if (payload.person !== t.person || box.userId !== t.person) {
@@ -835,11 +1084,18 @@ const invitationRefusalHere = async (
  * member; and the invitation behind it (`refuseASeatNotForTheInvited`).
  */
 export async function waitingHere(
-  sealed: SealedAccount, account: Account, viewingKey: KeysHeld, signerId: string, readOut: string, seating: SeatingReads,
+  sealed: SealedAccount,
+  account: Account,
+  viewingKey: KeysHeld,
+  signerId: string,
+  readOut: string,
+  seating: SeatingReads
 ): Promise<{ readonly payload: PendingSignerPayload; readonly userId: string | null }> {
   const box = sealed.pendingSigners.find((p) => p.id === signerId);
   if (box === undefined) {
-    throw new SeatKeyNotFromTheInvitee('That person is no longer waiting for a seat. Reload the page. Nothing was sent.');
+    throw new SeatKeyNotFromTheInvitee(
+      'That person is no longer waiting for a seat. Reload the page. Nothing was sent.'
+    );
   }
   let opened: { readonly value: PendingSignerPayload; readonly key: Hex };
   try {
@@ -850,27 +1106,41 @@ export async function waitingHere(
   const payload = opened.value;
   refuseASeatKeyNotFromTheInvitee(opened.key, sealed.id, payload);
   if (waitingIdTakenIn(account.signers, signerId, payload.leafCommitment)) throw new WaitingIdTaken();
-  if (account.signers.some((x) => x.id !== signerId && (x.signingPublicKey === payload.signingPublicKey
-    || (x.leafCommitment ?? '').toLowerCase() === payload.leafCommitment.toLowerCase()))) {
-    throw new SeatKeyNotFromTheInvitee('These keys already belong to another signer on this company, so they cannot be '
-      + 'seated under this name. Nothing was sent. Do not give this person access: they need a new invitation.');
+  if (
+    account.signers.some(
+      (x) =>
+        x.id !== signerId &&
+        (x.signingPublicKey === payload.signingPublicKey ||
+          (x.leafCommitment ?? '').toLowerCase() === payload.leafCommitment.toLowerCase())
+    )
+  ) {
+    throw new SeatKeyNotFromTheInvitee(
+      'These keys already belong to another signer on this company, so they cannot be ' +
+        'seated under this name. Nothing was sent. Do not give this person access: they need a new invitation.'
+    );
   }
   /* A seat taken by address was proved on the chain by the address's own key: nothing is read out for it. */
   if (!madeByAddress(payload.invited)) refuseASeatWhoseFingerprintIsNotTheJoiners(payload, readOut);
   if (typeof payload.person !== 'string' || payload.person !== box.userId) {
-    throw new SeatKeyNotFromTheInvitee('This seat request was not sealed for the sign-in it would make a member of the '
-      + 'company, so nobody is seated from it. Nothing was sent. Ask the person to accept their invitation again.');
+    throw new SeatKeyNotFromTheInvitee(
+      'This seat request was not sealed for the sign-in it would make a member of the ' +
+        'company, so nobody is seated from it. Nothing was sent. Ask the person to accept their invitation again.'
+    );
   }
   await refuseASeatNotForTheInvited(sealed, viewingKey, box, payload, seating);
   return { payload, userId: box.userId };
 }
 
 /** What `waitingHere` holds a request to, from one read of the roster: the directory that read believed, and this device's vault worker. */
-export const seatingOf = (read: { readonly witnesses: RosterWitnesses }, reads: Pick<RosterReads, 'leaves' | 'invitedSeats'>): SeatingReads =>
-  ({
-    seats: read.witnesses.directory, onTheChain: read.witnesses.seatsOnTheChain, leaves: reads.leaves,
-    ...(reads.invitedSeats === undefined ? {} : { invitedSeats: reads.invitedSeats }),
-  });
+export const seatingOf = (
+  read: { readonly witnesses: RosterWitnesses },
+  reads: Pick<RosterReads, 'leaves' | 'invitedSeats'>
+): SeatingReads => ({
+  seats: read.witnesses.directory,
+  onTheChain: read.witnesses.seatsOnTheChain,
+  leaves: reads.leaves,
+  ...(reads.invitedSeats === undefined ? {} : { invitedSeats: reads.invitedSeats })
+});
 
 /**
  * Whether two signed seat invitations are one: the same terms, signed by the same seat. The signature is not compared:
@@ -889,15 +1159,31 @@ export const sameInvitation = (a: SignedSeatInvitation, b: SignedSeatInvitation)
  * approved one made: the id commits to the whole invitation, so two different invitations never stand under one id.
  */
 export const believedSeatingsUnder = async (
-  here: DirectoryHere, served: readonly SealedProposal[], accountId: string, viewingKey: KeysHeld, chainId: string,
-  seats: readonly DirectoryWitness[], identity: ProposalIdentityOf, leafOnTheChain = false,
+  here: DirectoryHere,
+  served: readonly SealedProposal[],
+  accountId: string,
+  viewingKey: KeysHeld,
+  chainId: string,
+  seats: readonly DirectoryWitness[],
+  identity: ProposalIdentityOf,
+  leafOnTheChain = false
 ): Promise<AddSignerByAddress[]> => {
   const judge = judgeIn(here);
   const id = chainId.toLowerCase();
   const out: AddSignerByAddress[] = [];
   for (const p of listedHere(here, 'proposal', served, 'proposal')) {
     if (p.filedBy === undefined || p.accountId !== accountId || proposalFilingRefusal(accountId, p) !== null) continue;
-    if (judge(p.filedBy.publicKey, 'proposal', companyRecordKey('proposal', p.id), proposalEntry(accountId, p), true, p.keyEpoch) !== null) continue;
+    if (
+      judge(
+        p.filedBy.publicKey,
+        'proposal',
+        companyRecordKey('proposal', p.id),
+        proposalEntry(accountId, p),
+        true,
+        p.keyEpoch
+      ) !== null
+    )
+      continue;
     const x = addSignerByAddressIn(p, accountId, viewingKey);
     if (x === null || x.chainId !== id || !signedByASeatHeld(x.invited, seats, leafOnTheChain)) continue;
     out.push(x);

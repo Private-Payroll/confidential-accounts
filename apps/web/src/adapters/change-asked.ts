@@ -4,7 +4,10 @@
  * without loading the code that prices them.
  */
 export const CHANGE_ASKED = {
-  seating: 'seating', vaultThreshold: 'vault-threshold', spendingPolicy: 'spending-policy', policyBar: 'policy-bar',
+  seating: 'seating',
+  vaultThreshold: 'vault-threshold',
+  spendingPolicy: 'spending-policy',
+  policyBar: 'policy-bar'
 } as const;
 
 /** A change of who is seated: a signer added, removed, or put in a seat again. */

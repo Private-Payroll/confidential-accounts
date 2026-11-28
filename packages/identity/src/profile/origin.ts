@@ -87,9 +87,11 @@ const MAX_ORIGIN = 255;
 export const buildSetting = (name: string): unknown => {
   const env = (import.meta as { env?: Record<string, unknown> }).env;
   if (env && name in env) return env[name];
-  const proc = (globalThis as {
-    process?: { env?: Record<string, string | undefined> };
-  }).process;
+  const proc = (
+    globalThis as {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process;
   return proc?.env?.[name];
 };
 
@@ -157,8 +159,7 @@ const isLoopback = (url: URL): boolean =>
  * the public internet cannot do. **And it is still a development build's
  * exception only** - `usableOrigin` gates it exactly as it gates the other three.
  */
-const isLocalhostName = (host: string): boolean =>
-  host.endsWith('.localhost') && host.length > '.localhost'.length;
+const isLocalhostName = (host: string): boolean => host.endsWith('.localhost') && host.length > '.localhost'.length;
 
 /**
  * **IS THIS ONE OF THE THREE LOOPBACK ORIGINS?** Independent of whether they
@@ -195,11 +196,15 @@ export function usableOrigin(value: unknown): boolean {
  */
 export function whyNotUsable(value: unknown): string {
   if (isLoopbackOrigin(value) && !localhostOriginsAllowed()) {
-    return 'this wallet only talks to a site over a secure connection. It can be built to '
-      + 'allow a local development address as well, and this build was not.';
+    return (
+      'this wallet only talks to a site over a secure connection. It can be built to ' +
+      'allow a local development address as well, and this build was not.'
+    );
   }
-  return 'this wallet could not observe a secure origin for whoever is asking, so it cannot '
-    + 'tell you who they are. Nothing has been shown to them.';
+  return (
+    'this wallet could not observe a secure origin for whoever is asking, so it cannot ' +
+    'tell you who they are. Nothing has been shown to them.'
+  );
 }
 
 /* ======================================================================== *
@@ -221,8 +226,7 @@ export class SiteRefusal extends Error {
   }
 }
 
-const isIpLiteral = (host: string): boolean =>
-  host.startsWith('[') || /^[0-9.]+$/.test(host);
+const isIpLiteral = (host: string): boolean => host.startsWith('[') || /^[0-9.]+$/.test(host);
 
 /**
  * **THE NAME TWO HOSTS SHARE, WHICH IS WHAT A PASSKEY AND A COOKIE ARE SCOPED TO.**
@@ -259,9 +263,10 @@ export function sharedSite(first: string, second: string): string {
   if (a === b) return a;
   if (isIpLiteral(a) || isIpLiteral(b)) {
     throw new SiteRefusal(
-      `${a} and ${b} are not two names under one site - an address is only ever its own - `
-      + 'so a passkey or a sign-in made on one cannot be used on the other. Serve both surfaces '
-      + 'under one name.');
+      `${a} and ${b} are not two names under one site - an address is only ever its own - ` +
+        'so a passkey or a sign-in made on one cannot be used on the other. Serve both surfaces ' +
+        'under one name.'
+    );
   }
   const x = a.split('.').reverse();
   const y = b.split('.').reverse();
@@ -270,13 +275,15 @@ export function sharedSite(first: string, second: string): string {
   const site = common.reverse().join('.');
   if (common.length === 0) {
     throw new SiteRefusal(
-      `${a} and ${b} share no name, so a passkey or a sign-in made on one cannot be used on the `
-      + 'other. Serve both surfaces under one name.');
+      `${a} and ${b} share no name, so a passkey or a sign-in made on one cannot be used on the ` +
+        'other. Serve both surfaces under one name.'
+    );
   }
   if (common.length === 1 && site !== 'localhost') {
     throw new SiteRefusal(
-      `${a} and ${b} share only "${site}", which no browser lets a passkey or a sign-in belong `
-      + 'to. Serve both surfaces under one name you own.');
+      `${a} and ${b} share only "${site}", which no browser lets a passkey or a sign-in belong ` +
+        'to. Serve both surfaces under one name you own.'
+    );
   }
   return site;
 }
@@ -293,8 +300,9 @@ export function embedderFrom(value: unknown): string | null {
   if (value === undefined || value === null || value === '') return null;
   if (!usableOrigin(value)) {
     throw new SiteRefusal(
-      `the page this wallet was built to sit inside, ${String(value)}, is not an address it can `
-      + `trust: ${whyNotUsable(value)}`);
+      `the page this wallet was built to sit inside, ${String(value)}, is not an address it can ` +
+        `trust: ${whyNotUsable(value)}`
+    );
   }
   return value as string;
 }

@@ -12,18 +12,25 @@ import { IDBFactory } from 'fake-indexeddb';
  * in for, as the company's account stands; the passkey call and its verification are stood in for.
  */
 
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 /* What the chain says each account carries. */
 /* How each read after the first `answered` reads comes back: as the account stands, never, or failing. */
-const chain = vi.hoisted(() => ({ carries: new Map<string, string>(), answered: Infinity, then: 'never' as 'never' | 'fails', reads: 0 }));
+const chain = vi.hoisted(() => ({
+  carries: new Map<string, string>(),
+  answered: Infinity,
+  then: 'never' as 'never' | 'fails',
+  reads: 0
+}));
 vi.mock('../chain/company-label-on-chain.js', async (real) => ({
   ...(await real<typeof import('../chain/company-label-on-chain.js')>()),
   labelOnAccount: async (account: string) => {
@@ -34,7 +41,7 @@ vi.mock('../chain/company-label-on-chain.js', async (real) => ({
     }
     const label = chain.carries.get(account);
     return label === undefined ? { of: 'no-account' } : { of: 'carries', label };
-  },
+  }
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -74,35 +81,57 @@ const mockUsePasskey = vi.mocked(usePasskey);
 const mockVerifyAssertion = vi.mocked(verifyAssertion);
 
 const passkeyFixture = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7, signCount: 0,
-  provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false, transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 const passkeyAnswers = (credentialId: string): void => {
   mockUsePasskey.mockResolvedValueOnce({
-    credentialId, clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(), signature: new Uint8Array(),
-    userHandle: 'cGVyc29uLTE',
+    credentialId,
+    clientDataJSON: new Uint8Array(),
+    authenticatorData: new Uint8Array(),
+    signature: new Uint8Array(),
+    userHandle: 'cGVyc29uLTE'
   } as never);
   mockVerifyAssertion.mockResolvedValueOnce({ passkey: passkeyFixture(credentialId) } as never);
 };
 
 /** The service as the page reads it: the person, their saved keys sealed under their wallet's key, and the company. */
 function theService(secret: Uint8Array, account: string | null): void {
-  const key = savedKeysSealKey(identityFromSecret(secret as never) as never, { requester: { origin: PAGE, name: 'x', rdns: 'x' }, person: PERSON } as never);
-  let saved = { bundle: sealKeyring({ accounts: {}, counter: 1 } as never, key as never).sealed as unknown, version: 1 };
+  const key = savedKeysSealKey(
+    identityFromSecret(secret as never) as never,
+    { requester: { origin: PAGE, name: 'x', rdns: 'x' }, person: PERSON } as never
+  );
+  let saved = {
+    bundle: sealKeyring({ accounts: {}, counter: 1 } as never, key as never).sealed as unknown,
+    version: 1
+  };
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     const route = `${String(init?.method ?? 'GET')} ${url}`;
     const json = (status: number, b: unknown) => ({ ok: status < 400, status, json: async () => b }) as Response;
     switch (route) {
-      case 'GET /api/me': return json(200, { user: { id: PERSON, email: null, name: 'Priya' } });
-      case 'GET /api/me/keys': return json(200, { keyBundle: saved.bundle, version: saved.version });
+      case 'GET /api/me':
+        return json(200, { user: { id: PERSON, email: null, name: 'Priya' } });
+      case 'GET /api/me/keys':
+        return json(200, { keyBundle: saved.bundle, version: saved.version });
       case 'PUT /api/me/keys': {
         const body = JSON.parse(String(init!.body));
         saved = { bundle: body.keyBundle, version: saved.version + 1 };
         return json(200, { version: saved.version });
       }
-      case 'GET /api/accounts': return json(200, []);
-      case `POST /api/accounts/${COMPANY}/unlock`: return json(200, { company: LABEL, account });
-      default: return json(404, { error: `no route for ${route}` });
+      case 'GET /api/accounts':
+        return json(200, []);
+      case `POST /api/accounts/${COMPANY}/unlock`:
+        return json(200, { company: LABEL, account });
+      default:
+        return json(404, { error: `no route for ${route}` });
     }
   }) as typeof fetch;
 }
@@ -120,15 +149,17 @@ const tab = {
     }, 0);
   },
   closed: false,
-  close: () => {},
+  close: () => {}
 };
 /* Every message the wallet sent the page. */
 let said: Array<Record<string, unknown>> = [];
 const opener = {
   postMessage: (m: unknown) => {
     said.push(m as Record<string, unknown>);
-    setTimeout(() => { for (const h of [...pageHandlers]) h({ origin: WALLET, source: tab, data: m } as unknown as MessageEvent); }, 0);
-  },
+    setTimeout(() => {
+      for (const h of [...pageHandlers]) h({ origin: WALLET, source: tab, data: m } as unknown as MessageEvent);
+    }, 0);
+  }
 };
 const view = {
   open: () => tab,
@@ -137,14 +168,17 @@ const view = {
     /* The wallet's window is already listening: it says so to each listener the page adds. */
     setTimeout(() => h({ origin: WALLET, source: tab, data: { schema: READY_PING } } as unknown as MessageEvent), 0);
   },
-  removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { pageHandlers.delete(h); },
+  removeEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+    pageHandlers.delete(h);
+  },
   setTimeout: () => 0,
-  clearTimeout: () => {},
+  clearTimeout: () => {}
 } as unknown as Openable;
 
 /** The keyring asks the page sent, each once however often it was sent again to a wallet saying it listens. */
-const keyringAsks = (): Array<Record<string, unknown>> =>
-  [...new Map(asks.filter((m) => m['kind'] === 'keyring').map((m) => [m['nonce'], m])).values()];
+const keyringAsks = (): Array<Record<string, unknown>> => [
+  ...new Map(asks.filter((m) => m['kind'] === 'keyring').map((m) => [m['nonce'], m])).values()
+];
 
 async function aWallet(): Promise<Uint8Array> {
   const secret = newSecret();
@@ -157,7 +191,9 @@ async function aWallet(): Promise<Uint8Array> {
 /** The page's open press on the company's pages, answered through the locked wallet's one window. */
 async function openTheCompany(): Promise<{ released: string[]; alsoSaid: string | null }> {
   const released: string[] = [];
-  const stop = keyring.watchCompanyKeyReleased((id) => { released.push(id); });
+  const stop = keyring.watchCompanyKeyReleased((id) => {
+    released.push(id);
+  });
   const pressed = await pressOpen();
   await waitFor(() => expect(pressed.settled()).toBe(true), { timeout: 8000 });
   await pressed.opening;
@@ -167,10 +203,16 @@ async function openTheCompany(): Promise<{ released: string[]; alsoSaid: string 
 
 /** The open press, up to the person pressing Approve in the window once it can be pressed. */
 async function pressOpen(): Promise<{ opening: Promise<void>; settled: () => boolean; alsoSaid: string | null }> {
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
   await keyring.resumeSession(null);
   let settled = false;
-  const opening = keyring.openKeysWithWallet(WALLET, view, PAGE, undefined, COMPANY).finally(() => { settled = true; });
+  const opening = keyring.openKeysWithWallet(WALLET, view, PAGE, undefined, COMPANY).finally(() => {
+    settled = true;
+  });
   opening.catch(() => {});
   await waitFor(() => expect(document.querySelector('[data-ask-window="keyring"]')).not.toBeNull());
   await waitFor(() => expect(document.querySelector('[data-company-check="checking"]')).toBeNull());
@@ -183,7 +225,8 @@ async function pressOpen(): Promise<{ opening: Promise<void>; settled: () => boo
 }
 
 /** The keyring answers the wallet sent the page. */
-const releases = (): Array<Record<string, unknown>> => said.filter((m) => m['schema'] === 'midnight-identity/keyring-release/v1');
+const releases = (): Array<Record<string, unknown>> =>
+  said.filter((m) => m['schema'] === 'midnight-identity/keyring-release/v1');
 
 const realFetch = globalThis.fetch;
 beforeEach(() => {
@@ -209,7 +252,7 @@ beforeEach(() => {
 });
 
 describe('opening a company on its pages', () => {
-  it('on the chain, opens the saved keys and the company\'s vault balances in one window and one passkey', async () => {
+  it("on the chain, opens the saved keys and the company's vault balances in one window and one passkey", async () => {
     theService(await aWallet(), ACCOUNT);
     chain.carries.set(ACCOUNT, LABEL);
     const { released, alsoSaid } = await openTheCompany();
@@ -251,28 +294,41 @@ describe('opening a company on its pages', () => {
     theService(await aWallet(), ACCOUNT);
     chain.carries.set(ACCOUNT, LABEL);
     chain.answered = 0;
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await keyring.resumeSession(null);
     let settled = false;
-    void keyring.openKeysWithWallet(WALLET, view, PAGE, undefined, COMPANY).finally(() => { settled = true; }).catch(() => {});
+    void keyring
+      .openKeysWithWallet(WALLET, view, PAGE, undefined, COMPANY)
+      .finally(() => {
+        settled = true;
+      })
+      .catch(() => {});
     await waitFor(() => expect(document.querySelector('[data-company-check="checking"]')).not.toBeNull());
     const approve = document.querySelector('[data-approve-window]') as HTMLButtonElement;
     passkeyAnswers('cred-a');
     fireEvent.click(approve);
-    await new Promise((r) => { setTimeout(r, 500); });
+    await new Promise((r) => {
+      setTimeout(r, 500);
+    });
     /* RED WHEN: the window lets the keys be given before the wallet has read the company's account on the chain. */
     expect(approve.disabled).toBe(true);
     expect(mockUsePasskey).not.toHaveBeenCalled();
     expect([releases(), settled]).toEqual([[], false]);
   });
 
-  it('after the passkey, answers nothing until the wallet\'s own read of the chain is done', async () => {
+  it("after the passkey, answers nothing until the wallet's own read of the chain is done", async () => {
     theService(await aWallet(), ACCOUNT);
     chain.carries.set(ACCOUNT, LABEL);
     chain.answered = 1;
     const pressed = await pressOpen();
     await waitFor(() => expect(mockUsePasskey).toHaveBeenCalledTimes(1));
-    await new Promise((r) => { setTimeout(r, 1500); });
+    await new Promise((r) => {
+      setTimeout(r, 1500);
+    });
     /* RED WHEN: the wallet answers while its own read is still running, giving the saved keys without the company the person opened. */
     expect([releases(), pressed.settled()]).toEqual([[], false]);
     expect(keyring.companyKeyReleasedFor(COMPANY)).toBeNull();

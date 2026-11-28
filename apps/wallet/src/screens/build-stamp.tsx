@@ -31,14 +31,22 @@ export type BuildStampRead = PublishedBuild | { readonly of: 'checking' };
 
 /** The answer is kept with the address and contract it was read for, so it is never shown against another. */
 export function useBuildStamp(address: string, contract: ReleasedContract, read: KeysReader): BuildStampRead {
-  const [found, setFound] = useState<{ address: string; contract: ReleasedContract; build: PublishedBuild } | null>(null);
+  const [found, setFound] = useState<{ address: string; contract: ReleasedContract; build: PublishedBuild } | null>(
+    null
+  );
   useEffect(() => {
     let alive = true;
     read(address, contract).then(
-      (build) => { if (alive) setFound({ address, contract, build }); },
-      () => { if (alive) setFound({ address, contract, build: { of: 'unchecked' } }); },
+      (build) => {
+        if (alive) setFound({ address, contract, build });
+      },
+      () => {
+        if (alive) setFound({ address, contract, build: { of: 'unchecked' } });
+      }
     );
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [address, contract, read]);
   return found !== null && found.address === address && found.contract === contract ? found.build : { of: 'checking' };
 }
@@ -47,12 +55,27 @@ export function useBuildStamp(address: string, contract: ReleasedContract, read:
  * Says whether the contract's keys are a published build, by its kind. It gives and refuses nothing, and it says
  * nothing about whether the company is the one the person means: that is for the fingerprint.
  */
-export function BuildStamp({ address, contract }: { readonly address: string; readonly contract: 'account' | 'vault' }): ReactNode {
+export function BuildStamp({
+  address,
+  contract
+}: {
+  readonly address: string;
+  readonly contract: 'account' | 'vault';
+}): ReactNode {
   const t = useText();
   const stamp = useBuildStamp(address, contract, useContext(KeysReaderContext));
   const kind = contract;
-  const words = stamp.of === 'published' ? t('stamp.published', { kind, version: stamp.version })
-    : stamp.of === 'not-published' ? t('stamp.not-published', { kind })
-      : stamp.of === 'unchecked' ? t('stamp.unchecked', { kind }) : t('stamp.checking', { kind });
-  return <p className="m-0 text-sm text-muted-foreground" data-build-stamp={stamp.of} data-build-contract={contract}>{words}</p>;
+  const words =
+    stamp.of === 'published'
+      ? t('stamp.published', { kind, version: stamp.version })
+      : stamp.of === 'not-published'
+        ? t('stamp.not-published', { kind })
+        : stamp.of === 'unchecked'
+          ? t('stamp.unchecked', { kind })
+          : t('stamp.checking', { kind });
+  return (
+    <p className="m-0 text-sm text-muted-foreground" data-build-stamp={stamp.of} data-build-contract={contract}>
+      {words}
+    </p>
+  );
 }

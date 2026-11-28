@@ -11,11 +11,11 @@ vi.mock('./act-intents.js', async (importOriginal) => {
         calls: [
           { method: 'GET', path: '/api/accounts/:company' },
           { method: 'POST', path: '/api/accounts/:company/vaults', sends: true },
-          { method: 'GET', path: '/api/accounts/:company/headers', query: ['after', 'limit'] },
+          { method: 'GET', path: '/api/accounts/:company/headers', query: ['after', 'limit'] }
         ],
-        outcome: { vault: 'vault', approvals: 'count', said: 'code' },
-      },
-    }),
+        outcome: { vault: 'vault', approvals: 'count', said: 'code' }
+      }
+    })
   };
 });
 
@@ -37,9 +37,13 @@ const SHAPE = (ACT_INTENTS as unknown as Record<string, IntentShape>)['name-a-va
 const VAULT = 'c'.repeat(64);
 
 const act = (intent: Record<string, unknown> = {}): Record<string, unknown> => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'To name a vault.', nonce: 'n1', expiresAt: NOW + 600_000,
-  intent: { name: 'name-a-vault', company: 'acc_1', title: 'Payroll float', ...intent },
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'act',
+  requester: { name: 'Payroll', rdns: 'example.payroll' },
+  purpose: 'To name a vault.',
+  nonce: 'n1',
+  expiresAt: NOW + 600_000,
+  intent: { name: 'name-a-vault', company: 'acc_1', title: 'Payroll float', ...intent }
 });
 const refusal = (raw: unknown): string => {
   try {
@@ -51,8 +55,8 @@ const refusal = (raw: unknown): string => {
   return 'accepted';
 };
 
-describe('an action names a record and carries the page\'s words, and may leave out what its entry says is optional', () => {
-  it('reads a record\'s name and the page\'s words, and an optional vault given or not', () => {
+describe("an action names a record and carries the page's words, and may leave out what its entry says is optional", () => {
+  it("reads a record's name and the page's words, and an optional vault given or not", () => {
     const read = parseAsk(act(), PAGE, NOW);
     /* RED WHEN: a record's name or the page's words are refused, or an optional field is required. */
     expect(read.kind === 'act' ? read.intent.fields : null).toEqual({ company: 'acc_1', title: 'Payroll float' });
@@ -61,7 +65,7 @@ describe('an action names a record and carries the page\'s words, and may leave 
     expect(resumed.kind === 'act' ? resumed.intent.fields['vault'] : null).toBe(VAULT);
   });
 
-  it('refuses a record\'s name that is a path, words with control characters or too long, and a required field left out', () => {
+  it("refuses a record's name that is a path, words with control characters or too long, and a required field left out", () => {
     /* RED WHEN: a record's name can carry a path, so a call built from it reaches another route. */
     expect(refusal(act({ company: 'acc/../x' }))).toBe('not-an-act');
     expect(refusal(act({ company: '' }))).toBe('not-an-act');
@@ -82,15 +86,21 @@ describe('a call matches a route of its action, segment by segment, or nothing',
     expect(routeOf(SHAPE, 'GET', '/api/accounts/acc_1')).toEqual({ method: 'GET', path: '/api/accounts/:company' });
     expect(routeOf(SHAPE, 'POST', '/api/accounts/acc_1/vaults')?.sends).toBe(true);
     /* RED WHEN: a route that names its query parameters cannot be read with them. */
-    expect(routeOf(SHAPE, 'GET', '/api/accounts/acc_1/headers?after=3&limit=50')?.path).toBe('/api/accounts/:company/headers');
+    expect(routeOf(SHAPE, 'GET', '/api/accounts/acc_1/headers?after=3&limit=50')?.path).toBe(
+      '/api/accounts/:company/headers'
+    );
     expect(routeOf(SHAPE, 'GET', '/api/accounts/acc_1/headers')?.path).toBe('/api/accounts/:company/headers');
   });
 
   it('matches nothing for a query parameter its route does not name, one given twice, or a value that is not plain', () => {
     /* RED WHEN: a call can carry a query its route does not name, and so reach the service with what the action never asks. */
     for (const path of [
-      '/api/accounts/acc_1/headers?after=3&root=x', '/api/accounts/acc_1/headers?after=3&after=4', '/api/accounts/acc_1/headers?after=a%20b',
-      '/api/accounts/acc_1/headers?after', '/api/accounts/acc_1/headers?after=1?limit=2', '/api/accounts/acc_1/headers?',
+      '/api/accounts/acc_1/headers?after=3&root=x',
+      '/api/accounts/acc_1/headers?after=3&after=4',
+      '/api/accounts/acc_1/headers?after=a%20b',
+      '/api/accounts/acc_1/headers?after',
+      '/api/accounts/acc_1/headers?after=1?limit=2',
+      '/api/accounts/acc_1/headers?'
     ]) {
       expect(routeOf(SHAPE, 'GET', path), path).toBeNull();
     }
@@ -99,9 +109,15 @@ describe('a call matches a route of its action, segment by segment, or nothing',
   it('matches nothing for another method, another path, a longer path, a query, an encoded or a dot segment', () => {
     /* RED WHEN: a call reaches a route the action's entry does not name. */
     for (const [method, path] of [
-      ['PUT', '/api/accounts/acc_1'], ['GET', '/api/accounts/acc_1/keys'], ['GET', '/api/accounts'],
-      ['GET', '/api/accounts/acc_1?x=1'], ['GET', '/api/accounts/acc%2F1'], ['GET', '/api/accounts/..'],
-      ['GET', '/api/accounts//'], ['GET', '/other/accounts/acc_1'], ['GET', 'https://evil.example/api/accounts/acc_1'],
+      ['PUT', '/api/accounts/acc_1'],
+      ['GET', '/api/accounts/acc_1/keys'],
+      ['GET', '/api/accounts'],
+      ['GET', '/api/accounts/acc_1?x=1'],
+      ['GET', '/api/accounts/acc%2F1'],
+      ['GET', '/api/accounts/..'],
+      ['GET', '/api/accounts//'],
+      ['GET', '/other/accounts/acc_1'],
+      ['GET', 'https://evil.example/api/accounts/acc_1']
     ] as const) {
       expect(routeOf(SHAPE, method, path), `${method} ${path}`).toBeNull();
     }
@@ -110,30 +126,63 @@ describe('a call matches a route of its action, segment by segment, or nothing',
 
 const opened = () => {
   const posted: unknown[] = [];
-  const opener = { postMessage: (m: unknown) => { posted.push(m); } };
+  const opener = {
+    postMessage: (m: unknown) => {
+      posted.push(m);
+    }
+  };
   let handler: ((e: MessageEvent) => void) | null = null;
   const view = {
-    opener, parent: null, addEventListener: (_t: string, h: (e: MessageEvent) => void) => { handler = h; },
-    removeEventListener: () => { handler = null; },
+    opener,
+    parent: null,
+    addEventListener: (_t: string, h: (e: MessageEvent) => void) => {
+      handler = h;
+    },
+    removeEventListener: () => {
+      handler = null;
+    }
   } as unknown as ChannelWindow;
   const from = (data: unknown, source: unknown = opener, origin = PAGE) =>
     handler?.({ source, origin, data } as unknown as MessageEvent);
-  const channel = listen(view, () => NOW, () => {}, PAGE) as ActingChannel;
+  const channel = listen(
+    view,
+    () => NOW,
+    () => {},
+    PAGE
+  ) as ActingChannel;
   return { posted, from, channel };
 };
-const called = (n: number, over: Record<string, unknown> = {}) =>
-  ({ schema: ACT_CALLED_SCHEMA, nonce: 'n1', n, outcome: 'answered', status: 200, body: { id: 'acc_1' }, ...over });
-const settle = async (): Promise<void> => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
+const called = (n: number, over: Record<string, unknown> = {}) => ({
+  schema: ACT_CALLED_SCHEMA,
+  nonce: 'n1',
+  n,
+  outcome: 'answered',
+  status: 200,
+  body: { id: 'acc_1' },
+  ...over
+});
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+};
 
 describe('a call goes to the page that asked, numbered, and is answered only by it', () => {
   it('hands the call over in its shape and hears the status and body only from the asking window', async () => {
     const { posted, from, channel } = opened();
     from(act());
     let heard: CalledOver | null = null;
-    void channel.call({ step: 1, steps: 2 }, 'POST', '/api/accounts/acc_1/vaults', '{"tx":"AAAA"}').then((r) => { heard = r; });
+    void channel.call({ step: 1, steps: 2 }, 'POST', '/api/accounts/acc_1/vaults', '{"tx":"AAAA"}').then((r) => {
+      heard = r;
+    });
     /* RED WHEN: a call reaches the page in another shape, or without the body it carries. */
     expect(posted.at(-1)).toEqual({
-      schema: ACT_CALL_SCHEMA, nonce: 'n1', n: 1, step: 1, steps: 2, method: 'POST', path: '/api/accounts/acc_1/vaults', body: '{"tx":"AAAA"}',
+      schema: ACT_CALL_SCHEMA,
+      nonce: 'n1',
+      n: 1,
+      step: 1,
+      steps: 2,
+      method: 'POST',
+      path: '/api/accounts/acc_1/vaults',
+      body: '{"tx":"AAAA"}'
     });
     /* RED WHEN: the page reads the call without the body it carries, so a write reaches the service empty. */
     expect(readActCall(posted.at(-1), 'n1')?.body).toBe('{"tx":"AAAA"}');
@@ -183,38 +232,73 @@ describe('a call goes to the page that asked, numbered, and is answered only by 
 
 describe('the end of an action tells the page only the public parts its entry lists', () => {
   const ended = (outcome: unknown) => ({
-    schema: 'midnight-identity/act-ended/v1', nonce: 'n1', intent: 'name-a-vault', ended: 'done', step: 2, steps: 2,
-    relayed: 1, unconfirmed: 0, ...(outcome === undefined ? {} : { outcome }),
+    schema: 'midnight-identity/act-ended/v1',
+    nonce: 'n1',
+    intent: 'name-a-vault',
+    ended: 'done',
+    step: 2,
+    steps: 2,
+    relayed: 1,
+    unconfirmed: 0,
+    ...(outcome === undefined ? {} : { outcome })
   });
   it('reads a vault, a count and short codes', () => {
     /* RED WHEN: the outcome the entry lists does not reach the page. */
-    expect(readActEnded(ended({ vault: VAULT, approvals: 1, said: 'vault-name-not-filed,proposal-not-written-down' }), { nonce: 'n1', intent: 'name-a-vault' })?.outcome)
-      .toEqual({ vault: VAULT, approvals: 1, said: 'vault-name-not-filed,proposal-not-written-down' });
+    expect(
+      readActEnded(ended({ vault: VAULT, approvals: 1, said: 'vault-name-not-filed,proposal-not-written-down' }), {
+        nonce: 'n1',
+        intent: 'name-a-vault'
+      })?.outcome
+    ).toEqual({ vault: VAULT, approvals: 1, said: 'vault-name-not-filed,proposal-not-written-down' });
     expect(readActEnded(ended(undefined), { nonce: 'n1', intent: 'name-a-vault' })?.outcome).toBeUndefined();
   });
   it('refuses an end that carries a part the entry does not list, or a part not of its kind', () => {
     /* RED WHEN: a wallet's end can carry anything beyond the public facts its entry names. */
-    for (const outcome of [{ secret: 'ab'.repeat(32) }, { vault: 'not a vault' }, { approvals: -1 }, { said: 'Has Spaces' }, [1], 'x']) {
+    for (const outcome of [
+      { secret: 'ab'.repeat(32) },
+      { vault: 'not a vault' },
+      { approvals: -1 },
+      { said: 'Has Spaces' },
+      [1],
+      'x'
+    ]) {
       expect(readActEnded(ended(outcome), { nonce: 'n1', intent: 'name-a-vault' }), JSON.stringify(outcome)).toBeNull();
     }
   });
 
   const stopped = (why: string, said: Record<string, unknown>) => ({
-    schema: 'midnight-identity/act-ended/v1', nonce: 'n1', intent: 'name-a-vault', ended: 'stopped', step: 1, steps: 2,
-    relayed: 0, unconfirmed: 0, why, ...said,
+    schema: 'midnight-identity/act-ended/v1',
+    nonce: 'n1',
+    intent: 'name-a-vault',
+    ended: 'stopped',
+    step: 1,
+    steps: 2,
+    relayed: 0,
+    unconfirmed: 0,
+    why,
+    ...said
   });
   const at = { nonce: 'n1', intent: 'name-a-vault' };
   it('a stop for a refused check carries the key of its words and the kind of refusal, and nothing else of them', () => {
-    const read = readActEnded(stopped('check-failed', { refused: 'act.name-a-vault.why.start-owed', code: 'chain-unread' }), at);
+    const read = readActEnded(
+      stopped('check-failed', { refused: 'act.name-a-vault.why.start-owed', code: 'chain-unread' }),
+      at
+    );
     /* RED WHEN: the page cannot say which check refused, or of what kind. */
-    expect(read).toMatchObject({ why: 'check-failed', refused: 'act.name-a-vault.why.start-owed', code: 'chain-unread' });
+    expect(read).toMatchObject({
+      why: 'check-failed',
+      refused: 'act.name-a-vault.why.start-owed',
+      code: 'chain-unread'
+    });
     /* RED WHEN: a code reaches the page without the key it qualifies. */
     expect(readActEnded(stopped('check-failed', { code: 'chain-unread' }), at)).not.toHaveProperty('code');
   });
   it('drops a refusal not in its shape, or on any stop but a refused check, and keeps the rest of the end', () => {
     for (const said of [
-      { refused: 'act.name-a-vault.why.start-owed 12 USDC' }, { refused: 'Setting up this vault did not finish' },
-      { refused: `act.x.why.${'ab'.repeat(32)}0` }, { refused: { key: 'act.x.why.y' } },
+      { refused: 'act.name-a-vault.why.start-owed 12 USDC' },
+      { refused: 'Setting up this vault did not finish' },
+      { refused: `act.x.why.${'ab'.repeat(32)}0` },
+      { refused: { key: 'act.x.why.y' } }
     ]) {
       const read = readActEnded(stopped('check-failed', said), at);
       /* RED WHEN: words, an amount, a digit or anything but a key in its shape reaches the page as the refusal. */
@@ -226,6 +310,8 @@ describe('the end of an action tells the page only the public parts its entry li
     expect(badCode).toMatchObject({ refused: 'act.x.why.y' });
     expect(badCode).not.toHaveProperty('code');
     /* RED WHEN: a stop that is not a refused check carries a refusal. */
-    expect(readActEnded(stopped('step-failed', { refused: 'act.x.why.y', code: 'z' }), at)).not.toHaveProperty('refused');
+    expect(readActEnded(stopped('step-failed', { refused: 'act.x.why.y', code: 'z' }), at)).not.toHaveProperty(
+      'refused'
+    );
   });
 });

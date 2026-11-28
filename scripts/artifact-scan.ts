@@ -88,7 +88,10 @@ export function spanEnd(text: string, open: number): number {
   let i = open + 1;
   while (i < text.length) {
     const c = text[i];
-    if (c === '\\') { i += 2; continue; }
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
     if (c === "'" || c === '"' || c === '`') {
       const quote = c;
       i += 1;
@@ -96,9 +99,20 @@ export function spanEnd(text: string, open: number): number {
       i += 1;
       continue;
     }
-    if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i += 1; continue; }
-    if (c === '/' && text[i + 1] === '*') { const e = text.indexOf('*/', i + 2); i = e === -1 ? text.length : e + 2; continue; }
-    if (c === '(' || c === '[' || c === '{') { stack.push(OPEN[c]); i += 1; continue; }
+    if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const e = text.indexOf('*/', i + 2);
+      i = e === -1 ? text.length : e + 2;
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') {
+      stack.push(OPEN[c]);
+      i += 1;
+      continue;
+    }
     if (c === ')' || c === ']' || c === '}') {
       if (stack[stack.length - 1] !== c) return -1;
       stack.pop();
@@ -142,7 +156,10 @@ export function callSpans(text: string, name: string): { start: number; end: num
     // match, because the character before the dot is the namespace's last
     // letter. That is what the zero-assert refusal below caught.
     const before = at === 0 ? '' : text[at - 1];
-    if (!name.startsWith('.') && /[A-Za-z0-9_$]/.test(before)) { from = at + 1; continue; }
+    if (!name.startsWith('.') && /[A-Za-z0-9_$]/.test(before)) {
+      from = at + 1;
+      continue;
+    }
     const open = at + needle.length - 1;
     const end = spanEnd(text, open);
     if (end === -1) throw new Error(`callSpans: unbalanced ${name}( at ${at}`);
@@ -186,14 +203,26 @@ export function topLevelStrings(args: string): string[] {
   let i = 0;
   while (i < args.length) {
     const c = args[i];
-    if (c === '(' || c === '[' || c === '{') { depth += 1; i += 1; continue; }
-    if (c === ')' || c === ']' || c === '}') { depth -= 1; i += 1; continue; }
+    if (c === '(' || c === '[' || c === '{') {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
     if (c === "'" || c === '"') {
       const quote = c;
       let j = i + 1;
       let value = '';
       while (j < args.length && args[j] !== quote) {
-        if (args[j] === '\\') { value += args[j + 1]; j += 2; continue; }
+        if (args[j] === '\\') {
+          value += args[j + 1];
+          j += 2;
+          continue;
+        }
         value += args[j];
         j += 1;
       }
@@ -303,19 +332,23 @@ export type ArtifactSpec = {
  * is a guard the others walk past.
  */
 export const ARTIFACTS: readonly ArtifactSpec[] = Object.values(CONTRACT_TABLE).map((c) => ({
-  label: c.name, source: c.source, managed: c.compiled,
+  label: c.name,
+  source: c.source,
+  managed: c.compiled
 }));
 
 const sha256 = (b: Buffer | string): string => createHash('sha256').update(b).digest('hex');
 
 /** `Uint<0..255>` — the one-byte cell the runtime addresses a top-level field with. */
 export function indexDescriptor(moduleText: string): string {
-  const found = [...moduleText.matchAll(/const (_descriptor_\d+) = new __compactRuntime\.CompactTypeUnsignedInteger\(255n, 1\);/g)];
+  const found = [
+    ...moduleText.matchAll(/const (_descriptor_\d+) = new __compactRuntime\.CompactTypeUnsignedInteger\(255n, 1\);/g)
+  ];
   if (found.length !== 1) {
     throw new Error(
       `artifact-scan: expected exactly ONE Uint<0..255> descriptor to address ledger fields with, found ${found.length}. ` +
         'The field index is decoded through it, so a wrong one is a table of edges that are all subtly misattributed. ' +
-        'Nothing was emitted.',
+        'Nothing was emitted.'
     );
   }
   return found[0][1];
@@ -344,9 +377,11 @@ export function indicesFromLedgerFn(moduleText: string, desc: string): Map<strin
   while (i < objBody.length) {
     const c = objBody[i];
     if (c === "'" || c === '"' || c === '`') {
-      const q = c; i += 1;
+      const q = c;
+      i += 1;
       while (i < objBody.length && objBody[i] !== q) i += objBody[i] === '\\' ? 2 : 1;
-      i += 1; continue;
+      i += 1;
+      continue;
     }
     if (c === '(' || c === '[' || c === '{') {
       if (depth === 0) {
@@ -359,10 +394,18 @@ export function indicesFromLedgerFn(moduleText: string, desc: string): Map<strin
         keyStart = i;
         continue;
       }
-      depth += 1; i += 1; continue;
+      depth += 1;
+      i += 1;
+      continue;
     }
-    if (c === ')' || c === ']' || c === '}') { depth -= 1; i += 1; continue; }
-    if (c === ',' && depth === 0) { keyStart = i + 1; }
+    if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
+    if (c === ',' && depth === 0) {
+      keyStart = i + 1;
+    }
     i += 1;
   }
   return out;
@@ -417,7 +460,10 @@ export function typeText(t: unknown): string {
   if (n === 'Field') return 'Field';
   if (n === 'Vector') return `Vector<${String(o.length)}, ${typeText(o.type)}>`;
   if (n === 'Struct') return `struct ${String(o.name)}`;
-  if (n === 'Tuple') return ((o.types as unknown[]) ?? []).length === 0 ? '[]' : `[${((o.types as unknown[]) ?? []).map(typeText).join(', ')}]`;
+  if (n === 'Tuple')
+    return ((o.types as unknown[]) ?? []).length === 0
+      ? '[]'
+      : `[${((o.types as unknown[]) ?? []).map(typeText).join(', ')}]`;
   if (n === 'Opaque') return `Opaque<${String(o.name)}>`;
   if (n === 'Enum') return `enum ${String(o.name)}`;
   return String(n ?? JSON.stringify(t));
@@ -460,7 +506,11 @@ type Method = {
  * has a witness and a circuit of the same name — so the first two steps are
  * exclusive rather than merely ordered.
  */
-function classify(name: string, text: string, circuitNames: ReadonlySet<string>): { kind: MethodKind; witness?: string; circuit?: string } {
+function classify(
+  name: string,
+  text: string,
+  circuitNames: ReadonlySet<string>
+): { kind: MethodKind; witness?: string; circuit?: string } {
   const w = /this\.witnesses\.([A-Za-z_$][A-Za-z0-9_$]*)\(/.exec(text);
   if (w) return { kind: 'witness', witness: w[1] };
   const bare = /^_(.+)_\d+$/.exec(name)?.[1];
@@ -552,7 +602,10 @@ export function classifyQuery(args: string, desc: string): QueryKind {
    */
   let pushed = 0;
   for (const op of ops) {
-    if (/^\{ push: /.test(op) && !indexRe.test(op)) { pushed += 1; continue; }
+    if (/^\{ push: /.test(op) && !indexRe.test(op)) {
+      pushed += 1;
+      continue;
+    }
 
     const dug = /^\{ (dup|swap): \{ n: (\d+) \}/.exec(op);
     if (dug) {
@@ -580,7 +633,7 @@ export function classifyQuery(args: string, desc: string): QueryKind {
     'artifact-scan: an op array selects its root in a shape this does not recognise, so it is ' +
       'not known whether it addresses the contract ledger or the kernel. Reading it either way ' +
       'would be a guess. Nothing was emitted. The array begins:\n    ' +
-      flat.slice(0, 240),
+      flat.slice(0, 240)
   );
 }
 
@@ -598,7 +651,12 @@ export type KernelUse = Use & {
  * write carries both: it walks into the field and then inserts. Reading that as
  * a read is how a WRITER goes missing from the table of writers.
  */
-export function queriesIn(text: string, desc: string, fieldCount: number, where: string): {
+export function queriesIn(
+  text: string,
+  desc: string,
+  fieldCount: number,
+  where: string
+): {
   reads: number[];
   writes: number[];
   kernel: { slot: number | null; kind: 'reads' | 'writes' }[];
@@ -613,12 +671,15 @@ export function queriesIn(text: string, desc: string, fieldCount: number, where:
     } catch (e) {
       throw new Error(`${where}: ${String((e as Error).message)}`);
     }
-    if (q.root === 'kernel') { kernel.push({ slot: q.slot, kind: q.kind }); continue; }
+    if (q.root === 'kernel') {
+      kernel.push({ slot: q.slot, kind: q.kind });
+      continue;
+    }
     if (!Number.isInteger(q.index) || q.index < 0 || q.index >= fieldCount) {
       throw new Error(
         `artifact-scan: ${where} addresses ledger field ${q.index}, and this contract has ${fieldCount} fields. ` +
           'Either the field-index descriptor was decoded wrongly or the state has been reshaped. ' +
-          'Nothing was emitted.',
+          'Nothing was emitted.'
       );
     }
     (q.kind === 'writes' ? writes : reads).push(q.index);
@@ -641,8 +702,16 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
    */
   const infoText = readFileSync(infoPath, 'utf8').replace(/("maxval"\s*:\s*)(\d+)/g, '$1"$2"');
   const info = JSON.parse(infoText) as {
-    'compiler-version': string; 'language-version': string; 'runtime-version': string;
-    circuits: { name: string; pure: boolean; proof: boolean; arguments?: { name: string; type: unknown }[]; 'result-type'?: unknown }[];
+    'compiler-version': string;
+    'language-version': string;
+    'runtime-version': string;
+    circuits: {
+      name: string;
+      pure: boolean;
+      proof: boolean;
+      arguments?: { name: string; type: unknown }[];
+      'result-type'?: unknown;
+    }[];
     witnesses: { name: string }[];
     contracts: { name: string; circuits: { name: string }[] }[];
     ledger: { name: string; index: number | number[]; storage: string; exported: boolean }[];
@@ -660,13 +729,14 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
   for (const [name, idx] of declared) {
     const seen = accessors.get(name);
     if (seen === undefined) continue; // a Cell read through a getter with no query
-    if (typeof idx !== 'number' || idx !== seen) disagreements.push(`${name}: contract-info says ${JSON.stringify(idx)}, ledger() reads ${seen}`);
+    if (typeof idx !== 'number' || idx !== seen)
+      disagreements.push(`${name}: contract-info says ${JSON.stringify(idx)}, ledger() reads ${seen}`);
   }
   if (disagreements.length > 0) {
     throw new Error(
       `artifact-scan: ${spec.label}'s two statements of the ledger field table disagree:\n  ` +
         disagreements.join('\n  ') +
-        '\nEvery edge is decoded through this table, so nothing was emitted.',
+        '\nEvery edge is decoded through this table, so nothing was emitted.'
     );
   }
 
@@ -683,7 +753,10 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
     const fn = proto[name];
     if (typeof fn !== 'function') continue;
     const text = (fn as { toString(): string }).toString();
-    const k = name === 'initialState' ? { kind: 'circuit' as MethodKind, circuit: 'constructor' } : classify(name, text, circuitNames);
+    const k =
+      name === 'initialState'
+        ? { kind: 'circuit' as MethodKind, circuit: 'constructor' }
+        : classify(name, text, circuitNames);
     const { reads, writes, kernel } = queriesIn(text, desc, info.ledger.length, `${spec.label}.${name}`);
     const crossCalls = callSpansFlat(text, 'crossContractCall').map((args) => {
       /*
@@ -712,8 +785,8 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
       if (circuit === '' || !declaring) {
         throw new Error(
           `artifact-scan: ${spec.label}.${name} makes a cross-contract call to "${circuit || '(no circuit name found)'}" and ` +
-            "compiler/contract-info.json declares no contract with that circuit. The callee cannot be named from data, and " +
-            'naming it from an identifier in the emitted text is what made this read differently under two module loaders. Nothing was emitted.',
+            'compiler/contract-info.json declares no contract with that circuit. The callee cannot be named from data, and ' +
+            'naming it from an identifier in the emitted text is what made this read differently under two module loaders. Nothing was emitted.'
         );
       }
       return { contract: declaring.name, circuit };
@@ -727,14 +800,18 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
       callsMethods: [...new Set([...text.matchAll(/this\._([A-Za-z0-9_$]+_\d+)\(/g)].map((m) => '_' + m[1]))],
       readsFields: reads,
       writesFields: writes,
-      assertMessages: callSpansFlat(text, '.assert').map((a) => topLevelStrings(a).at(-1) ?? '').filter((s) => s.length > 0),
+      assertMessages: callSpansFlat(text, '.assert')
+        .map((a) => topLevelStrings(a).at(-1) ?? '')
+        .filter((s) => s.length > 0),
       crossCalls,
-      kernelUses: kernel,
+      kernelUses: kernel
     });
   }
 
   const fields = info.ledger.map((f) => ({ name: f.name, index: f.index, storage: f.storage, exported: f.exported }));
-  const byIndex = new Map<number, string>(fields.filter((f) => typeof f.index === 'number').map((f) => [f.index as number, f.name]));
+  const byIndex = new Map<number, string>(
+    fields.filter((f) => typeof f.index === 'number').map((f) => [f.index as number, f.name])
+  );
 
   /**
    * THE CLOSURE, AND IT IS NOT OPTIONAL. Not one of the account's ten provable
@@ -777,7 +854,12 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
         // Every one of those is pure and touches no field, so a graph built only
         // out of ledger access answers "nothing depends on payoutLeaf" — which
         // is the same answer as "safe to change".
-        if (target && target.kind === 'circuit' && target.circuit && target.circuit !== info.circuits.find((c) => `_${c.name}_0` === start)?.name) {
+        if (
+          target &&
+          target.kind === 'circuit' &&
+          target.circuit &&
+          target.circuit !== info.circuits.find((c) => `_${c.name}_0` === start)?.name
+        ) {
           uses.push({ circuit: target.circuit, via });
         }
         step(next, [...via, next]);
@@ -809,7 +891,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
       witnesses: dedupe(w.witnesses, (x) => x.witness).sort((a, b) => a.witness.localeCompare(b.witness)),
       calls: dedupe(w.calls, (x) => `${x.contract}.${x.circuit}`),
       kernel: dedupe(w.kernel, (x) => `${x.through}:${String(x.slot)}:${x.kind}`),
-      uses: dedupe(w.uses, (x) => x.circuit).sort((a, b) => a.circuit.localeCompare(b.circuit)),
+      uses: dedupe(w.uses, (x) => x.circuit).sort((a, b) => a.circuit.localeCompare(b.circuit))
     };
   };
 
@@ -827,7 +909,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
       witnesses: dedupe(w.witnesses, (x) => x.witness).sort((a, b) => a.witness.localeCompare(b.witness)),
       calls: dedupe(w.calls, (x) => `${x.contract}.${x.circuit}`),
       kernel: dedupe(w.kernel, (x) => `${x.through}:${String(x.slot)}:${x.kind}`),
-      uses: dedupe(w.uses, (x) => x.circuit).sort((a, b) => a.circuit.localeCompare(b.circuit)),
+      uses: dedupe(w.uses, (x) => x.circuit).sort((a, b) => a.circuit.localeCompare(b.circuit))
     };
   });
 
@@ -851,9 +933,12 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
      * them the signature comes back empty — which is visibly missing rather
      * than quietly wrong.
      */
-    const text = typeof proto.initialState === 'function' ? (proto.initialState as { toString(): string }).toString() : '';
+    const text =
+      typeof proto.initialState === 'function' ? (proto.initialState as { toString(): string }).toString() : '';
     const args: string[] = [];
-    for (const m of text.matchAll(/typeError\(\s*'Contract state constructor',\s*'argument \d+[^']*',\s*'[^']*',\s*'([^']*)',\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)/g)) {
+    for (const m of text.matchAll(
+      /typeError\(\s*'Contract state constructor',\s*'argument \d+[^']*',\s*'[^']*',\s*'([^']*)',\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)/g
+    )) {
       args.push(`${m[2].replace(/_\d+$/, '')}: ${m[1]}`);
     }
     return args.join(', ');
@@ -871,7 +956,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
   if (totalAsserts === 0) {
     throw new Error(
       `artifact-scan: ${spec.label} yielded ZERO asserts across ${circuits0.length} circuits. ` +
-        'A contract with no guards at all is not what this is; the assert extraction has stopped matching. Nothing was emitted.',
+        'A contract with no guards at all is not what this is; the assert extraction has stopped matching. Nothing was emitted.'
     );
   }
 
@@ -894,7 +979,7 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
   if (totalFields === 0) {
     throw new Error(
       `artifact-scan: ${spec.label} yielded ZERO ledger reads and writes across ${circuits0.length} circuits. ` +
-        'A contract that touches no state is not what this is; the field-index descriptor has stopped matching. Nothing was emitted.',
+        'A contract that touches no state is not what this is; the field-index descriptor has stopped matching. Nothing was emitted.'
     );
   }
 
@@ -908,8 +993,17 @@ export async function readContract(root: string, spec: ArtifactSpec): Promise<Co
     fields,
     circuits: circuits0,
     witnessNames: info.witnesses.map((w) => w.name),
-    ctor: typeof proto.initialState === 'function' ? build('constructor', 'initialState', false, `constructor(${ctorArgs})`) : null,
-    keys: readKeys(root, spec, info.circuits.filter((c) => !c.pure).map((c) => c.name)),
-    declaredCallees: (info.contracts ?? []).flatMap((k) => k.circuits.map((c) => ({ contract: k.name, circuit: c.name }))),
+    ctor:
+      typeof proto.initialState === 'function'
+        ? build('constructor', 'initialState', false, `constructor(${ctorArgs})`)
+        : null,
+    keys: readKeys(
+      root,
+      spec,
+      info.circuits.filter((c) => !c.pure).map((c) => c.name)
+    ),
+    declaredCallees: (info.contracts ?? []).flatMap((k) =>
+      k.circuits.map((c) => ({ contract: k.name, circuit: c.name }))
+    )
   };
 }

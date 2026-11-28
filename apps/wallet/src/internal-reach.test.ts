@@ -65,8 +65,9 @@ export const sourceFiles = (root: string): string[] => {
   const out: string[] = [];
   const walk = (dir: string): void => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (e.isDirectory()) { if (!SKIP.has(e.name)) walk(join(dir, e.name)); }
-      else if (/\.(ts|tsx)$/.test(e.name)) out.push(join(dir, e.name));
+      if (e.isDirectory()) {
+        if (!SKIP.has(e.name)) walk(join(dir, e.name));
+      } else if (/\.(ts|tsx)$/.test(e.name)) out.push(join(dir, e.name));
     }
   };
   walk(root);
@@ -92,29 +93,37 @@ export const sourceFiles = (root: string): string[] => {
 export const reachedSubpaths = (files: string[]): Set<string> => {
   const out = new Set<string>();
   const IMPORTS = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]midnight-identity\/([^'"]+)['"]/g;
-  for (const f of files)
-    for (const m of readFileSync(f, 'utf8').matchAll(IMPORTS))
-      out.add(m[1] as string);
+  for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(IMPORTS)) out.add(m[1] as string);
   return out;
 };
 
 /** What an outside consumer can resolve: the `exports` map, minus the root. */
 export const published = (pkg: { exports?: Record<string, unknown> }): Set<string> =>
-  new Set(Object.keys(pkg.exports ?? {}).filter(k => k !== '.').map(k => k.replace(/^\.\//, '')));
+  new Set(
+    Object.keys(pkg.exports ?? {})
+      .filter((k) => k !== '.')
+      .map((k) => k.replace(/^\.\//, ''))
+  );
 
 /**
  * THE THREE QUESTIONS, AS ONE PURE FUNCTION. Sets in, three lists out, no
  * filesystem and no clock - so the block at the foot of this file can watch
  * each list fill against inputs it builds itself.
  */
-export const verdict = (
-  { reached, published: pub, record }: { reached: Set<string>; published: Set<string>; record: Set<string> },
-): { publishedOnRecord: string[]; unrecorded: string[]; stale: string[] } => {
-  const internalReach = [...reached].filter(s => !pub.has(s)).sort();
+export const verdict = ({
+  reached,
+  published: pub,
+  record
+}: {
+  reached: Set<string>;
+  published: Set<string>;
+  record: Set<string>;
+}): { publishedOnRecord: string[]; unrecorded: string[]; stale: string[] } => {
+  const internalReach = [...reached].filter((s) => !pub.has(s)).sort();
   return {
-    publishedOnRecord: [...record].filter(s => pub.has(s)).sort(),
-    unrecorded: internalReach.filter(s => !record.has(s)),
-    stale: [...record].filter(s => !reached.has(s)).sort(),
+    publishedOnRecord: [...record].filter((s) => pub.has(s)).sort(),
+    unrecorded: internalReach.filter((s) => !record.has(s)),
+    stale: [...record].filter((s) => !reached.has(s)).sort()
   };
 };
 
@@ -124,32 +133,35 @@ describe('what the wallet reaches that the library does not publish', () => {
   const pkg = JSON.parse(readFileSync(join(LIB, 'package.json'), 'utf8')) as { exports?: Record<string, unknown> };
   const pub = published(pkg);
   const record = new Set<string>(
-    (JSON.parse(readFileSync(join(LIB, 'internal-subpaths.json'), 'utf8')) as { internal: string[] }).internal,
+    (JSON.parse(readFileSync(join(LIB, 'internal-subpaths.json'), 'utf8')) as { internal: string[] }).internal
   );
   const found = verdict({ reached, published: pub, record });
-  const internalReach = [...reached].filter(s => !pub.has(s)).sort();
+  const internalReach = [...reached].filter((s) => !pub.has(s)).sort();
 
   console.log(
-    `internal reach: ${files.length} application files, ${reached.size} distinct library subpaths, `
-    + `${pub.size} published, ${internalReach.length} internal, ${record.size} recorded`,
+    `internal reach: ${files.length} application files, ${reached.size} distinct library subpaths, ` +
+      `${pub.size} published, ${internalReach.length} internal, ${record.size} recorded`
   );
 
   it('read an application that actually has imports in it', () => {
-    expect(files.length, 'no source files found - the walk is looking in the wrong place, and every assertion below would pass over nothing')
-      .toBeGreaterThan(50);
-    expect(reached.size, 'no midnight-identity subpath imports found - the matcher no longer matches how this application imports the library')
-      .toBeGreaterThan(5);
-    expect(pub.size, 'the library published nothing - the exports map was not read')
-      .toBeGreaterThan(5);
+    expect(
+      files.length,
+      'no source files found - the walk is looking in the wrong place, and every assertion below would pass over nothing'
+    ).toBeGreaterThan(50);
+    expect(
+      reached.size,
+      'no midnight-identity subpath imports found - the matcher no longer matches how this application imports the library'
+    ).toBeGreaterThan(5);
+    expect(pub.size, 'the library published nothing - the exports map was not read').toBeGreaterThan(5);
   });
 
   it('records nothing that the library does publish', () => {
     const wrong = found.publishedOnRecord;
     expect(
       wrong,
-      `these are named as internal and the library PUBLISHES them:\n  ${wrong.join('\n  ')}\n`
-      + 'A published subpath on this list reads as a private reach that has to be justified, '
-      + 'and it is the opposite: anybody may import it.',
+      `these are named as internal and the library PUBLISHES them:\n  ${wrong.join('\n  ')}\n` +
+        'A published subpath on this list reads as a private reach that has to be justified, ' +
+        'and it is the opposite: anybody may import it.'
     ).toEqual([]);
   });
 
@@ -157,10 +169,10 @@ describe('what the wallet reaches that the library does not publish', () => {
     const unrecorded = found.unrecorded;
     expect(
       unrecorded,
-      `the application imports these and the library does not publish them, and they are on no record:\n  ${unrecorded.join('\n  ')}\n`
-      + 'Either the import belongs to public API - add it to the exports map - or it is a '
-      + 'deliberate internal reach and it goes in packages/identity/internal-subpaths.json '
-      + 'with the rest. What it may not be is unremarked.',
+      `the application imports these and the library does not publish them, and they are on no record:\n  ${unrecorded.join('\n  ')}\n` +
+        'Either the import belongs to public API - add it to the exports map - or it is a ' +
+        'deliberate internal reach and it goes in packages/identity/internal-subpaths.json ' +
+        'with the rest. What it may not be is unremarked.'
     ).toEqual([]);
   });
 
@@ -168,9 +180,9 @@ describe('what the wallet reaches that the library does not publish', () => {
     const stale = found.stale;
     expect(
       stale,
-      `the record names these and nothing imports them any more:\n  ${stale.join('\n  ')}\n`
-      + 'A list nobody prunes stops describing anything, and the next reader takes it for '
-      + 'the current answer. Remove the line in the same change that removed the import.',
+      `the record names these and nothing imports them any more:\n  ${stale.join('\n  ')}\n` +
+        'A list nobody prunes stops describing anything, and the next reader takes it for ' +
+        'the current answer. Remove the line in the same change that removed the import.'
     ).toEqual([]);
   });
 });
@@ -189,27 +201,36 @@ describe('each verdict, watched failing against inputs built here', () => {
   const RECORD = new Set(['profile/store', 'keys/derivation']);
 
   it('is green on inputs that agree, or every red below proves nothing', () => {
-    expect(verdict({ reached: REACHED, published: PUBLISHED, record: RECORD }))
-      .toEqual({ publishedOnRecord: [], unrecorded: [], stale: [] });
+    expect(verdict({ reached: REACHED, published: PUBLISHED, record: RECORD })).toEqual({
+      publishedOnRecord: [],
+      unrecorded: [],
+      stale: []
+    });
   });
 
   it('RED when the record names something the library publishes', () => {
     const { publishedOnRecord } = verdict({
-      reached: REACHED, published: PUBLISHED, record: new Set([...RECORD, 'profile/model']),
+      reached: REACHED,
+      published: PUBLISHED,
+      record: new Set([...RECORD, 'profile/model'])
     });
     expect(publishedOnRecord).toEqual(['profile/model']);
   });
 
   it('RED when the application reaches an unpublished subpath nothing recorded', () => {
     const { unrecorded } = verdict({
-      reached: REACHED, published: PUBLISHED, record: new Set(['keys/derivation']),
+      reached: REACHED,
+      published: PUBLISHED,
+      record: new Set(['keys/derivation'])
     });
     expect(unrecorded).toEqual(['profile/store']);
   });
 
   it('RED when the record names a subpath nothing imports any more', () => {
     const { stale } = verdict({
-      reached: REACHED, published: PUBLISHED, record: new Set([...RECORD, 'keys/vanished']),
+      reached: REACHED,
+      published: PUBLISHED,
+      record: new Set([...RECORD, 'keys/vanished'])
     });
     expect(stale).toEqual(['keys/vanished']);
   });

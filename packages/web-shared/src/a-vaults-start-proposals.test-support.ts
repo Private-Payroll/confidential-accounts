@@ -39,8 +39,13 @@ export interface ProposalsKeptInATest {
  * makes the seat one this device does not believe.
  */
 export const proposalsKeptInATest = (over: {
-  readonly signingSecret: Hex; readonly role?: Role | null; readonly accountId?: string; readonly viewingKey?: Hex;
-  readonly failSend?: boolean; readonly failEnter?: boolean | number; readonly kept?: SealedProposal[];
+  readonly signingSecret: Hex;
+  readonly role?: Role | null;
+  readonly accountId?: string;
+  readonly viewingKey?: Hex;
+  readonly failSend?: boolean;
+  readonly failEnter?: boolean | number;
+  readonly kept?: SealedProposal[];
   readonly onRaise?: (chainId: string) => void;
   /** The service refuses to write a carried-out proposal down. */
   readonly failCarried?: boolean;
@@ -53,7 +58,12 @@ export const proposalsKeptInATest = (over: {
   const raised = new Map<string, string>();
   const bodies: Array<Record<string, unknown>> = [];
   let entryRefusals = typeof over.failEnter === 'number' ? over.failEnter : over.failEnter === true ? Infinity : 0;
-  const round = (p: SealedProposal): RoundOnThePage => ({ id: p.id, chainId: p.chainId, status: p.status, approvalCount: 0 });
+  const round = (p: SealedProposal): RoundOnThePage => ({
+    id: p.id,
+    chainId: p.chainId,
+    status: p.status,
+    approvalCount: 0
+  });
   /*
    * The directory as this seat's device believes it: its own seat, and the company's records asked for every
    * proposal with none of them anchored yet. Only what a vault's start reads of it is given.
@@ -61,14 +71,23 @@ export const proposalsKeptInATest = (over: {
   const here = {
     dir: {
       company: accountId,
-      seats: [{ seat: 'ada', signingKey: signingPublicKeyOf(over.signingSecret), role: over.role === undefined ? 'admin' : over.role, retired: null }],
+      seats: [
+        {
+          seat: 'ada',
+          signingKey: signingPublicKeyOf(over.signingSecret),
+          role: over.role === undefined ? 'admin' : over.role,
+          retired: null
+        }
+      ]
     },
     another: new Set(over.notBelieved === 'unattested' ? ['ada'] : []),
     holders: { seats: over.notBelieved === 'not-on-the-chain' ? [] : ['ada'] },
     records: {
       asked: { records: new Set<string>(), kinds: new Set([kindKeyOf({ store: 'proposal', kind: 'proposal' })]) },
-      history: new Map(), notYetAnchored: [], stopped: null,
-    },
+      history: new Map(),
+      notYetAnchored: [],
+      stopped: null
+    }
   } as unknown as DirectoryHere;
   const doors: VaultStartProposals = {
     accountId,
@@ -86,19 +105,31 @@ export const proposalsKeptInATest = (over: {
           }
           log.push(`entered ${id}`);
         }
-      },
+      }
     },
     service: {
-      callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'bh', accountState: 'as', parameters: 'pp' }) as never,
+      callState: async () =>
+        ({ account: 'ac'.repeat(32), blockHash: 'bh', accountState: 'as', parameters: 'pp' }) as never,
       sealedProposals: async () => [...kept],
       file: async (company, body) => {
         bodies.push(body as unknown as Record<string, unknown>);
         const why = proposalFilingRefusal(company, body.proposal);
-        if (why !== null) throw new NothingWasSent(`this is not a proposal this company can write down: ${why}. Nothing was written down or sent.`);
+        if (why !== null)
+          throw new NothingWasSent(
+            `this is not a proposal this company can write down: ${why}. Nothing was written down or sent.`
+          );
         const f = body.proposal;
         const rec: SealedProposal = {
-          id: f.id, accountId: company, status: 'open', createdAt: f.createdAt, digest: f.digest, chainId: f.chainId,
-          approvalCount: 0, keyEpoch: f.keyEpoch, sealed: f.sealed, filedBy: { publicKey: f.filedBy.publicKey, signature: f.filedBy.signature },
+          id: f.id,
+          accountId: company,
+          status: 'open',
+          createdAt: f.createdAt,
+          digest: f.digest,
+          chainId: f.chainId,
+          approvalCount: 0,
+          keyEpoch: f.keyEpoch,
+          sealed: f.sealed,
+          filedBy: { publicKey: f.filedBy.publicKey, signature: f.filedBy.signature }
         };
         kept.push(rec);
         log.push(body.tx === undefined ? 'file' : 'file and raise');
@@ -112,26 +143,31 @@ export const proposalsKeptInATest = (over: {
       send: async (id, body) => {
         log.push(`send ${id}`);
         const rec = kept.find((p) => p.id === id);
-        if (rec === undefined) throw new NothingWasSent('this company holds no proposal by that name. Nothing was sent.');
+        if (rec === undefined)
+          throw new NothingWasSent('this company holds no proposal by that name. Nothing was sent.');
         raised.set(id, body.tx);
         over.onRaise?.(rec.chainId);
         return round(rec);
       },
       cancel: async (id, body) => {
         const i = kept.findIndex((p) => p.id === id);
-        if (i < 0 || (kept[i]!.status !== 'open' && kept[i]!.status !== 'approved') || body.filer !== signingPublicKeyOf(over.signingSecret).toLowerCase()) {
+        if (
+          i < 0 ||
+          (kept[i]!.status !== 'open' && kept[i]!.status !== 'approved') ||
+          body.filer !== signingPublicKeyOf(over.signingSecret).toLowerCase()
+        ) {
           log.push(`not withdrawn ${id}`);
           throw new NothingWasSent('this proposal is not one open for this seat to withdraw. Nothing was withdrawn.');
         }
         kept[i] = { ...kept[i]!, status: 'cancelled' };
         log.push(`withdrawn ${id}`);
         return round(kept[i]!);
-      },
+      }
     },
     carried: async (id, body) => {
       if (body.filer !== signingPublicKeyOf(over.signingSecret).toLowerCase() || !/^[0-9a-f]{64}$/u.test(body.vault)) {
         log.push(`not carried ${id}`);
-        throw new Error('this request does not carry this seat\'s filing key and the vault');
+        throw new Error("this request does not carry this seat's filing key and the vault");
       }
       const i = kept.findIndex((p) => p.id === id);
       if (over.failCarried === true || i < 0) {
@@ -140,7 +176,7 @@ export const proposalsKeptInATest = (over: {
       }
       kept[i] = { ...kept[i]!, status: 'executed' };
       log.push(`carried ${id}`);
-    },
+    }
   };
   return { doors, kept, log, raised, bodies };
 };

@@ -12,10 +12,24 @@ export function ChordKeys({ chord, bare = false }: { chord: Chord; bare?: boolea
   const keys: string[] = [];
   if (chord.command === true) keys.push(mac ? SHOWN.command : t('key.control'));
   /* Shift is shown for a letter or a named key; a sign such as ? is shown as the sign, which is what is pressed. */
-  if (chord.shift === true && (chord.key.length > 1 || /^[a-z]$/.test(chord.key))) keys.push(mac ? SHOWN.shift : t('key.shift'));
+  if (chord.shift === true && (chord.key.length > 1 || /^[a-z]$/.test(chord.key)))
+    keys.push(mac ? SHOWN.shift : t('key.shift'));
   keys.push(chord.key === 'enter' ? SHOWN.enter : chord.key === 'escape' ? t('key.escape') : chord.key.toUpperCase());
-  if (bare) return <span dir="ltr" className="inline-flex gap-1">{keys.map((k, i) => <span key={i}>{k}</span>)}</span>;
-  return <KbdGroup dir="ltr">{keys.map((k, i) => <Kbd key={i}>{k}</Kbd>)}</KbdGroup>;
+  if (bare)
+    return (
+      <span dir="ltr" className="inline-flex gap-1">
+        {keys.map((k, i) => (
+          <span key={i}>{k}</span>
+        ))}
+      </span>
+    );
+  return (
+    <KbdGroup dir="ltr">
+      {keys.map((k, i) => (
+        <Kbd key={i}>{k}</Kbd>
+      ))}
+    </KbdGroup>
+  );
 }
 
 /** Every way to press a shortcut from the table, the one shown first leading; `bare` shows that one alone. */

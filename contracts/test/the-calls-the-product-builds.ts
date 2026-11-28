@@ -24,7 +24,7 @@ export const callsBuiltBy = (sdk: unknown): ContractCalls =>
     ledger: L,
     ContractState: runtime.ContractState,
     settingsFor: transactionSettingsFor,
-    accountModuleFor,
+    accountModuleFor
   });
 
 /** The product's call and deploy builders over Midnight.js, with `over` standing in for any of its builders by name. */
@@ -35,5 +35,5 @@ export const callsTheProductBuilds = (over: Partial<Record<keyof Midnight, unkno
 export const readFrom = (contract: { serialize(): Uint8Array }, zswap?: { serialize(): Uint8Array }) => ({
   contract: contract.serialize(),
   zswap: (zswap ?? new L.ZswapChainState()).serialize(),
-  parameters: L.LedgerParameters.initialParameters().serialize(),
+  parameters: L.LedgerParameters.initialParameters().serialize()
 });

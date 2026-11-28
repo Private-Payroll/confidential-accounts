@@ -7,6 +7,6 @@
 import { describe } from 'vitest';
 import { countedOnACompanyOfItsOwn } from './actions-counted-on-a-company-of-their-own.test-support.js';
 
-describe('GIVING A READER THE COMPANY\'S READ READS THE SAME AT EVERY SIZE OF THE COMPANY', { timeout: 160_000 }, () => {
+describe("GIVING A READER THE COMPANY'S READ READS THE SAME AT EVERY SIZE OF THE COMPANY", { timeout: 160_000 }, () => {
   countedOnACompanyOfItsOwn(import.meta.url);
 });

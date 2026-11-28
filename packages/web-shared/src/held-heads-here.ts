@@ -8,7 +8,14 @@
 import type { Hex } from '../../../src/core/crypto.js';
 import { EMPTY_HEAD, type BatchHolders } from '../../../src/midnight/record-manifest.js';
 import {
-  HEADERS_AT_ONCE, headStepOf, leafHashOf, provenRefusal, treeHeaderReadable, treeLeafRefusal, type TreeHeader, type TreeLeaf,
+  HEADERS_AT_ONCE,
+  headStepOf,
+  leafHashOf,
+  provenRefusal,
+  treeHeaderReadable,
+  treeLeafRefusal,
+  type TreeHeader,
+  type TreeLeaf
 } from '../../../src/midnight/record-tree.js';
 import { DIRECTORY, directoryVersionsOf, type DirectoryVersionHeld } from '../../../src/midnight/records-held.js';
 import type { AccountHeld } from '../../../src/midnight/seat-directory.js';
@@ -18,15 +25,21 @@ import { AnchorNotMade } from './records-as-anchored.js';
 import { BEFORE_KEPT, type CheckedHeads, type HeadsBeforeStart } from './tree-kept-here.js';
 
 /** What reading the company's records asks of this device. */
-export type HeldDoors = Pick<AnchorDoors, 'accountId' | 'directory' | 'builder' | 'onChain' | 'tree' | 'checked' | 'headers'> & Partial<Pick<AnchorDoors, 'manifest' | 'vouching' | 'tagSeats' | 'leaving'>>;
+export type HeldDoors = Pick<
+  AnchorDoors,
+  'accountId' | 'directory' | 'builder' | 'onChain' | 'tree' | 'checked' | 'headers'
+> &
+  Partial<Pick<AnchorDoors, 'manifest' | 'vouching' | 'tagSeats' | 'leaving'>>;
 
 /** A holders list as one key, so the seats it names are read once. */
 export const heldKey = (h: BatchHolders): string => `${h.approvals}|${h.signerRoot}|${h.signers.join(',')}`;
 
-export const ROOT_NOT_KEPT = 'the service keeps no header that makes the root this device checked, so nothing can be read against it. Reload '
-  + 'the page; if it happens again, the service is withholding the company\'s records';
-export const NOT_PROVEN = 'the leaves the service gave do not prove into the root the anchor on chain holds, or an older version of one was '
-  + 'not given. Reload the page; if it happens again, the service is changing the company\'s records';
+export const ROOT_NOT_KEPT =
+  'the service keeps no header that makes the root this device checked, so nothing can be read against it. Reload ' +
+  "the page; if it happens again, the service is withholding the company's records";
+export const NOT_PROVEN =
+  'the leaves the service gave do not prove into the root the anchor on chain holds, or an older version of one was ' +
+  "not given. Reload the page; if it happens again, the service is changing the company's records";
 
 /** The older leaves a service gave, by their hash. */
 export const olderOf = (given: readonly unknown[]): ((hash: Hex) => TreeLeaf | undefined) => {
@@ -39,11 +52,13 @@ export const olderOf = (given: readonly unknown[]): ((hash: Hex) => TreeLeaf | u
 export const seatsHere = (doors: Pick<HeldDoors, 'builder'>) => {
   const seatsByHeld = new Map<string, readonly string[] | null>();
   const readSeats = async (helds: readonly BatchHolders[]): Promise<void> => {
-    const missing = [...new Map(helds.filter((h) => !seatsByHeld.has(heldKey(h))).map((h) => [heldKey(h), h])).values()];
+    const missing = [
+      ...new Map(helds.filter((h) => !seatsByHeld.has(heldKey(h))).map((h) => [heldKey(h), h])).values()
+    ];
     if (missing.length === 0) return;
     const a = await doors.builder.anchorHeads({ after: [], holders: missing });
     if (!Array.isArray(a?.holderSeats) || a.holderSeats.length !== missing.length) {
-      throw new AnchorNotMade('this device could not read which seats the company\'s headers name. Reload the page');
+      throw new AnchorNotMade("this device could not read which seats the company's headers name. Reload the page");
     }
     missing.forEach((h, i) => seatsByHeld.set(heldKey(h), a.holderSeats[i] ?? null));
   };
@@ -60,10 +75,19 @@ interface HeadersRead {
 }
 
 /** Reads the next page of headers after those read, never past `base`, and makes every one's head in one call. */
-const nextPageRead = async (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder'>, read: HeadersRead, base: number): Promise<void> => {
+const nextPageRead = async (
+  doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder'>,
+  read: HeadersRead,
+  base: number
+): Promise<void> => {
   const page = await doors.tree.headersAfter(doors.accountId, read.upTo, Math.min(HEADERS_AT_ONCE, base - read.upTo));
-  const given = (page.headers ?? []).filter((h): h is TreeHeader => treeHeaderReadable(h) && h.seq > read.upTo && h.seq <= base);
-  if (given.length === 0) { read.ended = true; return; }
+  const given = (page.headers ?? []).filter(
+    (h): h is TreeHeader => treeHeaderReadable(h) && h.seq > read.upTo && h.seq <= base
+  );
+  if (given.length === 0) {
+    read.ended = true;
+    return;
+  }
   const a = await doors.builder.anchorHeads({ after: given.map(headStepOf) });
   given.forEach((h, i) => {
     const at = read.bySeq.get(h.seq) ?? [];
@@ -81,7 +105,11 @@ const nextPageRead = async (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'build
  * that, and 'none' when no header follows on.
  */
 const chainFrom = (
-  b: number, base: number, read: HeadersRead, landedBy: ReadonlyMap<string, AnchorLanded>, headsBySeq: Map<number, Hex>,
+  b: number,
+  base: number,
+  read: HeadersRead,
+  landedBy: ReadonlyMap<string, AnchorLanded>,
+  headsBySeq: Map<number, Hex>
 ): HeadsBeforeStart | null | 'more' | 'none' => {
   const previousOf = new Map<number, Map<Hex, Hex>>();
   let heads = new Set<Hex>();
@@ -94,9 +122,17 @@ const chainFrom = (
     if (shown !== undefined) {
       const run: Hex[] = [];
       let h: Hex | undefined = shown;
-      for (let j = k; j >= b && h !== undefined; j -= 1) { if (j < base) { headsBySeq.set(j, h); run.unshift(h); } h = previousOf.get(j)?.get(h); }
+      for (let j = k; j >= b && h !== undefined; j -= 1) {
+        if (j < base) {
+          headsBySeq.set(j, h);
+          run.unshift(h);
+        }
+        h = previousOf.get(j)?.get(h);
+      }
       /* Whole: one head for each batch from `b` to the tie, or to `base - 1` when the tie is at or past `base`. */
-      return run.length === Math.min(k, base - 1) - b + 1 ? { from: b, heads: run, tied: { seq: k, head: shown } } : null;
+      return run.length === Math.min(k, base - 1) - b + 1
+        ? { from: b, heads: run, tied: { seq: k, head: shown } }
+        : null;
     }
     if (k === read.upTo && !read.ended) return 'more';
     heads = new Set(made.keys());
@@ -110,21 +146,36 @@ const chainFrom = (
  * believes holds. A run tied to anything else is not believed, and the batches it holds are read again.
  */
 const keptRunsStillTied = (
-  kept: readonly HeadsBeforeStart[], landedBy: ReadonlyMap<string, AnchorLanded>, headsBySeq: ReadonlyMap<number, Hex>,
+  kept: readonly HeadsBeforeStart[],
+  landedBy: ReadonlyMap<string, AnchorLanded>,
+  headsBySeq: ReadonlyMap<number, Hex>
 ): HeadsBeforeStart[] => {
-  const held = (r: HeadsBeforeStart, seq: number): Hex | undefined => (seq >= r.from && seq < r.from + r.heads.length ? r.heads[seq - r.from] : undefined);
+  const held = (r: HeadsBeforeStart, seq: number): Hex | undefined =>
+    seq >= r.from && seq < r.from + r.heads.length ? r.heads[seq - r.from] : undefined;
   const believed: HeadsBeforeStart[] = [];
   for (let left = [...kept], grew = true; grew;) {
     grew = false;
-    const tied = left.filter((r) => landedBy.has(r.tied.head) || headsBySeq.get(r.tied.seq) === r.tied.head
-      || believed.some((o) => held(o, r.tied.seq) === r.tied.head));
-    if (tied.length > 0) { believed.push(...tied); left = left.filter((r) => !tied.includes(r)); grew = true; }
+    const tied = left.filter(
+      (r) =>
+        landedBy.has(r.tied.head) ||
+        headsBySeq.get(r.tied.seq) === r.tied.head ||
+        believed.some((o) => held(o, r.tied.seq) === r.tied.head)
+    );
+    if (tied.length > 0) {
+      believed.push(...tied);
+      left = left.filter((r) => !tied.includes(r));
+      grew = true;
+    }
   }
   return kept.filter((r) => believed.includes(r));
 };
 
 /** **THE HEAD EACH BATCH LEFT**, as this device checked it from where it started (`kept`), and what each head says. */
-export const headsHere = (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder'>, landed: readonly AnchorLanded[], kept: CheckedHeads | null) => {
+export const headsHere = (
+  doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder'>,
+  landed: readonly AnchorLanded[],
+  kept: CheckedHeads | null
+) => {
   const landedBy = new Map(landed.map((l) => [l.head.toLowerCase(), l]));
   /* The batch this device started checking from: the heads before it are the ones read from the headers. */
   const base = kept?.base ?? 0;
@@ -176,9 +227,13 @@ export const headsHere = (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder
     }
   };
   return {
-    base, headsBySeq, landedFrom, headsBefore,
+    base,
+    headsBySeq,
+    landedFrom,
+    headsBefore,
     /** What the device keeps of the heads before its start after this read: null when this read found none to add. */
-    beforeToKeep: (): readonly HeadsBeforeStart[] | null => (found.length === 0 ? null : [...keptRuns, ...found].slice(-BEFORE_KEPT)),
+    beforeToKeep: (): readonly HeadsBeforeStart[] | null =>
+      found.length === 0 ? null : [...keptRuns, ...found].slice(-BEFORE_KEPT),
     seqOfHead: (h: string) => {
       const asked = h.toLowerCase();
       if (asked === EMPTY_HEAD) return -1;
@@ -200,7 +255,7 @@ export const headsHere = (doors: Pick<HeldDoors, 'accountId' | 'tree' | 'builder
        */
       const started = landedFrom(base);
       return started !== null && at < landed.indexOf(started) ? 'none' : 'unread';
-    },
+    }
   };
 };
 
@@ -209,7 +264,11 @@ export type SeatsHere = ReturnType<typeof seatsHere>;
 export type HeadsHere = ReturnType<typeof headsHere>;
 
 /** **THE COMPANY'S DIRECTORY AS ANCHORED**, version by version, and who held the account as each version was anchored. */
-export const directoryAsAnchoredHere = (doors: Pick<HeldDoors, 'accountId' | 'tree'>, seats: SeatsHere, heads: HeadsHere) => {
+export const directoryAsAnchoredHere = (
+  doors: Pick<HeldDoors, 'accountId' | 'tree'>,
+  seats: SeatsHere,
+  heads: HeadsHere
+) => {
   const company = doors.accountId;
   const { seatsByHeld, readSeats } = seats;
   const { landedFrom } = heads;
@@ -224,8 +283,10 @@ export const directoryAsAnchoredHere = (doors: Pick<HeldDoors, 'accountId' | 'tr
     const landedIn = landedFrom(d.batch);
     if (seats === undefined || seats === null || landedIn === null) return null;
     if (!Number.isSafeInteger(landedIn.seatBar) || landedIn.seatBar < 1) {
-      throw new AnchorNotMade('this device could not read the approvals a change of who is seated needed as the company\'s records '
-        + 'were anchored. Reload the page');
+      throw new AnchorNotMade(
+        "this device could not read the approvals a change of who is seated needed as the company's records " +
+          'were anchored. Reload the page'
+      );
     }
     return { approvals: d.held.approvals, seats, seatBar: landedIn.seatBar };
   };
@@ -233,8 +294,10 @@ export const directoryAsAnchoredHere = (doors: Pick<HeldDoors, 'accountId' | 'tr
     const given = await doors.tree.proofs(company, { root, records: [DIRECTORY], kinds: [] });
     if (given === null) throw new AnchorNotMade(ROOT_NOT_KEPT);
     const leaf = given.records[0] ?? null;
-    if (provenRefusal(root, { records: [{ name: DIRECTORY, leaf }] }, given.proof) !== null) throw new AnchorNotMade(NOT_PROVEN);
-    const versions = leaf === null ? new Map<number, DirectoryVersionHeld>() : directoryVersionsOf(leaf, olderOf(given.older));
+    if (provenRefusal(root, { records: [{ name: DIRECTORY, leaf }] }, given.proof) !== null)
+      throw new AnchorNotMade(NOT_PROVEN);
+    const versions =
+      leaf === null ? new Map<number, DirectoryVersionHeld>() : directoryVersionsOf(leaf, olderOf(given.older));
     if (versions === null) throw new AnchorNotMade(NOT_PROVEN);
     for (const [v, d] of versions) dirAt.set(v, d);
     await readSeats([...versions.values()].map((d) => d.held));

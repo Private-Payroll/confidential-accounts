@@ -7,7 +7,11 @@ import { Skeleton } from 'vaults-ui/components/skeleton';
  * round pill. Shown at zero too, so a count never disappears as it falls.
  */
 export function CountPill({ count }: { count: number }) {
-  return <Badge variant="secondary" className="h-5 min-w-5 rounded-full px-1.5" data-slot="count-pill" data-count={count}>{count}</Badge>;
+  return (
+    <Badge variant="secondary" className="h-5 min-w-5 rounded-full px-1.5" data-slot="count-pill" data-count={count}>
+      {count}
+    </Badge>
+  );
 }
 
 type Marks = Omit<HTMLAttributes<HTMLElement>, 'title' | 'children' | 'className' | 'style'>;
@@ -25,16 +29,17 @@ interface SectionCommon extends Marks {
   loading?: boolean;
 }
 
-export type SectionProps = SectionCommon & (
+export type SectionProps = SectionCommon &
   /** A list: `children` are its rows, each a `SectionRow`; with none, `empty` is shown instead. */
-  | { list?: true; empty: ReactNode; children?: ReactNode }
-  /**
-   * Something else under the title, such as the kit's table, which shows
-   * its own empty state. With `box` false the section is drawn on the
-   * page with no box of its own, for what is already in boxes: tiles.
-   */
-  | { list: false; empty?: never; box?: boolean; children: ReactNode }
-);
+  (
+    | { list?: true; empty: ReactNode; children?: ReactNode }
+    /**
+     * Something else under the title, such as the kit's table, which shows
+     * its own empty state. With `box` false the section is drawn on the
+     * page with no box of its own, for what is already in boxes: tiles.
+     */
+    | { list: false; empty?: never; box?: boolean; children: ReactNode }
+  );
 
 /**
  * A SECTION OF A PAGE: one box, a shade apart from the page, with a title and
@@ -53,9 +58,11 @@ export function Section(props: SectionProps) {
     <section
       data-slot="section"
       data-box={boxed}
-      className={boxed
-        ? 'flex min-w-0 flex-col gap-4 rounded-xl bg-card p-4 text-card-foreground shadow-xs ring-1 ring-foreground/10 md:p-5'
-        : 'flex min-w-0 flex-col gap-3'}
+      className={
+        boxed
+          ? 'flex min-w-0 flex-col gap-4 rounded-xl bg-card p-4 text-card-foreground shadow-xs ring-1 ring-foreground/10 md:p-5'
+          : 'flex min-w-0 flex-col gap-3'
+      }
       {...marks}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="section-header">
@@ -64,25 +71,52 @@ export function Section(props: SectionProps) {
             <h2 className="font-heading text-base font-medium">{title}</h2>
             {count === undefined ? null : <CountPill count={count} />}
           </div>
-          {description === undefined ? null : <div className="text-sm text-muted-foreground" data-slot="section-description">{description}</div>}
+          {description === undefined ? null : (
+            <div className="text-sm text-muted-foreground" data-slot="section-description">
+              {description}
+            </div>
+          )}
         </div>
-        {actions === undefined ? null : <div className="ms-auto flex flex-wrap items-center gap-2" data-slot="section-actions">{actions}</div>}
+        {actions === undefined ? null : (
+          <div className="ms-auto flex flex-wrap items-center gap-2" data-slot="section-actions">
+            {actions}
+          </div>
+        )}
       </div>
-      {list === false
-        ? children
-        : rows.length === 0
-          ? empty
-          : <ul className="flex flex-col divide-y" data-slot="section-rows">{rows}</ul>}
+      {list === false ? (
+        children
+      ) : rows.length === 0 ? (
+        empty
+      ) : (
+        <ul className="flex flex-col divide-y" data-slot="section-rows">
+          {rows}
+        </ul>
+      )}
     </section>
   );
 }
 
 /** One row of a section: what the item is at the start, and what can be done with it at the end. */
-export function SectionRow({ children, actions, ...marks }: { children: ReactNode; actions?: ReactNode } & Omit<HTMLAttributes<HTMLLIElement>, 'children' | 'className' | 'style'>) {
+export function SectionRow({
+  children,
+  actions,
+  ...marks
+}: { children: ReactNode; actions?: ReactNode } & Omit<
+  HTMLAttributes<HTMLLIElement>,
+  'children' | 'className' | 'style'
+>) {
   return (
-    <li data-slot="section-row" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0" {...marks}>
+    <li
+      data-slot="section-row"
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0"
+      {...marks}
+    >
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">{children}</div>
-      {actions === undefined ? null : <div className="flex flex-wrap items-center gap-2" data-slot="section-row-actions">{actions}</div>}
+      {actions === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-2" data-slot="section-row-actions">
+          {actions}
+        </div>
+      )}
     </li>
   );
 }
@@ -100,12 +134,21 @@ export function SectionLoading({ rows = 3, box = true, ...marks }: { rows?: numb
     <div
       data-slot="section-loading"
       aria-busy={true}
-      className={box ? 'flex flex-col gap-4 rounded-xl bg-card p-4 shadow-xs ring-1 ring-foreground/10 md:p-5' : 'flex flex-col gap-3'}
+      className={
+        box
+          ? 'flex flex-col gap-4 rounded-xl bg-card p-4 shadow-xs ring-1 ring-foreground/10 md:p-5'
+          : 'flex flex-col gap-3'
+      }
       {...marks}
     >
-      <div className="flex items-center gap-2"><Skeleton data-bar="title" className="h-5 w-40" /><Skeleton data-bar="count" className="h-5 w-6 rounded-full" /></div>
+      <div className="flex items-center gap-2">
+        <Skeleton data-bar="title" className="h-5 w-40" />
+        <Skeleton data-bar="count" className="h-5 w-6 rounded-full" />
+      </div>
       <div className="flex flex-col gap-3">
-        {Array.from({ length: rows }, (_, i) => <Skeleton key={i} data-bar="row" className="h-9 w-full" />)}
+        {Array.from({ length: rows }, (_, i) => (
+          <Skeleton key={i} data-bar="row" className="h-9 w-full" />
+        ))}
       </div>
     </div>
   );

@@ -25,11 +25,15 @@ export const approveWith = (doors: GovernedCallDoors, round: RoundOnThePage, key
 
 /** Charges a one-off to its vault's period when the vault has a spending policy (`chargeTheRunHere`), reading the records with `keys`. */
 export const chargeWith = (
-  doors: ChargeDoors & { readonly records: CompanyRecordsHere; readonly accountId: string }, keys: KeysHeld,
-  run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string },
+  doors: ChargeDoors & { readonly records: CompanyRecordsHere; readonly accountId: string },
+  keys: KeysHeld,
+  run: { readonly order: PrivatePaymentOrderOnTheWire; readonly proposalId: string }
 ): ReturnType<typeof chargeTheRunHere> => chargeTheRunHere({ ...doors, viewingKey: keys }, run);
 
 /** Where the vault's spending policy for this currency stands (`spendingPolicyHere`), its record opened with `keys`. */
 export const spendingPolicyWith = (
-  records: CompanyRecordsHere, accountId: string, keys: KeysHeld, payment: { readonly vault: string; readonly asset: AssetId },
+  records: CompanyRecordsHere,
+  accountId: string,
+  keys: KeysHeld,
+  payment: { readonly vault: string; readonly asset: AssetId }
 ): ReturnType<typeof spendingPolicyHere> => spendingPolicyHere({ records, accountId, viewingKey: keys }, payment);

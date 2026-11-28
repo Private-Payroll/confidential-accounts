@@ -12,16 +12,38 @@ import type { ActIntent } from 'midnight-identity/profile/request';
 import { assets as theAssets, type Asset, type AssetId, type AssetRegistry } from '../../../../src/core/assets.js';
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import {
-  POLICY_BANDS, policyTermsFromWire, policyTermsToWire, SPENDING_POLICY_KIND, type PolicyOpeningOnTheWire,
+  POLICY_BANDS,
+  policyTermsFromWire,
+  policyTermsToWire,
+  SPENDING_POLICY_KIND,
+  type PolicyOpeningOnTheWire
 } from '../../../../src/midnight/spending-policy-record.js';
 import { nothingWasSentBy, withCompanyKeys } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import type { GovernedOutcome } from '../../../../packages/web-shared/src/company-change-on-device.js';
 import { mayFileHere } from '../../../../packages/web-shared/src/may-file-here.js';
-import { PolicyNotOpenedHere, setSpendingPolicyOnDevice } from '../../../../packages/web-shared/src/spending-policy-here.js';
+import {
+  PolicyNotOpenedHere,
+  setSpendingPolicyOnDevice
+} from '../../../../packages/web-shared/src/spending-policy-here.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { type Handed } from './hand-over-in-the-wallet.js';
-import { codeOfError, StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
-import { policyBarKind, policyBarOnDevice, policyDoorsFor, spendingPolicyKind, termsShown, type PolicyKindsReach } from './policy-kinds.js';
+import {
+  codeOfError,
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
+import {
+  policyBarKind,
+  policyBarOnDevice,
+  policyDoorsFor,
+  spendingPolicyKind,
+  termsShown,
+  type PolicyKindsReach
+} from './policy-kinds.js';
 import { approving, onTheChain, type ProposalKind } from './proposal-kinds.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
@@ -45,12 +67,19 @@ const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const HEX64 = /^[0-9a-f]{64}$/u;
 const WHOLE = /^[1-9][0-9]{0,8}$/u;
 const BAND = /^([0-9]{1,39}):([1-9][0-9]{0,8})$/u;
-const whyOf = (act: SetPolicyAct) => (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.${act}.why.${key}`, ...(values === undefined ? {} : { values }),
-});
+const whyOf =
+  (act: SetPolicyAct) =>
+  (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
+    key: `act.${act}.why.${key}`,
+    ...(values === undefined ? {} : { values })
+  });
 
 /** A spending policy as the page asks it: the vault, its currency, and four bands written `ceiling:approvals`, checked as the contract takes them. */
-interface PolicyAsked { readonly vault: string; readonly asset: Asset; readonly terms: PolicyOpeningOnTheWire['terms'] }
+interface PolicyAsked {
+  readonly vault: string;
+  readonly asset: Asset;
+  readonly terms: PolicyOpeningOnTheWire['terms'];
+}
 
 export const policyAskedOf = (intent: ActIntent, registry: AssetRegistry): PolicyAsked | Words => {
   const f = intent.fields;
@@ -61,10 +90,14 @@ export const policyAskedOf = (intent: ActIntent, registry: AssetRegistry): Polic
   const bands = (f['bands'] ?? '').split(',').map((b) => BAND.exec(b));
   if (!HEX64.test(vault) || bands.length !== POLICY_BANDS || bands.some((m) => m === null)) return why('not-a-policy');
   try {
-    const terms = policyTermsToWire(policyTermsFromWire({
-      bands: bands.map((m) => ({ ceiling: m![1]!, approvals: m![2]! })),
-      periodLimit: f['periodLimit'], periodStart: f['periodStart'], periodLength: f['periodLength'],
-    }));
+    const terms = policyTermsToWire(
+      policyTermsFromWire({
+        bands: bands.map((m) => ({ ceiling: m![1]!, approvals: m![2]! })),
+        periodLimit: f['periodLimit'],
+        periodStart: f['periodStart'],
+        periodLength: f['periodLength']
+      })
+    );
     termsShown(terms, asset);
     return { vault, asset, terms };
   } catch (e) {
@@ -74,7 +107,7 @@ export const policyAskedOf = (intent: ActIntent, registry: AssetRegistry): Polic
 };
 
 const barAskedOf = (intent: ActIntent): number | Words =>
-  (WHOLE.test(intent.fields['bar'] ?? '') ? Number(intent.fields['bar']) : whyOf('set-policy-bar')('not-a-bar'));
+  WHOLE.test(intent.fields['bar'] ?? '') ? Number(intent.fields['bar']) : whyOf('set-policy-bar')('not-a-bar');
 
 /**
  * Refuses a spending policy from a seat whose role does not set spending policies, or one the company's directory, as
@@ -87,8 +120,11 @@ const mayRaiseAPolicyHere = async (r: CompanyReach, after?: Handed): Promise<voi
   const no = await mayFileHere(directory, signingPublicKeyOf(r.seat.signingSecret as Hex), SPENDING_POLICY_KIND);
   if (no === null) return;
   const why = whyOf('set-spending-policy');
-  if (after !== undefined) throw new StepRefused(why(after.over ? 'may-not-set-after-sending' : 'may-not-set-after-filing'));
-  throw new StepRefused(why(no.why === 'role' ? 'may-not-set' : no.why === 'no-seat' ? 'seat-not-in-directory' : 'seat-not-believed'));
+  if (after !== undefined)
+    throw new StepRefused(why(after.over ? 'may-not-set-after-sending' : 'may-not-set-after-filing'));
+  throw new StepRefused(
+    why(no.why === 'role' ? 'may-not-set' : no.why === 'no-seat' ? 'seat-not-in-directory' : 'seat-not-believed')
+  );
 };
 
 /**
@@ -104,11 +140,21 @@ const refuseAVaultNotAdopted = async (r: CompanyReach, vault: string): Promise<v
 const stoppedAs = (e: unknown, handed: Handed, why: ReturnType<typeof whyOf>): never => {
   if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
   if (e instanceof PolicyNotOpenedHere) throw new StepRefused(why('refused', { says: said(e) }), codeOfError(e));
-  throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? 'not-raised' : 'may-be-sent', { says: said(e) }), codeOfError(e));
+  throw new StepRefused(
+    why(!handed.over || nothingWasSentBy(e) ? 'not-raised' : 'may-be-sent', { says: said(e) }),
+    codeOfError(e)
+  );
 };
 
 /** The raise itself, through the shared code, stopped before the carrying out; a policy is filed as this seat's version first. */
-const raisedHere = async (act: SetPolicyAct, reach: SetPolicyReach, ctx: StepContext, r: CompanyReach, intent: ActIntent, handed: Handed): Promise<GovernedOutcome> => {
+const raisedHere = async (
+  act: SetPolicyAct,
+  reach: SetPolicyReach,
+  ctx: StepContext,
+  r: CompanyReach,
+  intent: ActIntent,
+  handed: Handed
+): Promise<GovernedOutcome> => {
   const why = whyOf(act);
   if (act === 'set-policy-bar') {
     const bar = barAskedOf(intent) as number;
@@ -119,9 +165,19 @@ const raisedHere = async (act: SetPolicyAct, reach: SetPolicyReach, ctx: StepCon
   const a = policyAskedOf(intent, reach.assets ?? theAssets) as PolicyAsked;
   await mayRaiseAPolicyHere(r);
   await refuseAVaultNotAdopted(r, a.vault);
-  return setSpendingPolicyOnDevice(policyDoorsFor(r, reach, ctx, handed, { files: true }), withCompanyKeys({
-    vault: a.vault, asset: a.asset.code, terms: a.terms, stopBeforeCarry: true, before: () => mayRaiseAPolicyHere(r, handed),
-  }, r.companyKeys));
+  return setSpendingPolicyOnDevice(
+    policyDoorsFor(r, reach, ctx, handed, { files: true }),
+    withCompanyKeys(
+      {
+        vault: a.vault,
+        asset: a.asset.code,
+        terms: a.terms,
+        stopBeforeCarry: true,
+        before: () => mayRaiseAPolicyHere(r, handed)
+      },
+      r.companyKeys
+    )
+  );
 };
 
 /**
@@ -144,16 +200,23 @@ export function setPolicyAction(reach: SetPolicyReach, act: SetPolicyAct): Actio
       { key: `act.${act}.shown.raise`, from: 'action' as const },
       { key: `act.${act}.shown.public`, from: 'action' as const },
       ...upkeepShown(),
-      { key: `act.${act}.shown.nothing-else`, from: 'action' as const },
+      { key: `act.${act}.shown.nothing-else`, from: 'action' as const }
     ],
     checks: [{ key: `act.${act}.check.seat` }, { key: `act.${act}.check.change` }, UPKEEP_CHECK],
     check: async (intent) => ((intent.fields['record'] ?? '') === '' ? why('not-a-company') : asked(intent)),
     steps: (intent) => {
       const kind: ProposalKind = act === 'set-policy-bar' ? policyBarKind(reach) : spendingPolicyKind(reach);
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const here = approving();
       let filed: ActIntent = intent;
-      const seat: ActionStep = { title: { key: `act.${act}.step.seat` }, run: async (ctx) => { await read.at(ctx); } };
+      const seat: ActionStep = {
+        title: { key: `act.${act}.step.seat` },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
+      };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       const raise: ActionStep = {
         title: { key: `act.${act}.step.raise` },
@@ -168,30 +231,44 @@ export function setPolicyAction(reach: SetPolicyReach, act: SetPolicyAct): Actio
           } catch (e) {
             return stoppedAs(e, handed, why);
           }
-          if (out.round === null) throw new StepRefused(why('not-raised', { says: 'The company holds no record of the proposal raised. Nothing more was sent.' }));
+          if (out.round === null)
+            throw new StepRefused(
+              why('not-raised', { says: 'The company holds no record of the proposal raised. Nothing more was sent.' })
+            );
           filed = { ...intent, fields: { ...intent.fields, proposal: out.round.id } } as ActIntent;
           here.round = { id: out.round.id, chainId: String(out.round.chainId).toLowerCase() };
-          if (act === 'set-spending-policy') here.round = { ...here.round, read: await readBack(ctx, kind, r, filed, why) };
+          if (act === 'set-spending-policy')
+            here.round = { ...here.round, read: await readBack(ctx, kind, r, filed, why) };
           const now = await onTheChain(r, here.round.chainId);
           here.standing = now ?? null;
           here.needed = now === undefined ? null : kind.needed(now, await r.holders(), filed);
           ctx.tell({
-            state: out.state === 'ready-to-carry' ? SET_POLICY_STATE.atItsBar : SET_POLICY_STATE.waiting, proposal: out.round.id,
-            ...(now === undefined ? {} : { approvals: now.approvals }), ...(here.needed === null ? {} : { needed: here.needed }),
+            state: out.state === 'ready-to-carry' ? SET_POLICY_STATE.atItsBar : SET_POLICY_STATE.waiting,
+            proposal: out.round.id,
+            ...(now === undefined ? {} : { approvals: now.approvals }),
+            ...(here.needed === null ? {} : { needed: here.needed })
           });
-        },
+        }
       };
       const carry: ActionStep = {
         title: { key: `act.${act}.step.carry` },
-        run: async (ctx) => { if (here.round !== null) await kind.carry!(here, read, filed)[0]!.run(ctx); },
+        run: async (ctx) => {
+          if (here.round !== null) await kind.carry!(here, read, filed)[0]!.run(ctx);
+        }
       };
       return [seat, upkeep.first, raise, carry, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
 /** The policy just raised, read back from the company's records with this seat's keys, as an approval reads it. */
-async function readBack(ctx: StepContext, kind: ProposalKind, r: CompanyReach, filed: ActIntent, why: ReturnType<typeof whyOf>): Promise<unknown> {
+async function readBack(
+  ctx: StepContext,
+  kind: ProposalKind,
+  r: CompanyReach,
+  filed: ActIntent,
+  why: ReturnType<typeof whyOf>
+): Promise<unknown> {
   try {
     return (await kind.opened(ctx, r, filed)).read;
   } catch (e) {
@@ -207,13 +284,13 @@ function shownAsked(act: SetPolicyAct, intent: ActIntent, registry: AssetRegistr
     return [
       { key: 'act.approve-policy.shown.bar', values: { bar }, from: 'page' },
       { key: 'act.approve-policy.shown.bar-every-signer', values: { bar }, from: 'action' },
-      { key: 'act.approve-policy.shown.bar-below-a-band', from: 'action' },
+      { key: 'act.approve-policy.shown.bar-below-a-band', from: 'action' }
     ];
   }
   const a = policyAskedOf(intent, registry);
   if ('key' in a) return [{ key: 'act.set-spending-policy.shown.not-a-policy', from: 'page' }];
   return [
     { key: 'act.set-spending-policy.shown.policy', values: { vault: a.vault, token: a.asset.symbol }, from: 'page' },
-    ...termsShown(a.terms, a.asset).map((l): ShownLine => ({ ...l, from: 'page' })),
+    ...termsShown(a.terms, a.asset).map((l): ShownLine => ({ ...l, from: 'page' }))
   ];
 }

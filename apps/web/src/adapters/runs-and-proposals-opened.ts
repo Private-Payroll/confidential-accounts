@@ -16,13 +16,35 @@ import { SERVICE } from './company-rows.js';
  */
 export function openRun(rec: SealedRun, readWith: HeldForReading): PayrollRun {
   const {
-    sealed, keyEpoch, proposalIds: _flat, employees: _e, totals: _t, payout: _p, skips: _s, repeats: _r, list: _l, ...operational
+    sealed,
+    keyEpoch,
+    proposalIds: _flat,
+    employees: _e,
+    totals: _t,
+    payout: _p,
+    skips: _s,
+    repeats: _r,
+    list: _l,
+    ...operational
   } = rec as SealedRun & Partial<Pick<PayrollRun, 'employees' | 'totals' | 'payout' | 'skips' | 'repeats' | 'list'>>;
-  return { ...operational, ...openRecord<Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>>(SERVICE.runsRecord, rec.accountId, sealed, keysByPurpose(readWith).at(keyEpoch)) } as PayrollRun;
+  return {
+    ...operational,
+    ...openRecord<Pick<PayrollRun, 'employees' | 'totals' | 'proposalIds'>>(
+      SERVICE.runsRecord,
+      rec.accountId,
+      sealed,
+      keysByPurpose(readWith).at(keyEpoch)
+    )
+  } as PayrollRun;
 }
 
 /** A proposal as this device reads it, the plain fields put back last so the envelope cannot override them. */
 export function openProposal(rec: SealedProposal, readWith: HeldForReading): Proposal {
   const { sealed, keyEpoch, approvalCount: _count, wiring: _wiring, ...open } = rec;
-  return { ...openRecord<Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>>(SERVICE.proposalsRecord, rec.accountId, sealed, keysByPurpose(readWith).at(keyEpoch)), ...open } as Proposal;
+  return {
+    ...openRecord<
+      Omit<Proposal, 'id' | 'accountId' | 'status' | 'createdAt' | 'executedAt' | 'digest' | 'txRef' | 'chainId'>
+    >(SERVICE.proposalsRecord, rec.accountId, sealed, keysByPurpose(readWith).at(keyEpoch)),
+    ...open
+  } as Proposal;
 }

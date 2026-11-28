@@ -1,13 +1,35 @@
 import { HugeiconsIcon } from '@hugeicons/react';
 import type { IconSvgElement } from '@hugeicons/react';
 import {
-  Alert02Icon, AlertDiamondIcon, ArrowDownLeft01Icon, ArrowRight01Icon,
-  ArrowUpRight01Icon, ChartUpIcon, CheckmarkCircle02Icon, CompassIcon, ContactBookIcon,
-  GlobeIcon, Home01Icon, IdCardIcon, InboxIcon, InformationCircleIcon, Key01Icon, LockIcon,
-  Moon02Icon, MonitorIcon,
-  PencilEdit02Icon, PlusSignIcon, PrinterIcon,
-  QrCode01Icon, ReceiptIcon, Settings02Icon, ShieldCheckIcon, Sun03Icon, Tick02Icon,
-  UnfoldMoreIcon, Wallet01Icon,
+  Alert02Icon,
+  AlertDiamondIcon,
+  ArrowDownLeft01Icon,
+  ArrowRight01Icon,
+  ArrowUpRight01Icon,
+  ChartUpIcon,
+  CheckmarkCircle02Icon,
+  CompassIcon,
+  ContactBookIcon,
+  GlobeIcon,
+  Home01Icon,
+  IdCardIcon,
+  InboxIcon,
+  InformationCircleIcon,
+  Key01Icon,
+  LockIcon,
+  Moon02Icon,
+  MonitorIcon,
+  PencilEdit02Icon,
+  PlusSignIcon,
+  PrinterIcon,
+  QrCode01Icon,
+  ReceiptIcon,
+  Settings02Icon,
+  ShieldCheckIcon,
+  Sun03Icon,
+  Tick02Icon,
+  UnfoldMoreIcon,
+  Wallet01Icon
 } from '@hugeicons/core-free-icons';
 
 /**
@@ -108,7 +130,7 @@ export const GLYPH = {
   inbox: InboxIcon,
   printer: PrinterIcon,
   secured: ShieldCheckIcon,
-  wallet: Wallet01Icon,
+  wallet: Wallet01Icon
 } satisfies Record<string, IconSvgElement>;
 
 /**
@@ -128,10 +150,7 @@ export function glyphFor(name: string): IconSvgElement {
  * name by the control it sits in. It takes its size from where it sits: a
  * kit button sizes its icons, and anywhere else the caller says how large.
  */
-export function Glyph({ icon, className }: {
-  readonly icon: IconSvgElement;
-  readonly className?: string;
-}) {
+export function Glyph({ icon, className }: { readonly icon: IconSvgElement; readonly className?: string }) {
   return (
     <HugeiconsIcon
       icon={icon}

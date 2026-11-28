@@ -24,26 +24,22 @@ describe('§1 — the wallet a company is offered', () => {
      * offered in the picker; it is not what an untouched screen proposes. */
     expect(OFFER_ORDER[0]).toBe(SUBWALLET_ACCOUNTS[0]);
     expect(OFFER_ORDER[OFFER_ORDER.length - 1]).toBe(MAIN_ACCOUNT);
-    expect([...OFFER_ORDER].sort((a, b) => a - b))
-      .toEqual([...WALLET_ACCOUNTS].sort((a, b) => a - b));
+    expect([...OFFER_ORDER].sort((a, b) => a - b)).toEqual([...WALLET_ACCOUNTS].sort((a, b) => a - b));
 
     const empty = emptyProfile(NOW);
-    expect(chooseSlot(empty, 'https://a.example'))
-      .toEqual({ account: SUBWALLET_ACCOUNTS[0], because: 'unused' });
+    expect(chooseSlot(empty, 'https://a.example')).toEqual({ account: SUBWALLET_ACCOUNTS[0], because: 'unused' });
   });
 
   it('TWO SITES ARE NOT OFFERED ONE SLOT', () => {
     const one = to(emptyProfile(NOW), 'https://a.example', SUBWALLET_ACCOUNTS[0]!);
-    expect(chooseSlot(one, 'https://b.example'))
-      .toEqual({ account: SUBWALLET_ACCOUNTS[1], because: 'unused' });
+    expect(chooseSlot(one, 'https://b.example')).toEqual({ account: SUBWALLET_ACCOUNTS[1], because: 'unused' });
   });
 
   it('AND A SITE THAT ALREADY HAS ONE KEEPS IT', () => {
     /* A second address next month means half a salary history sitting at an
      * address the company no longer pays. */
     const one = to(emptyProfile(NOW), 'https://a.example', SUBWALLET_ACCOUNTS[4]!);
-    expect(chooseSlot(one, 'https://a.example'))
-      .toEqual({ account: SUBWALLET_ACCOUNTS[4], because: 'already-theirs' });
+    expect(chooseSlot(one, 'https://a.example')).toEqual({ account: SUBWALLET_ACCOUNTS[4], because: 'already-theirs' });
   });
 
   it('AND WHEN EVERY SLOT IS SPENT IT SAYS SO RATHER THAN PRETENDING', () => {
@@ -54,8 +50,7 @@ describe('§1 — the wallet a company is offered', () => {
     for (const [i, account] of OFFER_ORDER.entries()) {
       profile = to(profile, `https://site-${i}.example`, account);
     }
-    expect(chooseSlot(profile, 'https://new.example'))
-      .toEqual({ account: OFFER_ORDER[0], because: 'every-slot-used' });
+    expect(chooseSlot(profile, 'https://new.example')).toEqual({ account: OFFER_ORDER[0], because: 'every-slot-used' });
   });
 
   it('WHO ELSE ALREADY HAS A SLOT — everybody but the site asking', () => {
@@ -76,7 +71,6 @@ describe('§1 — the wallet a company is offered', () => {
      */
     const profile = to(emptyProfile(NOW), 'https://a.example', 2);
     expect(chooseSlot(profile, 'https://b.example').account).toBeTypeOf('number');
-    expect(chooseSlot(profile, 'https://b.example'))
-      .toEqual(chooseSlot(profile, 'https://b.example'));
+    expect(chooseSlot(profile, 'https://b.example')).toEqual(chooseSlot(profile, 'https://b.example'));
   });
 });

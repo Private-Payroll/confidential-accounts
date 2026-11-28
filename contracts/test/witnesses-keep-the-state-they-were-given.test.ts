@@ -50,7 +50,7 @@ import {
   PINNED_PATH,
   aTreeThatFindsAPath,
   witnessesThatDidNotHandBackWhatTheyWereGiven,
-  type WitnessFn,
+  type WitnessFn
 } from './witness-identity.js';
 import { privateStateFor } from './simulator.js';
 
@@ -59,25 +59,39 @@ describe('the private half hands back the state it was given', () => {
   const policy = {
     terms: {
       bands: [1n, 2n, 3n, 4n].map((n) => ({ ceiling: n * 100n, approvals: n })),
-      periodLimit: 1_000n, periodStart: 0n, periodLength: 60n,
+      periodLimit: 1_000n,
+      periodStart: 0n,
+      periodLength: 60n
     },
-    blinding: new Uint8Array(32).fill(7),
+    blinding: new Uint8Array(32).fill(7)
   };
 
   /** The address an invitee was invited at, so the two witnesses that read one have one to hand back. */
   const invite = { coinSecretKey: new Uint8Array(32).fill(8), addressSalt: new Uint8Array(32).fill(9) };
 
   /** A device replaying a path it captured. `signerPath` short-circuits. */
-  const pinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: PINNED_PATH, pinAnyLeaf: true, policy, periodSpent: 5n, invite });
+  const pinned = (): AccountPrivateState => ({
+    ...privateStateFor(1),
+    pinnedPath: PINNED_PATH,
+    pinAnyLeaf: true,
+    policy,
+    periodSpent: 5n,
+    invite
+  });
 
   /**
    * A device with no pin, which is every real one. `signerPath` goes to the
    * tree, and that is its OTHER branch - the one a check that only ever ran
    * pinned would never execute.
    */
-  const unpinned = (): AccountPrivateState =>
-    ({ ...privateStateFor(1), pinnedPath: null, pinAnyLeaf: false, policy, periodSpent: 5n, invite });
+  const unpinned = (): AccountPrivateState => ({
+    ...privateStateFor(1),
+    pinnedPath: null,
+    pinAnyLeaf: false,
+    policy,
+    periodSpent: 5n,
+    invite
+  });
 
   const real = witnesses as unknown as Record<string, WitnessFn>;
 
@@ -91,10 +105,10 @@ describe('the private half hands back the state it was given', () => {
   it('EVERY witness returns the identical object, so a call can add nothing to a device', () => {
     expect(
       witnessesThatDidNotHandBackWhatTheyWereGiven(real, pinned()),
-      'a witness no longer hands back the record it was given. A device may only answer for a '
-      + 'signing secret it does not store because the record a call carries forward is the '
-      + 'identical object it was handed - the moment one is a copy, the write that follows a '
-      + 'settled call puts a secret into a store instead of putting back what it read',
+      'a witness no longer hands back the record it was given. A device may only answer for a ' +
+        'signing secret it does not store because the record a call carries forward is the ' +
+        'identical object it was handed - the moment one is a copy, the write that follows a ' +
+        'settled call puts a secret into a store instead of putting back what it read'
     ).toEqual([]);
   });
 
@@ -109,9 +123,9 @@ describe('the private half hands back the state it was given', () => {
   it('EVERY witness does it again with no pin, so the branch a real device takes is covered', () => {
     expect(
       witnessesThatDidNotHandBackWhatTheyWereGiven(real, unpinned(), aTreeThatFindsAPath()),
-      'a witness no longer hands back the record it was given when the path is resolved from '
-      + 'the tree rather than replayed - which is the branch every device that has not pinned '
-      + 'anything takes, and that is all of them',
+      'a witness no longer hands back the record it was given when the path is resolved from ' +
+        'the tree rather than replayed - which is the branch every device that has not pinned ' +
+        'anything takes, and that is all of them'
     ).toEqual([]);
   });
 
@@ -125,8 +139,8 @@ describe('the private half hands back the state it was given', () => {
     const declared = Object.keys(witnesses).sort();
     expect(
       Object.keys(EXTRA_ARGUMENTS).sort(),
-      'a witness has been added or removed and the check was not told how to call it, so it '
-      + 'has been walking past it',
+      'a witness has been added or removed and the check was not told how to call it, so it ' +
+        'has been walking past it'
     ).toEqual(declared);
     /* Eighteen: the signer's rights record and what a run's id opens to joined the thirteen,
        what a leg's retries have taken joined them, and the invited address's coin secret key and
@@ -150,10 +164,12 @@ describe('the private half hands back the state it was given', () => {
       return [{ ...ps }, value];
     };
 
-    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned()))
-      .toEqual([`${name}: handed back a different object`]);
-    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, unpinned(), aTreeThatFindsAPath()))
-      .toEqual([`${name}: handed back a different object`]);
+    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned())).toEqual([
+      `${name}: handed back a different object`
+    ]);
+    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, unpinned(), aTreeThatFindsAPath())).toEqual([
+      `${name}: handed back a different object`
+    ]);
   });
 
   /**
@@ -174,10 +190,11 @@ describe('the private half hands back the state it was given', () => {
       return [ps, found];
     };
 
-    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, unpinned(), aTreeThatFindsAPath()),
-      'the unpinned run does not reach the branch that resolves a path from the tree, so a '
-      + 'change made there is invisible to this check')
-      .toEqual(['signerPath: handed back a different object']);
+    expect(
+      witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, unpinned(), aTreeThatFindsAPath()),
+      'the unpinned run does not reach the branch that resolves a path from the tree, so a ' +
+        'change made there is invisible to this check'
+    ).toEqual(['signerPath: handed back a different object']);
 
     /* And the pinned run cannot see it, which is the whole reason both exist. */
     expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned())).toEqual([]);
@@ -191,10 +208,13 @@ describe('the private half hands back the state it was given', () => {
    */
   it('goes red when a witness throws rather than reporting it clean', () => {
     const mutated: Record<string, WitnessFn> = { ...real };
-    mutated.localSecretKey = () => { throw new Error('no record on this device'); };
+    mutated.localSecretKey = () => {
+      throw new Error('no record on this device');
+    };
 
-    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned()))
-      .toEqual(['localSecretKey: threw - no record on this device']);
+    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned())).toEqual([
+      'localSecretKey: threw - no record on this device'
+    ]);
   });
 
   /**
@@ -205,10 +225,11 @@ describe('the private half hands back the state it was given', () => {
   it('goes red when a witness arrives that it does not know how to call', () => {
     const mutated: Record<string, WitnessFn> = {
       ...real,
-      somethingNew: ((c: any) => [c.privateState, 1]) as unknown as WitnessFn,
+      somethingNew: ((c: any) => [c.privateState, 1]) as unknown as WitnessFn
     };
 
-    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned()))
-      .toEqual(['somethingNew: this check does not know how to call it']);
+    expect(witnessesThatDidNotHandBackWhatTheyWereGiven(mutated, pinned())).toEqual([
+      'somethingNew: this check does not know how to call it'
+    ]);
   });
 });

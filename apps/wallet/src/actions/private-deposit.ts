@@ -4,24 +4,48 @@ import { readVaultAddress, type VaultAddress } from 'midnight-identity/profile/c
 import { fromHex, type Hex } from '../../../../src/core/crypto.js';
 import { recordsKeypairFrom } from '../../../../src/midnight/company-nonce-secret.js';
 import type { DepositMoney } from '../../../../src/midnight/deposit-nonce.js';
-import { depositIntoCompanyVault, DepositLandedNotYetRecorded, DepositNotYetSeen, type DepositDoors, type DepositsInFlight } from '../../../../packages/web-shared/src/vault-private-deposit.js';
+import {
+  depositIntoCompanyVault,
+  DepositLandedNotYetRecorded,
+  DepositNotYetSeen,
+  type DepositDoors,
+  type DepositsInFlight
+} from '../../../../packages/web-shared/src/vault-private-deposit.js';
 import { type VaultService } from '../../../../packages/web-shared/src/vault-service.js';
-import { browserDepositsInFlight, browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
+import {
+  browserDepositsInFlight,
+  browserInFlightRecords
+} from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
 import { VaultSecretBeingChanged } from '../../../../packages/web-shared/src/deposit-on-device.js';
 import { DepositLineNotEnded } from '../../../../packages/web-shared/src/deposit-line-ended.js';
 import { deviceRecordsFor, deviceSignerFrom, readersIn } from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { stopsFor } from './leaving-read-in-the-wallet.js';
 import { vaultServiceThrough } from '../../../../packages/web-shared/src/vault-service-through-the-view.js';
-import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
+import {
+  coinsKeptOnThisDevice,
+  type CoinsKeptHere
+} from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { payForThePage, readWhatThePageAsks } from '../chain/balance-for-page.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
-import { depositSentFor, depositWalletFor, type DepositBalanceDoors, type DepositWallet } from './deposit-sent-by-the-wallet.js';
+import {
+  depositSentFor,
+  depositWalletFor,
+  type DepositBalanceDoors,
+  type DepositWallet
+} from './deposit-sent-by-the-wallet.js';
 import { timeShown } from '../../../../packages/web-shared/src/vault-step-reads.js';
 
 /*
@@ -56,12 +80,16 @@ export interface PrivateDepositReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.private-deposit.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.private-deposit.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 
 /** Where the deposit got to, as the action's outcome tells the page. */
 const STATE = {
-  recorded: 'recorded', notYetSpendable: 'not-yet-spendable', notYetSeen: 'not-yet-seen', landedNotRecorded: 'landed-not-recorded',
+  recorded: 'recorded',
+  notYetSpendable: 'not-yet-spendable',
+  notYetSeen: 'not-yet-seen',
+  landedNotRecorded: 'landed-not-recorded'
 } as const;
 
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -70,7 +98,7 @@ const bare = (h: string): string => h.toLowerCase().replace(/^0x/u, '');
 /** The wallet's own storage for a deposit on its way and the coins it made: this origin's, which no page can reach. */
 const keptInTheWallet = (opener: InFlightOpener) => ({
   inFlight: browserDepositsInFlight(opener),
-  coins: coinsKeptOnThisDevice(browserInFlightRecords(), opener),
+  coins: coinsKeptOnThisDevice(browserInFlightRecords(), opener)
 });
 
 /** The money the action names: the private token and the amount, as the ask's fields carry them. */
@@ -88,9 +116,13 @@ export const moneyOf = (intent: ActIntent): DepositMoney | null => {
  * answered, and a send whose failure the page cannot turn into "nothing was sent" (`depositSentFor`).
  */
 export function depositDoorsFor(
-  ctx: StepContext, r: CompanyReach, reach: PrivateDepositReach, vault: VaultAddress, money: DepositMoney,
+  ctx: StepContext,
+  r: CompanyReach,
+  reach: PrivateDepositReach,
+  vault: VaultAddress,
+  money: DepositMoney,
   /* Opened only by `pay`, which refuses first when no account was chosen. */
-  wallet: DepositWallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now),
+  wallet: DepositWallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now)
 ): DepositDoors {
   if (ctx.person === null) throw new StepRefused(why('no-person'));
   const me = deviceSignerFrom(r.leaf, r.companyKey);
@@ -101,8 +133,10 @@ export function depositDoorsFor(
   const base = vaultServiceThrough(r.stepView);
   const service: VaultService = {
     ...base,
-    keys: async () => { throw new Error('a private deposit reads no readers from the service.'); },
-    deposit: depositSentFor(ctx, r, wallet, reach.now),
+    keys: async () => {
+      throw new Error('a private deposit reads no readers from the service.');
+    },
+    deposit: depositSentFor(ctx, r, wallet, reach.now)
   };
   const account = ctx.held.account;
   return {
@@ -130,13 +164,24 @@ export function depositDoorsFor(
       const read = readWhatThePageAsks(await doors.ledger(), ask.transaction, vault);
       const leaf = read.leaves[0];
       /* Paid only for the one coin this wallet built: of the amount and the token the window showed, into this vault. */
-      if (read.pays !== 'private' || read.leaves.length !== 1 || leaf === undefined || leaf.kind !== 'shielded'
-        || bare(leaf.token) !== bare(money.token) || BigInt(leaf.amount) !== money.value) {
+      if (
+        read.pays !== 'private' ||
+        read.leaves.length !== 1 ||
+        leaf === undefined ||
+        leaf.kind !== 'shielded' ||
+        bare(leaf.token) !== bare(money.token) ||
+        BigInt(leaf.amount) !== money.value
+      ) {
         throw new StepRefused(why('not-as-built'));
       }
-      const finished = await payForThePage(doors, read.tx, { pays: 'private', leaves: read.leaves }, { stillWanted: () => !ctx.signal.aborted });
+      const finished = await payForThePage(
+        doors,
+        read.tx,
+        { pays: 'private', leaves: read.leaves },
+        { stillWanted: () => !ctx.signal.aborted }
+      );
       return { transaction: finished, leaves: read.leaves };
-    },
+    }
   };
 }
 
@@ -147,7 +192,10 @@ export function depositDoorsFor(
  * itself (`ActionStopped`) carries no words and is thrown as it is.
  */
 const lineNotEnded = (stop: Words, code: string | undefined): StepRefused =>
-  new StepRefused(why('line-not-ended', { ...(stop.values ?? {}), stop: stop.key }), code ?? stop.key.slice(stop.key.lastIndexOf('.') + 1));
+  new StepRefused(
+    why('line-not-ended', { ...(stop.values ?? {}), stop: stop.key }),
+    code ?? stop.key.slice(stop.key.lastIndexOf('.') + 1)
+  );
 
 /**
  * The deposit step's stop, as the person and the page read it. A stop whose journal line could not be marked is sorted
@@ -163,10 +211,15 @@ function depositStopped(ctx: StepContext, thrown: unknown, wallet: DepositWallet
     ctx.tell({ state: STATE.notYetSeen });
     const unsent = wallet.unsent();
     if (unsent === null) throw new StepRefused(why('not-yet-seen'));
-    throw new StepRefused(why(`held.${unsent.why}`, { until: timeShown(wallet.freesAt()), says: unsent.says }), unsent.why);
+    throw new StepRefused(
+      why(`held.${unsent.why}`, { until: timeShown(wallet.freesAt()), says: unsent.says }),
+      unsent.why
+    );
   }
   if (e instanceof VaultSecretBeingChanged) {
-    throw notEnded === null ? new StepRefused(why('secret-being-changed')) : lineNotEnded(why('secret-being-changed'), undefined);
+    throw notEnded === null
+      ? new StepRefused(why('secret-being-changed'))
+      : lineNotEnded(why('secret-being-changed'), undefined);
   }
   if (e instanceof DepositLandedNotYetRecorded) {
     ctx.tell({ state: STATE.landedNotRecorded });
@@ -174,8 +227,10 @@ function depositStopped(ctx: StepContext, thrown: unknown, wallet: DepositWallet
   }
   /* A wallet that could not balance says which token it was short of and by how much, so the words name it. */
   const short = thrown as { message?: string; tokenType?: unknown; amount?: unknown } | null;
-  const ofWhat = short !== null && typeof short === 'object' && short.tokenType !== undefined
-    ? ` (short of token ${String(short.tokenType)}${short.amount === undefined ? '' : `, ${String(short.amount)} of its smallest unit needed`})` : '';
+  const ofWhat =
+    short !== null && typeof short === 'object' && short.tokenType !== undefined
+      ? ` (short of token ${String(short.tokenType)}${short.amount === undefined ? '' : `, ${String(short.amount)} of its smallest unit needed`})`
+      : '';
   throw new StepRefused(why('not-made', { says: `${short?.message ?? String(thrown)}${ofWhat}` }));
 }
 
@@ -184,10 +239,18 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
   return Object.freeze({
     headline: 'act.private-deposit.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
-      { key: 'act.private-deposit.shown.amount', values: { amount: intent.fields['amount'] ?? '', token: intent.fields['token'] ?? '' }, from: 'page' as const },
+      {
+        key: 'act.private-deposit.shown.amount',
+        values: { amount: intent.fields['amount'] ?? '', token: intent.fields['token'] ?? '' },
+        from: 'page' as const
+      },
       { key: 'act.private-deposit.shown.pays', from: 'action' as const },
       { key: 'act.private-deposit.shown.own-fee', from: 'action' as const },
-      { key: 'act.private-deposit.shown.vault', values: { vault: intent.fields['vault'] ?? '' }, from: 'page' as const },
+      {
+        key: 'act.private-deposit.shown.vault',
+        values: { vault: intent.fields['vault'] ?? '' },
+        from: 'page' as const
+      },
       { key: 'act.private-deposit.shown.vault-check', from: 'action' as const },
       { key: 'act.private-deposit.shown.records', from: 'action' as const },
       { key: 'act.private-deposit.shown.journal', from: 'action' as const },
@@ -196,7 +259,7 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
       { key: 'act.private-deposit.shown.secret-again', from: 'action' as const },
       { key: 'act.private-deposit.shown.manifest', from: 'action' as const },
       ...upkeepShown({ ownEntry: true }),
-      { key: 'act.private-deposit.shown.nothing-else', from: 'action' as const },
+      { key: 'act.private-deposit.shown.nothing-else', from: 'action' as const }
     ],
     checks: [
       { key: 'act.private-deposit.check.seat' },
@@ -204,7 +267,7 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
       { key: 'act.private-deposit.check.secret' },
       { key: 'act.private-deposit.check.built' },
       { key: 'act.private-deposit.check.one-on-its-way' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent, held) => {
       if (intent.fields['record'] === undefined) return why('not-a-company');
@@ -214,34 +277,58 @@ export function privateDepositAction(reach: PrivateDepositReach): ActionDefiniti
       return null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.private-deposit.step.seat' },
         run: async (ctx) => {
           await read.at(ctx);
-        },
+        }
       };
-      const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, { coins: (opener) => (reach.kept ?? keptInTheWallet)(opener).coins }, { ownEntry: true });
+      const upkeep = upkeepSteps(
+        { reach: read.at, renew: read.renew },
+        { coins: (opener) => (reach.kept ?? keptInTheWallet)(opener).coins },
+        { ownEntry: true }
+      );
       const deposit: ActionStep = {
         title: { key: 'act.private-deposit.step.deposit' },
         run: async (ctx) => {
           const r = await read.at(ctx);
-          const vault = readVaultAddress(intent.fields['vault']) ?? (() => { throw new StepRefused(why('not-a-vault')); })();
-          const money = moneyOf(intent) ?? (() => { throw new StepRefused(why('nothing')); })();
+          const vault =
+            readVaultAddress(intent.fields['vault']) ??
+            (() => {
+              throw new StepRefused(why('not-a-vault'));
+            })();
+          const money =
+            moneyOf(intent) ??
+            (() => {
+              throw new StepRefused(why('nothing'));
+            })();
           ctx.tell({ vault });
           const wallet = depositWalletFor(reach.balance, ctx.held.identity, ctx.held.account ?? 0, reach.now);
           try {
-            const done = await depositIntoCompanyVault(depositDoorsFor(ctx, r, reach, vault, money, wallet), vault as unknown as Hex, money);
-            const created = typeof done.note.createdIn === 'string' && HEX64.test(bare(done.note.createdIn)) ? bare(done.note.createdIn) : null;
-            ctx.tell({ state: done.notYetSpendable === undefined ? STATE.recorded : STATE.notYetSpendable, ...(created === null ? {} : { created }) });
+            const done = await depositIntoCompanyVault(
+              depositDoorsFor(ctx, r, reach, vault, money, wallet),
+              vault as unknown as Hex,
+              money
+            );
+            const created =
+              typeof done.note.createdIn === 'string' && HEX64.test(bare(done.note.createdIn))
+                ? bare(done.note.createdIn)
+                : null;
+            ctx.tell({
+              state: done.notYetSpendable === undefined ? STATE.recorded : STATE.notYetSpendable,
+              ...(created === null ? {} : { created })
+            });
           } catch (thrown) {
             depositStopped(ctx, thrown, wallet);
           } finally {
             await wallet.stop();
           }
-        },
+        }
       };
       return [seat, upkeep.first, deposit, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

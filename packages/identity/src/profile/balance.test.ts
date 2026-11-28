@@ -23,14 +23,21 @@ const wire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   account: ACCOUNT,
   vault: VAULT,
   transaction: TX,
-  ...over,
+  ...over
 });
 const codeOf = (raw: Record<string, unknown>): string => {
-  try { parseAsk(raw, A, NOW); return 'parsed'; } catch (e) {
+  try {
+    parseAsk(raw, A, NOW);
+    return 'parsed';
+  } catch (e) {
     return e instanceof RequestError ? e.code : `threw ${String(e)}`;
   }
 };
-const without = (key: string) => { const w = wire(); delete w[key]; return w; };
+const without = (key: string) => {
+  const w = wire();
+  delete w[key];
+  return w;
+};
 
 describe('A BALANCE ASK', () => {
   it('parses, folds both addresses to one spelling, keeps the label as written, and carries the transaction untouched', () => {
@@ -42,8 +49,18 @@ describe('A BALANCE ASK', () => {
     expect(b.vault).toBe(VAULT);
     expect(b.transaction).toBe(TX);
     expect(b.requester.origin).toBe(A);
-    expect(Object.keys(b).sort()).toEqual(
-      ['account', 'company', 'expiresAt', 'kind', 'nonce', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
+    expect(Object.keys(b).sort()).toEqual([
+      'account',
+      'company',
+      'expiresAt',
+      'kind',
+      'nonce',
+      'purpose',
+      'requester',
+      'schema',
+      'transaction',
+      'vault'
+    ]);
   });
 
   it('refuses a company, a vault or a transaction it cannot read, each by name', () => {
@@ -76,7 +93,8 @@ describe('A BALANCE ASK', () => {
   it('A TRANSACTION OR A VAULT ON ANY OTHER KIND IS REFUSED, NOT IGNORED', () => {
     for (const kind of ['sign-in', 'unlock', 'keyring', 'disclosure', 'join']) {
       expect(codeOf({ ...wire({ kind }), transaction: TX }), kind).toBe('balance-fields-on-another-kind');
-      const noTx = wire({ kind }); delete noTx['transaction'];
+      const noTx = wire({ kind });
+      delete noTx['transaction'];
       expect(codeOf(noTx), kind).toBe('balance-fields-on-another-kind');
     }
   });

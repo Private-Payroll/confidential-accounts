@@ -19,7 +19,9 @@ type RoleChangeStage = 'remove' | 'removal-under-way' | 'invite';
 
 /** Which step a role change of `leaf` is at, from the directory's seats as believed here and the seats the chain holds. */
 export const roleChangeStageOf = (
-  seats: ReadonlyArray<{ readonly seat: string; readonly retired: unknown }>, held: readonly string[], leaf: string,
+  seats: ReadonlyArray<{ readonly seat: string; readonly retired: unknown }>,
+  held: readonly string[],
+  leaf: string
 ): RoleChangeStage => {
   const l = leaf.toLowerCase();
   if (!held.some((x) => x.toLowerCase() === l)) return 'invite';
@@ -38,11 +40,15 @@ const filesOf = (role: Role | null): string => mayFile({ role }).join();
  */
 export const roleAskedRefusal = (role: unknown, now: Role | null | undefined): string | null => {
   if (isReaderRole(role)) {
-    return 'limited and accountant people read the company\'s records and hold no seat, so a signer\'s seat is not changed into '
-      + 'one. To make this signer a reader, remove them first with Remove. Read access is given on the Roles tab in Settings';
+    return (
+      "limited and accountant people read the company's records and hold no seat, so a signer's seat is not changed into " +
+      'one. To make this signer a reader, remove them first with Remove. Read access is given on the Roles tab in Settings'
+    );
   }
-  if (!isSignerRole(role)) return 'the role asked for is not one a seat of a company can hold: choose admin, approver or initiator';
-  if (now !== undefined && filesOf(now) === filesOf(role)) return `that seat already holds the role ${role}, so there is nothing to change`;
+  if (!isSignerRole(role))
+    return 'the role asked for is not one a seat of a company can hold: choose admin, approver or initiator';
+  if (now !== undefined && filesOf(now) === filesOf(role))
+    return `that seat already holds the role ${role}, so there is nothing to change`;
   return null;
 };
 
@@ -58,8 +64,10 @@ type AddressTie = 'tied' | 'untied';
 export const addressTieOf = (seatCoin: string | undefined, addressCoin: string): AddressTie | string => {
   if (seatCoin === undefined) return 'untied';
   if (seatCoin.toLowerCase() === addressCoin.toLowerCase()) return 'tied';
-  return 'the address given is not the one this seat was invited at, as the company\'s list of signers records it, so the '
-    + 'person invited again would not be the one removed. Give the address of the wallet that holds the seat';
+  return (
+    "the address given is not the one this seat was invited at, as the company's list of signers records it, so the " +
+    'person invited again would not be the one removed. Give the address of the wallet that holds the seat'
+  );
 };
 
 /**
@@ -69,7 +77,11 @@ export const addressTieOf = (seatCoin: string | undefined, addressCoin: string):
  * raised the removal invites the person; with another address or role, the one confirmed is asked for again.
  */
 export const keptRoleChangeRefusal = (
-  k: Keyring, accountId: string, leaf: string, coinPublicKey: string, role: SignerRole,
+  k: Keyring,
+  accountId: string,
+  leaf: string,
+  coinPublicKey: string,
+  role: SignerRole
 ): 'not-started-here' | 'not-as-started' | null => {
   const kept = k.roleChangesKept?.[roleChangeKeyOf(accountId, leaf)];
   if (kept === undefined) return 'not-started-here';
@@ -77,11 +89,16 @@ export const keptRoleChangeRefusal = (
 };
 
 /** A field of a value read off the wire, or undefined where it is not an object. */
-const fieldOf = (x: unknown, name: string): unknown => (typeof x === 'object' && x !== null ? Reflect.get(x, name) : undefined);
+const fieldOf = (x: unknown, name: string): unknown =>
+  typeof x === 'object' && x !== null ? Reflect.get(x, name) : undefined;
 
 /** Whether a change read off the wire is shaped as a retirement: a seat, a whole threshold of at least one, and a list of signatures. */
-const isRetirement = (c: unknown): c is QuorumChange => fieldOf(c, 'kind') === 'retire' && typeof fieldOf(c, 'seat') === 'string'
-  && Number.isSafeInteger(fieldOf(c, 'threshold')) && Number(fieldOf(c, 'threshold')) >= 1 && Array.isArray(fieldOf(c, 'signatures'));
+const isRetirement = (c: unknown): c is QuorumChange =>
+  fieldOf(c, 'kind') === 'retire' &&
+  typeof fieldOf(c, 'seat') === 'string' &&
+  Number.isSafeInteger(fieldOf(c, 'threshold')) &&
+  Number(fieldOf(c, 'threshold')) >= 1 &&
+  Array.isArray(fieldOf(c, 'signatures'));
 
 /**
  * Whether the company's directory, as served, holds the retirement of `leaf`: a retirement naming the seat whose
@@ -94,16 +111,19 @@ const isRetirement = (c: unknown): c is QuorumChange => fieldOf(c, 'kind') === '
  */
 export const retiredInTheDirectory = (company: string, filings: readonly unknown[], leaf: string): boolean => {
   const l = leaf.toLowerCase();
-  const named = new Set(filings.flatMap((f) => {
-    const c = fieldOf(f, 'change');
-    const key = fieldOf(fieldOf(fieldOf(c, 'entry'), 'statement'), 'signingKey');
-    return fieldOf(c, 'kind') === 'claim' && typeof key === 'string' ? [key.toLowerCase()] : [];
-  }));
+  const named = new Set(
+    filings.flatMap((f) => {
+      const c = fieldOf(f, 'change');
+      const key = fieldOf(fieldOf(fieldOf(c, 'entry'), 'statement'), 'signingKey');
+      return fieldOf(c, 'kind') === 'claim' && typeof key === 'string' ? [key.toLowerCase()] : [];
+    })
+  );
   return filings.some((f) => {
     const c = fieldOf(f, 'change');
     if (!isRetirement(c) || c.seat.toLowerCase() !== l) return false;
     const at = Number(fieldOf(f, 'signedAt') ?? fieldOf(f, 'version'));
-    if (!Number.isSafeInteger(at) || signaturesRefusal(directoryChangeMessage(company, at, c), c.signatures) !== null) return false;
+    if (!Number.isSafeInteger(at) || signaturesRefusal(directoryChangeMessage(company, at, c), c.signatures) !== null)
+      return false;
     return c.signatures.filter((x) => named.has(String(x.publicKey).toLowerCase())).length >= c.threshold;
   });
 };

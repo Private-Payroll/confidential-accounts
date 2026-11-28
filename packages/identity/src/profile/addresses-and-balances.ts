@@ -101,8 +101,13 @@ export function whyNotAddressesAndBalances(shown: unknown): string | null {
   const seen = new Set<string>();
   for (const b of s.balances as unknown[]) {
     const h = b as Partial<HeldAmount> | null;
-    if (typeof h !== 'object' || h === null || !TOKEN.test(String(h.token)) || !DIGITS.test(String(h.amount))
-      || !VISIBILITIES.includes(h.visibility as Visibility)) {
+    if (
+      typeof h !== 'object' ||
+      h === null ||
+      !TOKEN.test(String(h.token)) ||
+      !DIGITS.test(String(h.amount)) ||
+      !VISIBILITIES.includes(h.visibility as Visibility)
+    ) {
       return 'one of its balances is not a token, an amount and a side';
     }
     if (read[h.visibility as Visibility] === null) return 'it carries an amount for a side it says it could not read';
@@ -119,14 +124,18 @@ export function whyNotAddressesAndBalances(shown: unknown): string | null {
  * nothing is taken out, so the page receives exactly what the person saw.
  */
 export function addressesAndBalancesAnswerFor(
-  request: AddressesAndBalancesRequest, shown: AddressesAndBalancesShown, at: number,
+  request: AddressesAndBalancesRequest,
+  shown: AddressesAndBalancesShown,
+  at: number
 ): AddressesAndBalances {
   if (!usableOrigin(request.requester.origin)) {
     throw new AddressesAndBalancesRefused('This wallet could not tell who asked, so nothing has been shown to them.');
   }
   const why = whyNotAddressesAndBalances(shown);
   if (why !== null) {
-    throw new AddressesAndBalancesRefused(`What this wallet read is not whole (${why}), so nothing has been shown to them.`);
+    throw new AddressesAndBalancesRefused(
+      `What this wallet read is not whole (${why}), so nothing has been shown to them.`
+    );
   }
   return Object.freeze({
     schema: ADDRESSES_AND_BALANCES_SCHEMA,
@@ -134,18 +143,20 @@ export function addressesAndBalancesAnswerFor(
     nonce: request.nonce,
     at,
     addresses: Object.freeze({ private: shown.addresses.private }),
-    balances: Object.freeze(shown.balances.map((b) => Object.freeze({ token: b.token, amount: b.amount, visibility: b.visibility }))),
-    read: Object.freeze({ private: shown.read.private, public: shown.read.public }),
+    balances: Object.freeze(
+      shown.balances.map((b) => Object.freeze({ token: b.token, amount: b.amount, visibility: b.visibility }))
+    ),
+    read: Object.freeze({ private: shown.read.private, public: shown.read.public })
   });
 }
 
 export type AddressesAndBalancesRead =
   | { readonly ok: true; readonly shown: AddressesAndBalancesShown; readonly at: number }
   | {
-    readonly ok: false;
-    readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch';
-    readonly says: string;
-  };
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch';
+      readonly says: string;
+    };
 
 /**
  * THE PAGE'S SIDE. Every expectation is the page's own: where it is and the
@@ -154,16 +165,17 @@ export type AddressesAndBalancesRead =
  */
 export function readAddressesAndBalancesAnswer(
   message: unknown,
-  expecting: { readonly atOrigin: string; readonly expectingNonce: string },
+  expecting: { readonly atOrigin: string; readonly expectingNonce: string }
 ): AddressesAndBalancesRead {
   const body = message as Partial<AddressesAndBalances> | null;
   if (typeof body !== 'object' || body === null || body.schema !== ADDRESSES_AND_BALANCES_SCHEMA) {
-    return { ok: false, code: 'not-an-answer', says: 'that is not a wallet\'s addresses and balances.' };
+    return { ok: false, code: 'not-an-answer', says: "that is not a wallet's addresses and balances." };
   }
   if (body.origin !== expecting.atOrigin) {
     return {
-      ok: false, code: 'origin-mismatch',
-      says: `this was shown to ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`,
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was shown to ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
     };
   }
   if (body.nonce !== expecting.expectingNonce) {
@@ -180,7 +192,7 @@ export function readAddressesAndBalancesAnswer(
     shown: {
       addresses: { private: shown.addresses.private },
       balances: shown.balances.map((b) => ({ token: b.token, amount: b.amount, visibility: b.visibility })),
-      read: { private: shown.read.private, public: shown.read.public },
-    },
+      read: { private: shown.read.private, public: shown.read.public }
+    }
   };
 }

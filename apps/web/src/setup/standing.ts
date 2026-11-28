@@ -26,7 +26,10 @@ const skips = (): Map<string | null, Set<StepId>> => (skippedIn ??= readSkips(ta
 export const skippedFor = (company: string | null): Set<StepId> => {
   const all = skips();
   let s = all.get(company);
-  if (s === undefined) { s = new Set(); all.set(company, s); }
+  if (s === undefined) {
+    s = new Set();
+    all.set(company, s);
+  }
   return s;
 };
 
@@ -45,7 +48,11 @@ export function skipStep(company: string | null, step: StepId): boolean {
  * Where `step` stands: done when the application knows it is, skipped when the person skipped it and it is not done, open otherwise.
  * Skipping a step never makes it done, and a step that cannot be skipped is never skipped, whatever the tab kept.
  */
-export function standingOf(step: (typeof EVERY_STEP)[number], facts: SetupFacts, skipped: ReadonlySet<StepId>): Standing {
+export function standingOf(
+  step: (typeof EVERY_STEP)[number],
+  facts: SetupFacts,
+  skipped: ReadonlySet<StepId>
+): Standing {
   if (step.done(facts)) return STANDING.done;
   return step.skippable && skipped.has(step.id) ? STANDING.skipped : STANDING.open;
 }
@@ -67,7 +74,9 @@ export function nextAfter(index: number, facts: SetupFacts): StepId | null {
 
 /** The first step that is neither done nor skipped, or the last step when every one is. A step asked for by name is taken before this, by the wizard. */
 export function firstOpen(facts: SetupFacts, skipped: ReadonlySet<StepId>): StepId {
-  return EVERY_STEP.find((s) => standingOf(s, facts, skipped) === STANDING.open)?.id ?? EVERY_STEP[EVERY_STEP.length - 1]!.id;
+  return (
+    EVERY_STEP.find((s) => standingOf(s, facts, skipped) === STANDING.open)?.id ?? EVERY_STEP[EVERY_STEP.length - 1]!.id
+  );
 }
 
 /** The steps not done yet, in the list's order: what the setup card on Home lists. A skipped step is not done, so it is among them. */
@@ -90,7 +99,11 @@ interface InvitedReads {
  */
 export function someoneInvited(records: InvitedReads): boolean {
   if (records.people.of === READ.read && records.people.value.length > 0) return true;
-  if (records.invitations.of === READ.read && records.invitations.value.some((i) => i.kind === INVITED.employee || i.kind === INVITED.vendor)) return true;
+  if (
+    records.invitations.of === READ.read &&
+    records.invitations.value.some((i) => i.kind === INVITED.employee || i.kind === INVITED.vendor)
+  )
+    return true;
   return records.vendors?.of === READ.read && records.vendors.value.vendors.length > 0;
 }
 
@@ -110,23 +123,44 @@ export function useInvitedFact(company: string | null): { invited: boolean; relo
  * and never another company's reading. `reread` puts the old reading away and reads again, for a step that changed the creation;
  * what this tab keeps shows at once, and what the network said before stays until the new reading comes.
  */
-export function useCreationFact(company: string | null): { creation: CompanyCreation | null; reread: (startedCompany?: string) => Promise<void> } {
+export function useCreationFact(company: string | null): {
+  creation: CompanyCreation | null;
+  reread: (startedCompany?: string) => Promise<void>;
+} {
   const [read, setRead] = useState<{ of: string | null; creation: CompanyCreation } | null>(null);
-  const load = useCallback(async (fresh: boolean, startedCompany?: string): Promise<void> => {
-    const id = startedCompany ?? company;
-    if (fresh) {
-      creationChanged(id);
-      /* What this tab keeps is known now: a creation just started shows as started before the network is asked, and what was read before is kept until the new reading comes. */
-      const here = creationHere(id);
-      setRead((was) => ({ of: id, creation: was !== null && was.of === id ? { ...was.creation, company: here.company, kept: here.kept, awaitingSecondPress: here.awaitingSecondPress } : here }));
-    }
-    const creation = await creationOf(id);
-    setRead({ of: id, creation });
-  }, [company]);
+  const load = useCallback(
+    async (fresh: boolean, startedCompany?: string): Promise<void> => {
+      const id = startedCompany ?? company;
+      if (fresh) {
+        creationChanged(id);
+        /* What this tab keeps is known now: a creation just started shows as started before the network is asked, and what was read before is kept until the new reading comes. */
+        const here = creationHere(id);
+        setRead((was) => ({
+          of: id,
+          creation:
+            was !== null && was.of === id
+              ? {
+                  ...was.creation,
+                  company: here.company,
+                  kept: here.kept,
+                  awaitingSecondPress: here.awaitingSecondPress
+                }
+              : here
+        }));
+      }
+      const creation = await creationOf(id);
+      setRead({ of: id, creation });
+    },
+    [company]
+  );
   useEffect(() => {
     let alive = true;
-    void creationOf(company).then((creation) => { if (alive) setRead({ of: company, creation }); });
-    return () => { alive = false; };
+    void creationOf(company).then((creation) => {
+      if (alive) setRead({ of: company, creation });
+    });
+    return () => {
+      alive = false;
+    };
   }, [company]);
   const reread = useCallback((startedCompany?: string) => load(true, startedCompany), [load]);
   return { creation: read !== null && read.of === company ? read.creation : null, reread };

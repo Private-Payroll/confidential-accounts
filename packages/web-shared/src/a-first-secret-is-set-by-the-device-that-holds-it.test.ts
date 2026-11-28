@@ -16,50 +16,81 @@ const SECRET = '5e'.repeat(31) + '00';
 const step = (n: number) => ({ sibling: String(n), goesLeft: n % 2 === 0 });
 
 const RUN: SecretRunOnTheWire = {
-  vault: VAULT, previous: '00'.repeat(32), commitment: '11'.repeat(32), copiesRoot: '22'.repeat(32), count: '2',
+  vault: VAULT,
+  previous: '00'.repeat(32),
+  commitment: '11'.repeat(32),
+  copiesRoot: '22'.repeat(32),
+  count: '2',
   edge: Array.from({ length: 10 }, (_, i) => step(100 + i)),
-  details: '33'.repeat(32), nonce: '44'.repeat(32), salt: '55'.repeat(32), asset: '66'.repeat(32), root: '77'.repeat(32),
-  payees: '1', path: [{ sibling: '1', siblingSum: '0', goesLeft: true }],
-  copies: [{ reader: '88'.repeat(32), parts: ['01', '02', '03', '04'].map((p) => p.repeat(32)), path: Array.from({ length: 10 }, (_, i) => step(i)) }],
+  details: '33'.repeat(32),
+  nonce: '44'.repeat(32),
+  salt: '55'.repeat(32),
+  asset: '66'.repeat(32),
+  root: '77'.repeat(32),
+  payees: '1',
+  path: [{ sibling: '1', siblingSum: '0', goesLeft: true }],
+  copies: [
+    {
+      reader: '88'.repeat(32),
+      parts: ['01', '02', '03', '04'].map((p) => p.repeat(32)),
+      path: Array.from({ length: 10 }, (_, i) => step(i))
+    }
+  ]
 };
 
 const standIns = () => {
   const asked: Array<{ circuitId: string; args: readonly unknown[]; read: unknown; account: unknown }> = [];
   const deps: VaultBuilderDeps = {
     ledger: {
-      ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) },
+      ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) }
     },
     runtimeState: { deserialize: () => ({ state: true }) },
     contracts: {
-      buildDeploy: async () => { throw new Error('no deploy here'); },
+      buildDeploy: async () => {
+        throw new Error('no deploy here');
+      },
       buildCall: async (_zk, call) => {
         asked.push({ circuitId: call.circuitId, args: call.args ?? [], read: call.read, account: call.account });
         return { private: { unprovenTx: 'unproven' as never, transaction: null, nextZswapLocalState: null } };
-      },
+      }
     },
     compiled: {},
     zkConfig: {},
     prove: async () => ({ serialize: () => new Uint8Array([1]) }),
     network: 'undeployed',
-    random: (n) => new Uint8Array(n).fill(4),
+    random: (n) => new Uint8Array(n).fill(4)
   };
   return { deps, asked };
 };
 const CHAIN = {
-  blockHash: '99'.repeat(32), vaultState: new Uint8Array([1]), zswapState: new Uint8Array([2]),
-  parameters: new Uint8Array([3]), accountState: new Uint8Array([4]),
+  blockHash: '99'.repeat(32),
+  vaultState: new Uint8Array([1]),
+  zswapState: new Uint8Array([2]),
+  parameters: new Uint8Array([3]),
+  accountState: new Uint8Array([4])
 };
 const hex = (b: unknown) => Buffer.from(b as Uint8Array).toString('hex');
 
-describe('setting a vault\'s secret from the device, its first or a replacement', () => {
+describe("setting a vault's secret from the device, its first or a replacement", () => {
   it('BUILDS THE CALL WITH THE EDGE, THE SECRET ITSELF AND NO EARLIER SECRET, in the places the circuit reads them', async () => {
     const { deps, asked } = standIns();
     await buildSetNonceSecret(deps, {
-      vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
+      vault: VAULT,
+      account: ACCOUNT,
+      run: RUN,
+      secret: SECRET,
+      proposal: 'aa'.repeat(32),
+      opensAt: '1',
+      closesAt: '2',
+      chain: CHAIN
     });
     expect(asked.map((a) => a.circuitId)).toEqual(['setNonceSecret']);
     /* RED WHEN the vault's call is built on other states, or reads any account but the company's at the vault's own block. */
-    expect(asked[0]!.read).toEqual({ contract: CHAIN.vaultState, zswap: CHAIN.zswapState, parameters: CHAIN.parameters });
+    expect(asked[0]!.read).toEqual({
+      contract: CHAIN.vaultState,
+      zswap: CHAIN.zswapState,
+      parameters: CHAIN.parameters
+    });
     expect(asked[0]!.account).toEqual({ address: ACCOUNT, state: CHAIN.accountState, blockHash: CHAIN.blockHash });
     const args = asked[0]!.args;
     /* RED WHEN the arguments move: the run, the replaced commitment, the commitment, the root and the count come first. */
@@ -78,23 +109,50 @@ describe('setting a vault\'s secret from the device, its first or a replacement'
     const { deps, asked } = standIns();
     const earlier = `${'7c'.repeat(31)}00`;
     await buildSetNonceSecret(deps, {
-      vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, earlier, proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
+      vault: VAULT,
+      account: ACCOUNT,
+      run: RUN,
+      secret: SECRET,
+      earlier,
+      proposal: 'aa'.repeat(32),
+      opensAt: '1',
+      closesAt: '2',
+      chain: CHAIN
     });
     /* RED WHEN a replacement is built with zero as its earlier secret: the vault refuses it once a secret took money. */
     expect(hex(asked[0]!.args[7])).toBe(earlier);
     expect(hex(asked[0]!.args[6])).toBe(SECRET);
-    await expect(buildSetNonceSecret(deps, {
-      vault: VAULT, account: ACCOUNT, run: RUN, secret: SECRET, earlier: 'zz', proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
-    })).rejects.toThrow(/earlier secret is not thirty-two bytes/);
+    await expect(
+      buildSetNonceSecret(deps, {
+        vault: VAULT,
+        account: ACCOUNT,
+        run: RUN,
+        secret: SECRET,
+        earlier: 'zz',
+        proposal: 'aa'.repeat(32),
+        opensAt: '1',
+        closesAt: '2',
+        chain: CHAIN
+      })
+    ).rejects.toThrow(/earlier secret is not thirty-two bytes/);
   });
 
   it('REFUSES A RUN THAT DOES NOT SHOW WHERE ITS COPIES END, and builds nothing', async () => {
     const { deps, asked } = standIns();
     const short = { ...RUN, edge: RUN.edge.slice(0, 9) };
     /* RED WHEN a run without its full edge is built: the vault would refuse it after the fee. */
-    await expect(buildSetNonceSecret(deps, {
-      vault: VAULT, account: ACCOUNT, run: short, secret: SECRET, proposal: 'aa'.repeat(32), opensAt: '1', closesAt: '2', chain: CHAIN,
-    })).rejects.toThrow(/does not show where its copies end/);
+    await expect(
+      buildSetNonceSecret(deps, {
+        vault: VAULT,
+        account: ACCOUNT,
+        run: short,
+        secret: SECRET,
+        proposal: 'aa'.repeat(32),
+        opensAt: '1',
+        closesAt: '2',
+        chain: CHAIN
+      })
+    ).rejects.toThrow(/does not show where its copies end/);
     expect(asked).toEqual([]);
   });
 });

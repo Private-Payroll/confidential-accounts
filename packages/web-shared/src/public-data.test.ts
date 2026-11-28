@@ -66,9 +66,16 @@ const packagesReachedBy = async (file: string): Promise<string[]> => {
       build: {
         outDir: out,
         emptyOutDir: true,
-        lib: { entry: join(REPO, file), formats: ['es'], fileName: 'probe' },
+        lib: { entry: join(REPO, file), formats: ['es'], fileName: 'probe' }
       },
-      plugins: [{ name: 'record-the-graph', moduleParsed(info: { id: string }) { modules.add(info.id); } }],
+      plugins: [
+        {
+          name: 'record-the-graph',
+          moduleParsed(info: { id: string }) {
+            modules.add(info.id);
+          }
+        }
+      ]
     });
   } finally {
     process.env.NODE_ENV = wasEnv;
@@ -81,17 +88,23 @@ const packagesReachedBy = async (file: string): Promise<string[]> => {
 };
 
 describe('what the indexer client brings with it', () => {
-  it('REACHES THE WALLET SDK\'S LEDGER, which is why it cannot live in the page',
-    { timeout: 180_000 }, async () => {
-      const reached = await packagesReachedBy(join('packages', 'web-shared', 'src', 'public-data.ts'));
+  it("REACHES THE WALLET SDK'S LEDGER, which is why it cannot live in the page", { timeout: 180_000 }, async () => {
+    const reached = await packagesReachedBy(join('packages', 'web-shared', 'src', 'public-data.ts'));
 
-      expect(reached,
-        'the reader for the contract\'s public state no longer reaches the wallet SDK\'s ledger. '
-        + 'If that is true, this reader could live in the page after all and the reason it is '
-        + 'kept off the page has gone - read what changed before changing this list')
-        /* Both ledgers' runtimes: the reader decodes what the chain served under either ledger. */
-        .toEqual(['@midnight-ntwrk/onchain-runtime-v3', '@midnightntwrk/ledger-v8', '@midnightntwrk/ledger-v9', '@midnightntwrk/onchain-runtime-v4']);
-    });
+    expect(
+      reached,
+      "the reader for the contract's public state no longer reaches the wallet SDK's ledger. " +
+        'If that is true, this reader could live in the page after all and the reason it is ' +
+        'kept off the page has gone - read what changed before changing this list'
+    )
+      /* Both ledgers' runtimes: the reader decodes what the chain served under either ledger. */
+      .toEqual([
+        '@midnight-ntwrk/onchain-runtime-v3',
+        '@midnightntwrk/ledger-v8',
+        '@midnightntwrk/ledger-v9',
+        '@midnightntwrk/onchain-runtime-v4'
+      ]);
+  });
 
   /**
    * **THE CONTROL FOR THE CASE ABOVE, AND IT IS NOT DECORATION.** Without it,
@@ -100,15 +113,19 @@ describe('what the indexer client brings with it', () => {
    * matched the whole of `node_modules`. The adapter beside it is a real module
    * in this repository, built through the same function, and it reaches none.
    */
-  it('and the provider a call is assembled with reaches none of it, through the same measurement',
-    { timeout: 180_000 }, async () => {
+  it(
+    'and the provider a call is assembled with reaches none of it, through the same measurement',
+    { timeout: 180_000 },
+    async () => {
       const reached = await packagesReachedBy(join('packages', 'web-shared', 'src', 'zk-config.ts'));
 
-      expect(reached,
-        'the adapter over the artefact cache has started reaching WebAssembly. It has no run-time '
-        + 'import of the package whose types it uses, and that is what keeps it loadable anywhere')
-        .toEqual([]);
-    });
+      expect(
+        reached,
+        'the adapter over the artefact cache has started reaching WebAssembly. It has no run-time ' +
+          'import of the package whose types it uses, and that is what keeps it loadable anywhere'
+      ).toEqual([]);
+    }
+  );
 
   /**
    * **AND NEITHER DOES THE THIRD OF THE THREE, WHICH IS THE ONE HOLDING A
@@ -125,48 +142,54 @@ describe('what the indexer client brings with it', () => {
    * "none" and the case that says "the ledger" differ in their subject and in
    * nothing else.
    */
-  it('and neither does the one that composes a signer\'s own record',
-    { timeout: 180_000 }, async () => {
-      const reached = await packagesReachedBy(join('packages', 'web-shared', 'src', 'private-state.ts'));
+  it("and neither does the one that composes a signer's own record", { timeout: 180_000 }, async () => {
+    const reached = await packagesReachedBy(join('packages', 'web-shared', 'src', 'private-state.ts'));
 
-      expect(reached,
-        'the module that composes a call\'s private record has started reaching WebAssembly. It '
-        + 'takes the contract\'s record as a type only, and that is what keeps it loadable on '
-        + 'whichever thread a call is assembled on')
-        .toEqual([]);
-    });
+    expect(
+      reached,
+      "the module that composes a call's private record has started reaching WebAssembly. It " +
+        "takes the contract's record as a type only, and that is what keeps it loadable on " +
+        'whichever thread a call is assembled on'
+    ).toEqual([]);
+  });
 });
 
 describe('the endpoints a wallet reports', () => {
-  const good = { indexerUri: 'https://indexer.example/api/v1/graphql', indexerWsUri: 'wss://indexer.example/api/v1/graphql/ws' };
+  const good = {
+    indexerUri: 'https://indexer.example/api/v1/graphql',
+    indexerWsUri: 'wss://indexer.example/api/v1/graphql/ws'
+  };
 
   it('accepts what a wallet actually reports', () => {
     expect(() => refuseEndpointsThatCannotWork(good)).not.toThrow();
   });
 
   it('accepts the plain-http pair a local node reports', () => {
-    expect(() => refuseEndpointsThatCannotWork({
-      indexerUri: 'http://localhost:8088/api/v1/graphql',
-      indexerWsUri: 'ws://localhost:8088/api/v1/graphql/ws',
-    })).not.toThrow();
+    expect(() =>
+      refuseEndpointsThatCannotWork({
+        indexerUri: 'http://localhost:8088/api/v1/graphql',
+        indexerWsUri: 'ws://localhost:8088/api/v1/graphql/ws'
+      })
+    ).not.toThrow();
   });
 
   it.each([
     ['', good.indexerWsUri],
-    [good.indexerUri, ''],
+    [good.indexerUri, '']
   ])('refuses when the wallet named nothing (%s, %s)', (indexerUri, indexerWsUri) => {
-    expect(() => refuseEndpointsThatCannotWork({ indexerUri, indexerWsUri }))
-      .toThrow(/did not say which indexer/);
+    expect(() => refuseEndpointsThatCannotWork({ indexerUri, indexerWsUri })).toThrow(/did not say which indexer/);
   });
 
   it('refuses a read address that is not an HTTP one', () => {
-    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerUri: 'wss://indexer.example/graphql' }))
-      .toThrow(/not an address this can read from over HTTP/);
+    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerUri: 'wss://indexer.example/graphql' })).toThrow(
+      /not an address this can read from over HTTP/
+    );
   });
 
   it('refuses a read address that is not an address at all', () => {
-    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerUri: 'indexer.example' }))
-      .toThrow(/not an address this can read from over HTTP/);
+    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerUri: 'indexer.example' })).toThrow(
+      /not an address this can read from over HTTP/
+    );
   });
 
   /**
@@ -177,12 +200,14 @@ describe('the endpoints a wallet reports', () => {
    * nothing was read.
    */
   it('refuses an http address in the subscription slot, in words a reader can act on', () => {
-    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerWsUri: good.indexerUri }))
-      .toThrow(/not a websocket address/);
+    expect(() => refuseEndpointsThatCannotWork({ ...good, indexerWsUri: good.indexerUri })).toThrow(
+      /not a websocket address/
+    );
   });
 
   it('will not build a reader from endpoints it has refused', async () => {
-    await expect(publicDataProviderFor({ indexerUri: '', indexerWsUri: '' }))
-      .rejects.toThrow(/did not say which indexer/);
+    await expect(publicDataProviderFor({ indexerUri: '', indexerWsUri: '' })).rejects.toThrow(
+      /did not say which indexer/
+    );
   });
 });

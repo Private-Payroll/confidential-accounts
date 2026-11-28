@@ -1,11 +1,19 @@
 import type { Identity } from 'midnight-identity/keys/derivation';
-import { DEPOSIT_CLOCKS_MAY_DIFFER_MS, DEPOSIT_TIME_TO_LIVE_MS } from '../../../../packages/web-shared/src/vault-private-deposit.js';
+import {
+  DEPOSIT_CLOCKS_MAY_DIFFER_MS,
+  DEPOSIT_TIME_TO_LIVE_MS
+} from '../../../../packages/web-shared/src/vault-private-deposit.js';
 import { CompanyChangedMeanwhile } from '../../../../packages/web-shared/src/company-view-probe.js';
 import type { VaultService } from '../../../../packages/web-shared/src/vault-service.js';
 import { timeShown } from '../../../../packages/web-shared/src/vault-step-reads.js';
 import type { BalanceDoors } from '../chain/balance-for-page.js';
 import { dustFromSpecks, exactSpecks } from '../chain/amount.js';
-import { finishedSentWithOwnDust, OwnFeeNotPaid, type OwnFeeFacade, type OwnFeeUnpaid } from '../chain/finished-paid-with-own-dust.js';
+import {
+  finishedSentWithOwnDust,
+  OwnFeeNotPaid,
+  type OwnFeeFacade,
+  type OwnFeeUnpaid
+} from '../chain/finished-paid-with-own-dust.js';
 import { FeeRefused, said } from '../chain/sent-straight-to-the-chain.js';
 import type { CompanyReach } from './company-reach.js';
 import { ownFeeConfirmed } from './hand-over-in-the-wallet.js';
@@ -43,22 +51,31 @@ export interface DepositWallet {
 }
 
 export function depositWalletFor(
-  balance: (identity: Identity, account: number) => DepositBalanceDoors, identity: Identity, account: number, now: () => number,
+  balance: (identity: Identity, account: number) => DepositBalanceDoors,
+  identity: Identity,
+  account: number,
+  now: () => number
 ): DepositWallet {
   let doors: DepositBalanceDoors | null = null;
   let paidAt: number | null = null;
   let unsent: { why: DepositUnsent; says: string } | null = null;
   return {
     doors: () => (doors ??= balance(identity, account)),
-    paying: () => { paidAt ??= now(); },
+    paying: () => {
+      paidAt ??= now();
+    },
     freesAt: () => (paidAt ?? now()) + DEPOSIT_TIME_TO_LIVE_MS + DEPOSIT_CLOCKS_MAY_DIFFER_MS,
     unsent: () => unsent,
-    sentNothing: (why, says) => { unsent = { why, says }; },
+    sentNothing: (why, says) => {
+      unsent = { why, says };
+    },
     stop: async () => {
       const opened = doors;
       doors = null;
-      await opened?.stop?.().catch(() => { /* stopping a wallet that failed to start has nothing to give back */ });
-    },
+      await opened?.stop?.().catch(() => {
+        /* stopping a wallet that failed to start has nothing to give back */
+      });
+    }
   };
 }
 
@@ -81,7 +98,7 @@ const refusedFor = (e: unknown): 'fee-not-paid' | 'network-refused' | null => {
 export const feeLines = (fee: bigint, until: number): readonly Words[] => [
   { key: 'act.private-deposit.fee.service' },
   { key: 'act.private-deposit.fee.own', values: { fee: dustFromSpecks(fee), specks: exactSpecks(fee) } },
-  { key: 'act.private-deposit.fee.if-not', values: { until: timeShown(until) } },
+  { key: 'act.private-deposit.fee.if-not', values: { until: timeShown(until) } }
 ];
 
 /**
@@ -92,20 +109,31 @@ export const feeLines = (fee: bigint, until: number): readonly Words[] => [
  */
 export function depositSentFor(
   ctx: Pick<StepContext, 'signal' | 'show' | 'sendStraight'> & Partial<Pick<StepContext, 'confirmFee'>>,
-  r: Pick<CompanyReach, 'stepView'>, wallet: DepositWallet, now: () => number,
+  r: Pick<CompanyReach, 'stepView'>,
+  wallet: DepositWallet,
+  now: () => number
 ): VaultService['deposit'] {
-  const byTheWallet = async (vault: string, tx: string, refused: unknown): Promise<{ txRef: string; transactionHash: string | null }> => {
+  const byTheWallet = async (
+    vault: string,
+    tx: string,
+    refused: unknown
+  ): Promise<{ txRef: string; transactionHash: string | null }> => {
     const doors = wallet.doors();
     if (doors.ownFee === undefined) {
       wallet.sentNothing('not-paid', 'this wallet cannot pay a fee from its DUST here');
       throw mayStillBeSent(refused);
     }
     try {
-      const id = await ctx.sendStraight((door) => finishedSentWithOwnDust({ facade: doors.ownFee!, signSegment: doors.signSegment }, tx, {
-        now, stillWanted: () => !ctx.signal.aborted,
-        confirm: (fee) => ownFeeConfirmed(ctx, feeLines(fee, wallet.freesAt()), door.ready, fee),
-        handedOver: door.handedOver,
-      }), [{ vault }]);
+      const id = await ctx.sendStraight(
+        (door) =>
+          finishedSentWithOwnDust({ facade: doors.ownFee!, signSegment: doors.signSegment }, tx, {
+            now,
+            stillWanted: () => !ctx.signal.aborted,
+            confirm: (fee) => ownFeeConfirmed(ctx, feeLines(fee, wallet.freesAt()), door.ready, fee),
+            handedOver: door.handedOver
+          }),
+        [{ vault }]
+      );
       ctx.show({ key: 'act.fell-back.own-dust' });
       return { txRef: PLAIN_REF.test(id) ? id : '', transactionHash: null };
     } catch (e) {
@@ -117,9 +145,14 @@ export function depositSentFor(
   return async (v, tx) => {
     let answer: { txRef?: unknown; transactionHash?: unknown } | null;
     try {
-      answer = (await r.stepView.current().write([{ to: 'vault-send', tx, calls: [{ act: 'deposit', vault: v }] }]))[0] as typeof answer;
+      answer = (
+        await r.stepView.current().write([{ to: 'vault-send', tx, calls: [{ act: 'deposit', vault: v }] }])
+      )[0] as typeof answer;
     } catch (e) {
-      if (e instanceof CompanyChangedMeanwhile || (e as { thisSendNotSent?: unknown } | null)?.thisSendNotSent === true) {
+      if (
+        e instanceof CompanyChangedMeanwhile ||
+        (e as { thisSendNotSent?: unknown } | null)?.thisSendNotSent === true
+      ) {
         throw Object.assign(e as Error, { nothingWasSent: true });
       }
       const code = refusedFor(e);
@@ -128,7 +161,10 @@ export function depositSentFor(
       throw mayStillBeSent(e);
     }
     const ref = typeof answer?.txRef === 'string' && PLAIN_REF.test(answer.txRef) ? answer.txRef : '';
-    const hash = typeof answer?.transactionHash === 'string' && HEX64.test(bare(answer.transactionHash)) ? bare(answer.transactionHash) : null;
+    const hash =
+      typeof answer?.transactionHash === 'string' && HEX64.test(bare(answer.transactionHash))
+        ? bare(answer.transactionHash)
+        : null;
     return { txRef: ref, transactionHash: hash };
   };
 }

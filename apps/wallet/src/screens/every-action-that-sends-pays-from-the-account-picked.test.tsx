@@ -13,16 +13,30 @@ import type { ReactNode } from 'react';
  */
 
 /* What each run was handed to pay from: the run itself is replaced, so reaching it at all is what "it went on" means. */
-const ran = vi.hoisted(() => ({ accounts: [] as Array<number | undefined>, pressOnceOpen: [] as Array<boolean | undefined> }));
+const ran = vi.hoisted(() => ({
+  accounts: [] as Array<number | undefined>,
+  pressOnceOpen: [] as Array<boolean | undefined>
+}));
 
 vi.mock('../actions/runner-screen.js', () => ({
-  ActionRunner: ({ account, pressOnceOpen, payingFrom }: {
-    readonly account?: number; readonly pressOnceOpen?: boolean; readonly payingFrom?: ReactNode;
+  ActionRunner: ({
+    account,
+    pressOnceOpen,
+    payingFrom
+  }: {
+    readonly account?: number;
+    readonly pressOnceOpen?: boolean;
+    readonly payingFrom?: ReactNode;
   }): ReactNode => {
     ran.accounts.push(account);
     ran.pressOnceOpen.push(pressOnceOpen);
-    return <>{payingFrom}<p data-action-runs={String(account)} /></>;
-  },
+    return (
+      <>
+        {payingFrom}
+        <p data-action-runs={String(account)} />
+      </>
+    );
+  }
 }));
 
 import { ACT_INTENTS } from 'midnight-identity/profile/act-intents';
@@ -60,16 +74,17 @@ const SENDING = Object.keys(ACTIONS).filter((name) => shapes[name] !== undefined
 const PAYS_FROM_THE_PICK = [...SENDING, 'recovery'];
 
 let asked = 0;
-const askFor = (name: string): Extract<Ask, { kind: 'act' }> => ({
-  schema: 'midnight-identity/disclosure-request/v1',
-  kind: 'act',
-  requester: { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'To run an action.',
-  nonce: `${name}-${(asked += 1)}`,
-  expiresAt: Date.now() + 600_000,
-  hearsProgress: true,
-  intent: { name, fields: {} },
-} as unknown as Extract<Ask, { kind: 'act' }>);
+const askFor = (name: string): Extract<Ask, { kind: 'act' }> =>
+  ({
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'act',
+    requester: { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' },
+    purpose: 'To run an action.',
+    nonce: `${name}-${(asked += 1)}`,
+    expiresAt: Date.now() + 600_000,
+    hearsProgress: true,
+    intent: { name, fields: {} }
+  }) as unknown as Extract<Ask, { kind: 'act' }>;
 
 const say = (key: string): string => (en as Record<string, string>)[key] ?? key;
 
@@ -77,17 +92,41 @@ const say = (key: string): string => (en as Record<string, string>)[key] ?? key;
 const SITE_SLOT = 5;
 const profileWithTheSite = (): Profile => ({
   ...emptyProfile(Date.now()),
-  grants: [{ recipient: { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' }, subwallet: SITE_SLOT, values: [], madeAt: 0, disclosures: [] }],
+  grants: [
+    {
+      recipient: { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' },
+      subwallet: SITE_SLOT,
+      values: [],
+      madeAt: 0,
+      disclosures: []
+    }
+  ]
 });
 
 /** The opened approval screen for this ask, in the wallet whose fingerprint is `opened`, with the account open last. */
 const screenFor = (
-  request: Extract<Ask, { kind: 'act' }>, opened: string, profile: Profile | null = null, record: 'profile' | 'unopenable' = 'profile',
-): ReactNode => actView({
-  identity: identityFromSecret(SECRET), secret: SECRET, now: Date.now, framing: undefined, opened: { of: record },
-  setChannelState: () => {}, channel: null, subwallet: OPEN_LAST, thisWallet: opened, profile, request,
-  consent: { ok: true }, walletRecord: undefined, say, atOnce: false,
-} as never);
+  request: Extract<Ask, { kind: 'act' }>,
+  opened: string,
+  profile: Profile | null = null,
+  record: 'profile' | 'unopenable' = 'profile'
+): ReactNode =>
+  actView({
+    identity: identityFromSecret(SECRET),
+    secret: SECRET,
+    now: Date.now,
+    framing: undefined,
+    opened: { of: record },
+    setChannelState: () => {},
+    channel: null,
+    subwallet: OPEN_LAST,
+    thisWallet: opened,
+    profile,
+    request,
+    consent: { ok: true },
+    walletRecord: undefined,
+    say,
+    atOnce: false
+  } as never);
 
 const shown = (selector: string): Element | null => document.querySelector(selector);
 
@@ -98,12 +137,16 @@ beforeEach(() => {
   ran.accounts = [];
   ran.pressOnceOpen = [];
 });
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+});
 
 describe('which actions pay from the account picked', () => {
   it('reads the routes of every action, and finds the payments and the upkeep among those that can send', () => {
     /* RED WHEN: the list of actions that can send is empty or misses a payment, so the cases below hold nothing. */
-    expect(SENDING).toEqual(expect.arrayContaining(['pay-run', 'one-off-payment', 'private-deposit', 'give-vault-keys']));
+    expect(SENDING).toEqual(
+      expect.arrayContaining(['pay-run', 'one-off-payment', 'private-deposit', 'give-vault-keys'])
+    );
   });
 
   it('holds every action to the pick but those named as sending nothing, none of which can send by its routes', () => {
@@ -166,16 +209,28 @@ describe('the words say what the account picked pays', () => {
     render(<SessionProvider>{screenFor(askFor('private-deposit'), PICKED)}</SessionProvider>);
     expect(document.body.textContent).toContain(say('ask.pays.choose-open'));
     cleanup();
-    render(<SessionProvider><PaysFromAccount request={askFor('give-vault-keys')} how="before" secret={SECRET} account={PICKED_ACCOUNT} shared={[]} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <PaysFromAccount
+          request={askFor('give-vault-keys')}
+          how="before"
+          secret={SECRET}
+          account={PICKED_ACCOUNT}
+          shared={[]}
+        />
+      </SessionProvider>
+    );
     /* RED WHEN: the line naming the account picked says it pays more than a fee not covered for the person. */
-    expect(shown('[data-pays-from-account]')?.textContent).toMatch(/^Any network fee not covered for you is paid from/u);
+    expect(shown('[data-pays-from-account]')?.textContent).toMatch(
+      /^Any network fee not covered for you is paid from/u
+    );
   });
 });
 
 describe('an action that pays only a fee keeps paying from the account kept for the site unless another is picked', () => {
   const feeOnly = PAYS_FROM_THE_PICK.filter((name) => name !== 'private-deposit');
 
-  it('a coin payment\'s pick starts on the main account, as it always did', () => {
+  it("a coin payment's pick starts on the main account, as it always did", () => {
     /* RED WHEN: a deposit's pick before the passkey starts anywhere but the main account of the wallet that opens. */
     expect(firstPickOf(askFor('private-deposit'))).toBe(MAIN_ACCOUNT);
   });
@@ -220,9 +275,11 @@ const doorsIn = (reach: unknown): string[] => {
 };
 
 describe('what each action is given to reach holds the two lists true', () => {
-  it('an action named as sending nothing is given no door to the person\'s accounts', () => {
+  it("an action named as sending nothing is given no door to the person's accounts", () => {
     /* RED WHEN: an action taken off the pick is given the person's own wallet, the chain that reaches it, or coins. */
-    expect([...SENDS_NOTHING].map((name) => [name, doorsIn(reachOf(name))])).toEqual([...SENDS_NOTHING].map((name) => [name, []]));
+    expect([...SENDS_NOTHING].map((name) => [name, doorsIn(reachOf(name))])).toEqual(
+      [...SENDS_NOTHING].map((name) => [name, []])
+    );
     /* RED WHEN: the walk finds no door anywhere, so the check above would pass for anything. */
     expect(doorsIn(reachOf('pay-run'))).toContain('chain');
     expect(doorsIn(reachOf('recovery'))).toContain('ownWallet');
@@ -246,8 +303,12 @@ describe('what each action is given to reach holds the two lists true', () => {
 const everyAccountGiven = (): Profile => ({
   ...emptyProfile(Date.now()),
   grants: OFFER_ORDER.map((subwallet) => ({
-    recipient: { origin: 'https://other.example', name: 'Other', rdns: 'example.other' }, subwallet, values: [], madeAt: 0, disclosures: [],
-  })),
+    recipient: { origin: 'https://other.example', name: 'Other', rdns: 'example.other' },
+    subwallet,
+    values: [],
+    madeAt: 0,
+    disclosures: []
+  }))
 });
 
 describe('a fee-only action left on the account offered to the site says what that account is, and waits when it should', () => {
@@ -257,7 +318,7 @@ describe('a fee-only action left on the account offered to the site says what th
     return request;
   };
 
-  it('on the site\'s own account it starts on the Approve before the passkey, and says it was not picked', () => {
+  it("on the site's own account it starts on the Approve before the passkey, and says it was not picked", () => {
     render(<SessionProvider>{screenFor(leftOnOffered(), PICKED, profileWithTheSite())}</SessionProvider>);
     /* RED WHEN: an act on the site's own account waits for a second press, or says the person picked the account. */
     expect(ran.pressOnceOpen).toEqual([false]);
@@ -272,8 +333,10 @@ describe('a fee-only action left on the account offered to the site says what th
     expect(shown('[data-pays-from-shared]')?.textContent).toContain('https://other.example');
   });
 
-  it('when this wallet\'s record could not be read it waits for a press, and says why', () => {
-    render(<SessionProvider>{screenFor(leftOnOffered(), PICKED, emptyProfile(Date.now()), 'unopenable')}</SessionProvider>);
+  it("when this wallet's record could not be read it waits for a press, and says why", () => {
+    render(
+      <SessionProvider>{screenFor(leftOnOffered(), PICKED, emptyProfile(Date.now()), 'unopenable')}</SessionProvider>
+    );
     /* RED WHEN: an act runs at once from an account whose other sites could not be known. */
     expect(ran.pressOnceOpen).toEqual([true]);
     expect(shown('[data-pays-from-record-unread]')).not.toBeNull();
@@ -289,7 +352,9 @@ describe('the line naming the account says how it was picked', () => {
     expect(shown('[data-pays-from-account]')?.textContent).toContain('You picked it before your passkey.');
     cleanup();
     render(<SessionProvider>{screenFor(askFor('pay-run'), PICKED, profileWithTheSite())}</SessionProvider>);
-    act(() => { fireEvent.click(shown('[data-pay-from-open]') as HTMLElement); });
+    act(() => {
+      fireEvent.click(shown('[data-pay-from-open]') as HTMLElement);
+    });
     /* RED WHEN: an account picked in a wallet already open is said to have been picked before the passkey. */
     expect(shown('[data-pays-from-account]')?.textContent).toContain('You picked it here.');
     expect(shown('[data-pays-from-account]')?.textContent).not.toContain('before your passkey');

@@ -43,8 +43,8 @@ export function loadTermsSeen(): TermsSeen | null {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
     const record = parsed as Partial<TermsSeen>;
-    if (typeof record.hash !== 'string' || typeof record.url !== 'string'
-      || typeof record.seenAt !== 'number') return null;
+    if (typeof record.hash !== 'string' || typeof record.url !== 'string' || typeof record.seenAt !== 'number')
+      return null;
     return { hash: record.hash, url: record.url, seenAt: record.seenAt };
   } catch {
     return null;
@@ -55,7 +55,9 @@ export function recordTermsSeen(terms: { hash: string; url: string }): void {
   try {
     const record: TermsSeen = { hash: terms.hash, url: terms.url, seenAt: Date.now() };
     localStorage.setItem(KEY, JSON.stringify(record));
-  } catch { /* a failure to record means they show again — never worse */ }
+  } catch {
+    /* a failure to record means they show again — never worse */
+  }
 }
 
 /** The SDK's own static fetch, over this wallet's own configuration. */

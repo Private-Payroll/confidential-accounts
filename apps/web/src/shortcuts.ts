@@ -39,24 +39,51 @@ export interface Shortcut {
 export const SHORTCUTS = {
   commandBar: { chords: [{ key: 'k', code: 'KeyK', command: true }], does: (t) => t('shortcut.commandBar') },
   everyShortcut: { chords: [{ key: '?', code: 'Slash', shift: true }], does: (t) => t('shortcut.everyShortcut') },
-  searchThisPage: { chords: [{ key: '/', code: 'Slash' }], does: (t) => t('shortcut.searchThisPage'), soon: (t) => t('shortcut.searchThisPage.soon') },
-  create: { chords: [{ key: 'c', code: 'KeyC' }], does: (t) => t('shortcut.create'), soon: (t) => t('shortcut.create.soon') },
-  nextRow: { chords: [{ key: 'j', code: 'KeyJ' }], does: (t) => t('shortcut.nextRow'), soon: (t) => t('shortcut.rows.soon') },
-  previousRow: { chords: [{ key: 'k', code: 'KeyK' }], does: (t) => t('shortcut.previousRow'), soon: (t) => t('shortcut.rows.soon') },
-  openRow: { chords: [{ key: 'enter', code: 'Enter' }], does: (t) => t('shortcut.openRow'), soon: (t) => t('shortcut.rows.soon') },
+  searchThisPage: {
+    chords: [{ key: '/', code: 'Slash' }],
+    does: (t) => t('shortcut.searchThisPage'),
+    soon: (t) => t('shortcut.searchThisPage.soon')
+  },
+  create: {
+    chords: [{ key: 'c', code: 'KeyC' }],
+    does: (t) => t('shortcut.create'),
+    soon: (t) => t('shortcut.create.soon')
+  },
+  nextRow: {
+    chords: [{ key: 'j', code: 'KeyJ' }],
+    does: (t) => t('shortcut.nextRow'),
+    soon: (t) => t('shortcut.rows.soon')
+  },
+  previousRow: {
+    chords: [{ key: 'k', code: 'KeyK' }],
+    does: (t) => t('shortcut.previousRow'),
+    soon: (t) => t('shortcut.rows.soon')
+  },
+  openRow: {
+    chords: [{ key: 'enter', code: 'Enter' }],
+    does: (t) => t('shortcut.openRow'),
+    soon: (t) => t('shortcut.rows.soon')
+  },
   close: { chords: [{ key: 'escape', code: 'Escape' }], does: (t) => t('shortcut.close') },
   toggleMenu: { chords: [{ key: 'b', code: 'KeyB', command: true }], does: (t) => t('shortcut.toggleMenu') },
   switchCompany: { chords: [{ key: '.', code: 'Period', command: true }], does: (t) => t('shortcut.switchCompany') },
-  lightOrDark: { chords: [{ key: 'l', code: 'KeyL', command: true, shift: true }], does: (t) => t('shortcut.lightOrDark') },
+  lightOrDark: {
+    chords: [{ key: 'l', code: 'KeyL', command: true, shift: true }],
+    does: (t) => t('shortcut.lightOrDark')
+  }
 } as const satisfies Record<string, Shortcut>;
 
 export type ShortcutId = keyof typeof SHORTCUTS;
 
 /** Each shortcut's id, by its own name, so code names a shortcut without writing it as text. */
-export const SHORTCUT = Object.fromEntries(Object.keys(SHORTCUTS).map((id) => [id, id])) as { readonly [K in ShortcutId]: K };
+export const SHORTCUT = Object.fromEntries(Object.keys(SHORTCUTS).map((id) => [id, id])) as {
+  readonly [K in ShortcutId]: K;
+};
 
 /** Every shortcut, with its id, in the table's order. */
-export const EVERY_SHORTCUT: readonly (Shortcut & { id: ShortcutId })[] = (Object.keys(SHORTCUTS) as ShortcutId[]).map((id) => ({ id, ...(SHORTCUTS[id] as Shortcut) }));
+export const EVERY_SHORTCUT: readonly (Shortcut & { id: ShortcutId })[] = (Object.keys(SHORTCUTS) as ShortcutId[]).map(
+  (id) => ({ id, ...(SHORTCUTS[id] as Shortcut) })
+);
 
 /** A computer made by Apple, where the command key is the one held for shortcuts. */
 export const onAMac = (platform: string): boolean => /mac|iphone|ipad/i.test(platform);
@@ -79,7 +106,12 @@ export function pressed(chord: Chord, press: Press, mac: boolean): boolean {
   if (letterLike && press.shiftKey !== (chord.shift === true)) return false;
   if (typed === chord.key) return true;
   /* By place, Shift is read for every chord: on a keyboard whose letters are not Latin, / and ? are one key with and without it. */
-  return !LATIN.test(press.key) && press.key.length === 1 && press.code === chord.code && press.shiftKey === (chord.shift === true);
+  return (
+    !LATIN.test(press.key) &&
+    press.key.length === 1 &&
+    press.code === chord.code &&
+    press.shiftKey === (chord.shift === true)
+  );
 }
 
 /** Whether a press is being typed into a field, where a shortcut without the command key is text. */

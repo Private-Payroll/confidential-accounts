@@ -43,7 +43,10 @@ export interface VaultPublicMoney {
  * Every asset in the registry is read, not only those a person may choose
  * today: a token switched off is still money a vault holds.
  */
-export async function vaultPublicMoney(viewOfTheVault: () => Promise<unknown>, registry: AssetRegistry = assets): Promise<VaultPublicMoney | null> {
+export async function vaultPublicMoney(
+  viewOfTheVault: () => Promise<unknown>,
+  registry: AssetRegistry = assets
+): Promise<VaultPublicMoney | null> {
   const answer = await readPublicHoldings(viewOfTheVault);
   if (answer.of === 'unreadable') return null;
   const byToken = new Map<string, { decimals: number; symbol: string }>();

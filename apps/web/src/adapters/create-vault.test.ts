@@ -40,15 +40,30 @@ const STATEMENT = signRecordsKey(ME, LABEL, 'c0'.repeat(32) as never, fromHex('1
 const SIGNER = newSigningKeypair();
 /* This signer's entry in the company's seat directory, signed by their wallet: the seat and the records key a vault's pool and journals are wrapped to. */
 const ENTRY = directoryEntryMade({
-  company: 'c1', person: 'u1', committeeKey: MINE, opening: OPENING, signingSecret: 'aa'.repeat(32) as Hex, viewingKey: '5e'.repeat(32) as Hex,
-  signed: signDirectoryEntry(ME, LABEL, 'c0'.repeat(32) as never, fromHex('11'.repeat(32)), signingPublicKeyOf('aa'.repeat(32)), SEAT),
+  company: 'c1',
+  person: 'u1',
+  committeeKey: MINE,
+  opening: OPENING,
+  signingSecret: 'aa'.repeat(32) as Hex,
+  viewingKey: '5e'.repeat(32) as Hex,
+  signed: signDirectoryEntry(
+    ME,
+    LABEL,
+    'c0'.repeat(32) as never,
+    fromHex('11'.repeat(32)),
+    signingPublicKeyOf('aa'.repeat(32)),
+    SEAT
+  )
 });
 const COMPANY = 'c0'.repeat(32);
 const VAULT = 'ab'.repeat(32);
 const kr = vi.hoisted(() => ({
   log: [] as string[],
   answers: {} as Record<string, unknown>,
-  keys: { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' } as Record<string, string> | null,
+  keys: { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' } as Record<
+    string,
+    string
+  > | null,
   roster: null as unknown,
   canOpen: true,
   keysFail: null as Error | null,
@@ -63,7 +78,16 @@ const kr = vi.hoisted(() => ({
   /* Who holds the vault, as the wallet reads it off the vault: the company's committee, another key, or nothing read. */
   vaultHeld: 'company' as 'company' | 'temporary' | 'unread',
   /* Where the vault's start stands on the stand-in chain, and the approvals each round needs. */
-  start: { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 },
+  start: {
+    adopted: false,
+    open: false,
+    approvals: 0,
+    set: false,
+    run: false,
+    runApprovals: 0,
+    written: false,
+    needed: 1
+  },
   records: new Map<string, unknown>(),
   /* Each version of the new vault's name this device filed. */
   info: [] as unknown[],
@@ -92,24 +116,34 @@ const kr = vi.hoisted(() => ({
   readAsBornFails: false,
   /* The company's keys are built in the view, and each one built is watched. */
   keysInTheView: false,
-  keysMade: [] as WeakRef<object>[],
+  keysMade: [] as WeakRef<object>[]
 }));
 /* Each read here stands for a page opened afresh, so each is handed a view of its own, as the page opens it. */
 const aViewOf = (company: string): PageView => openViewOf(company);
 vi.mock('./filing-judge.js', async (real) => {
   const judge = await real<typeof import('./filing-judge.js')>();
   return {
-  ...judge,
-  /*
-   * The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never
-   * changed; where a test says, built in a layer of the view as the real judges build them, and watched by a weak reference.
-   */
-  companyKeysFor: async (view: PageView) => {
-    const keys = () => ({ epoch: 0, newest: 0, key: '5e'.repeat(32), keyAt: () => '5e'.repeat(32), sealing: () => ({ key: '5e'.repeat(32), epoch: 0 }) });
-    if (!kr.keysInTheView) return keys();
-    return view.layer('company-keys', async () => { const made = keys(); kr.keysMade.push(new WeakRef(made)); return made; });
-  },
-};
+    ...judge,
+    /*
+     * The company's keys as its directory gives them (`companyKeysFor`), stood in for by the one key of a company never
+     * changed; where a test says, built in a layer of the view as the real judges build them, and watched by a weak reference.
+     */
+    companyKeysFor: async (view: PageView) => {
+      const keys = () => ({
+        epoch: 0,
+        newest: 0,
+        key: '5e'.repeat(32),
+        keyAt: () => '5e'.repeat(32),
+        sealing: () => ({ key: '5e'.repeat(32), epoch: 0 })
+      });
+      if (!kr.keysInTheView) return keys();
+      return view.layer('company-keys', async () => {
+        const made = keys();
+        kr.keysMade.push(new WeakRef(made));
+        return made;
+      });
+    }
+  };
 });
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
@@ -120,18 +154,34 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   forgetLocally: () => {},
   resumeSession: async () => null,
   canOpenCompanies: () => kr.canOpen,
-  actOnACompanyInTheWallet: async (intent: unknown, _origin: string, opts?: { onStep?: (at: { step: number; steps: number }) => void }) => {
+  actOnACompanyInTheWallet: async (
+    intent: unknown,
+    _origin: string,
+    opts?: { onStep?: (at: { step: number; steps: number }) => void }
+  ) => {
     kr.acts.push(intent);
     for (const at of kr.steps) opts?.onStep?.(at);
     if (kr.actFails !== null) throw kr.actFails;
     return kr.ended;
   },
-  openKeysWithWallet: async () => { kr.log.push('keys opened with the account'); kr.canOpen = true; },
+  openKeysWithWallet: async () => {
+    kr.log.push('keys opened with the account');
+    kr.canOpen = true;
+  },
   pendingSeatsFor: () => [],
   /* This seat as the wallet read it for the tab: its public halves only, worked out here from the test's seat. */
-  seatHeldHere: () => (kr.keys === null ? null : {
-    signerId: kr.keys['signerId'], signingPublicKey: kr.keys['signingSecret'] === 'aa'.repeat(32) ? 'e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58' : 'ff'.repeat(32), wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32),
-  }),
+  seatHeldHere: () =>
+    kr.keys === null
+      ? null
+      : {
+          signerId: kr.keys['signerId'],
+          signingPublicKey:
+            kr.keys['signingSecret'] === 'aa'.repeat(32)
+              ? 'e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58'
+              : 'ff'.repeat(32),
+          wrappingPublicKey: 'a2'.repeat(32),
+          scope: 'a3'.repeat(32)
+        },
   /* The company's viewing key, which opens every directory entry's proof here. */
   viewingKeyFor: () => '5e'.repeat(32),
   companyKeysForVaults: async () => {
@@ -140,35 +190,68 @@ vi.mock('vaults-web-shared/keyring.js', async (real) => ({
     /* The same identity the test names at the top, worked out here because this stand-in is hoisted above it. */
     const { identityFromSecret: fromSecret } = await import('midnight-identity');
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
-    return { companyKey: '11'.repeat(32), committeeKey: committeeOf(fromSecret(new Uint8Array(32).fill(1)), `co_${'c1'.repeat(32)}` as never), company: `co_${'c1'.repeat(32)}`, account: COMPANY };
-  },
+    return {
+      companyKey: '11'.repeat(32),
+      committeeKey: committeeOf(fromSecret(new Uint8Array(32).fill(1)), `co_${'c1'.repeat(32)}` as never),
+      company: `co_${'c1'.repeat(32)}`,
+      account: COMPANY
+    };
+  }
 }));
 vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   /* The person's account signs their records key for the seat the page names, and says who holds the company. */
-  recordsKeyFromTheWallet: async (_origin: string, ask: {
-    company: string; account: string; seat: string; vault?: string; signingKey?: string;
-    firstSecret?: { readers: readonly { key: string; name?: string }[] };
-  }) => {
+  recordsKeyFromTheWallet: async (
+    _origin: string,
+    ask: {
+      company: string;
+      account: string;
+      seat: string;
+      vault?: string;
+      signingKey?: string;
+      firstSecret?: { readers: readonly { key: string; name?: string }[] };
+    }
+  ) => {
     /* What the wallet would show for a vault's first secret: each reader, by the name the page holds, else by its key. */
     if (kr.walletAskFails && ask.vault !== undefined) throw new Error('the person closed the wallet');
-    const shown = ask.firstSecret === undefined ? ''
-      : ` showing ${ask.firstSecret.readers.map((r) => r.name ?? r.key.slice(0, 4)).join(', ')}`;
-    kr.log.push(`records key signed for ${ask.seat.slice(0, 4)}${ask.vault === undefined ? '' : ` with vault ${ask.vault.slice(0, 4)}`}${shown}`);
+    const shown =
+      ask.firstSecret === undefined
+        ? ''
+        : ` showing ${ask.firstSecret.readers.map((r) => r.name ?? r.key.slice(0, 4)).join(', ')}`;
+    kr.log.push(
+      `records key signed for ${ask.seat.slice(0, 4)}${ask.vault === undefined ? '' : ` with vault ${ask.vault.slice(0, 4)}`}${shown}`
+    );
     const { identityFromSecret: fromSecret } = await import('midnight-identity');
     const { committeeKeyFor: committeeOf } = await import('midnight-identity/profile/committee-key');
-    const { signRecordsKey: sign, signDirectoryEntry: signEntry } = await import('midnight-identity/profile/records-key');
+    const { signRecordsKey: sign, signDirectoryEntry: signEntry } =
+      await import('midnight-identity/profile/records-key');
     const me = fromSecret(new Uint8Array(32).fill(1));
     const committeeKey = committeeOf(me, ask.company as never);
     return {
-      committeeKey, statement: sign(me, ask.company as never, ask.account as never, new Uint8Array(32).fill(0x11), ask.seat),
+      committeeKey,
+      statement: sign(me, ask.company as never, ask.account as never, new Uint8Array(32).fill(0x11), ask.seat),
       /* The directory entry, signed in the same press when the page names its filing key. */
-      entry: ask.signingKey === undefined ? null : signEntry(me, ask.company as never, ask.account as never, new Uint8Array(32).fill(0x11), ask.signingKey, ask.seat),
+      entry:
+        ask.signingKey === undefined
+          ? null
+          : signEntry(
+              me,
+              ask.company as never,
+              ask.account as never,
+              new Uint8Array(32).fill(0x11),
+              ask.signingKey,
+              ask.seat
+            ),
       seats: { committee: [committeeKey], threshold: 1, seats: kr.seatHeld ? [ask.seat] : ['77'.repeat(32)] },
-      vault: ask.vault === undefined || kr.vaultHeld === 'unread' ? null : {
-        vault: ask.vault, account: 'c0'.repeat(32), threshold: 1,
-        committee: kr.vaultHeld === 'company' ? [committeeKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }],
-      },
+      vault:
+        ask.vault === undefined || kr.vaultHeld === 'unread'
+          ? null
+          : {
+              vault: ask.vault,
+              account: 'c0'.repeat(32),
+              threshold: 1,
+              committee: kr.vaultHeld === 'company' ? [committeeKey] : [{ tag: 'schnorr', value: '77'.repeat(32) }]
+            }
     };
   },
   /* Who holds the company, as the wallet reads it with no press: the vault adopted once the stand-in chain says so. */
@@ -180,19 +263,41 @@ vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
     const late = kr.holdersReads >= 4;
     if (late && kr.holdersFail !== null) throw kr.holdersFail;
     return {
-      holders: { committee: [committeeKey], threshold: late ? kr.holdersThreshold : 1, seats: [kr.ownSeat, ...kr.seatsAlso], approvals: 1, vaultThresholds: kr.vaultThresholds, policyBar: null, seatBar: 1, adoptedVaults: [...kr.adoptedAlso, ...(kr.start.adopted ? ['ab'.repeat(32)] : [])], founding: kr.ownSeat, foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }], account: 'c0'.repeat(32) },
+      holders: {
+        committee: [committeeKey],
+        threshold: late ? kr.holdersThreshold : 1,
+        seats: [kr.ownSeat, ...kr.seatsAlso],
+        approvals: 1,
+        vaultThresholds: kr.vaultThresholds,
+        policyBar: null,
+        seatBar: 1,
+        adoptedVaults: [...kr.adoptedAlso, ...(kr.start.adopted ? ['ab'.repeat(32)] : [])],
+        founding: kr.ownSeat,
+        foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
+        account: 'c0'.repeat(32)
+      },
       /* The indexer the wallet reads through, which the page reads the vault through too. */
-      indexer: { indexerUri: 'https://indexer.wallet.example/api/v3/graphql', indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws' },
+      indexer: {
+        indexerUri: 'https://indexer.wallet.example/api/v3/graphql',
+        indexerWsUri: 'wss://indexer.wallet.example/api/v3/graphql/ws'
+      }
     };
-  },
+  }
 }));
 vi.mock('vaults-web-shared/service-transport.js', async (real) => {
   const api = async (path: string, opts?: RequestInit) => {
     const method = String(opts?.method ?? 'GET');
     /* What the company's view reads besides: no newer version of any record, and no record by name. Not written down. */
-    if (path.endsWith('/manifest/newest')) return { versions: (JSON.parse(String(opts?.body)) as { records: unknown[] }).records.map(() => 0) };
+    if (path.endsWith('/manifest/newest'))
+      return { versions: (JSON.parse(String(opts?.body)) as { records: unknown[] }).records.map(() => 0) };
     if (path.endsWith('/records/read')) {
-      return { records: (JSON.parse(String(opts?.body)) as { records: { kind: string; id: string; every?: boolean }[] }).records.map((r) => (r.every === true ? { kind: r.kind, id: r.id, versions: [] } : { kind: r.kind, id: r.id, filed: null })) };
+      return {
+        records: (
+          JSON.parse(String(opts?.body)) as { records: { kind: string; id: string; every?: boolean }[] }
+        ).records.map((r) =>
+          r.every === true ? { kind: r.kind, id: r.id, versions: [] } : { kind: r.kind, id: r.id, filed: null }
+        )
+      };
     }
     kr.log.push(`${method} ${path}`);
     const a = kr.answers[`${method} ${path}`] ?? kr.answers[path];
@@ -207,18 +312,23 @@ vi.mock('vaults-web-shared/service-transport.js', async (real) => {
 /* The company's roster as this device opens it, stood in for where the page's judges open it. */
 vi.mock('vaults-web-shared/company-judges.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/company-judges.js')>()),
-  openAccountWith: async () => kr.roster,
+  openAccountWith: async () => kr.roster
 }));
 /* Offering and folding vault keys are their own tests' (`vault-keys-are-offered-and-folded.test.ts`); here each is written down. */
 vi.mock('vaults-web-shared/roster-filed-here.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/roster-filed-here.js')>()),
-  offerVaultKeysHere: async () => { kr.log.push('keys offered'); },
-  foldOffersHere: async () => { kr.log.push('offers folded'); return { folded: [], refused: [] }; },
+  offerVaultKeysHere: async () => {
+    kr.log.push('keys offered');
+  },
+  foldOffersHere: async () => {
+    kr.log.push('offers folded');
+    return { folded: [], refused: [] };
+  }
 }));
 vi.mock('vaults-web-shared/directory-filed-here.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/directory-filed-here.js')>()),
   /* This signer's entry in the seat directory; whether it is filed is `vault-keys`' own test's. */
-  fileTheOwedDirectoryEntry: async () => 'filed',
+  fileTheOwedDirectoryEntry: async () => 'filed'
 }));
 vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/vault-page-doors.js')>()),
@@ -226,7 +336,7 @@ vi.mock('vaults-web-shared/vault-page-doors.js', async (real) => ({
   deviceRecordsFor: () => (record: string) => {
     if (!kr.records.has(record)) kr.records.set(record, new MemorySealedPoolStore());
     return kr.records.get(record);
-  },
+  }
 }));
 /* The company's records a vault's name is filed in: every version this device filed, kept for the length of one test. */
 vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
@@ -237,41 +347,71 @@ vi.mock('vaults-web-shared/vault-info-here.js', async (real) => ({
     put: async (rec: { version: number }) => {
       if (kr.infoRefused) throw new Error('the service refused it');
       kr.info.push(rec);
-    },
-  }),
+    }
+  })
 }));
 vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
   startVaultBuilder: async () => ({
-    ownSeat: async (material: { blinding: string }) => { kr.log.push(`own seat from ${material.blinding}`); return kr.ownSeat; },
+    ownSeat: async (material: { blinding: string }) => {
+      kr.log.push(`own seat from ${material.blinding}`);
+      return kr.ownSeat;
+    },
     /* The leaf each directory entry's opening makes, as the worker works it out with the account's own compiled `signerLeaf`. */
     seatOpenings: async (input: { openings: readonly { publicKey: string; scope: string; blinding: string }[] }) => {
       const { leafOfTheContract } = await import('../../../../src/testing/directory-seats.js');
       return { openings: input.openings.map((o) => ({ leaf: leafOfTheContract(o as never), tag: null })) };
     },
     /* The account's own heads, and its history at the wallet's indexer: the stand-in chain holds no anchor. */
-    anchorHeads: async (i: { after: unknown[] }) => ({ after: i.after.map(() => '00'.repeat(32)), seats: i.after.map(() => null) }),
+    anchorHeads: async (i: { after: unknown[] }) => ({
+      after: i.after.map(() => '00'.repeat(32)),
+      seats: i.after.map(() => null)
+    }),
     /* A chain holding no anchor: no head landed, and who holds the account named for an anchor nobody here sends. */
-    anchorsOnChain: async () => ({ landed: [], now: { approvals: 1, signerRoot: '00'.repeat(32), signers: ['00'.repeat(32)] }, seatsNow: ['00'.repeat(32)] }),
+    anchorsOnChain: async () => ({
+      landed: [],
+      now: { approvals: 1, signerRoot: '00'.repeat(32), signers: ['00'.repeat(32)] },
+      seatsNow: ['00'.repeat(32)]
+    }),
     /* The value a company-wide run names, which the vault check counts as one of the company's vaults. */
     companyWide: async () => 'cc'.repeat(32),
-    deploy: async (account: string) => { kr.log.push(`built for ${account}`); return { vault: VAULT, temporaryKey: K(0x77), tx: 'deploy-tx' }; },
-    ...(kr.noBornHeld ? {} : {
-      bornHeldVault: async (input: { account: string; holders: { committee: unknown[]; threshold: number } }) => {
-        kr.log.push(`built held for ${input.account} by ${input.holders.committee.length} at ${input.holders.threshold}`);
-        return { vault: VAULT, tx: 'deploy-tx' };
-      },
-    }),
-    vaultAsDeployed: async (input: { vault: string; indexer: { indexerUri: string } }) => { if (kr.readAsBornFails) throw new Error('the worker failed'); kr.log.push(`read as born ${input.vault} at ${input.indexer.indexerUri}`); return { refusal: kr.bornRefusal }; },
+    deploy: async (account: string) => {
+      kr.log.push(`built for ${account}`);
+      return { vault: VAULT, temporaryKey: K(0x77), tx: 'deploy-tx' };
+    },
+    ...(kr.noBornHeld
+      ? {}
+      : {
+          bornHeldVault: async (input: { account: string; holders: { committee: unknown[]; threshold: number } }) => {
+            kr.log.push(
+              `built held for ${input.account} by ${input.holders.committee.length} at ${input.holders.threshold}`
+            );
+            return { vault: VAULT, tx: 'deploy-tx' };
+          }
+        }),
+    vaultAsDeployed: async (input: { vault: string; indexer: { indexerUri: string } }) => {
+      if (kr.readAsBornFails) throw new Error('the worker failed');
+      kr.log.push(`read as born ${input.vault} at ${input.indexer.indexerUri}`);
+      return { refusal: kr.bornRefusal };
+    },
     /* The vault as this device's worker reads it on the stand-in chain, at the indexer the wallet named: held as the chain shows it, pinned to the company. */
     vaultOnChain: async (input: { vault: string; account?: string; indexer: { indexerUri: string } }) => {
       kr.log.push(`vault read here at ${input.indexer.indexerUri}`);
-      const v = kr.chain as { onChain?: boolean; authority?: { committee: unknown[]; threshold: number } } | Error | null;
+      const v = kr.chain as
+        { onChain?: boolean; authority?: { committee: unknown[]; threshold: number } } | Error | null;
       if (v instanceof Error) throw v;
       if (v === null || v.onChain !== true) return { onChain: false };
       return {
-        onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, everCreated: [], authority: v.authority ?? null, account: COMPANY, started: false,
+        onChain: true,
+        state: 'QUJD',
+        notes: [],
+        notesFromThisBuild: true,
+        everCreated: [],
+        authority: v.authority ?? null,
+        account: COMPANY,
+        started: false,
         /* The circuits of the vault, and of the account when the read names it, are this app's. */
-        circuits: null, ...(input.account === undefined ? {} : { accountCircuits: null }),
+        circuits: null,
+        ...(input.account === undefined ? {} : { accountCircuits: null })
       };
     },
     /* Both contracts at one block, as this device's worker reads them at the indexer the wallet named. */
@@ -279,7 +419,10 @@ vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
       kr.log.push(`block read here at ${input.indexer.indexerUri}`);
       return { blockHash: 'b', vaultState: 'v', zswapState: 'z', parameters: 'p', accountState: 'a' };
     },
-    handover: async (input: { vault: string; counter: bigint; to: unknown }) => { kr.log.push(`handover built ${input.vault} ${input.counter}`); return { tx: 'handover-tx' }; },
+    handover: async (input: { vault: string; counter: bigint; to: unknown }) => {
+      kr.log.push(`handover built ${input.vault} ${input.counter}`);
+      return { tx: 'handover-tx' };
+    },
     startStanding: async (input: { secret?: string; window?: unknown }) => {
       const st = kr.start;
       /* This signer's own copy, sealed as the vault worker seals it, so the press finds a copy its own key opens. */
@@ -287,44 +430,108 @@ vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
       const { recordsKeypairFrom: keysOf } = await import('../../../../src/midnight/company-nonce-secret.js');
       const { fromHex: bytes, toHex: hexOf } = await import('../../../../src/core/crypto.js');
       const reader = keysOf(bytes('11'.repeat(32))).publicKey;
-      const parts = input.secret === undefined ? [] : sealSecretCopy({ vault: VAULT, secret: input.secret as Hex, reader: reader as Hex }).map((p) => hexOf(p));
-      const round = { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), stale: false };
-      const run = { proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: VAULT, salt: 'b4'.repeat(32), opensAt: '1', closesAt: '9', inWindow: true };
+      const parts =
+        input.secret === undefined
+          ? []
+          : sealSecretCopy({ vault: VAULT, secret: input.secret as Hex, reader: reader as Hex }).map((p) => hexOf(p));
+      const round = {
+        proposal: 'a1'.repeat(32),
+        payload: 'a2'.repeat(32),
+        named: 'a3'.repeat(32),
+        salt: 'a4'.repeat(32),
+        stale: false
+      };
+      const run = {
+        proposal: 'b1'.repeat(32),
+        payload: 'b2'.repeat(32),
+        named: VAULT,
+        salt: 'b4'.repeat(32),
+        opensAt: '1',
+        closesAt: '9',
+        inWindow: true
+      };
       return {
         standing: {
           adopted: st.adopted,
           adoption: { ...round, open: st.open, approvals: st.approvals, needed: st.needed },
-          ...(input.secret === undefined ? {} : {
-            secret: {
-              set: st.set, another: false, rootIsThisRuns: st.set, written: [st.written], started: st.set && st.written,
-              run: st.run ? { ...run, open: true, approvals: st.runApprovals, needed: st.needed, stale: false } : null,
-              ...(input.window === undefined ? {} : { raise: { ...run, opensAt: '1', closesAt: '9' } }),
-            },
-          }),
+          ...(input.secret === undefined
+            ? {}
+            : {
+                secret: {
+                  set: st.set,
+                  another: false,
+                  rootIsThisRuns: st.set,
+                  written: [st.written],
+                  started: st.set && st.written,
+                  run: st.run
+                    ? { ...run, open: true, approvals: st.runApprovals, needed: st.needed, stale: false }
+                    : null,
+                  ...(input.window === undefined ? {} : { raise: { ...run, opensAt: '1', closesAt: '9' } })
+                }
+              })
         },
-        ...(input.secret === undefined ? {} : {
-          run: { vault: VAULT, root: 'c1'.repeat(32), payees: '1', asset: 'c2'.repeat(32), copies: [{ reader, parts, path: [] }] },
-        }),
+        ...(input.secret === undefined
+          ? {}
+          : {
+              run: {
+                vault: VAULT,
+                root: 'c1'.repeat(32),
+                payees: '1',
+                asset: 'c2'.repeat(32),
+                copies: [{ reader, parts, path: [] }]
+              }
+            })
       };
     },
-    governedCall: async (input: { order: { circuit: string } }) => { kr.log.push(`account ${input.order.circuit} proved`); return { tx: 'call-tx' }; },
-    setNonceSecret: async () => { kr.log.push('secret proved'); return { tx: 'secret-tx' }; },
+    governedCall: async (input: { order: { circuit: string } }) => {
+      kr.log.push(`account ${input.order.circuit} proved`);
+      return { tx: 'call-tx' };
+    },
+    setNonceSecret: async () => {
+      kr.log.push('secret proved');
+      return { tx: 'secret-tx' };
+    },
     /* The stand-in vault holds the secret the company's records hold once it is set. */
     secretIsTheVaults: async () => true,
-    writeSecretCopy: async (input: { place: number }) => { kr.log.push(`copy ${input.place} proved`); return { tx: 'copy-tx' }; },
-  }),
+    writeSecretCopy: async (input: { place: number }) => {
+      kr.log.push(`copy ${input.place} proved`);
+      return { tx: 'copy-tx' };
+    }
+  })
 }));
 
 const ROUTE = (r = '') => `/api/accounts/c1${r}`;
 /** A roster naming signer `s1` with committee key `mine`. */
-const rosterWith = (mine: { tag: string; value: string } | null) => ({ id: 'c1', signers: [{
-  id: 's1', userId: 'u1', name: 'Priya', status: 'active', signingPublicKey: SIGNER.publicKey, wrappingPublicKey: 'ee'.repeat(32), leafCommitment: SEAT,
-  ...(mine === null ? {} : {
-    vaultKeys: signVaultKeys('c1', 's1', {
-      committeeKey: mine, recordsKey: MY_RECORDS_KEY, recordsKeyStatement: STATEMENT.signature as Hex, recordsKeySeat: SEAT as Hex,
-    }, SIGNER.secret),
-  }),
-}], notBelieved: [] as string[] });
+const rosterWith = (mine: { tag: string; value: string } | null) => ({
+  id: 'c1',
+  signers: [
+    {
+      id: 's1',
+      userId: 'u1',
+      name: 'Priya',
+      status: 'active',
+      signingPublicKey: SIGNER.publicKey,
+      wrappingPublicKey: 'ee'.repeat(32),
+      leafCommitment: SEAT,
+      ...(mine === null
+        ? {}
+        : {
+            vaultKeys: signVaultKeys(
+              'c1',
+              's1',
+              {
+                committeeKey: mine,
+                recordsKey: MY_RECORDS_KEY,
+                recordsKeyStatement: STATEMENT.signature as Hex,
+                recordsKeySeat: SEAT as Hex
+              },
+              SIGNER.secret
+            )
+          })
+    }
+  ],
+  notBelieved: [] as string[]
+});
 const COMMITTEE = { committee: [MINE], threshold: 1 };
 
 async function load() {
@@ -348,69 +555,140 @@ const startRoutes = () => {
    */
   const proposals: Array<Record<string, unknown>> = [];
   kr.answers[`GET ${ROUTE('/proposals')}`] = () => proposals;
-  kr.answers[`POST ${ROUTE('/proposals')}`] = (body: { proposal: { id: string; chainId: string }; tx?: string; vault?: string }) => {
+  kr.answers[`POST ${ROUTE('/proposals')}`] = (body: {
+    proposal: { id: string; chainId: string };
+    tx?: string;
+    vault?: string;
+  }) => {
     const rec = { ...body.proposal, accountId: 'c1', status: 'open', approvalCount: 0 };
     proposals.push(rec);
     /* The service writes a proposal down as carried out once its own read of the chain no longer holds it open. */
     kr.answers[`POST /api/proposals/${rec.id}/carried`] = (asked: { vault?: string; filer?: string }) => {
-      if (asked.vault !== VAULT || typeof asked.filer !== 'string') throw new Error('this request does not name the vault and this seat\'s filing key');
-      if (body.vault === undefined ? kr.start.open && !kr.start.adopted : !kr.start.set) throw new Error('the chain still holds this proposal open');
+      if (asked.vault !== VAULT || typeof asked.filer !== 'string')
+        throw new Error("this request does not name the vault and this seat's filing key");
+      if (body.vault === undefined ? kr.start.open && !kr.start.adopted : !kr.start.set)
+        throw new Error('the chain still holds this proposal open');
       rec.status = 'executed';
       return { id: rec.id, status: 'executed' };
     };
     if (body.tx !== undefined) {
       /* The raise counts at once as the raiser's own approval, as the chain does. */
-      if (body.vault === undefined) { kr.start.open = true; kr.start.approvals = 1; }
-      else { kr.start.run = true; kr.start.runApprovals = 1; }
+      if (body.vault === undefined) {
+        kr.start.open = true;
+        kr.start.approvals = 1;
+      } else {
+        kr.start.run = true;
+        kr.start.runApprovals = 1;
+      }
     }
     return { id: rec.id, chainId: rec.chainId, status: 'open', approvalCount: 0 };
   };
   kr.answers[`POST ${ROUTE('/manifest/entries')}`] = {};
-  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`] = () => { kr.start.set = true; return { txRef: 'secret' }; };
-  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`] = () => { kr.start.written = true; return { txRef: 'copy' }; };
+  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/secret`)}`] = () => {
+    kr.start.set = true;
+    return { txRef: 'secret' };
+  };
+  kr.answers[`POST ${ROUTE(`/vaults/${VAULT}/start/copy`)}`] = () => {
+    kr.start.written = true;
+    return { txRef: 'copy' };
+  };
 };
 beforeEach(async () => {
-  kr.log = []; kr.answers = {}; kr.canOpen = true; kr.keysFail = null; kr.acts = []; kr.actFails = null; kr.steps = []; kr.ended = { of: 'done', steps: 1, relayed: 0 }; kr.seatHeld = true; kr.vaultHeld = 'company';
-  kr.start = { adopted: false, open: false, approvals: 0, set: false, run: false, runApprovals: 0, written: false, needed: 1 };
+  kr.log = [];
+  kr.answers = {};
+  kr.canOpen = true;
+  kr.keysFail = null;
+  kr.acts = [];
+  kr.actFails = null;
+  kr.steps = [];
+  kr.ended = { of: 'done', steps: 1, relayed: 0 };
+  kr.seatHeld = true;
+  kr.vaultHeld = 'company';
+  kr.start = {
+    adopted: false,
+    open: false,
+    approvals: 0,
+    set: false,
+    run: false,
+    runApprovals: 0,
+    written: false,
+    needed: 1
+  };
   kr.records = new Map();
   kr.ownSeat = SEAT;
   kr.bornRefusal = null;
   kr.chain = null;
   kr.adoptedAlso = [];
   kr.seatsAlso = [];
-  kr.keysInTheView = false; kr.keysMade = []; kr.holdersFail = null; kr.walletAskFails = false; kr.holdersThreshold = 1; kr.holdersReads = 0; kr.noBornHeld = false; kr.readAsBornFails = false;
+  kr.keysInTheView = false;
+  kr.keysMade = [];
+  kr.holdersFail = null;
+  kr.walletAskFails = false;
+  kr.holdersThreshold = 1;
+  kr.holdersReads = 0;
+  kr.noBornHeld = false;
+  kr.readAsBornFails = false;
   startRoutes();
   kr.keys = { signerId: 's1', signingSecret: 'aa'.repeat(32), wrappingSecret: 'bb', blinding: 'cc' };
   kr.roster = rosterWith(MINE);
   kr.answers[ROUTE()] = { id: 'c1' };
-  kr.answers[ROUTE('/directory')] = { filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }] };
+  kr.answers[ROUTE('/directory')] = {
+    filings: [{ company: 'c1', version: 1, change: { kind: 'claim', entry: ENTRY } }]
+  };
   /* The company's records hold no entry, and the stand-in chain no anchor: creating a vault reads no record through them. */
   kr.answers[`GET ${ROUTE(`/manifest/tree/pending?root=${EMPTY_ROOT}`)}`] = { entries: [] };
-  kr.answers[`POST ${ROUTE('/manifest/tree/proofs')}`] = (b: { records: unknown[]; kinds: unknown[] }) =>
-    ({ records: b.records.map(() => null), kinds: b.kinds.map(() => []), older: [], proof: { siblings: [] } });
-  kr.answers[ROUTE('/call-state')] = { account: 'c0'.repeat(32), accountState: '00'.repeat(32), parameters: '', blockHash: 'b' };
+  kr.answers[`POST ${ROUTE('/manifest/tree/proofs')}`] = (b: { records: unknown[]; kinds: unknown[] }) => ({
+    records: b.records.map(() => null),
+    kinds: b.kinds.map(() => []),
+    older: [],
+    proof: { siblings: [] }
+  });
+  kr.answers[ROUTE('/call-state')] = {
+    account: 'c0'.repeat(32),
+    accountState: '00'.repeat(32),
+    parameters: '',
+    blockHash: 'b'
+  };
   kr.answers[`PUT ${ROUTE('/vault-keys')}`] = { given: true };
   kr.answers[`GET ${ROUTE('/vault-keys')}`] = { committee: COMMITTEE, why: null, readers: [MY_RECORDS_KEY] };
   /* The approvals the account and its vaults need, as the wallet reads the account: one, everywhere. */
   kr.vaultThresholds = [];
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const LABEL_C1 = `co_${'c1'.repeat(32)}`;
 const ACCOUNT_C1 = 'c0'.repeat(32);
 const VAULT_C1 = 'd1'.repeat(32);
-const named = () => { kr.answers[ROUTE()] = { id: 'c1', companyLabel: LABEL_C1, contractAddress: ACCOUNT_C1 }; };
+const named = () => {
+  kr.answers[ROUTE()] = { id: 'c1', companyLabel: LABEL_C1, contractAddress: ACCOUNT_C1 };
+};
 
-describe('creating a vault is one action in the person\'s wallet', () => {
+describe("creating a vault is one action in the person's wallet", () => {
   /* RED WHEN: the page names the company to the wallet by anything but its record, label and account, or adds what the action does not take, or opens the person's keys itself. */
-  it('names the company, the vault to carry on and the vault\'s name to the wallet, and nothing else', async () => {
+  it("names the company, the vault to carry on and the vault's name to the wallet, and nothing else", async () => {
     const m = await load();
     named();
     kr.ended = { of: 'done', steps: 3, relayed: 7, outcome: { vault: VAULT_C1 } };
-    expect(await m.createVault('u1', aViewOf('c1'), () => {}, { name: ' Payroll ', description: 'Monthly ' })).toEqual({ of: 'done', vault: VAULT_C1 });
-    expect(kr.acts).toEqual([{ name: 'create-vault', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1, title: 'Payroll', about: 'Monthly' }]);
-    expect(await m.finishStarting('u1', aViewOf('c1'), VAULT_C1.toUpperCase(), () => {})).toEqual({ of: 'done', vault: VAULT_C1 });
-    expect(kr.acts[1]).toEqual({ name: 'create-vault', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1, vault: VAULT_C1 });
+    expect(await m.createVault('u1', aViewOf('c1'), () => {}, { name: ' Payroll ', description: 'Monthly ' })).toEqual({
+      of: 'done',
+      vault: VAULT_C1
+    });
+    expect(kr.acts).toEqual([
+      { name: 'create-vault', record: 'c1', company: LABEL_C1, account: ACCOUNT_C1, title: 'Payroll', about: 'Monthly' }
+    ]);
+    expect(await m.finishStarting('u1', aViewOf('c1'), VAULT_C1.toUpperCase(), () => {})).toEqual({
+      of: 'done',
+      vault: VAULT_C1
+    });
+    expect(kr.acts[1]).toEqual({
+      name: 'create-vault',
+      record: 'c1',
+      company: LABEL_C1,
+      account: ACCOUNT_C1,
+      vault: VAULT_C1
+    });
     expect(kr.log).not.toContain('keys opened with the account');
   });
 
@@ -418,9 +696,25 @@ describe('creating a vault is one action in the person\'s wallet', () => {
   it('says which round waits for other signers, with its approvals, and what was said along the way', async () => {
     const m = await load();
     named();
-    kr.ended = { of: 'done', steps: 3, relayed: 4, outcome: { vault: VAULT_C1, round: 'first-secret', approvals: 1, needed: 2, said: 'proposal-not-written-down,not-a-code' } };
+    kr.ended = {
+      of: 'done',
+      steps: 3,
+      relayed: 4,
+      outcome: {
+        vault: VAULT_C1,
+        round: 'first-secret',
+        approvals: 1,
+        needed: 2,
+        said: 'proposal-not-written-down,not-a-code'
+      }
+    };
     expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({
-      of: 'awaiting-approvals', vault: VAULT_C1, round: 'first-secret', approvals: 1, needed: 2, said: ['proposal-not-written-down'],
+      of: 'awaiting-approvals',
+      vault: VAULT_C1,
+      round: 'first-secret',
+      approvals: 1,
+      needed: 2,
+      said: ['proposal-not-written-down']
     });
   });
 
@@ -429,13 +723,15 @@ describe('creating a vault is one action in the person\'s wallet', () => {
    * are being filed while the wallet builds the vault: the wallet's steps are its records, entry, offer, the vault, and
    * its records again.
    */
-  it('says the vault is being built only while the wallet is on the vault\'s own step', async () => {
+  it("says the vault is being built only while the wallet is on the vault's own step", async () => {
     const m = await load();
     named();
     kr.steps = [1, 2, 3, 4, 5].map((step) => ({ step, steps: 5 }));
     kr.ended = { of: 'done', steps: 5, relayed: 3, outcome: { vault: VAULT_C1 } };
     const seen: string[] = [];
-    await m.createVault('u1', aViewOf('c1'), (stage) => { seen.push(stage); });
+    await m.createVault('u1', aViewOf('c1'), (stage) => {
+      seen.push(stage);
+    });
     expect(seen).toEqual(['checking', 'checking', 'checking', 'checking', 'building', 'checking', 'done']);
   });
 
@@ -443,9 +739,29 @@ describe('creating a vault is one action in the person\'s wallet', () => {
   it('names the vault when the action stopped after it was built, with why where the wallet said', async () => {
     const m = await load();
     named();
-    kr.ended = { of: 'stopped', step: 3, steps: 3, relayed: 2, unconfirmed: 0, why: 'check-failed', outcome: { vault: VAULT_C1, stopped: 'signer-left-out' } };
-    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({ of: 'start-owed', vault: VAULT_C1, stopped: 'mismatch' });
-    kr.ended = { of: 'stopped', step: 3, steps: 3, relayed: 2, unconfirmed: 0, why: 'stopped', outcome: { vault: VAULT_C1, stopped: 'made-up' } };
+    kr.ended = {
+      of: 'stopped',
+      step: 3,
+      steps: 3,
+      relayed: 2,
+      unconfirmed: 0,
+      why: 'check-failed',
+      outcome: { vault: VAULT_C1, stopped: 'signer-left-out' }
+    };
+    expect(await m.createVault('u1', aViewOf('c1'), () => {})).toEqual({
+      of: 'start-owed',
+      vault: VAULT_C1,
+      stopped: 'mismatch'
+    });
+    kr.ended = {
+      of: 'stopped',
+      step: 3,
+      steps: 3,
+      relayed: 2,
+      unconfirmed: 0,
+      why: 'stopped',
+      outcome: { vault: VAULT_C1, stopped: 'made-up' }
+    };
     /* RED WHEN: a reason the wallet named that this page has no words for is passed on as one. */
     expect(await m.createVault('u1', aViewOf('c1'), () => {})).toStrictEqual({ of: 'start-owed', vault: VAULT_C1 });
     kr.ended = { of: 'stopped', step: 1, steps: 3, relayed: 0, unconfirmed: 0, why: 'check-failed' };
@@ -483,12 +799,14 @@ describe('keys not open', () => {
    */
   it('says the keys are not open yet, asks the account only when the person acts, and opens them', async () => {
     const m = await load();
-    kr.canOpen = false; kr.keys = null;
+    kr.canOpen = false;
+    kr.keys = null;
     expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'locked' });
     expect(kr.log).not.toContain('keys opened with the account');
     expect(await m.openYourKeys('u1')).toEqual({ of: 'done' });
     expect(kr.log).toContain('keys opened with the account');
-    kr.canOpen = false; kr.log = [];
+    kr.canOpen = false;
+    kr.log = [];
     named();
     await m.createVault('u1', aViewOf('c1'), () => {});
     /* The press is the wallet's one action: this page does not open the person's keys for it. */
@@ -501,22 +819,63 @@ describe('whether a vault can be created', () => {
   /* The filing key this signer's wallet signed their directory entry for: the key their roster entry holds when it is believed. */
   const FILING = { secret: 'aa'.repeat(32), publicKey: signingPublicKeyOf('aa'.repeat(32)) };
   /* An offer of vault keys as a signer's device files it: sealed under the company's roster key, the entry their wallet signed beside the keys. */
-  const offerOf = (signerId: string, seat: string, filer: { publicKey: string; secret: string }, sealedUnder = '5e'.repeat(32), entryWrapped = '11'.repeat(32)) => ({
+  const offerOf = (
+    signerId: string,
+    seat: string,
+    filer: { publicKey: string; secret: string },
+    sealedUnder = '5e'.repeat(32),
+    entryWrapped = '11'.repeat(32)
+  ) => ({
     person: 'u1',
-    ...sealVaultKeysOffer('c1', {
-      signerId,
-      entry: { committeeKey: MINE, statement: signDirectoryEntry(ME, LABEL, COMPANY as never, fromHex(entryWrapped), filer.publicKey as Hex, seat) },
-      keys: signVaultKeys('c1', signerId, {
-        committeeKey: MINE, recordsKey: MY_RECORDS_KEY, recordsKeyStatement: STATEMENT.signature as Hex, recordsKeySeat: seat as Hex,
-      }, filer.secret as Hex),
-    }, sealedUnder as Hex),
+    ...sealVaultKeysOffer(
+      'c1',
+      {
+        signerId,
+        entry: {
+          committeeKey: MINE,
+          statement: signDirectoryEntry(
+            ME,
+            LABEL,
+            COMPANY as never,
+            fromHex(entryWrapped),
+            filer.publicKey as Hex,
+            seat
+          )
+        },
+        keys: signVaultKeys(
+          'c1',
+          signerId,
+          {
+            committeeKey: MINE,
+            recordsKey: MY_RECORDS_KEY,
+            recordsKeyStatement: STATEMENT.signature as Hex,
+            recordsKeySeat: seat as Hex
+          },
+          filer.secret as Hex
+        )
+      },
+      sealedUnder as Hex
+    )
   });
   /* This signer's offer still open on the service, their roster entry holding no keys yet; and a second active signer on the roster. */
-  const mineUnfolded = (userId = 'u1') => ({ ...rosterWith(null), signers: rosterWith(null).signers.map((x) => ({ ...x, userId, signingPublicKey: FILING.publicKey })) });
+  const mineUnfolded = (userId = 'u1') => ({
+    ...rosterWith(null),
+    signers: rosterWith(null).signers.map((x) => ({ ...x, userId, signingPublicKey: FILING.publicKey }))
+  });
   const withOther = (roster: ReturnType<typeof rosterWith>) => ({
-    ...roster, signers: [...roster.signers, {
-      id: 's2', userId: 'u2', name: 'Sam', status: 'active', signingPublicKey: OTHER.publicKey, wrappingPublicKey: 'ee'.repeat(32), leafCommitment: '99'.repeat(32),
-    }],
+    ...roster,
+    signers: [
+      ...roster.signers,
+      {
+        id: 's2',
+        userId: 'u2',
+        name: 'Sam',
+        status: 'active',
+        signingPublicKey: OTHER.publicKey,
+        wrappingPublicKey: 'ee'.repeat(32),
+        leafCommitment: '99'.repeat(32)
+      }
+    ]
   });
   beforeEach(async () => {
     kr.answers[ROUTE()] = { id: 'c1', companyLabel: LABEL, contractAddress: COMPANY };
@@ -540,7 +899,7 @@ describe('whether a vault can be created', () => {
   });
 
   /* RED WHEN: an offer this device cannot open or that is not the signer's own counts as given: one sealed under another key, one signed by another key than the roster's for the signer, one for another seat, or one whose directory entry names another records key than its keys. */
-  it('counts no offer this device cannot open, or that is not the roster signer\'s own', async () => {
+  it("counts no offer this device cannot open, or that is not the roster signer's own", async () => {
     const m = await load();
     kr.roster = mineUnfolded();
     for (const offer of [
@@ -549,7 +908,7 @@ describe('whether a vault can be created', () => {
       offerOf('s1', '98'.repeat(32), FILING),
       offerOf('s9', SEAT, FILING),
       /* Its directory entry names another records key than its vault keys do. */
-      offerOf('s1', SEAT, FILING, '5e'.repeat(32), '22'.repeat(32)),
+      offerOf('s1', SEAT, FILING, '5e'.repeat(32), '22'.repeat(32))
     ]) {
       kr.answers[`GET ${ROUTE('/vault-keys/offers')}`] = { offers: [offer] };
       expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
@@ -570,14 +929,14 @@ describe('whether a vault can be created', () => {
   });
 
   /* RED WHEN: a signer's keys count as given while the company's directory holds no entry for their seat, which makes no reader of it. */
-  it('is not ready for keys whose seat the company\'s directory does not hold', async () => {
+  it("is not ready for keys whose seat the company's directory does not hold", async () => {
     const m = await load();
     kr.answers[ROUTE('/directory')] = { filings: [] };
     expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'yours-missing' });
   });
 
   /* RED WHEN: a vault is said ready while the first secret's own check of the signers against the account would refuse: the account seats a signer the roster does not name (a); an open offer the fold would refuse counts (b); a signer's records key is signed for a seat the account no longer holds, though another row attests the seat (c). */
-  describe('says ready only when the first secret\'s own check would pass', () => {
+  describe("says ready only when the first secret's own check would pass", () => {
     it('(a) is not ready while the account seats a signer the roster does not name', async () => {
       const m = await load();
       expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
@@ -594,17 +953,31 @@ describe('whether a vault can be created', () => {
       expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'ready' });
     });
 
-    it('(c) is not ready when a signer\'s records key is signed for a seat the account no longer holds, though another row attests the seat', async () => {
+    it("(c) is not ready when a signer's records key is signed for a seat the account no longer holds, though another row attests the seat", async () => {
       const m = await load();
       const OLD = '97'.repeat(32);
       const oldStatement = signRecordsKey(ME, LABEL, 'c0'.repeat(32) as never, fromHex('11'.repeat(32)), OLD);
       const roster = rosterWith(MINE);
-      kr.roster = { ...roster, signers: [
-        { ...roster.signers[0]!, vaultKeys: signVaultKeys('c1', 's1', {
-          committeeKey: MINE, recordsKey: MY_RECORDS_KEY, recordsKeyStatement: oldStatement.signature as Hex, recordsKeySeat: OLD as Hex,
-        }, SIGNER.secret) },
-        { ...roster.signers[0]!, id: 's0', status: 'removed', leafCommitment: null },
-      ] };
+      kr.roster = {
+        ...roster,
+        signers: [
+          {
+            ...roster.signers[0]!,
+            vaultKeys: signVaultKeys(
+              'c1',
+              's1',
+              {
+                committeeKey: MINE,
+                recordsKey: MY_RECORDS_KEY,
+                recordsKeyStatement: oldStatement.signature as Hex,
+                recordsKeySeat: OLD as Hex
+              },
+              SIGNER.secret
+            )
+          },
+          { ...roster.signers[0]!, id: 's0', status: 'removed', leafCommitment: null }
+        ]
+      };
       expect(await m.readVaultReadiness('u1', aViewOf('c1'))).toEqual({ of: 'others-missing' });
     });
   });
@@ -622,7 +995,7 @@ describe('whether a vault can be created', () => {
   });
 });
 
-describe('the company\'s keys a vault is read with', () => {
+describe("the company's keys a vault is read with", () => {
   /* RED WHEN: what the vault's read is handed holds the company's opened keys itself, so they outlive the view that opened them. */
   it('are read through the view at each call: once the view ends the reader refuses, and nothing holds the keys', async () => {
     const v8 = await import('node:v8');

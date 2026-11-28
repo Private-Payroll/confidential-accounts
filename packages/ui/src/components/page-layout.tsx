@@ -67,7 +67,9 @@ export function FocusedLayout({ title, exit, children }: FocusedLayoutProps) {
   return (
     <div data-slot="focused-layout" className="flex min-h-svh flex-col bg-sidebar text-sidebar-foreground">
       <header className="flex h-12 shrink-0 items-center gap-3 px-4">
-        <span className="truncate text-sm font-medium" data-slot="focused-title">{title}</span>
+        <span className="truncate text-sm font-medium" data-slot="focused-title">
+          {title}
+        </span>
         <div className="ms-auto">{exit}</div>
       </header>
       <div className="flex flex-1 px-2 pb-2 md:px-3 md:pb-3">

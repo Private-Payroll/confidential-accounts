@@ -20,7 +20,17 @@ import { companyRecordEntry, recordKeyOf } from '../../../src/midnight/record-ma
 import { companyRecordKey } from '../../../src/midnight/seat-directory.js';
 import type { CompanyRecordsHere } from './run-rebuilt-here.js';
 import { kindAsked } from './vault-page-doors.js';
-import { approveSpendingPolicyOnDevice, bandsInForceHere, refusePolicyChangeHere, removalBoundaryRefusal, sealPoliciesToNewSignersHere, setSpendingPolicyOnDevice, type PoliciesResealed, type PolicyGovernanceDoors, type PolicySteps } from './spending-policy-here.js';
+import {
+  approveSpendingPolicyOnDevice,
+  bandsInForceHere,
+  refusePolicyChangeHere,
+  removalBoundaryRefusal,
+  sealPoliciesToNewSignersHere,
+  setSpendingPolicyOnDevice,
+  type PoliciesResealed,
+  type PolicyGovernanceDoors,
+  type PolicySteps
+} from './spending-policy-here.js';
 import { spendingPolicyHere } from './spending-policy-read-here.js';
 import { approverRosterFrom, EVERY_RIGHT, type ApproverRoster } from '../../../src/core/vault-approvers.js';
 import { heldFiledBy } from '../../../src/testing/record-tree-double.js';
@@ -35,12 +45,12 @@ import { POLICY_NOT_OPENED_HERE } from './policies-resealed-here.js';
 const seams = vi.hoisted(() => ({ opens: undefined as unknown as (proposalId: string) => Promise<OpenedRound> }));
 vi.mock('./round-opened-here.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./round-opened-here.js')>()),
-  openTheRoundHere: (_s: unknown, _a: string, proposalId: string) => seams.opens(proposalId),
+  openTheRoundHere: (_s: unknown, _a: string, proposalId: string) => seams.opens(proposalId)
 }));
 /* Every proposal the service lists is one the company's records name: a withheld proposal is `listedHere`'s own subject. */
 vi.mock('./vault-page-doors.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./vault-page-doors.js')>()),
-  listedHere: (_h: unknown, _s: unknown, served: unknown) => served,
+  listedHere: (_h: unknown, _s: unknown, served: unknown) => served
 }));
 
 const COMPANY = 'acme';
@@ -57,25 +67,49 @@ const EVERYONE = [ADA, BO, CY];
 type Signer = typeof ADA;
 
 const TERMS = {
-  bands: [{ ceiling: '10', approvals: '1' }, { ceiling: '20', approvals: '1' }, { ceiling: '30', approvals: '1' }, { ceiling: '40', approvals: '1' }],
-  periodLimit: '100', periodStart: '0', periodLength: '60',
+  bands: [
+    { ceiling: '10', approvals: '1' },
+    { ceiling: '20', approvals: '1' },
+    { ceiling: '30', approvals: '1' },
+    { ceiling: '40', approvals: '1' }
+  ],
+  periodLimit: '100',
+  periodStart: '0',
+  periodLength: '60'
 };
 const OTHER_TERMS = { ...TERMS, periodLimit: '90' };
 const made = (...parts: string[]): string => createHash('sha256').update(parts.join(':')).digest('hex');
 const POLICY_KEY = made('policy', VAULT);
-const keysOf = (i: { vault: string; asset: string; assetBlinding: string; policy?: { terms: { periodLimit: string }; blinding: string } }) => ({
-  assetKey: made('asset', i.asset), policyKey: made('policy', i.vault), onKey: made('on', i.vault), barKey: made('bar'),
-  commitment: i.policy === undefined ? null : made('commitment', i.policy.terms.periodLimit, i.policy.blinding),
+const keysOf = (i: {
+  vault: string;
+  asset: string;
+  assetBlinding: string;
+  policy?: { terms: { periodLimit: string }; blinding: string };
+}) => ({
+  assetKey: made('asset', i.asset),
+  policyKey: made('policy', i.vault),
+  onKey: made('on', i.vault),
+  barKey: made('bar'),
+  commitment: i.policy === undefined ? null : made('commitment', i.policy.terms.periodLimit, i.policy.blinding)
 });
-const commitmentOf = (terms: { periodLimit: string }, blinding: string) => made('commitment', terms.periodLimit, blinding);
+const commitmentOf = (terms: { periodLimit: string }, blinding: string) =>
+  made('commitment', terms.periodLimit, blinding);
 const chainHolding = (terms: { periodLimit: string }, blinding: string) =>
-  new Map([[made('on', VAULT), '01'], [POLICY_KEY, commitmentOf(terms, blinding)]]);
+  new Map([
+    [made('on', VAULT), '01'],
+    [POLICY_KEY, commitmentOf(terms, blinding)]
+  ]);
 
 /** A seat as the directory holds it: its role, and once retired, its boundary. */
 type SeatAs = { readonly who: Signer; readonly role?: string; readonly retired?: Record<string, number> };
 const seatRow = (s: SeatAs) => ({
-  seat: s.who.seat, person: s.who.seat.slice(0, 4), signingKey: s.who.filing.publicKey, wrappingKey: s.who.wrap.publicKey,
-  committeeKey: COMMITTEE, role: s.role ?? 'admin', retired: s.retired ?? null,
+  seat: s.who.seat,
+  person: s.who.seat.slice(0, 4),
+  signingKey: s.who.filing.publicKey,
+  wrappingKey: s.who.wrap.publicKey,
+  committeeKey: COMMITTEE,
+  role: s.role ?? 'admin',
+  retired: s.retired ?? null
 });
 
 interface World {
@@ -91,7 +125,11 @@ interface World {
    * newest directory version anchored through that batch; the batch that anchored each directory version; the
    * directory at each version.
    */
-  readonly anchored?: ReadonlyArray<{ readonly rec: SealedCompanyRecord; readonly dirVersion: number; readonly batch?: number }>;
+  readonly anchored?: ReadonlyArray<{
+    readonly rec: SealedCompanyRecord;
+    readonly dirVersion: number;
+    readonly batch?: number;
+  }>;
   readonly dirBatches?: Readonly<Record<number, number>>;
   readonly dirAt?: Readonly<Record<number, readonly SeatAs[]>>;
   /** Seats whose entry names a records key their own wallet has not attested in the roster this device opened. */
@@ -102,59 +140,119 @@ interface World {
 
 const recordsOf = (w: World): CompanyRecordsHere => {
   const as = w.as ?? ADA;
-  const state = signedFoundingState(COMPANY, {
-    keyEpoch: 0, sealed: seal(canonical({ state: {}, blinding: { assetBlinding: 'ab'.repeat(32), payRecordKey: 'ef'.repeat(32) } }), VIEWING),
-  } as never, ADA.filing.secret);
-  const notHere = async () => { throw new Error('not read here'); };
+  const state = signedFoundingState(
+    COMPANY,
+    {
+      keyEpoch: 0,
+      sealed: seal(
+        canonical({ state: {}, blinding: { assetBlinding: 'ab'.repeat(32), payRecordKey: 'ef'.repeat(32) } }),
+        VIEWING
+      )
+    } as never,
+    ADA.filing.secret
+  );
+  const notHere = async () => {
+    throw new Error('not read here');
+  };
   return {
     oneOffs: noOneOffsHere(),
     directory: async () => {
-      const dirOf = (seats: readonly SeatAs[], version: number) => ({ company: COMPANY, version, seats: seats.map(seatRow) });
+      const dirOf = (seats: readonly SeatAs[], version: number) => ({
+        company: COMPANY,
+        version,
+        seats: seats.map(seatRow)
+      });
       const believed = {
         dir: dirOf(w.seats, 9),
         holders: {
-          committee: [COMMITTEE], seats: w.onChain.map((x) => x.seat), approvals: 1, adoptedVaults: [VAULT], account: 'ac'.repeat(32),
-          ...(w.seatBar === undefined ? {} : { seatBar: w.seatBar }),
+          committee: [COMMITTEE],
+          seats: w.onChain.map((x) => x.seat),
+          approvals: 1,
+          adoptedVaults: [VAULT],
+          account: 'ac'.repeat(32),
+          ...(w.seatBar === undefined ? {} : { seatBar: w.seatBar })
         },
         another: new Set<string>((w.another ?? []).map((x) => x.seat)),
-        at: (v: number) => (w.dirAt?.[v] === undefined ? null : { dir: dirOf(w.dirAt[v]!, v), digests: [] }),
+        at: (v: number) => (w.dirAt?.[v] === undefined ? null : { dir: dirOf(w.dirAt[v]!, v), digests: [] })
       };
-      const records = await heldFiledBy(COMPANY, w.filed, EVERYONE.map((x) => x.filing.secret),
-        { seat: ADA.seat, signingSecret: ADA.filing.secret, records: [state], committee: [COMMITTEE] }, believed as never);
+      const records = await heldFiledBy(
+        COMPANY,
+        w.filed,
+        EVERYONE.map((x) => x.filing.secret),
+        { seat: ADA.seat, signingSecret: ADA.filing.secret, records: [state], committee: [COMMITTEE] },
+        believed as never
+      );
       const key = recordKeyOf({ store: 'company', kind: 'spending-policy', id: POLICY_KEY });
       const history = new Map(records.history);
       if (w.anchored !== undefined) {
-        history.set(key, w.anchored.map(({ rec, dirVersion, batch }, i) => ({
-          version: rec.version, digest: companyRecordEntry(rec).digest, filedBy: rec.filedBy!.publicKey.toLowerCase(), batch: batch ?? i + 1, dirVersion,
-        })) as never);
+        history.set(
+          key,
+          w.anchored.map(({ rec, dirVersion, batch }, i) => ({
+            version: rec.version,
+            digest: companyRecordEntry(rec).digest,
+            filedBy: rec.filedBy!.publicKey.toLowerCase(),
+            batch: batch ?? i + 1,
+            dirVersion
+          })) as never
+        );
       }
-      const directory = w.dirBatches === undefined ? records.directory
-        : new Map(Object.entries(w.dirBatches).map(([v, batch]) => [Number(v), { digest: '00'.repeat(32), batch, held: undefined }] as const));
+      const directory =
+        w.dirBatches === undefined
+          ? records.directory
+          : new Map(
+              Object.entries(w.dirBatches).map(
+                ([v, batch]) => [Number(v), { digest: '00'.repeat(32), batch, held: undefined }] as const
+              )
+            );
       return { ...believed, records: { ...records, history, directory } } as never;
     },
-    people: notHere as never, runs: notHere as never, policy: notHere as never,
+    people: notHere as never,
+    runs: notHere as never,
+    policy: notHere as never,
     state: async (id) => (id === '0' ? state : null),
     roundIdentity: undefined as never,
-    payments: { paidOnceOf: () => { throw new Error('not read here'); }, paidMovementOf: () => { throw new Error('not read here'); }, read: notHere as never },
+    payments: {
+      paidOnceOf: () => {
+        throw new Error('not read here');
+      },
+      paidMovementOf: () => {
+        throw new Error('not read here');
+      },
+      read: notHere as never
+    },
     spendingPolicies: {
       versions: async (id) => w.filed.filter((r) => r.id === id),
-      file: async (rec) => { w.filed.push(signCompanyFiling(rec, as.filing.secret)); },
+      file: async (rec) => {
+        w.filed.push(signCompanyFiling(rec, as.filing.secret));
+      },
       me: { signerId: as.seat, wrappingSecret: as.wrap.secret },
       keys: async (i) => keysOf(i),
       grantReaders: async () => [],
-      onChain: async (keys) => new Map(keys.map((k) => [k, w.chain.get(k) ?? null])),
-    },
+      onChain: async (keys) => new Map(keys.map((k) => [k, w.chain.get(k) ?? null]))
+    }
   };
 };
 const doorsOf = (w: World) => ({ records: recordsOf(w), accountId: COMPANY, viewingKey: VIEWING });
 
 /** A version of the policy's record, sealed to `to` and signed by `by`. */
-const versionOf = (version: number, blinding: string, to: readonly Signer[], by: Signer, terms = TERMS): SealedCompanyRecord =>
-  signCompanyFiling(sealSpendingPolicy({
-    company: COMPANY, id: POLICY_KEY, version, keyEpoch: 0,
-    secrets: { vault: VAULT, asset: TEST_TOKEN, opening: { terms, blinding } },
-    signers: to.map((x) => ({ id: x.seat, wrappingPublicKey: x.wrap.publicKey })) as never,
-  }), by.filing.secret as never);
+const versionOf = (
+  version: number,
+  blinding: string,
+  to: readonly Signer[],
+  by: Signer,
+  terms = TERMS
+): SealedCompanyRecord =>
+  signCompanyFiling(
+    sealSpendingPolicy({
+      company: COMPANY,
+      id: POLICY_KEY,
+      version,
+      keyEpoch: 0,
+      secrets: { vault: VAULT, asset: TEST_TOKEN, opening: { terms, blinding } },
+      signers: to.map((x) => ({ id: x.seat, wrappingPublicKey: x.wrap.publicKey })) as never
+    }),
+    by.filing.secret as never
+  );
 const readersOf = (rec: SealedCompanyRecord) => rec.wrapped.map((x) => x.signerId).sort();
 const read = (w: World) => spendingPolicyHere(doorsOf(w), { vault: VAULT, asset: TEST_TOKEN });
 /** The version of the policy in force; a vault under no policy has none, which a test of versions must not pass over. */
@@ -168,13 +266,18 @@ const B2 = 'b2'.repeat(32);
 /** Bo, retired with no policy version of his own. */
 const BO_RETIRED: SeatAs = { who: BO, retired: {} };
 
-describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
+describe("A VAULT'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN", () => {
   it('A SIGNER WHO LEAVES TAKES NO POLICY WITH THEM: THE SIGNERS WHO STAY STILL READ THE ONE IN FORCE', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     /* Sealed to both while both were seated, anchored before Bo was retired. */
     const w: World = {
-      seats: [{ who: ADA }, BO_RETIRED], onChain: [ADA], chain: chainHolding(TERMS, B1), filed: [v1],
-      anchored: [{ rec: v1, dirVersion: 1 }], dirBatches: { 1: 1, 2: 2 }, dirAt: { 1: [{ who: ADA }, { who: BO }] },
+      seats: [{ who: ADA }, BO_RETIRED],
+      onChain: [ADA],
+      chain: chainHolding(TERMS, B1),
+      filed: [v1],
+      anchored: [{ rec: v1, dirVersion: 1 }],
+      dirBatches: { 1: 1, 2: 2 },
+      dirAt: { 1: [{ who: ADA }, { who: BO }] }
     };
     /* RED WHEN: a removal leaves a policy unreadable to a signer who stays. */
     await expect(read(w)).resolves.toMatchObject({ state: 'set', version: 1, commitment: commitmentOf(TERMS, B1) });
@@ -185,56 +288,108 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     /* Filed and carried while Bo was seated, so sealed to him too; its entry waited and was anchored in the retirement's batch. */
     const v2 = versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS);
     const w: World = {
-      seats: [{ who: ADA }, BO_RETIRED], onChain: [ADA], chain: chainHolding(OTHER_TERMS, B2), filed: [v1, v2],
-      anchored: [{ rec: v1, dirVersion: 1, batch: 1 }, { rec: v2, dirVersion: 2, batch: 2 }], dirBatches: { 1: 1, 2: 2 },
-      dirAt: { 1: [{ who: ADA }, { who: BO }], 2: [{ who: ADA }, BO_RETIRED] },
+      seats: [{ who: ADA }, BO_RETIRED],
+      onChain: [ADA],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed: [v1, v2],
+      anchored: [
+        { rec: v1, dirVersion: 1, batch: 1 },
+        { rec: v2, dirVersion: 2, batch: 2 }
+      ],
+      dirBatches: { 1: 1, 2: 2 },
+      dirAt: { 1: [{ who: ADA }, { who: BO }], 2: [{ who: ADA }, BO_RETIRED] }
     };
     /* RED WHEN: a version anchored in the same batch as a retirement is judged as filed after it - the vault's policy is unreadable for good. */
-    await expect(read(w)).resolves.toMatchObject({ state: 'set', version: 2, commitment: commitmentOf(OTHER_TERMS, B2) });
+    await expect(read(w)).resolves.toMatchObject({
+      state: 'set',
+      version: 2,
+      commitment: commitmentOf(OTHER_TERMS, B2)
+    });
   });
 
   it('A POLICY SET AFTER A SIGNER LEFT IS NEVER SEALED TO THEM', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     const v2 = versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS);
     const w: World = {
-      seats: [{ who: ADA }, BO_RETIRED], onChain: [ADA], chain: chainHolding(OTHER_TERMS, B2), filed: [v1, v2],
-      anchored: [{ rec: v1, dirVersion: 1, batch: 1 }, { rec: v2, dirVersion: 2, batch: 3 }], dirBatches: { 1: 1, 2: 2 },
-      dirAt: { 1: [{ who: ADA }, { who: BO }], 2: [{ who: ADA }, BO_RETIRED] },
+      seats: [{ who: ADA }, BO_RETIRED],
+      onChain: [ADA],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed: [v1, v2],
+      anchored: [
+        { rec: v1, dirVersion: 1, batch: 1 },
+        { rec: v2, dirVersion: 2, batch: 3 }
+      ],
+      dirBatches: { 1: 1, 2: 2 },
+      dirAt: { 1: [{ who: ADA }, { who: BO }], 2: [{ who: ADA }, BO_RETIRED] }
     };
     /* RED WHEN: a version anchored after a seat's retirement and sealed to that seat is believed - the signer who left reads it. */
     await expect(read(w)).rejects.toThrow(/None of the company's records/u);
     /* The chain holds it, approved at the bar: a signer who stays seals the same opening to the signers who stay, and not to Bo. */
     const recovered: World = { ...w, filed: [v1, v2] };
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(recovered), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
+    expect(
+      await sealPoliciesToNewSignersHere({ ...doorsOf(recovered), keyEpoch: 0, filingKey: ADA.filing.publicKey })
+    ).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: a policy the chain holds that no device believes is never sealed again to the signers who stay, so the vault never pays again. */
     expect(readersOf(recovered.filed[2]!)).toEqual([ADA.seat]);
-    await expect(read(recovered)).resolves.toMatchObject({ state: 'set', version: 3, commitment: commitmentOf(OTHER_TERMS, B2) });
+    await expect(read(recovered)).resolves.toMatchObject({
+      state: 'set',
+      version: 3,
+      commitment: commitmentOf(OTHER_TERMS, B2)
+    });
     /* RED WHEN: a version not yet anchored, sealed to a seat retired now, is believed. */
-    const pending: World = { seats: [{ who: ADA }, BO_RETIRED], onChain: [ADA], chain: chainHolding(OTHER_TERMS, B2), filed: [v2] };
+    const pending: World = {
+      seats: [{ who: ADA }, BO_RETIRED],
+      onChain: [ADA],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed: [v2]
+    };
     await expect(read(pending)).rejects.toThrow(/None of the company's records/u);
     /* RED WHEN: a version anchored with a directory this device cannot replay is believed on a guess. */
     const unreplayed: World = {
-      seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(TERMS, B1), filed: [v1],
-      anchored: [{ rec: v1, dirVersion: 3, batch: 2 }], dirBatches: { 3: 1 },
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: chainHolding(TERMS, B1),
+      filed: [v1],
+      anchored: [{ rec: v1, dirVersion: 3, batch: 2 }],
+      dirBatches: { 3: 1 }
     };
     await expect(read(unreplayed)).rejects.toThrow(/None of the company's records/u);
-    await expect(read({ ...unreplayed, dirAt: { 3: [{ who: ADA }, { who: BO }] } })).rejects.toThrow(/None of the company's records/u);
-    await expect(read({ ...unreplayed, dirBatches: { 1: 1, 2: 1, 3: 1 } })).rejects.toThrow(/None of the company's records/u);
-    await expect(read({ ...unreplayed, dirBatches: { 1: 1, 2: 1, 3: 1 }, dirAt: { 3: [{ who: ADA }, { who: BO }] } })).resolves.toMatchObject({ version: 1 });
+    await expect(read({ ...unreplayed, dirAt: { 3: [{ who: ADA }, { who: BO }] } })).rejects.toThrow(
+      /None of the company's records/u
+    );
+    await expect(read({ ...unreplayed, dirBatches: { 1: 1, 2: 1, 3: 1 } })).rejects.toThrow(
+      /None of the company's records/u
+    );
+    await expect(
+      read({ ...unreplayed, dirBatches: { 1: 1, 2: 1, 3: 1 }, dirAt: { 3: [{ who: ADA }, { who: BO }] } })
+    ).resolves.toMatchObject({ version: 1 });
   });
 
   it('NO VERSION SHUTS OUT A SIGNER WHO STAYS, AND A SIGNER SEATED LATER MAY BE LEFT OUT UNTIL SEALED IN', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
-    const both: World = { seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(OTHER_TERMS, B2), filed: [] };
+    const both: World = {
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed: []
+    };
     /* RED WHEN: a version leaving out a signer who stays is believed - that signer could never raise or approve a run from the vault. */
-    await expect(read({ ...both, filed: [v1, versionOf(2, B2, [ADA], ADA, OTHER_TERMS)] })).rejects.toThrow(/None of the company's records/u);
-    await expect(read({ ...both, filed: [v1, versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS)] })).resolves.toMatchObject({ version: 2 });
+    await expect(read({ ...both, filed: [v1, versionOf(2, B2, [ADA], ADA, OTHER_TERMS)] })).rejects.toThrow(
+      /None of the company's records/u
+    );
+    await expect(read({ ...both, filed: [v1, versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS)] })).resolves.toMatchObject({
+      version: 2
+    });
     /* The first version is judged by the other rules alone. */
-    await expect(read({ ...both, chain: chainHolding(TERMS, B1), filed: [versionOf(1, B1, [ADA], ADA)] })).resolves.toMatchObject({ version: 1 });
+    await expect(
+      read({ ...both, chain: chainHolding(TERMS, B1), filed: [versionOf(1, B1, [ADA], ADA)] })
+    ).resolves.toMatchObject({ version: 1 });
     /* RED WHEN: a signer seated after the policy was set makes the policy unbelieved for everybody, freezing the vault. */
     const joined: World = {
-      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(OTHER_TERMS, B2),
-      filed: [v1, versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS)],
+      seats: [{ who: ADA }, { who: BO }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed: [v1, versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS)]
     };
     await expect(read(joined)).resolves.toMatchObject({ version: 2 });
   });
@@ -244,15 +399,26 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     /* Filed while Ada's device did not believe Cy's records key, so sealed to Ada and Bo only; carried. */
     const v2 = versionOf(2, B2, [ADA, BO], ADA, OTHER_TERMS);
     const filed = [v1, v2];
-    const w: World = { seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(OTHER_TERMS, B2), filed };
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: chainHolding(OTHER_TERMS, B2),
+      filed
+    };
     const lagging = await read({ ...w, another: [CY] }).then(versionHeld, (e: Error) => e.message.slice(0, 20));
     const caughtUp = await read(w).then(versionHeld, (e: Error) => e.message.slice(0, 20));
     /* RED WHEN: a version is believed while a roster lags and refused once it catches up - a policy carried in between is then unreadable. */
     expect(lagging).toBe(caughtUp);
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
+    expect(
+      await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey })
+    ).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: the policy the chain holds, opened by a version no device believes, is never sealed again to every signer who stays. */
     expect(readersOf(filed[2]!)).toEqual([ADA.seat, BO.seat, CY.seat].sort());
-    await expect(read({ ...w, as: CY })).resolves.toMatchObject({ state: 'set', version: 3, commitment: commitmentOf(OTHER_TERMS, B2) });
+    await expect(read({ ...w, as: CY })).resolves.toMatchObject({
+      state: 'set',
+      version: 3,
+      commitment: commitmentOf(OTHER_TERMS, B2)
+    });
   });
 
   it('THE SAME TERMS ARE NEVER SET AGAIN UNDER A NEW BLINDING, BY THE RAISER OR AN APPROVER', async () => {
@@ -264,75 +430,133 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     const sent: string[] = [];
     const doors = {
       ...doorsOf(w),
-      service: new Proxy({}, { get: (_t, name) => async () => { sent.push(String(name)); throw new Error('nothing is sent here'); } }),
+      service: new Proxy(
+        {},
+        {
+          get: (_t, name) => async () => {
+            sent.push(String(name));
+            throw new Error('nothing is sent here');
+          }
+        }
+      ),
       material: { signingSecret: ADA.filing.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
       filing: { seat: ADA.seat, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1' },
-      approvers: async () => { throw new Error('not read here'); }, vaultName: () => 'the vault',
-      builder: { policyBarKey: async () => made('bar') },
+      approvers: async () => {
+        throw new Error('not read here');
+      },
+      vaultName: () => 'the vault',
+      builder: { policyBarKey: async () => made('bar') }
     } as unknown as PolicyGovernanceDoors;
     /* RED WHEN: the same terms are raised again under a new blinding, so the vault's period total starts from zero. */
-    await expect(setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS }))
-      .rejects.toThrow(/already has exactly this spending policy/u);
+    await expect(
+      setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS })
+    ).rejects.toThrow(/already has exactly this spending policy/u);
     expect([filed.length, sent]).toEqual([2, []]);
     /* RED WHEN: an approving device approves a proposal for exactly the terms in force under another commitment. */
     const keys = keysOf({ vault: VAULT, asset: TEST_TOKEN, assetBlinding: '' });
-    await expect(refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, { commitment: commitmentOf(TERMS, B2) }))
-      .rejects.toThrow(/exactly the spending policy this vault already has/u);
+    await expect(
+      refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, { commitment: commitmentOf(TERMS, B2) })
+    ).rejects.toThrow(/exactly the spending policy this vault already has/u);
     /* A real change of terms is approved. */
     const change = versionOf(3, 'b3'.repeat(32), [ADA], ADA, OTHER_TERMS);
-    await expect(refusePolicyChangeHere(doorsOf({ ...w, filed: [...filed, change] }), VAULT, TEST_TOKEN, keys as never,
-      { commitment: commitmentOf(OTHER_TERMS, 'b3'.repeat(32)) })).resolves.toBeUndefined();
+    await expect(
+      refusePolicyChangeHere(doorsOf({ ...w, filed: [...filed, change] }), VAULT, TEST_TOKEN, keys as never, {
+        commitment: commitmentOf(OTHER_TERMS, 'b3'.repeat(32))
+      })
+    ).resolves.toBeUndefined();
   });
 
   it('A DEVICE THAT CANNOT OPEN THE POLICY IN FORCE CHANGES NOTHING', async () => {
     /* The policy in force is sealed to Ada alone; Bo's device cannot open it. */
     const filed = [versionOf(1, B1, [ADA], ADA)];
-    const w: World = { seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(TERMS, B1), filed, as: BO };
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: chainHolding(TERMS, B1),
+      filed,
+      as: BO
+    };
     const doors = {
       ...doorsOf(w),
-      service: new Proxy({}, { get: () => async () => { throw new Error('nothing is sent here'); } }),
+      service: new Proxy(
+        {},
+        {
+          get: () => async () => {
+            throw new Error('nothing is sent here');
+          }
+        }
+      ),
       material: { signingSecret: BO.filing.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
       filing: { seat: BO.seat, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1' },
-      approvers: async () => { throw new Error('not read here'); }, vaultName: () => 'the vault',
-      builder: { policyBarKey: async () => made('bar') },
+      approvers: async () => {
+        throw new Error('not read here');
+      },
+      vaultName: () => 'the vault',
+      builder: { policyBarKey: async () => made('bar') }
     } as unknown as PolicyGovernanceDoors;
     /* RED WHEN: a device that cannot open the policy in force files or raises a change - the same terms under a new blinding pass. */
-    await expect(setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS }))
-      .rejects.toThrow(/cannot open the spending policy this vault holds now/u);
+    await expect(
+      setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms: TERMS })
+    ).rejects.toThrow(/cannot open the spending policy this vault holds now/u);
     expect(filed).toHaveLength(1);
     /* RED WHEN: such a device approves or carries out a change it cannot compare with the policy in force. */
     const change = versionOf(2, B2, [ADA, BO], ADA);
     const keys = keysOf({ vault: VAULT, asset: TEST_TOKEN, assetBlinding: '' });
-    await expect(refusePolicyChangeHere(doorsOf({ ...w, filed: [...filed, change] }), VAULT, TEST_TOKEN, keys as never,
-      { commitment: commitmentOf(TERMS, B2) })).rejects.toThrow(/cannot open the spending policy this vault holds now/u);
+    await expect(
+      refusePolicyChangeHere(doorsOf({ ...w, filed: [...filed, change] }), VAULT, TEST_TOKEN, keys as never, {
+        commitment: commitmentOf(TERMS, B2)
+      })
+    ).rejects.toThrow(/cannot open the spending policy this vault holds now/u);
   });
 
   it('A POLICY FILED BY A SIGNER WHOSE REMOVAL IS RAISED IS NOT APPROVED', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     const bosChange = versionOf(2, B2, [ADA, BO], BO, OTHER_TERMS);
-    const w: World = { seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(TERMS, B1), filed: [v1, bosChange] };
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: chainHolding(TERMS, B1),
+      filed: [v1, bosChange]
+    };
     const keys = keysOf({ vault: VAULT, asset: TEST_TOKEN, assetBlinding: '' });
-    const approve = (leaving: readonly Signer[]) => refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, {
-      commitment: commitmentOf(OTHER_TERMS, B2), leaving: async () => new Set(leaving.map((x) => x.filing.publicKey)),
-    });
+    const approve = (leaving: readonly Signer[]) =>
+      refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, {
+        commitment: commitmentOf(OTHER_TERMS, B2),
+        leaving: async () => new Set(leaving.map((x) => x.filing.publicKey))
+      });
     await expect(approve([])).resolves.toBeUndefined();
     /* RED WHEN: a policy version filed by a seat under a raised removal is approved, so a signer on their way out sets the terms the company keeps. */
     await expect(approve([BO])).rejects.toThrow(/filed by a signer whose removal is raised/u);
     /* RED WHEN: a policy change is approved while who is leaving could not be read, or refused in words that do not say what holds it up. */
-    const blocked = new onDevice.LeavingNotRead('proposal prp_9 did not open on this device (sealed in a shape this device does not read). Only the signer who raised it can withdraw it');
-    await expect(refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, {
-      commitment: commitmentOf(OTHER_TERMS, B2), leaving: async () => { throw blocked; },
-    })).rejects.toThrow(/proposal prp_9 did not open on this device .*Only the signer who raised it can withdraw it/u);
+    const blocked = new onDevice.LeavingNotRead(
+      'proposal prp_9 did not open on this device (sealed in a shape this device does not read). Only the signer who raised it can withdraw it'
+    );
+    await expect(
+      refusePolicyChangeHere(doorsOf(w), VAULT, TEST_TOKEN, keys as never, {
+        commitment: commitmentOf(OTHER_TERMS, B2),
+        leaving: async () => {
+          throw blocked;
+        }
+      })
+    ).rejects.toThrow(/proposal prp_9 did not open on this device .*Only the signer who raised it can withdraw it/u);
   });
 
   it('A REMOVAL WHOSE BOUNDARY LEAVES OUT A POLICY VERSION THE LEAVER FILED IS REFUSED', async () => {
     const filed = [versionOf(1, B1, [ADA, BO], ADA), versionOf(2, B2, [ADA, BO], BO, OTHER_TERMS)];
-    const here = await recordsOf({ seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: new Map(), filed })
-      .directory(kindAsked('company', 'spending-policy'));
+    const here = await recordsOf({
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: new Map(),
+      filed
+    }).directory(kindAsked('company', 'spending-policy'));
     const key = companyRecordKey('spending-policy', POLICY_KEY);
     /* RED WHEN: a removal is approved with a boundary below a version the leaver filed - that version is believed by no device after. */
-    expect(removalBoundaryRefusal(here, BO.filing.publicKey, { [key]: 1 })).toMatch(/version 2 of a vault's spending policy/u);
-    expect(removalBoundaryRefusal(here, BO.filing.publicKey, {})).toMatch(/past the last version this removal keeps \(0\)/u);
+    expect(removalBoundaryRefusal(here, BO.filing.publicKey, { [key]: 1 })).toMatch(
+      /version 2 of a vault's spending policy/u
+    );
+    expect(removalBoundaryRefusal(here, BO.filing.publicKey, {})).toMatch(
+      /past the last version this removal keeps \(0\)/u
+    );
     expect(removalBoundaryRefusal(here, BO.filing.publicKey, { [key]: 2 })).toBeNull();
     /* Another signer's versions are not the leaver's to keep. */
     expect(removalBoundaryRefusal(here, CY.filing.publicKey, {})).toBeNull();
@@ -345,14 +569,24 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     const w: World = { seats, onChain: [ADA, BO, CY], chain, filed };
     /* Cy cannot read it yet. */
     await expect(read({ ...w, as: CY })).rejects.toThrow(/None of the company's records/u);
-    const done: PoliciesResealed = await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey });
+    const done: PoliciesResealed = await sealPoliciesToNewSignersHere({
+      ...doorsOf(w),
+      keyEpoch: 0,
+      filingKey: ADA.filing.publicKey
+    });
     expect(done).toMatchObject({ sealed: [POLICY_KEY], refused: [], notThisSeat: false });
     /* RED WHEN: a newly seated signer is not sealed into the policy in force, so they can never raise or approve a run from the vault. */
     expect(filed).toHaveLength(2);
     expect(readersOf(filed[1]!)).toEqual([ADA.seat, BO.seat, CY.seat].sort());
     /* RED WHEN: the re-seal mints a new blinding - the chain's commitment and the vault's period total would change. */
-    expect(openSpendingPolicy(filed[1]!, { signerId: CY.seat, wrappingSecret: CY.wrap.secret as never }).secrets.opening).toEqual({ terms: TERMS, blinding: B1 });
-    await expect(read({ ...w, as: CY })).resolves.toMatchObject({ state: 'set', version: 2, commitment: commitmentOf(TERMS, B1) });
+    expect(
+      openSpendingPolicy(filed[1]!, { signerId: CY.seat, wrappingSecret: CY.wrap.secret as never }).secrets.opening
+    ).toEqual({ terms: TERMS, blinding: B1 });
+    await expect(read({ ...w, as: CY })).resolves.toMatchObject({
+      state: 'set',
+      version: 2,
+      commitment: commitmentOf(TERMS, B1)
+    });
     expect(chain.get(POLICY_KEY)).toBe(commitmentOf(TERMS, B1));
     /* Everybody is sealed in now: nothing more is filed, and the same terms are still refused as a change. */
     await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey });
@@ -361,10 +595,21 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
 
   it('A SEAT THAT MAY NOT SET A POLICY FILES NO RE-SEAL AND NAMES EACH POLICY A SEAT THAT MAY STILL HAS TO SEAL', async () => {
     const filed = [versionOf(1, B1, [ADA, BO], ADA)];
-    const w: World = { seats: [{ who: ADA }, { who: BO, role: 'approver' }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed, as: BO };
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO, role: 'approver' }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: chainHolding(TERMS, B1),
+      filed,
+      as: BO
+    };
     /* RED WHEN: a seat that may not set policies says nothing while a signer seated since cannot read the policy in force. */
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: BO.filing.publicKey }))
-      .toEqual({ sealed: [], refused: [], skipped: [], owed: [POLICY_KEY], notThisSeat: true });
+    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: BO.filing.publicKey })).toEqual({
+      sealed: [],
+      refused: [],
+      skipped: [],
+      owed: [POLICY_KEY],
+      notThisSeat: true
+    });
     expect(filed).toHaveLength(1);
   });
 
@@ -372,16 +617,30 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     const filed = [v1];
     const w: World = {
-      seats: [{ who: ADA }, BO_RETIRED, { who: CY }], onChain: [ADA, CY], chain: chainHolding(TERMS, B1), filed,
-      anchored: [{ rec: v1, dirVersion: 1 }], dirBatches: { 1: 1, 2: 2 }, dirAt: { 1: [{ who: ADA }, { who: BO }] },
+      seats: [{ who: ADA }, BO_RETIRED, { who: CY }],
+      onChain: [ADA, CY],
+      chain: chainHolding(TERMS, B1),
+      filed,
+      anchored: [{ rec: v1, dirVersion: 1 }],
+      dirBatches: { 1: 1, 2: 2 },
+      dirAt: { 1: [{ who: ADA }, { who: BO }] }
     };
     /* RED WHEN: a device whose seat may not file a spending policy files a re-seal. */
     const approver: World = { ...w, seats: [{ who: ADA, role: 'approver' }, BO_RETIRED, { who: CY }] };
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf(approver), keyEpoch: 0, filingKey: ADA.filing.publicKey })).toMatchObject({ sealed: [], refused: [], notThisSeat: true });
+    expect(
+      await sealPoliciesToNewSignersHere({ ...doorsOf(approver), keyEpoch: 0, filingKey: ADA.filing.publicKey })
+    ).toMatchObject({ sealed: [], refused: [], notThisSeat: true });
     expect(filed).toHaveLength(1);
     /* RED WHEN: a device that cannot open the policy in force files anything for it, or says nothing of the policy it left unsealed. */
-    expect(await sealPoliciesToNewSignersHere({ ...doorsOf({ ...w, as: CY }), keyEpoch: 0, filingKey: CY.filing.publicKey }))
-      .toEqual({ sealed: [], refused: [{ id: POLICY_KEY, why: POLICY_NOT_OPENED_HERE }], skipped: [], owed: [], notThisSeat: false });
+    expect(
+      await sealPoliciesToNewSignersHere({ ...doorsOf({ ...w, as: CY }), keyEpoch: 0, filingKey: CY.filing.publicKey })
+    ).toEqual({
+      sealed: [],
+      refused: [{ id: POLICY_KEY, why: POLICY_NOT_OPENED_HERE }],
+      skipped: [],
+      owed: [],
+      notThisSeat: false
+    });
     expect(filed).toHaveLength(1);
     await sealPoliciesToNewSignersHere({ ...doorsOf(w), keyEpoch: 0, filingKey: ADA.filing.publicKey });
     /* RED WHEN: a retired seat is sealed into a re-seal - a signer who left reads the policy again. */
@@ -390,9 +649,13 @@ describe('A VAULT\'S SPENDING POLICY AS SIGNERS LEAVE AND JOIN', () => {
   });
 });
 
-describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', () => {
+describe("A SPENDING POLICY WHILE A SIGNER'S REMOVAL IS RAISED OR APPROVED", () => {
   /* The same bands as the policy in force, but for the last: what a change asks of the approvals a change of who is seated needs. */
-  const lastBandAt = (approvals: string) => ({ ...TERMS, bands: [...TERMS.bands.slice(0, 3), { ceiling: '40', approvals }], periodLimit: `9${approvals}` });
+  const lastBandAt = (approvals: string) => ({
+    ...TERMS,
+    bands: [...TERMS.bands.slice(0, 3), { ceiling: '40', approvals }],
+    periodLimit: `9${approvals}`
+  });
   const ABOVE = lastBandAt('3');
   const AT = lastBandAt('2');
   const B3 = 'b3'.repeat(32);
@@ -405,60 +668,146 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
    * chain is never reached. All three may approve the vault's runs, at a threshold of one, unless `approvers` says
    * otherwise; `another` are seats this device does not believe now.
    */
-  const everyoneOnTheVault = () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: EVERYONE.map((x) => ({ leaf: x.seat, rights: EVERY_RIGHT })), adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
-  });
+  const everyoneOnTheVault = () =>
+    approverRosterFrom({
+      threshold: 1,
+      vaultThresholds: [],
+      seated: EVERYONE.map((x) => ({ leaf: x.seat, rights: EVERY_RIGHT })),
+      adoptedVaults: [VAULT],
+      companyWide: 'cc'.repeat(32)
+    });
   const aCompany = (
-    filed: SealedCompanyRecord[], policy?: { commitment: string; approvals: number }, removal = 2,
-    o: { readonly approvers?: () => ApproverRoster; readonly another?: readonly Signer[]; readonly chain?: Map<string, string> } = {},
+    filed: SealedCompanyRecord[],
+    policy?: { commitment: string; approvals: number },
+    removal = 2,
+    o: {
+      readonly approvers?: () => ApproverRoster;
+      readonly another?: readonly Signer[];
+      readonly chain?: Map<string, string>;
+    } = {}
   ) => {
     const w: World = {
-      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: o.chain ?? chainHolding(TERMS, B1), filed, seatBar: 2,
-      ...(o.another === undefined ? {} : { another: o.another }),
+      seats: [{ who: ADA }, { who: BO }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: o.chain ?? chainHolding(TERMS, B1),
+      filed,
+      seatBar: 2,
+      ...(o.another === undefined ? {} : { another: o.another })
     };
     const served = [
-      { id: 'prp_removal', accountId: COMPANY, status: 'open', chainId: '0a'.repeat(32), approvalCount: removal, raisedAt: 'now', createdAt: '2026-10-16' },
-      ...(policy === undefined ? [] : [{
-        id: 'prp_policy', accountId: COMPANY, status: 'open', chainId: '0b'.repeat(32), approvalCount: policy.approvals, raisedAt: 'now', createdAt: '2026-10-16',
-      }]),
+      {
+        id: 'prp_removal',
+        accountId: COMPANY,
+        status: 'open',
+        chainId: '0a'.repeat(32),
+        approvalCount: removal,
+        raisedAt: 'now',
+        createdAt: '2026-10-16'
+      },
+      ...(policy === undefined
+        ? []
+        : [
+            {
+              id: 'prp_policy',
+              accountId: COMPANY,
+              status: 'open',
+              chainId: '0b'.repeat(32),
+              approvalCount: policy.approvals,
+              raisedAt: 'now',
+              createdAt: '2026-10-16'
+            }
+          ])
     ];
     const opened = (chainId: string, governance: OpenedRound['governance']): OpenedRound =>
-      ({ chainId, digest: 'dd'.repeat(32), vault: '00'.repeat(32), salt: '11'.repeat(32), summary: '', governance, filedBy: ADA.filing.publicKey } as OpenedRound);
-    seams.opens = async (id) => (id === 'prp_removal' ? opened('0a'.repeat(32), { kind: 'remove-signer', leaf: CY.seat })
-      : opened('0b'.repeat(32), { kind: 'spending-policy', vault: VAULT, assetKey: ASSET_KEY, commitment: policy!.commitment }));
+      ({
+        chainId,
+        digest: 'dd'.repeat(32),
+        vault: '00'.repeat(32),
+        salt: '11'.repeat(32),
+        summary: '',
+        governance,
+        filedBy: ADA.filing.publicKey
+      }) as OpenedRound;
+    seams.opens = async (id) =>
+      id === 'prp_removal'
+        ? opened('0a'.repeat(32), { kind: 'remove-signer', leaf: CY.seat })
+        : opened('0b'.repeat(32), {
+            kind: 'spending-policy',
+            vault: VAULT,
+            assetKey: ASSET_KEY,
+            commitment: policy!.commitment
+          });
     const sent: string[] = [];
     const records = {
       ...recordsOf(w),
-      roundsOnChain: async (ids: readonly string[]) => Object.fromEntries(ids.map((id) => {
-        const p = served.find((x) => x.chainId === id)!;
-        /* This seat's approval of neither proposal is on the test's chain. */
-        return [id, { held: 'open' as const, approvals: p.approvalCount, raisedAt: 1, txRef: id, approvedHere: false }];
-      })),
+      roundsOnChain: async (ids: readonly string[]) =>
+        Object.fromEntries(
+          ids.map((id) => {
+            const p = served.find((x) => x.chainId === id)!;
+            /* This seat's approval of neither proposal is on the test's chain. */
+            return [
+              id,
+              { held: 'open' as const, approvals: p.approvalCount, raisedAt: 1, txRef: id, approvedHere: false }
+            ];
+          })
+        )
     };
     const doors = {
-      records, accountId: COMPANY, viewingKey: VIEWING,
+      records,
+      accountId: COMPANY,
+      viewingKey: VIEWING,
       service: {
         sealedProposals: async () => served,
         standing: async (id: string) => served.find((x) => x.id === id),
         callState: async () => ({ account: 'ac'.repeat(32), blockHash: 'b', accountState: 'AS', parameters: 'PP' }),
-        file: async () => { sent.push('raise'); throw new Error('nothing is sent here'); },
-        approve: async () => { sent.push('approve'); throw new Error('nothing is sent here'); },
-        carry: async () => { sent.push('carry'); throw new Error('nothing is sent here'); },
+        file: async () => {
+          sent.push('raise');
+          throw new Error('nothing is sent here');
+        },
+        approve: async () => {
+          sent.push('approve');
+          throw new Error('nothing is sent here');
+        },
+        carry: async () => {
+          sent.push('carry');
+          throw new Error('nothing is sent here');
+        }
       },
       material: { signingSecret: ADA.filing.secret, blinding: '00'.repeat(32), scope: '00'.repeat(32) },
-      filing: { seat: ADA.seat, keyEpoch: 0, salt: () => '11'.repeat(32), newId: () => 'p1', entered: { enter: async () => {} } },
-      approvers: async () => (o.approvers ?? everyoneOnTheVault)(), vaultName: () => 'the vault',
+      filing: {
+        seat: ADA.seat,
+        keyEpoch: 0,
+        salt: () => '11'.repeat(32),
+        newId: () => 'p1',
+        entered: { enter: async () => {} }
+      },
+      approvers: async () => (o.approvers ?? everyoneOnTheVault)(),
+      vaultName: () => 'the vault',
       builder: {
         policyBarKey: async () => made('bar'),
         proposalIdentity: async () => ({ digest: 'dd'.repeat(32), chainId: '0c'.repeat(32), noVault: '00'.repeat(32) }),
-        governedCall: async () => { sent.push('build'); throw new Error('nothing is built here'); },
-      },
+        governedCall: async () => {
+          sent.push('build');
+          throw new Error('nothing is built here');
+        }
+      }
     } as unknown as PolicyGovernanceDoors;
     return {
-      doors, records, sent, set: (terms: typeof TERMS) => setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }),
-      approve: (terms: typeof TERMS, steps: Omit<PolicySteps, 'approveOnly'> = {}) => approveSpendingPolicyOnDevice(doors, {
-        viewingKey: VIEWING, proposal: 'prp_policy', vault: VAULT, asset: TEST_TOKEN, terms, approveOnly: '0b'.repeat(32), ...steps,
-      }),
+      doors,
+      records,
+      sent,
+      set: (terms: typeof TERMS) =>
+        setSpendingPolicyOnDevice(doors, { viewingKey: VIEWING, vault: VAULT, asset: TEST_TOKEN, terms }),
+      approve: (terms: typeof TERMS, steps: Omit<PolicySteps, 'approveOnly'> = {}) =>
+        approveSpendingPolicyOnDevice(doors, {
+          viewingKey: VIEWING,
+          proposal: 'prp_policy',
+          vault: VAULT,
+          asset: TEST_TOKEN,
+          terms,
+          approveOnly: '0b'.repeat(32),
+          ...steps
+        })
     };
   };
 
@@ -466,17 +815,23 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
     const raising = aCompany([v1]);
     /* RED WHEN: a policy needing three approvals is raised while a removal is approved at a bar of two - once carried out, the removal never can be. */
-    await expect(raising.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
+    await expect(raising.set(ABOVE)).rejects.toThrow(
+      /would raise the approvals a change of who is seated needs while a removal of a signer is approved/u
+    );
     expect(raising.sent).toEqual([]);
     /* The same change raised beside the removal before this device saw it, one approval short. */
     const filed = [v1, versionOf(2, B3, [ADA, BO, CY], ADA, ABOVE)];
     const approving = aCompany(filed, { commitment: commitmentOf(ABOVE, B3), approvals: 1 });
     /* RED WHEN: a policy needing three approvals is approved while a removal is approved at a bar of two. */
-    await expect(approving.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
+    await expect(approving.set(ABOVE)).rejects.toThrow(
+      /would raise the approvals a change of who is seated needs while a removal of a signer is approved/u
+    );
     expect(approving.sent).toEqual([]);
     /* RED WHEN: a policy needing three approvals is carried out while a removal is approved at a bar of two. */
     const carrying = aCompany(filed, { commitment: commitmentOf(ABOVE, B3), approvals: 2 });
-    await expect(carrying.set(ABOVE)).rejects.toThrow(/would raise the approvals a change of who is seated needs while a removal of a signer is approved/u);
+    await expect(carrying.set(ABOVE)).rejects.toThrow(
+      /would raise the approvals a change of who is seated needs while a removal of a signer is approved/u
+    );
     expect(carrying.sent).toEqual([]);
   });
 
@@ -495,13 +850,18 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     const keys = keysOf({ vault: VAULT, asset: TEST_TOKEN, assetBlinding: '' });
     const doors = { records: c.records, accountId: COMPANY, viewingKey: VIEWING };
     /* RED WHEN: a removal still waiting for its approvals counts its seat as leaving. */
-    expect([...await onDevice.seatsLeavingHere(c.doors as never, VIEWING as never)]).toEqual([]);
+    expect([...(await onDevice.seatsLeavingHere(c.doors as never, VIEWING as never))]).toEqual([]);
     /* RED WHEN: the signers who stay cannot open the version the leaver filed while the removal waits for its approvals. */
-    await expect(refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, { commitment: commitmentOf(ABOVE, B3) })).resolves.toBeUndefined();
+    await expect(
+      refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, { commitment: commitmentOf(ABOVE, B3) })
+    ).resolves.toBeUndefined();
     /* RED WHEN: a change to a version filed by a seat whose removal is raised is approved because the removal is not yet approved. */
-    await expect(refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, {
-      commitment: commitmentOf(ABOVE, B3), leaving: () => onDevice.seatsUnderARaisedRemovalHere(c.doors as never, VIEWING as never),
-    })).rejects.toThrow(/filed by a signer whose removal is raised/u);
+    await expect(
+      refusePolicyChangeHere(doors, VAULT, TEST_TOKEN, keys as never, {
+        commitment: commitmentOf(ABOVE, B3),
+        leaving: () => onDevice.seatsUnderARaisedRemovalHere(c.doors as never, VIEWING as never)
+      })
+    ).rejects.toThrow(/filed by a signer whose removal is raised/u);
   });
 
   it('A POLICY WHOSE HIGHEST BAND IS AT THE SEAT BAR IS RAISED AND APPROVED WHILE A REMOVAL IS APPROVED', async () => {
@@ -511,7 +871,10 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     /* RED WHEN: a policy at the seat bar is refused while a removal is raised, so no policy can be set until the removal ends. */
     await expect(raising.set(AT)).rejects.toThrow(/nothing is built here/u);
     expect(raising.sent).toEqual(['build']);
-    const approving = aCompany([v1, versionOf(2, B3, [ADA, BO, CY], ADA, AT)], { commitment: commitmentOf(AT, B3), approvals: 1 });
+    const approving = aCompany([v1, versionOf(2, B3, [ADA, BO, CY], ADA, AT)], {
+      commitment: commitmentOf(AT, B3),
+      approvals: 1
+    });
     await expect(approving.set(AT)).rejects.toThrow(/nothing is built here/u);
     expect(approving.sent).toEqual(['build']);
   });
@@ -540,27 +903,45 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
       expect(c.sent).toEqual([]);
     });
 
-    it('a policy whose highest band asks for more signers than may approve its vault\'s runs is refused before any build', async () => {
-      const onlyAda = () => approverRosterFrom({
-        threshold: 1, vaultThresholds: [], adoptedVaults: [VAULT], companyWide: 'cc'.repeat(32),
-        seated: [{ leaf: ADA.seat, rights: EVERY_RIGHT }, ...[BO, CY].map((x) => ({ leaf: x.seat, rights: { mayApprove: false, everyVault: true, onVaults: [] } }))],
-      });
+    it("a policy whose highest band asks for more signers than may approve its vault's runs is refused before any build", async () => {
+      const onlyAda = () =>
+        approverRosterFrom({
+          threshold: 1,
+          vaultThresholds: [],
+          adoptedVaults: [VAULT],
+          companyWide: 'cc'.repeat(32),
+          seated: [
+            { leaf: ADA.seat, rights: EVERY_RIGHT },
+            ...[BO, CY].map((x) => ({ leaf: x.seat, rights: { mayApprove: false, everyVault: true, onVaults: [] } }))
+          ]
+        });
       const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 1 }, 1, { approvers: onlyAda });
       /* RED WHEN: a policy is approved with its bands not counted against the signers who may approve its vault's runs. */
-      await expect(c.approve(AT)).rejects.toThrow(/unable to pay: the vault \(its runs need 2 approvals and 1 signer could give them\)/u);
+      await expect(c.approve(AT)).rejects.toThrow(
+        /unable to pay: the vault \(its runs need 2 approvals and 1 signer could give them\)/u
+      );
       expect(c.sent).toEqual([]);
       /* RED WHEN: the band check is made only at the approval, and a policy that leaves the vault short is carried out. */
-      const carrying = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 2 }, 1, { approvers: onlyAda });
+      const carrying = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 2 }, 1, {
+        approvers: onlyAda
+      });
       await expect(carrying.approve(AT, { carryOnly: true })).rejects.toThrow(/unable to pay/u);
       expect(carrying.sent).toEqual([]);
     });
 
     it('the bands counted are those of the policy the chain holds in force, opened from the version that makes it', async () => {
-      const w: World = { seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(AT, B3), filed: [v1, v2] };
+      const w: World = {
+        seats: [{ who: ADA }, { who: BO }, { who: CY }],
+        onChain: [ADA, BO, CY],
+        chain: chainHolding(AT, B3),
+        filed: [v1, v2]
+      };
       /* RED WHEN: the band counted is not the highest band of the policy in force, so a vault's bar is read short of what its runs need. */
       expect(await bandsInForceHere(doorsOf(w))).toEqual([{ vault: VAULT, band: 2 }]);
       /* RED WHEN: a version the chain does not hold in force is counted as the vault's policy. */
-      expect(await bandsInForceHere(doorsOf({ ...w, chain: chainHolding(TERMS, B1) }))).toEqual([{ vault: VAULT, band: 1 }]);
+      expect(await bandsInForceHere(doorsOf({ ...w, chain: chainHolding(TERMS, B1) }))).toEqual([
+        { vault: VAULT, band: 1 }
+      ]);
       /* RED WHEN: a policy the chain holds none for is counted as in force. */
       expect(await bandsInForceHere(doorsOf({ ...w, chain: new Map() }))).toEqual([]);
     });
@@ -568,24 +949,41 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
     it('a policy at its bar is carried out by another signer as the policy it opened', async () => {
       const c = aCompany([v1, v2], { commitment: commitmentOf(AT, B3), approvals: 2 }, 1);
       const built: unknown[] = [];
-      (c.doors.builder as { governedCall: unknown }).governedCall = async ({ order }: { order: unknown }) => { built.push(order); throw new Error('nothing is built here'); };
+      (c.doors.builder as { governedCall: unknown }).governedCall = async ({ order }: { order: unknown }) => {
+        built.push(order);
+        throw new Error('nothing is built here');
+      };
       await expect(c.approve(AT, { carryOnly: true })).rejects.toThrow(/nothing is built here/u);
       /* RED WHEN: the policy carried out is not the one the proposal commits to, opened from the version this device believes. */
-      expect(built).toMatchObject([{ circuit: 'setPolicy', vault: VAULT, commitment: commitmentOf(AT, B3), proposal: '0b'.repeat(32), policy: { terms: AT, blinding: B3 } }]);
+      expect(built).toMatchObject([
+        {
+          circuit: 'setPolicy',
+          vault: VAULT,
+          commitment: commitmentOf(AT, B3),
+          proposal: '0b'.repeat(32),
+          policy: { terms: AT, blinding: B3 }
+        }
+      ]);
     });
   });
 
-  describe('A REMOVAL IS COUNTED AGAINST EVERY VAULT\'S APPROVERS AT THE TOP BAND OF ITS POLICIES IN FORCE', () => {
+  describe("A REMOVAL IS COUNTED AGAINST EVERY VAULT'S APPROVERS AT THE TOP BAND OF ITS POLICIES IN FORCE", () => {
     const v1 = versionOf(1, B1, [ADA, BO, CY], ADA);
     const above = versionOf(2, B3, [ADA, BO, CY], ADA, ABOVE);
-    const removeCy = (c: ReturnType<typeof aCompany>) => onDevice.governOnDevice(c.doors, {
-      viewingKey: VIEWING as never, change: { kind: 'remove-signer', leaf: CY.seat }, summary: 'Remove Cy', body: {} as never,
-    });
+    const removeCy = (c: ReturnType<typeof aCompany>) =>
+      onDevice.governOnDevice(c.doors, {
+        viewingKey: VIEWING as never,
+        change: { kind: 'remove-signer', leaf: CY.seat },
+        summary: 'Remove Cy',
+        body: {} as never
+      });
 
-    it('a removal that leaves the vault fewer approvers than its policy\'s top band needs is neither approved nor sent', async () => {
+    it("a removal that leaves the vault fewer approvers than its policy's top band needs is neither approved nor sent", async () => {
       const c = aCompany([v1, above], undefined, 1, { chain: chainHolding(ABOVE, B3) });
       /* RED WHEN: a removal is judged without the bands in force, and leaves no run in the vault's top band able to be paid. */
-      await expect(removeCy(c)).rejects.toThrow(/unable to pay: the vault \(its runs need 3 approvals and 2 signers could give them\)/u);
+      await expect(removeCy(c)).rejects.toThrow(
+        /unable to pay: the vault \(its runs need 3 approvals and 2 signers could give them\)/u
+      );
       expect(c.sent).toEqual([]);
       /* The control: under a policy whose top band two can give, the removal passes the count and is approved. */
       const within = aCompany([v1, above], undefined, 1);
@@ -603,7 +1001,7 @@ describe('A SPENDING POLICY WHILE A SIGNER\'S REMOVAL IS RAISED OR APPROVED', ()
   });
 });
 
-describe('A RE-SEAL AND A PERSON\'S OWN POLICY RAISE PICK THE SAME NEXT VERSION', () => {
+describe("A RE-SEAL AND A PERSON'S OWN POLICY RAISE PICK THE SAME NEXT VERSION", () => {
   /** The service keeps the first filing of a version and refuses a second, as its store does; `stale` is served until a filing is tried. */
   const oneFilingPerVersion = (w: World, stale?: readonly SealedCompanyRecord[]): CompanyRecordsHere => {
     const records = recordsOf(w);
@@ -616,64 +1014,124 @@ describe('A RE-SEAL AND A PERSON\'S OWN POLICY RAISE PICK THE SAME NEXT VERSION'
         versions: async (id) => served ?? w.filed.filter((r) => r.id === id),
         file: async (rec) => {
           served = undefined;
-          if (w.filed.some((r) => r.id === rec.id && r.version === rec.version)) throw new Error(`version ${rec.version} is already filed`);
+          if (w.filed.some((r) => r.id === rec.id && r.version === rec.version))
+            throw new Error(`version ${rec.version} is already filed`);
           await policies.file(rec);
-        },
-      },
+        }
+      }
     };
   };
 
   it('the one filed second is refused and said, and a re-seal after the raise never displaces it', async () => {
     const v1 = versionOf(1, B1, [ADA, BO], ADA);
     const raise = versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS);
-    const w: World = { seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1), filed: [v1] };
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: chainHolding(TERMS, B1),
+      filed: [v1]
+    };
     const doors = { accountId: COMPANY, viewingKey: VIEWING, keyEpoch: 0, filingKey: ADA.filing.publicKey };
     /* The re-seal read the versions before the raise landed, then filed after it. */
     const racing = oneFilingPerVersion(w, [v1]);
     w.filed.push(raise);
     const lost = await sealPoliciesToNewSignersHere({ ...doors, records: racing });
     /* RED WHEN: a re-seal that loses the race for a version is hidden, or overwrites the raise filed at that version. */
-    expect(lost).toMatchObject({ sealed: [], refused: [{ id: POLICY_KEY, why: expect.stringMatching(/version 2 is already filed/u) }] });
+    expect(lost).toMatchObject({
+      sealed: [],
+      refused: [{ id: POLICY_KEY, why: expect.stringMatching(/version 2 is already filed/u) }]
+    });
     expect(w.filed.map((r) => r.version)).toEqual([1, 2]);
-    expect(openSpendingPolicy(w.filed[1]!, { signerId: ADA.seat, wrappingSecret: ADA.wrap.secret as never }).secrets.opening.blinding).toBe(B2);
+    expect(
+      openSpendingPolicy(w.filed[1]!, { signerId: ADA.seat, wrappingSecret: ADA.wrap.secret as never }).secrets.opening
+        .blinding
+    ).toBe(B2);
     /* The next upkeep reads again: the policy in force is sealed to Cy at the version after the raise. */
-    expect(await sealPoliciesToNewSignersHere({ ...doors, records: oneFilingPerVersion(w) })).toMatchObject({ sealed: [POLICY_KEY], refused: [] });
+    expect(await sealPoliciesToNewSignersHere({ ...doors, records: oneFilingPerVersion(w) })).toMatchObject({
+      sealed: [POLICY_KEY],
+      refused: []
+    });
     expect(w.filed.map((r) => r.version)).toEqual([1, 2, 3]);
     /* The raise is approved: the chain now commits to its terms. */
     w.chain.set(POLICY_KEY, commitmentOf(OTHER_TERMS, B2));
     /* RED WHEN: the re-sealed old terms, filed after the raise, are read as the policy in force once the raise is approved. */
-    await expect(read(w)).resolves.toMatchObject({ state: 'set', version: 2, commitment: commitmentOf(OTHER_TERMS, B2) });
+    await expect(read(w)).resolves.toMatchObject({
+      state: 'set',
+      version: 2,
+      commitment: commitmentOf(OTHER_TERMS, B2)
+    });
   });
 
   it('EVERY POLICY THE COMPANY FILED IS ASKED OF THE CHAIN IN ONE ASK WHEN THEY ARE SEALED AGAIN, HOWEVER MANY THERE ARE', async () => {
-    const another = (n: string): SealedCompanyRecord => signCompanyFiling(sealSpendingPolicy({
-      company: COMPANY, id: n.repeat(32) as never, version: 1, keyEpoch: 0,
-      secrets: { vault: VAULT, asset: TEST_TOKEN, opening: { terms: TERMS, blinding: B1 } },
-      signers: [ADA].map((x) => ({ id: x.seat, wrappingPublicKey: x.wrap.publicKey })) as never,
-    }), ADA.filing.secret as never);
-    const w: World = { seats: [{ who: ADA }, { who: BO }], onChain: [ADA, BO], chain: chainHolding(TERMS, B1), filed: [versionOf(1, B1, [ADA], ADA), another('c1'), another('c2')] };
+    const another = (n: string): SealedCompanyRecord =>
+      signCompanyFiling(
+        sealSpendingPolicy({
+          company: COMPANY,
+          id: n.repeat(32) as never,
+          version: 1,
+          keyEpoch: 0,
+          secrets: { vault: VAULT, asset: TEST_TOKEN, opening: { terms: TERMS, blinding: B1 } },
+          signers: [ADA].map((x) => ({ id: x.seat, wrappingPublicKey: x.wrap.publicKey })) as never
+        }),
+        ADA.filing.secret as never
+      );
+    const w: World = {
+      seats: [{ who: ADA }, { who: BO }],
+      onChain: [ADA, BO],
+      chain: chainHolding(TERMS, B1),
+      filed: [versionOf(1, B1, [ADA], ADA), another('c1'), another('c2')]
+    };
     const doors = doorsOf(w);
     const asked: (readonly string[])[] = [];
-    const counted = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies,
-      onChain: async (keys: readonly string[]) => { asked.push(keys); return doors.records.spendingPolicies!.onChain(keys); } } } };
-    const resealed = await sealPoliciesToNewSignersHere({ ...counted, keyEpoch: 0, filingKey: ADA.filing.publicKey } as never);
+    const counted = {
+      ...doors,
+      records: {
+        ...doors.records,
+        spendingPolicies: {
+          ...doors.records.spendingPolicies,
+          onChain: async (keys: readonly string[]) => {
+            asked.push(keys);
+            return doors.records.spendingPolicies!.onChain(keys);
+          }
+        }
+      }
+    };
+    const resealed = await sealPoliciesToNewSignersHere({
+      ...counted,
+      keyEpoch: 0,
+      filingKey: ADA.filing.publicKey
+    } as never);
     expect(resealed.sealed).toEqual([POLICY_KEY]);
     /* RED WHEN: each policy is asked of the chain on its own, so every seat action reads the chain once more for each policy filed. */
     expect(asked.map((k) => k.length)).toEqual([3]);
   });
 });
 
-describe('A VERSION WHOSE KEYS THE WORKER CANNOT MAKE STOPS ITS POLICY WITH THE WORKER\'S REASON', () => {
-  it('the bands a change counts, strict and not, and the re-seal each give the worker\'s reason when the newest version\'s keys are refused', async () => {
+describe("A VERSION WHOSE KEYS THE WORKER CANNOT MAKE STOPS ITS POLICY WITH THE WORKER'S REASON", () => {
+  it("the bands a change counts, strict and not, and the re-seal each give the worker's reason when the newest version's keys are refused", async () => {
     const w: World = {
-      seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1),
-      filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)],
+      seats: [{ who: ADA }, { who: BO }, { who: CY }],
+      onChain: [ADA, BO, CY],
+      chain: chainHolding(TERMS, B1),
+      filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)]
     };
     const doors = doorsOf(w);
     const why = 'the worker could not make the keys of this version';
-    const refusing = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies!,
-      keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) => each.map((i) => (i.policy?.blinding === B2
-        ? { status: 'rejected' as const, reason: new Error(why) } : { status: 'fulfilled' as const, value: keysOf(i) })) as never } } };
+    const refusing = {
+      ...doors,
+      records: {
+        ...doors.records,
+        spendingPolicies: {
+          ...doors.records.spendingPolicies!,
+          keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) =>
+            each.map((i) =>
+              i.policy?.blinding === B2
+                ? { status: 'rejected' as const, reason: new Error(why) }
+                : { status: 'fulfilled' as const, value: keysOf(i) }
+            ) as never
+        }
+      }
+    };
     /* The control: with every version's keys made, the version the chain holds is found under the newer one. */
     expect(await bandsInForceHere(doors)).toEqual([{ vault: VAULT, band: 1 }]);
     /* RED WHEN: a version whose keys the worker could not make is passed over, so a policy change counts an older version's band. */
@@ -681,42 +1139,65 @@ describe('A VERSION WHOSE KEYS THE WORKER CANNOT MAKE STOPS ITS POLICY WITH THE 
     /* RED WHEN: a removal refuses such a policy in other words than the worker's, or counts an older version's band. */
     await expect(bandsInForceHere(refusing, { strict: true })).rejects.toThrow(why);
     /* RED WHEN: the re-seal passes over the version it could not make keys for, and says nothing of why. */
-    expect((await sealPoliciesToNewSignersHere({ ...refusing, keyEpoch: 0, filingKey: ADA.filing.publicKey })).refused).toEqual([{ id: POLICY_KEY, why }]);
+    expect(
+      (await sealPoliciesToNewSignersHere({ ...refusing, keyEpoch: 0, filingKey: ADA.filing.publicKey })).refused
+    ).toEqual([{ id: POLICY_KEY, why }]);
   });
 });
 
 describe('THE VERSION IN FORCE OF EVERY POLICY IS FOUND TOGETHER: A DECLARATION THAT FAILS, AND KEYS WITH NO COMMITMENT', () => {
   const twoVersions = (): World => ({
-    seats: [{ who: ADA }, { who: BO }, { who: CY }], onChain: [ADA, BO, CY], chain: chainHolding(TERMS, B1),
-    filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)],
+    seats: [{ who: ADA }, { who: BO }, { who: CY }],
+    onChain: [ADA, BO, CY],
+    chain: chainHolding(TERMS, B1),
+    filed: [versionOf(1, B1, [ADA, BO, CY], ADA), versionOf(2, B2, [ADA, BO, CY], ADA, OTHER_TERMS)]
   });
 
   it('a declaration of the policies the chain holds that fails rejects the whole re-seal and refuses the bands a change counts', async () => {
-    const why = 'the company\'s records could not be declared';
+    const why = "the company's records could not be declared";
     /* The first read that names records is the declaration of every policy the chain holds; it fails, and every read after it is served. */
     const failingDeclaration = () => {
       const doors = doorsOf(twoVersions());
       let declared = false;
       const directory: CompanyRecordsHere['directory'] = async (asked) => {
-        if (!declared && asked !== undefined && 'records' in asked) { declared = true; throw new Error(why); }
+        if (!declared && asked !== undefined && 'records' in asked) {
+          declared = true;
+          throw new Error(why);
+        }
         return doors.records.directory(asked);
       };
       return { ...doors, records: { ...doors.records, directory } };
     };
     /* RED WHEN: a declaration that failed is passed over and the re-seal goes on to seal from reads the view never proved together. */
-    await expect(sealPoliciesToNewSignersHere({ ...failingDeclaration(), keyEpoch: 0, filingKey: ADA.filing.publicKey })).rejects.toThrow(why);
+    await expect(
+      sealPoliciesToNewSignersHere({ ...failingDeclaration(), keyEpoch: 0, filingKey: ADA.filing.publicKey })
+    ).rejects.toThrow(why);
     /* RED WHEN: a removal or a policy change counts its bands from reads whose declaration failed. */
     await expect(bandsInForceHere(failingDeclaration())).rejects.toThrow(why);
   });
 
   it('a version whose keys come back with no commitment is passed over, and the version the chain holds is the one read and counted', async () => {
     const doors = doorsOf(twoVersions());
-    const noCommitment = { ...doors, records: { ...doors.records, spendingPolicies: { ...doors.records.spendingPolicies!,
-      keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) => each.map((i) => ({
-        status: 'fulfilled' as const, value: { ...keysOf(i), ...(i.policy?.blinding === B2 ? { commitment: null } : {}) },
-      })) as never } } };
+    const noCommitment = {
+      ...doors,
+      records: {
+        ...doors.records,
+        spendingPolicies: {
+          ...doors.records.spendingPolicies!,
+          keysOfEach: async (each: readonly Parameters<typeof keysOf>[0][]) =>
+            each.map((i) => ({
+              status: 'fulfilled' as const,
+              value: { ...keysOf(i), ...(i.policy?.blinding === B2 ? { commitment: null } : {}) }
+            })) as never
+        }
+      }
+    };
     /* RED WHEN: a newer version whose keys name no commitment refuses the policy, though an older version makes the commitment the chain holds. */
-    await expect(spendingPolicyHere(noCommitment, { vault: VAULT, asset: TEST_TOKEN })).resolves.toMatchObject({ state: 'set', version: 1, commitment: commitmentOf(TERMS, B1) });
+    await expect(spendingPolicyHere(noCommitment, { vault: VAULT, asset: TEST_TOKEN })).resolves.toMatchObject({
+      state: 'set',
+      version: 1,
+      commitment: commitmentOf(TERMS, B1)
+    });
     expect(await bandsInForceHere(noCommitment)).toEqual([{ vault: VAULT, band: 1 }]);
   });
 });

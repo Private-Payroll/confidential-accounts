@@ -8,18 +8,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 const NAMES = ['accountDeploy', 'finishedCreation', 'creationAgain', 'governedCall', 'accountPresence'] as const;
 const w = vi.hoisted(() => ({ worker: {} as Record<string, unknown>, starts: 0 }));
-vi.mock('vaults-web-shared/vault-worker-client.js', () => ({ startVaultBuilder: async () => { w.starts += 1; return w.worker; } }));
+vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
+  startVaultBuilder: async () => {
+    w.starts += 1;
+    return w.worker;
+  }
+}));
 
 const aWorker = (): Record<string, unknown> => Object.fromEntries(NAMES.map((n) => [n, async () => n]));
 async function load() {
   vi.resetModules();
   return import('./vault-builder.js');
 }
-beforeEach(() => { w.worker = aWorker(); w.starts = 0; });
+beforeEach(() => {
+  w.worker = aWorker();
+  w.starts = 0;
+});
 
 describe('the creation builder', () => {
   /* RED WHEN: the keyring is handed any of the worker's functions that builds, signs or proves a company's account, or the worker is started again. */
-  it('is the page\'s worker\'s read of the account alone, from the one worker the page started', async () => {
+  it("is the page's worker's read of the account alone, from the one worker the page started", async () => {
     const m = await load();
     const b = await m.theCreationBuilder();
     expect(Object.keys(b ?? {})).toEqual(['accountPresence']);

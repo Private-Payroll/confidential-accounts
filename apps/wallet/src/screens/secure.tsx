@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import {
-  MAX_PIECES, checkPlan, splitSecret, suggestDefault, toBase64Url, warningsFor,
-} from 'midnight-identity';
+import { MAX_PIECES, checkPlan, splitSecret, suggestDefault, toBase64Url, warningsFor } from 'midnight-identity';
 import type { PieceSet, Placement, Secret } from 'midnight-identity';
 import { hrefOf } from '../routes.js';
 import { loadSecuredSetup, loadSubwallets, saveSecuredSetup } from '../accounts/storage.js';
@@ -35,7 +33,7 @@ const KINDS: Record<PlaceKind, { readonly label: string; readonly hint: string }
   device: { label: 'Another device of mine', hint: 'which machine — e.g. “the old laptop”' },
   key: { label: 'A hardware key', hint: 'which key — e.g. “yubikey in the drawer”' },
   person: { label: 'Somebody I trust', hint: 'who — e.g. “my sister”' },
-  file: { label: 'A file I keep', hint: 'which account or disk holds it — e.g. “you@example.com”' },
+  file: { label: 'A file I keep', hint: 'which account or disk holds it — e.g. “you@example.com”' }
 };
 
 export interface Candidate {
@@ -67,17 +65,21 @@ export const DEFAULT_CANDIDATES: readonly Candidate[] = [
   { id: 1, kind: 'cloud', detail: 'my own cloud drive' },
   { id: 2, kind: 'paper', detail: 'a safe place at home' },
   { id: 3, kind: 'person', detail: 'someone I would call' },
-  { id: 4, kind: 'device', detail: 'this browser', isThisDevice: true },
+  { id: 4, kind: 'device', detail: 'this browser', isThisDevice: true }
 ];
 
 /** The suggested plan, FROM the library — §7.3 enforced by `suggestDefault`,
  * wherever the this-device candidate sits in the list. */
 export function planFromCandidates(candidates: readonly Candidate[]): {
-  rows: Row[]; threshold: number;
+  rows: Row[];
+  threshold: number;
 } {
-  const suggestion = suggestDefault(candidates.map((c) => ({
-    ...toPlacement(c), isThisDevice: c.isThisDevice ?? false,
-  })));
+  const suggestion = suggestDefault(
+    candidates.map((c) => ({
+      ...toPlacement(c),
+      isThisDevice: c.isThisDevice ?? false
+    }))
+  );
   const rows = candidates
     .filter((c) => suggestion.placements.some((p) => p.holder === holderOf(c)))
     .map(({ id, kind, detail }) => ({ id, kind, detail }));
@@ -87,8 +89,9 @@ export function planFromCandidates(candidates: readonly Candidate[]): {
 const normalise = (typed: string): string => typed.replace(/\s+/g, '');
 
 export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
-  const [view, setView] = useState<'existing' | 'plan' | 'cards' | 'prove' | 'done' | 'sheet'>(
-    () => (loadSecuredSetup(secret) ? 'existing' : 'plan'));
+  const [view, setView] = useState<'existing' | 'plan' | 'cards' | 'prove' | 'done' | 'sheet'>(() =>
+    loadSecuredSetup(secret) ? 'existing' : 'plan'
+  );
   const [initial] = useState(() => planFromCandidates(DEFAULT_CANDIDATES));
   const [rows, setRows] = useState<Row[]>(initial.rows);
   const [threshold, setThreshold] = useState(initial.threshold);
@@ -124,7 +127,8 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
 
   const warnings = useMemo(
     () => (planProblem === null ? warningsFor(placements, threshold) : []),
-    [placements, threshold, planProblem]);
+    [placements, threshold, planProblem]
+  );
 
   const cut = async (): Promise<void> => {
     setBusy(true);
@@ -159,9 +163,10 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
     const expected = toBase64Url(set.pieces[proveIndex]?.bytes ?? new Uint8Array());
     if (normalise(typed) !== expected) {
       setError(
-        `that does not match piece ${proveIndex + 1}. Read it from the card itself — `
-        + 'letter for letter — not from memory. If the card is not to hand, that is '
-        + 'exactly what this step exists to find out.');
+        `that does not match piece ${proveIndex + 1}. Read it from the card itself — ` +
+          'letter for letter — not from memory. If the card is not to hand, that is ' +
+          'exactly what this step exists to find out.'
+      );
       return;
     }
     setBusy(true);
@@ -193,12 +198,14 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
       <>
         <h1>Your sheet: the pieces, and your wallet names.</h1>
         <p className="lede">
-          Print it or save it with your records. It is a snapshot — after renaming a
-          wallet, come back and print it again.
+          Print it or save it with your records. It is a snapshot — after renaming a wallet, come back and print it
+          again.
         </p>
-        {current
-          ? <PieceMap setup={current} names={loadSubwallets(secret).names} />
-          : <p className="muted">Nothing is on record for this account yet.</p>}
+        {current ? (
+          <PieceMap setup={current} names={loadSubwallets(secret).names} />
+        ) : (
+          <p className="muted">Nothing is on record for this account yet.</p>
+        )}
         <div className="actions" style={{ marginTop: '1rem' }}>
           <button type="button" className="primary" onClick={() => window.print()}>
             Print this sheet
@@ -224,17 +231,15 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
         <h1>This account is secured.</h1>
         {current && (
           <p className="muted">
-            On {day(current.rebuiltAt)} it was cut into {current.pieces.length} pieces and
-            proved rebuildable from any {current.threshold}. One piece was read back from
-            its card; you said the rest are placed.
+            On {day(current.rebuiltAt)} it was cut into {current.pieces.length} pieces and proved rebuildable from any{' '}
+            {current.threshold}. One piece was read back from its card; you said the rest are placed.
           </p>
         )}
         <section className="card">
           <h2>The sheet</h2>
           <p className="muted small">
-            Where each piece lives, and the names you have given your subwallets — the
-            one part of this account that lives only in this browser. A printed copy
-            ages: reprint it after renaming.
+            Where each piece lives, and the names you have given your subwallets — the one part of this account that
+            lives only in this browser. A printed copy ages: reprint it after renaming.
           </p>
           <button type="button" onClick={() => setView('sheet')}>
             Print the sheet…
@@ -242,19 +247,20 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
         </section>
         <section className="card">
           <h2>Cut a new set</h2>
-          <p className="muted small">
-            Replaces the plan on record with a new one and new pieces.
-          </p>
+          <p className="muted small">Replaces the plan on record with a new one and new pieces.</p>
           <p className="warn-text small">
-            Re-cutting adds a way in — it never removes one. The pieces of the set you
-            are replacing{current && current.pieces.length > 0
-              ? ` — ${current.pieces.map((p) => p.label).join('; ')} — `
-              : ' '}still rebuild this account for as long as they exist, and nothing
-            can switch them off. The record here will keep naming them.
+            Re-cutting adds a way in — it never removes one. The pieces of the set you are replacing
+            {current && current.pieces.length > 0 ? ` — ${current.pieces.map((p) => p.label).join('; ')} — ` : ' '}still
+            rebuild this account for as long as they exist, and nothing can switch them off. The record here will keep
+            naming them.
           </p>
-          <button type="button" onClick={() => setView('plan')}>Choose a new plan…</button>
+          <button type="button" onClick={() => setView('plan')}>
+            Choose a new plan…
+          </button>
         </section>
-        <p><a href={hrefOf('home')}>← Back to your wallet</a></p>
+        <p>
+          <a href={hrefOf('home')}>← Back to your wallet</a>
+        </p>
       </>
     );
   }
@@ -262,23 +268,34 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
   if (view === 'done') {
     return (
       <>
-        <h1><span className="ok" aria-hidden="true">✓</span> Account secured.</h1>
+        <h1>
+          <span className="ok" aria-hidden="true">
+            ✓
+          </span>{' '}
+          Account secured.
+        </h1>
         <p className="lede">
-          Cut into {set?.pieces.length} pieces, proved rebuildable from any{' '}
-          {set?.threshold}, and one piece read back from its card — so at least one
-          demonstrably exists outside this page. You said the rest are placed.
+          Cut into {set?.pieces.length} pieces, proved rebuildable from any {set?.threshold}, and one piece read back
+          from its card — so at least one demonstrably exists outside this page. You said the rest are placed.
         </p>
         <p className="muted">
           Each piece shows on your wallet as <em>not yet checked</em> — or, for paper,
           <em> can&rsquo;t be checked</em>, which is its honest, permanent answer.
         </p>
         <p className="muted small">
-          One more thing worth paper: <button type="button" className="quiet inline" onClick={() => setView('sheet')}>
+          One more thing worth paper:{' '}
+          <button type="button" className="quiet inline" onClick={() => setView('sheet')}>
             print the sheet
-          </button> — where each piece lives, with your subwallet names on it. It is a
-          snapshot; reprint it after renaming.
+          </button>{' '}
+          — where each piece lives, with your subwallet names on it. It is a snapshot; reprint it after renaming.
         </p>
-        <p><a href={hrefOf('home')}><button type="button" className="primary">Back to your wallet</button></a></p>
+        <p>
+          <a href={hrefOf('home')}>
+            <button type="button" className="primary">
+              Back to your wallet
+            </button>
+          </a>
+        </p>
       </>
     );
   }
@@ -289,8 +306,10 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
       <>
         <h1>Read one piece back from its card.</h1>
         <p className="lede">
-          A tick can be pressed without moving from the chair; this cannot. Type the
-          bytes of <strong>piece {proveIndex + 1} — {piece?.placement.label}</strong>{' '}
+          A tick can be pressed without moving from the chair; this cannot. Type the bytes of{' '}
+          <strong>
+            piece {proveIndex + 1} — {piece?.placement.label}
+          </strong>{' '}
           from its printed or written card. The pieces are no longer on this screen.
         </p>
         <textarea
@@ -308,7 +327,9 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
             type="button"
             className="primary big"
             disabled={busy || normalise(typed).length === 0}
-            onClick={() => { void finish(); }}
+            onClick={() => {
+              void finish();
+            }}
           >
             This is piece {proveIndex + 1} — finish
           </button>
@@ -328,24 +349,21 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
       <>
         <h1>Put each piece where its card says.</h1>
         <p className="lede">
-          {set.pieces.length} pieces. Every combination of {set.threshold} of them was
-          actually rebuilt and checked before you were shown this. Fewer than{' '}
-          {set.threshold} tell whoever holds them nothing at all.
+          {set.pieces.length} pieces. Every combination of {set.threshold} of them was actually rebuilt and checked
+          before you were shown this. Fewer than {set.threshold} tell whoever holds them nothing at all.
         </p>
         <p className="warn-text small">
-          Print each card on its own — the button on the card does exactly that. Pieces
-          kept together are one piece: never the same file, the same drawer, or the
-          same print job.
+          Print each card on its own — the button on the card does exactly that. Pieces kept together are one piece:
+          never the same file, the same drawer, or the same print job.
         </p>
 
         <div className="print-cards">
           {set.pieces.map((piece, index) => (
-            <div
-              className={printing === index ? 'piece-card print-target' : 'piece-card'}
-              key={piece.placement.holder}
-            >
+            <div className={printing === index ? 'piece-card print-target' : 'piece-card'} key={piece.placement.holder}>
               <div className="piece-card-head">
-                <span className="faint small">piece {index + 1} of {set.pieces.length}</span>
+                <span className="faint small">
+                  piece {index + 1} of {set.pieces.length}
+                </span>
                 <span className="small">keep apart from the others</span>
               </div>
               <h2>{piece.placement.label}</h2>
@@ -353,9 +371,8 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
                 {(toBase64Url(piece.bytes).match(/.{1,4}/g) ?? []).join(' ')}
               </div>
               <p className="small piece-card-note">
-                Midnight Identity recovery piece {index + 1} of {set.pieces.length}. On
-                its own it reveals nothing. It must not be kept beside the others —
-                never in one file, one drawer, or one print job. Its place:{' '}
+                Midnight Identity recovery piece {index + 1} of {set.pieces.length}. On its own it reveals nothing. It
+                must not be kept beside the others — never in one file, one drawer, or one print job. Its place:{' '}
                 {piece.placement.label}.
               </p>
               <div className="piece-card-actions">
@@ -372,8 +389,8 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
                       else next.add(index);
                       setPlaced(next);
                     }}
-                  />
-                  {' '}This piece is where the card says
+                  />{' '}
+                  This piece is where the card says
                 </label>
               </div>
             </div>
@@ -382,19 +399,13 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
 
         <ErrorNote message={error} />
         <div className="actions" style={{ marginTop: '1.25rem' }}>
-          <button
-            type="button"
-            className="primary big"
-            disabled={!allPlaced || busy}
-            onClick={startProof}
-          >
+          <button type="button" className="primary big" disabled={!allPlaced || busy} onClick={startProof}>
             All {set.pieces.length} are placed — continue
           </button>
           {!allPlaced && (
             <p className="faint small" style={{ marginTop: '0.6rem' }}>
-              Tick each card once its piece is really there. Before anything is
-              recorded, one piece — the wallet picks which — is read back from its
-              card, off this screen.
+              Tick each card once its piece is really there. Before anything is recorded, one piece — the wallet picks
+              which — is read back from its card, off this screen.
             </p>
           )}
         </div>
@@ -411,22 +422,20 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
     <>
       <h1>Secure your account.</h1>
       <p className="lede">
-        Your account is cut into pieces you place. You choose how many exist and how
-        many put it back; anything fewer than that tells whoever holds it nothing.
+        Your account is cut into pieces you place. You choose how many exist and how many put it back; anything fewer
+        than that tells whoever holds it nothing.
       </p>
       <p className="muted small">
-        The suggested plan is {initial.threshold} of {initial.rows.length} — and it
-        never includes the machine you are standing at, because a lost or broken
-        device is the usual reason people are recovering. When this one goes, its
+        The suggested plan is {initial.threshold} of {initial.rows.length} — and it never includes the machine you are
+        standing at, because a lost or broken device is the usual reason people are recovering. When this one goes, its
         piece would go with it.
       </p>
 
       <section className="card">
         <h2>Where the pieces will live</h2>
         <p className="muted small">
-          Name who controls each place — the account, the person, the spot — not the
-          gadget. Two pieces reachable through the same account are one piece, and the
-          plan below is checked for exactly that.
+          Name who controls each place — the account, the person, the spot — not the gadget. Two pieces reachable
+          through the same account are one piece, and the plan below is checked for exactly that.
         </p>
         <div>
           {rows.map((row) => (
@@ -440,7 +449,9 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
                 }}
               >
                 {(Object.keys(KINDS) as PlaceKind[]).map((kind) => (
-                  <option key={kind} value={kind}>{KINDS[kind].label}</option>
+                  <option key={kind} value={kind}>
+                    {KINDS[kind].label}
+                  </option>
                 ))}
               </select>
               <input
@@ -499,14 +510,19 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
           </button>
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Losing pieces is normal. A plan with a spare — needing fewer than all of
-          them — survives a lost one.
+          Losing pieces is normal. A plan with a spare — needing fewer than all of them — survives a lost one.
         </p>
       </section>
 
-      {planProblem && <div className="error" role="alert">{planProblem}</div>}
+      {planProblem && (
+        <div className="error" role="alert">
+          {planProblem}
+        </div>
+      )}
       {warnings.map((warning) => (
-        <div className="warn-banner" role="alert" key={warning.kind}>{warning.says}</div>
+        <div className="warn-banner" role="alert" key={warning.kind}>
+          {warning.says}
+        </div>
       ))}
       <ErrorNote message={error} />
 
@@ -515,7 +531,9 @@ export function Secure({ secret }: { readonly secret: Secret }): ReactNode {
           type="button"
           className="primary big"
           disabled={planProblem !== null || busy}
-          onClick={() => { void cut(); }}
+          onClick={() => {
+            void cut();
+          }}
         >
           {busy ? 'Cutting, and proving it can be put back…' : 'Cut the account into pieces'}
         </button>

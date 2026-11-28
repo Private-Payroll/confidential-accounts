@@ -292,7 +292,7 @@ export function ReceiveDevice(): ReactNode {
       return undefined;
     }
     let stale = false;
-    (async () => {
+    void (async () => {
       try {
         const probe = acceptKeys(
           request, revealedKey, { sealed: sealedText }, typedDigits, Date.now());

@@ -17,9 +17,19 @@ export function ComingSoonPage({ id }: { id: PageId }) {
   const badge = explanation === null ? undefined : <ComingSoon explanation={explanation} />;
   return (
     <div className="flex flex-col gap-6" data-screen="coming-soon" data-page={id}>
-      {outerOf(page) === undefined
-        ? <PageHeader title={<><HugeiconsIcon icon={page.icon} strokeWidth={2} className="size-5 text-muted-foreground" />{page.name(t)}</>} badge={badge} />
-        : badge === undefined ? null : <div className="flex items-center gap-2">{badge}</div>}
+      {outerOf(page) === undefined ? (
+        <PageHeader
+          title={
+            <>
+              <HugeiconsIcon icon={page.icon} strokeWidth={2} className="size-5 text-muted-foreground" />
+              {page.name(t)}
+            </>
+          }
+          badge={badge}
+        />
+      ) : badge === undefined ? null : (
+        <div className="flex items-center gap-2">{badge}</div>
+      )}
       {Already === undefined ? null : <Already />}
       {explanation === null ? null : <EmptyState icon={page.icon}>{explanation}</EmptyState>}
     </div>

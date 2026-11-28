@@ -15,53 +15,120 @@ const MINUTE = 60_000;
 const FEE = 300n;
 
 const intentOf = (spends: readonly unknown[], over: Record<string, unknown> = {}) => ({
-  actions: [], guaranteedUnshieldedOffer: null, fallibleUnshieldedOffer: null, dustActions: { spends, registrations: [] }, ...over,
+  actions: [],
+  guaranteedUnshieldedOffer: null,
+  fallibleUnshieldedOffer: null,
+  dustActions: { spends, registrations: [] },
+  ...over
 });
-const balancingOf = (spends: readonly unknown[] = [{ vFee: FEE }], over: Record<string, unknown> = {}, offer: unknown = null) => ({
-  guaranteedOffer: offer, fallibleOffer: null, intents: new Map([[2, intentOf(spends, over)]]),
+const balancingOf = (
+  spends: readonly unknown[] = [{ vFee: FEE }],
+  over: Record<string, unknown> = {},
+  offer: unknown = null
+) => ({
+  guaranteedOffer: offer,
+  fallibleOffer: null,
+  intents: new Map([[2, intentOf(spends, over)]])
 });
 
-const facadeWith = (opts: {
-  deadline?: Date | null; balancing?: unknown; balanceFails?: unknown; estimateFails?: unknown; submitFails?: unknown;
-} = {}) => {
+const facadeWith = (
+  opts: {
+    deadline?: Date | null;
+    balancing?: unknown;
+    balanceFails?: unknown;
+    estimateFails?: unknown;
+    submitFails?: unknown;
+  } = {}
+) => {
   const did: string[] = [];
-  const intents = opts.deadline === null ? new Map([[1, {}]]) : new Map([[1, { ttl: opts.deadline ?? new Date(NOW + 80 * MINUTE) }]]);
+  const intents =
+    opts.deadline === null ? new Map([[1, {}]]) : new Map([[1, { ttl: opts.deadline ?? new Date(NOW + 80 * MINUTE) }]]);
   const original = { intents };
-  const ready = { subscribe: (w: { next: (s: unknown) => void }) => { w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } };
+  const ready = {
+    subscribe: (w: { next: (s: unknown) => void }) => {
+      w.next({ progress: { isConnected: true, isStrictlyComplete: () => true } });
+      return { unsubscribe: () => {} };
+    }
+  };
   const asked: { ttl?: Date; kinds?: unknown } = {};
   const facade = {
     dust: { state: ready },
     state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
-    adoptTransaction: (_bytes: Uint8Array, stage: string) => { did.push(`adopted ${stage}`); return original; },
-    estimateTransactionFee: async (_tx: unknown, o: { ttl?: Date }) => { did.push('estimated'); asked.ttl = o.ttl; if (opts.estimateFails !== undefined) throw opts.estimateFails; return FEE; },
+    adoptTransaction: (_bytes: Uint8Array, stage: string) => {
+      did.push(`adopted ${stage}`);
+      return original;
+    },
+    estimateTransactionFee: async (_tx: unknown, o: { ttl?: Date }) => {
+      did.push('estimated');
+      asked.ttl = o.ttl;
+      if (opts.estimateFails !== undefined) throw opts.estimateFails;
+      return FEE;
+    },
     balanceFinalizedTransaction: async (tx: unknown, o: { ttl: Date; tokenKindsToBalance?: unknown }) => {
       did.push('balanced');
       asked.kinds = o.tokenKindsToBalance;
       if (o.ttl.getTime() !== asked.ttl?.getTime()) did.push('another deadline');
       if (opts.balanceFails !== undefined) throw opts.balanceFails;
-      return { type: 'FINALIZED_TRANSACTION', originalTransaction: tx, balancingTransaction: opts.balancing ?? balancingOf() };
+      return {
+        type: 'FINALIZED_TRANSACTION',
+        originalTransaction: tx,
+        balancingTransaction: opts.balancing ?? balancingOf()
+      };
     },
-    signRecipe: async (r: unknown) => { did.push('signed'); return r; },
-    finalizeRecipe: async () => { did.push('finalized'); return { finished: true }; },
-    submitTransaction: async () => { did.push('submitted'); if (opts.submitFails !== undefined) throw opts.submitFails; return 'sub-1'; },
-    revert: async () => { did.push('reverted'); },
+    signRecipe: async (r: unknown) => {
+      did.push('signed');
+      return r;
+    },
+    finalizeRecipe: async () => {
+      did.push('finalized');
+      return { finished: true };
+    },
+    submitTransaction: async () => {
+      did.push('submitted');
+      if (opts.submitFails !== undefined) throw opts.submitFails;
+      return 'sub-1';
+    },
+    revert: async () => {
+      did.push('reverted');
+    }
   };
-  return { did, asked, original, doors: { facade: async () => facade as never, signSegment: () => (() => {}) as never } };
+  return {
+    did,
+    asked,
+    original,
+    doors: { facade: async () => facade as never, signSegment: () => (() => {}) as never }
+  };
 };
 
 const wayWith = (yes: boolean, did: string[], shown: bigint[] = []) => ({
-  now: () => NOW, stillWanted: () => true,
-  confirm: async (fee: bigint) => { shown.push(fee); did.push('asked'); return yes; },
-  handedOver: () => { did.push('handed over'); },
+  now: () => NOW,
+  stillWanted: () => true,
+  confirm: async (fee: bigint) => {
+    shown.push(fee);
+    did.push('asked');
+    return yes;
+  },
+  handedOver: () => {
+    did.push('handed over');
+  }
 });
 
-describe('the fee is paid from the person\'s own DUST only after they confirm it', () => {
+describe("the fee is paid from the person's own DUST only after they confirm it", () => {
   it('confirmed: the fee shown is what is balanced, with DUST only, and the transaction is handed over then sent', async () => {
     const { did, asked, doors } = facadeWith();
     const shown: bigint[] = [];
     expect(await finishedSentWithOwnDust(doors, 'AQID', wayWith(true, did, shown))).toBe('sub-1');
     /* RED WHEN: the fee is balanced before the person confirms it, or the transaction is sent before it counts as handed over. */
-    expect(did).toEqual(['adopted Finalized', 'estimated', 'asked', 'balanced', 'signed', 'finalized', 'handed over', 'submitted']);
+    expect(did).toEqual([
+      'adopted Finalized',
+      'estimated',
+      'asked',
+      'balanced',
+      'signed',
+      'finalized',
+      'handed over',
+      'submitted'
+    ]);
     expect(shown).toEqual([FEE]);
     /* RED WHEN: the wallet balances anything but DUST, or with another deadline than the fee it showed. */
     expect(asked.kinds).toEqual(['dust']);
@@ -99,7 +166,7 @@ describe('what is added is the fee shown and nothing else', () => {
     ['more DUST than the fee shown', balancingOf([{ vFee: FEE }, { vFee: 1n }])],
     ['a spend whose fee cannot be read', balancingOf([{}])],
     ['a coin as well as the fee', balancingOf([{ vFee: FEE }], {}, { inputs: [], outputs: [{}], transients: [] })],
-    ['a call as well as the fee', balancingOf([{ vFee: FEE }], { actions: [{}] })],
+    ['a call as well as the fee', balancingOf([{ vFee: FEE }], { actions: [{}] })]
   ] as const) {
     it(`refuses ${name} and signs and sends nothing`, async () => {
       const { did, doors } = facadeWith({ balancing });
@@ -115,7 +182,9 @@ describe('what is added is the fee shown and nothing else', () => {
 
   it('a recipe that changes the transaction itself is refused', () => {
     /* RED WHEN: a recipe whose original is another transaction passes as only the fee. */
-    expect(moreThanTheShownFeeRefusal({ originalTransaction: {}, balancingTransaction: balancingOf() }, {}, FEE)).toMatch(/change the deposit itself/);
+    expect(
+      moreThanTheShownFeeRefusal({ originalTransaction: {}, balancingTransaction: balancingOf() }, {}, FEE)
+    ).toMatch(/change the deposit itself/);
   });
 });
 
@@ -130,14 +199,24 @@ describe('every way it does not send says so, and a send that started may have b
 
   it('the deadline is read again once the person confirms, so a late answer neither outlives the deposit nor is built expired', async () => {
     let now = NOW;
-    const late = (to: number, did: string[]) => ({ ...wayWith(true, did), now: () => now, confirm: async () => { did.push('asked'); now = to; return true; } });
+    const late = (to: number, did: string[]) => ({
+      ...wayWith(true, did),
+      now: () => now,
+      confirm: async () => {
+        did.push('asked');
+        now = to;
+        return true;
+      }
+    });
     const slow = facadeWith();
     await finishedSentWithOwnDust(slow.doors, 'AQID', late(NOW + 25 * MINUTE, slow.did));
     /* RED WHEN: the fee is built with the deadline read before a confirm that came 25 minutes later. */
     expect(slow.did).toContain('another deadline');
     const expired = facadeWith();
     now = NOW;
-    const failed = await finishedSentWithOwnDust(expired.doors, 'AQID', late(NOW + 81 * MINUTE, expired.did)).catch((e: unknown) => e);
+    const failed = await finishedSentWithOwnDust(expired.doors, 'AQID', late(NOW + 81 * MINUTE, expired.did)).catch(
+      (e: unknown) => e
+    );
     /* RED WHEN: a deposit that expired while the person read is still balanced and sent. */
     expect((failed as OwnFeeNotPaid).why).toBe('not-paid');
     expect(expired.did).not.toContain('balanced');

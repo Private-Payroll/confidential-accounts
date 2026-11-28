@@ -18,7 +18,15 @@ import type { Hex } from '../../../../src/core/crypto.js';
 import { nothingWasSentBy } from '../../../../packages/web-shared/src/governed-call-on-device.js';
 import { ApprovalNotOwed } from '../../../../packages/web-shared/src/proposal-approved-on-device.js';
 import { refuseARunALeaverRaisedHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
-import { approveStartRoundHere, carryStartRoundHere, finishedSecretRunHere, StartRoundRefused, startRoundOpenedHere, type StartRoundKind, type StartRoundNamed } from '../../../../packages/web-shared/src/vault-start-round.js';
+import {
+  approveStartRoundHere,
+  carryStartRoundHere,
+  finishedSecretRunHere,
+  StartRoundRefused,
+  startRoundOpenedHere,
+  type StartRoundKind,
+  type StartRoundNamed
+} from '../../../../packages/web-shared/src/vault-start-round.js';
 import { SAID, START_STOP, VaultStartOwed } from '../../../../packages/web-shared/src/vault-start-stops.js';
 import { type CreateVaultDoors } from '../../../../packages/web-shared/src/vault-doors.js';
 import { approversHere, runsOutrunHere } from './approvers-here.js';
@@ -44,14 +52,16 @@ export interface StartKindsReach {
 export const START_STATE = { waiting: 'waiting-for-approvals', atItsBar: 'ready-to-carry' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.approve-start.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.approve-start.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const KIND_WHY: Readonly<Record<string, string>> = { closed: 'carried-out', counted: 'already-counted' };
-const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words => why(KIND_WHY[stop] ?? stop, values);
+const kindWhy = (stop: ApprovalStop | string, values?: Readonly<Record<string, string | number>>): Words =>
+  why(KIND_WHY[stop] ?? stop, values);
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const vaultOf = (intent: ActIntent): Hex | null => {
   const v = readVaultAddress(intent.fields['vault']);
-  return v === null ? null : String(v).toLowerCase() as Hex;
+  return v === null ? null : (String(v).toLowerCase() as Hex);
 };
 
 /**
@@ -63,7 +73,10 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
   const stoppedAt = e instanceof StartRoundRefused || e instanceof VaultStartOwed ? e.stoppedAt : undefined;
   if (stoppedAt === START_STOP.adoptionStale) throw new StepRefused(why('outrun'), stoppedAt);
   const says = e instanceof VaultStartOwed ? e.why : said(e);
-  throw new StepRefused(why(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says }), stoppedAt ?? codeOfError(e));
+  throw new StepRefused(
+    why(!handed.over || nothingWasSentBy(e) ? notSent : 'may-be-sent', { says }),
+    stoppedAt ?? codeOfError(e)
+  );
 };
 
 /**
@@ -73,36 +86,59 @@ const stoppedAs = (e: unknown, handed: Handed, notSent: string): never => {
  * its raise, and never approved or carried once a signer has been removed since its raise.
  */
 function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind {
-  const named = (intent: ActIntent): StartRoundNamed => ({ vault: vaultOf(intent)!, round, proposal: intent.fields['proposal']! });
+  const named = (intent: ActIntent): StartRoundNamed => ({
+    vault: vaultOf(intent)!,
+    round,
+    proposal: intent.fields['proposal']!
+  });
   /*
    * The doors the vault's own start takes, with every send marked as handed over, and the company as a change to it
    * counts it for the vault check, its open runs among it.
    */
   const doorsFor = (ctx: StepContext, r: CompanyReach, handed: Handed): CreateVaultDoors => {
-    if (reach.indexerHttp === undefined) throw new StepRefused(why('not-approved', { says: 'This wallet does not know the indexer it reads a vault at, so nothing was approved. Nothing was sent.' }));
+    if (reach.indexerHttp === undefined)
+      throw new StepRefused(
+        why('not-approved', {
+          says: 'This wallet does not know the indexer it reads a vault at, so nothing was approved. Nothing was sent.'
+        })
+      );
     const d = vaultDoorsFor(ctx, r, reach as unknown as CreateVaultReach);
-    const marked = <A extends unknown[], R>(f: ((...a: A) => Promise<R>) | undefined) => (f === undefined ? undefined
-      : (...a: A): Promise<R> => { handed.over = true; return f(...a); });
+    const marked = <A extends unknown[], R>(f: ((...a: A) => Promise<R>) | undefined) =>
+      f === undefined
+        ? undefined
+        : (...a: A): Promise<R> => {
+            handed.over = true;
+            return f(...a);
+          };
     return {
       ...d,
       service: {
-        ...d.service, startAccountCall: marked(d.service.startAccountCall), startSecret: marked(d.service.startSecret),
-        startCopy: marked(d.service.startCopy),
+        ...d.service,
+        startAccountCall: marked(d.service.startAccountCall),
+        startSecret: marked(d.service.startSecret),
+        startCopy: marked(d.service.startCopy)
       },
       handOver: handOverMarked(d.handOver, handed),
-      approvers: () => approversHere(r, () => runsOutrunHere(r)),
+      approvers: () => approversHere(r, () => runsOutrunHere(r))
     };
   };
   /* A round its raiser filed after their own removal was raised is neither approved nor carried out. */
   const leaverChecked = async (ctx: StepContext, r: CompanyReach, intent: ActIntent): Promise<void> => {
     try {
-      await refuseARunALeaverRaisedHere(governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal)).records!, r.accountId, r.companyKeys, intent.fields['proposal']!);
+      await refuseARunALeaverRaisedHere(
+        governanceDoorsFor(r, (ms) => reach.pause(ms, ctx.signal)).records!,
+        r.accountId,
+        r.companyKeys,
+        intent.fields['proposal']!
+      );
     } catch (e) {
       if (e instanceof ActionStopped) throw e;
       throw new StepRefused(why('not-approved', { says: said(e) }), codeOfError(e));
     }
   };
-  const notWrittenDown = (ctx: StepContext, says: string | null): void => { if (says !== null) ctx.tell({ said: SAID.proposalNotWrittenDown }); };
+  const notWrittenDown = (ctx: StepContext, says: string | null): void => {
+    if (says !== null) ctx.tell({ said: SAID.proposalNotWrittenDown });
+  };
   const carryOut: CarryOut = async (ctx, r, intent, _round, handed) => {
     await leaverChecked(ctx, r, intent);
     let out: Awaited<ReturnType<typeof carryStartRoundHere>>;
@@ -123,7 +159,7 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
         return [
           { key: 'act.approve-start.shown.adopt', values: { vault }, from: 'page' },
           { key: 'act.approve-start.shown.checks-adopt', from: 'action' },
-          { key: 'act.approve-start.shown.approve', from: 'action' },
+          { key: 'act.approve-start.shown.approve', from: 'action' }
         ];
       }
       const seated = await seatsShownFor(reach, intent);
@@ -133,10 +169,12 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
         seated === null
           ? { key: 'act.approve-start.shown.sealed-to-unread', from: 'action' }
           : { key: 'act.approve-start.shown.sealed-to', values: { seats: seated }, from: 'wallet' },
-        ...(readers === undefined || readers === '' ? [] : [{ key: 'act.approve-start.shown.readers', values: { names: readers }, from: 'page' as const }]),
+        ...(readers === undefined || readers === ''
+          ? []
+          : [{ key: 'act.approve-start.shown.readers', values: { names: readers }, from: 'page' as const }]),
         { key: 'act.approve-start.shown.checks-secret', from: 'action' },
         { key: 'act.approve-start.shown.carry-secret', from: 'action' },
-        { key: 'act.approve-start.shown.approve', from: 'action' },
+        { key: 'act.approve-start.shown.approve', from: 'action' }
       ];
     },
     check: (intent) => (vaultOf(intent) === null ? why('not-a-vault') : null),
@@ -150,9 +188,10 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
         return stoppedAs(e, handed, 'not-approved');
       }
     },
-    needed: round === 'adoption'
-      ? (onChain, held) => Math.max(onChain.needed ?? 0, held.approvals)
-      : (onChain, held, intent) => oneOffNeeded(onChain, held, vaultOf(intent) ?? ''),
+    needed:
+      round === 'adoption'
+        ? (onChain, held) => Math.max(onChain.needed ?? 0, held.approvals)
+        : (onChain, held, intent) => oneOffNeeded(onChain, held, vaultOf(intent) ?? ''),
     approve: async (ctx, r, intent, _round, handed) => {
       await leaverChecked(ctx, r, intent);
       let done: Awaited<ReturnType<typeof approveStartRoundHere>>;
@@ -164,24 +203,30 @@ function startKind(reach: StartKindsReach, round: StartRoundKind): ProposalKind 
       if (done !== 'approved') throw new ApprovalNotOwed(done === 'counted' ? 'counted' : 'carried-out');
     },
     stateAt: (atItsBar) => (atItsBar ? START_STATE.atItsBar : START_STATE.waiting),
-    ...(round === 'adoption' ? {} : {
-      /* A run closed by the set of its secret, with sealed copies still owed: they are written, and the run written down. */
-      afterClosed: async (ctx: StepContext, r: CompanyReach, intent: ActIntent): Promise<string | null> => {
-        const handed: Handed = { over: false };
-        let out: Awaited<ReturnType<typeof finishedSecretRunHere>>;
-        try {
-          out = await finishedSecretRunHere(doorsFor(ctx, r, handed), named(intent));
-        } catch (e) {
-          return stoppedAs(e, handed, 'not-carried');
-        }
-        if (out === null) return null;
-        notWrittenDown(ctx, out.said);
-        return out.state;
-      },
-    }),
-    carry: (here, read, intent) => [carryStep(kind, intent, read, here, { key: 'act.approve-start.step.carry' }, carryOut)],
-    ...(round === 'adoption' ? { carries: (intent: ActIntent) => ({ kind: 'adopt-vault' as const, move: adopted(vaultOf(intent)!) }) } : {}),
-    why: kindWhy,
+    ...(round === 'adoption'
+      ? {}
+      : {
+          /* A run closed by the set of its secret, with sealed copies still owed: they are written, and the run written down. */
+          afterClosed: async (ctx: StepContext, r: CompanyReach, intent: ActIntent): Promise<string | null> => {
+            const handed: Handed = { over: false };
+            let out: Awaited<ReturnType<typeof finishedSecretRunHere>>;
+            try {
+              out = await finishedSecretRunHere(doorsFor(ctx, r, handed), named(intent));
+            } catch (e) {
+              return stoppedAs(e, handed, 'not-carried');
+            }
+            if (out === null) return null;
+            notWrittenDown(ctx, out.said);
+            return out.state;
+          }
+        }),
+    carry: (here, read, intent) => [
+      carryStep(kind, intent, read, here, { key: 'act.approve-start.step.carry' }, carryOut)
+    ],
+    ...(round === 'adoption'
+      ? { carries: (intent: ActIntent) => ({ kind: 'adopt-vault' as const, move: adopted(vaultOf(intent)!) }) }
+      : {}),
+    why: kindWhy
   };
   return kind;
 }

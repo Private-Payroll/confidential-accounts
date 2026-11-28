@@ -22,16 +22,26 @@ export function readSignIn(storage: Pick<Storage, 'getItem'> | null): SignInCarr
   const text = storage?.getItem(KEPT.signIn) ?? null;
   if (text === null) return null;
   let kept: unknown;
-  try { kept = JSON.parse(text); } catch { return null; }
+  try {
+    kept = JSON.parse(text);
+  } catch {
+    return null;
+  }
   const k = (kept ?? {}) as { personId?: unknown; address?: unknown };
   return typeof k.personId === 'string' && k.personId !== '' && typeof k.address === 'string' && k.address !== ''
-    ? { personId: k.personId, address: k.address } : null;
+    ? { personId: k.personId, address: k.address }
+    : null;
 }
 
 /** Keep `signIn` in `storage`, or forget what is kept when it is null. A browser that refuses keeps nothing. */
-export function keepSignIn(storage: Pick<Storage, 'setItem' | 'removeItem'> | null, signIn: SignInCarried | null): void {
+export function keepSignIn(
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | null,
+  signIn: SignInCarried | null
+): void {
   try {
     if (signIn === null) storage?.removeItem(KEPT.signIn);
     else storage?.setItem(KEPT.signIn, JSON.stringify({ personId: signIn.personId, address: signIn.address }));
-  } catch { /* kept for this page only, which is nothing after a reload */ }
+  } catch {
+    /* kept for this page only, which is nothing after a reload */
+  }
 }

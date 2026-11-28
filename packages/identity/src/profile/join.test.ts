@@ -46,12 +46,12 @@ const join = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   purpose: 'Accept your invitation so we can pay you.',
   wants: [
     { attribute: 'receiving-address', required: true },
-    { attribute: 'given-name', required: false, reason: 'For your payslip.' },
+    { attribute: 'given-name', required: false, reason: 'For your payslip.' }
   ],
   inboxPublicKey: INBOX_KEY,
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 const refusal = (body: unknown, origin = ORIGIN): RequestError => {
@@ -71,7 +71,8 @@ const refusal = (body: unknown, origin = ORIGIN): RequestError => {
  * never read**, which is why this function never looks at it.
  */
 const unsealAsTheOtherSideDoes = (
-  envelope: { ephemeral: string; iv: string; body: string }, secret: Uint8Array,
+  envelope: { ephemeral: string; iv: string; body: string },
+  secret: Uint8Array
 ): string => {
   const shared = x25519.getSharedSecret(secret, hexToBytes(envelope.ephemeral));
   const key = sha256(shared);
@@ -110,13 +111,13 @@ describe('a join is one of the kinds this wallet answers', () => {
     /* **AND AGAIN WHEN THE TWELFTH, `addresses-and-balances`, WAS APPENDED**, and the commas held. */
     /* **AND AGAIN WHEN THE THIRTEENTH, `act`, WAS APPENDED**, and the commas held. */
     expect(said).toContain(
-      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances' and 'act', and that asks");
+      "this wallet answers 'disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances' and 'act', and that asks"
+    );
     expect(said).not.toContain("'addresses-and-balances' and 'act' and");
   });
 
   it('a well-formed invitation parses, and the key is folded to one spelling', () => {
-    const ask = parseAsk(
-      join({ inboxPublicKey: INBOX_KEY.toUpperCase() }), ORIGIN, NOW) as JoinRequest;
+    const ask = parseAsk(join({ inboxPublicKey: INBOX_KEY.toUpperCase() }), ORIGIN, NOW) as JoinRequest;
     expect(ask.kind).toBe('join');
     expect(ask.inboxPublicKey).toBe(INBOX_KEY);
     /* The folding argument, applied to a second hex field: one canonical form
@@ -126,19 +127,17 @@ describe('a join is one of the kinds this wallet answers', () => {
     expect(ask.wants.map((w) => w.attribute)).toEqual(['receiving-address', 'given-name']);
   });
 
-  it('THE ORIGIN IS STILL THE BROWSER\'S, AND A JOIN THAT NAMES ONE IS REFUSED', () => {
+  it("THE ORIGIN IS STILL THE BROWSER'S, AND A JOIN THAT NAMES ONE IS REFUSED", () => {
     const ask = parseAsk(join(), ORIGIN, NOW);
     expect(ask.requester.origin).toBe(ORIGIN);
-    expect(refusal(join({ origin: 'https://evil.example' })).code)
-      .toBe('claims-its-own-origin');
+    expect(refusal(join({ origin: 'https://evil.example' })).code).toBe('claims-its-own-origin');
   });
 
   it('A JOIN THAT NAMES AN ADDRESS IS NOT SERVED THAT ADDRESS', () => {
     /* The refusal is checked before the kind is read, so the fourth kind
      * inherits it rather than needing its own arm. Pinned here because
      * *inherits it* is a claim about a line's position. */
-    expect(refusal(join({ address: 'mn_shield-addr_test1abc' })).code)
-      .toBe('proposes-an-address');
+    expect(refusal(join({ address: 'mn_shield-addr_test1abc' })).code).toBe('proposes-an-address');
   });
 });
 
@@ -161,7 +160,7 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
       INBOX_KEY.replace(/^../u, 'zz'),
       '',
       42,
-      null,
+      null
     ]) {
       expect(refusal(join({ inboxPublicKey: bad })).code).toBe('not-an-inbox-key');
     }
@@ -175,7 +174,7 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
       wants: [{ attribute: 'given-name', required: true }],
       inboxPublicKey: INBOX_KEY,
       nonce: 'n1',
-      expiresAt: NOW + 60_000,
+      expiresAt: NOW + 60_000
     });
     expect(said.code).toBe('inbox-key-on-a-disclosure');
     /* IGNORING IT IS THE FAULT. A requester answered in the clear after naming
@@ -184,26 +183,30 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
   });
 
   it('a sign-in and an unlock may not name one either, each with its own code', () => {
-    expect(refusal({
-      schema: 'midnight-identity/disclosure-request/v1',
-      kind: 'sign-in',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-      purpose: 'So we know it is you.',
-      inboxPublicKey: INBOX_KEY,
-      nonce: 'n1',
-      expiresAt: NOW + 60_000,
-    }).code).toBe('inbox-key-on-a-sign-in');
+    expect(
+      refusal({
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'sign-in',
+        requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+        purpose: 'So we know it is you.',
+        inboxPublicKey: INBOX_KEY,
+        nonce: 'n1',
+        expiresAt: NOW + 60_000
+      }).code
+    ).toBe('inbox-key-on-a-sign-in');
 
-    expect(refusal({
-      schema: 'midnight-identity/disclosure-request/v1',
-      kind: 'unlock',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-      purpose: 'To open your records.',
-      company: `co_${'a'.repeat(64)}`,
-      inboxPublicKey: INBOX_KEY,
-      nonce: 'n1',
-      expiresAt: NOW + 60_000,
-    }).code).toBe('inbox-key-on-an-unlock');
+    expect(
+      refusal({
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'unlock',
+        requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+        purpose: 'To open your records.',
+        company: `co_${'a'.repeat(64)}`,
+        inboxPublicKey: INBOX_KEY,
+        nonce: 'n1',
+        expiresAt: NOW + 60_000
+      }).code
+    ).toBe('inbox-key-on-an-unlock');
   });
 
   it('a join may not name a company — two powers, one press, refused whole', () => {
@@ -228,9 +231,11 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
      * to be paid, and one that does not ask for that is asking for something
      * else.
      */
-    const said = refusal(join({
-      wants: [{ attribute: 'given-name', required: true }],
-    }));
+    const said = refusal(
+      join({
+        wants: [{ attribute: 'given-name', required: true }]
+      })
+    );
     expect(said.code).toBe('not-an-invitation');
     expect(said.message).toContain("'receiving-address'");
     expect(said.message).toContain('Nothing has been shown to them');
@@ -245,12 +250,16 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
      * declines the address. An invitation that marked it optional would make
      * that warning unreachable while still calling itself an invitation.
      */
-    expect(refusal(join({
-      wants: [
-        { attribute: 'receiving-address', required: false },
-        { attribute: 'given-name', required: true },
-      ],
-    })).code).toBe('not-an-invitation');
+    expect(
+      refusal(
+        join({
+          wants: [
+            { attribute: 'receiving-address', required: false },
+            { attribute: 'given-name', required: true }
+          ]
+        })
+      ).code
+    ).toBe('not-an-invitation');
   });
 
   it('the company still chooses the rest of the list, and the order', () => {
@@ -258,22 +267,29 @@ describe('THE KEY AN ACCEPTANCE IS SEALED TO IS REFUSED BY NAME AND BY PRESENCE'
      * asked for. Everything else about the list -- which attributes, how many,
      * in what order, with what reasons -- is the company's, and is carried
      * through untouched. */
-    const ask = parseAsk(join({
-      wants: [
-        { attribute: 'email', required: false, reason: 'For your payslip.' },
-        { attribute: 'receiving-address', required: true },
-        { attribute: 'family-name', required: true },
-      ],
-    }), ORIGIN, NOW) as JoinRequest;
-    expect(ask.wants.map((w) => w.attribute))
-      .toEqual(['email', 'receiving-address', 'family-name']);
+    const ask = parseAsk(
+      join({
+        wants: [
+          { attribute: 'email', required: false, reason: 'For your payslip.' },
+          { attribute: 'receiving-address', required: true },
+          { attribute: 'family-name', required: true }
+        ]
+      }),
+      ORIGIN,
+      NOW
+    ) as JoinRequest;
+    expect(ask.wants.map((w) => w.attribute)).toEqual(['email', 'receiving-address', 'family-name']);
     expect(ask.wants[0]?.reason).toBe('For your payslip.');
   });
 
   it('a want on a join is the same three fields, and a fourth is refused', () => {
-    expect(refusal(join({
-      wants: [{ attribute: 'receiving-address', required: true, address: 'mn_shield-addr_x' }],
-    })).code).toBe('a-want-proposes-a-value');
+    expect(
+      refusal(
+        join({
+          wants: [{ attribute: 'receiving-address', required: true, address: 'mn_shield-addr_x' }]
+        })
+      ).code
+    ).toBe('a-want-proposes-a-value');
   });
 });
 
@@ -285,15 +301,17 @@ describe('THE FOURTH KIND LANDS ON THE SAME FAIL-CLOSED EDGE AS THE SECOND AND T
   });
 
   it('adding `kind: join` to a disclosure leaves a join with no key — refused', () => {
-    expect(refusal({
-      schema: 'midnight-identity/disclosure-request/v1',
-      kind: 'join',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-      purpose: 'To pay you.',
-      wants: [{ attribute: 'given-name', required: true }],
-      nonce: 'n1',
-      expiresAt: NOW + 60_000,
-    }).code).toBe('not-an-inbox-key');
+    expect(
+      refusal({
+        schema: 'midnight-identity/disclosure-request/v1',
+        kind: 'join',
+        requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+        purpose: 'To pay you.',
+        wants: [{ attribute: 'given-name', required: true }],
+        nonce: 'n1',
+        expiresAt: NOW + 60_000
+      }).code
+    ).toBe('not-an-inbox-key');
   });
 
   it('`parseRequest` still answers only a disclosure, and names what it got', () => {
@@ -307,11 +325,10 @@ describe('THE FOURTH KIND LANDS ON THE SAME FAIL-CLOSED EDGE AS THE SECOND AND T
   });
 });
 
-describe('THE SEAL IS THE READER\'S SHAPE, NOT THIS REPOSITORY\'S HABIT', () => {
+describe("THE SEAL IS THE READER'S SHAPE, NOT THIS REPOSITORY'S HABIT", () => {
   it('AN ACCEPTANCE ROUND-TRIPS THROUGH AN INDEPENDENT READER', () => {
     const sealed = sealToInbox('{"payload":"whatever this mints"}', INBOX_KEY);
-    expect(unsealAsTheOtherSideDoes(sealed, inboxSecret))
-      .toBe('{"payload":"whatever this mints"}');
+    expect(unsealAsTheOtherSideDoes(sealed, inboxSecret)).toBe('{"payload":"whatever this mints"}');
   });
 
   it('EVERY FIELD IS LOWERCASE HEX, AND `tag` IS THE EMPTY STRING', () => {

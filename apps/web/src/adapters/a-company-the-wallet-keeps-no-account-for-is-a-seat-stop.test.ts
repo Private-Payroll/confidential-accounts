@@ -5,7 +5,10 @@ import { describe, expect, it } from 'vitest';
 import { SEAT_REFUSALS } from './refusal-codes.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WALLET_EN = JSON.parse(readFileSync(resolve(HERE, '../../../wallet/src/locales/en.json'), 'utf8')) as Record<string, string>;
+const WALLET_EN = JSON.parse(readFileSync(resolve(HERE, '../../../wallet/src/locales/en.json'), 'utf8')) as Record<
+  string,
+  string
+>;
 
 /* The stops the wallet makes before anything is built, because it keeps no account, another account or two accounts as
  * the company's, could not look the person's companies up, or holds a seat the recovery words do not make. */

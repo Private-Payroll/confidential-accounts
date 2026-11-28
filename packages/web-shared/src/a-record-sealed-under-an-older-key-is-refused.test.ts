@@ -12,7 +12,14 @@ import { proposalEntry, recordKeyOf, runEntry } from '../../../src/midnight/reco
 import { keptRunHere, proposalsListedHere, runRebuiltHere } from './run-rebuilt-here.js';
 import { openTheRoundHere } from './round-opened-here.js';
 import { emptyDirectory, type Directory, type DirectorySeat } from '../../../src/midnight/seat-directory.js';
-import { filingRefusalCodeOf, judgeIn, listedHere, RecordSealedUnderAnOlderKey, refusedForItsKey, type DirectoryHere } from './vault-page-doors.js';
+import {
+  filingRefusalCodeOf,
+  judgeIn,
+  listedHere,
+  RecordSealedUnderAnOlderKey,
+  refusedForItsKey,
+  type DirectoryHere
+} from './vault-page-doors.js';
 import { HttpCompanyRecordStore } from './http-sealed-pool-store.js';
 import { signCompanyFiling, toCompanyWire } from '../../../src/midnight/sealed-record-wire.js';
 import { storeReachOver } from '../../../src/testing/writes-over-a-send.js';
@@ -20,7 +27,14 @@ import { readRoutesOverSend } from '../../../src/testing/service-routes-in-memor
 
 const ACC = 'acc_older_key';
 const ADA = newSigningKeypair();
-const ADA_SEAT: DirectorySeat = { seat: 'a1'.repeat(32), person: 'ada', signingKey: ADA.publicKey, wrappingKey: 'b1'.repeat(32) as Hex, role: 'admin', retired: null };
+const ADA_SEAT: DirectorySeat = {
+  seat: 'a1'.repeat(32),
+  person: 'ada',
+  signingKey: ADA.publicKey,
+  wrappingKey: 'b1'.repeat(32) as Hex,
+  role: 'admin',
+  retired: null
+};
 const ROSTER = { store: 'company' as const, kind: 'roster', id: 'roster' };
 const digestOf = (n: number): Hex => n.toString(16).padStart(2, '0').repeat(32) as Hex;
 
@@ -28,20 +42,42 @@ const digestOf = (n: number): Hex => n.toString(16).padStart(2, '0').repeat(32) 
  * The company with one change of the key, its version 3 anchored in batch `rotatedIn`, and each record version given
  * anchored in the batch named (or waiting to be anchored, with `batch` null).
  */
-const aCompany = (rotatedIn: number, versions: readonly { read: typeof ROSTER; version: number; batch: number | null }[]): DirectoryHere => {
+const aCompany = (
+  rotatedIn: number,
+  versions: readonly { read: typeof ROSTER; version: number; batch: number | null }[]
+): DirectoryHere => {
   const dir: Directory = {
-    ...emptyDirectory(ACC), version: 3, seats: [ADA_SEAT],
-    rotations: [{ version: 3, epoch: 1, keyCheck: 'cc'.repeat(32) as Hex, after: 2 }],
+    ...emptyDirectory(ACC),
+    version: 3,
+    seats: [ADA_SEAT],
+    rotations: [{ version: 3, epoch: 1, keyCheck: 'cc'.repeat(32) as Hex, after: 2 }]
   };
-  const history = new Map<string, { version: number; digest: Hex; filedBy: Hex; batch: number; dirVersion: number }[]>();
+  const history = new Map<
+    string,
+    { version: number; digest: Hex; filedBy: Hex; batch: number; dirVersion: number }[]
+  >();
   const notYetAnchored: unknown[] = [];
   for (const v of versions) {
     if (v.batch === null) {
-      notYetAnchored.push({ ...v.read, version: v.version, digest: digestOf(v.version), filedBy: { publicKey: ADA.publicKey } });
+      notYetAnchored.push({
+        ...v.read,
+        version: v.version,
+        digest: digestOf(v.version),
+        filedBy: { publicKey: ADA.publicKey }
+      });
       continue;
     }
     const key = recordKeyOf(v.read);
-    history.set(key, [...(history.get(key) ?? []), { version: v.version, digest: digestOf(v.version), filedBy: ADA.publicKey.toLowerCase() as Hex, batch: v.batch, dirVersion: 3 }]);
+    history.set(key, [
+      ...(history.get(key) ?? []),
+      {
+        version: v.version,
+        digest: digestOf(v.version),
+        filedBy: ADA.publicKey.toLowerCase() as Hex,
+        batch: v.batch,
+        dirVersion: 3
+      }
+    ]);
   }
   return {
     dir,
@@ -50,22 +86,39 @@ const aCompany = (rotatedIn: number, versions: readonly { read: typeof ROSTER; v
     another: new Set(),
     at: () => null,
     records: {
-      head: '00'.repeat(32), reached: {} as never, stopped: null,
+      head: '00'.repeat(32),
+      reached: {} as never,
+      stopped: null,
       asked: { records: new Set([recordKeyOf(ROSTER)]), kinds: new Set() },
-      history, notYetAnchored: notYetAnchored as never,
-      directory: new Map([1, 2, 3].map((v) => [v, { digest: digestOf(v), batch: v === 3 ? rotatedIn : 0, held: {} as never }])),
-    },
+      history,
+      notYetAnchored: notYetAnchored as never,
+      directory: new Map(
+        [1, 2, 3].map((v) => [v, { digest: digestOf(v), batch: v === 3 ? rotatedIn : 0, held: {} as never }])
+      )
+    }
   } as unknown as DirectoryHere;
 };
 
 const judged = (here: DirectoryHere, read: typeof ROSTER, version: number, sealedAt?: number) =>
-  judgeIn(here)(ADA.publicKey, read.kind as never, `${read.kind}:${read.id}`, { ...read, version, digest: digestOf(version) }, false, sealedAt);
+  judgeIn(here)(
+    ADA.publicKey,
+    read.kind as never,
+    `${read.kind}:${read.id}`,
+    { ...read, version, digest: digestOf(version) },
+    false,
+    sealedAt
+  );
 
 describe('a record sealed under an older company key than the one in force at its batch', () => {
   it('is refused when its batch came after the change of the key was anchored', () => {
-    const here = aCompany(2, [{ read: ROSTER, version: 1, batch: 0 }, { read: ROSTER, version: 2, batch: 3 }]);
+    const here = aCompany(2, [
+      { read: ROSTER, version: 1, batch: 0 },
+      { read: ROSTER, version: 2, batch: 3 }
+    ]);
     /* RED WHEN: a record sealed under the key a removed signer holds, entered after the change of the key, is believed. */
-    expect(judged(here, ROSTER, 2, 0)).toMatch(/sealed under the company's key at epoch 0, and the key at epoch 1 was already in force/u);
+    expect(judged(here, ROSTER, 2, 0)).toMatch(
+      /sealed under the company's key at epoch 0, and the key at epoch 1 was already in force/u
+    );
     /* The control: the same record sealed under the key in force is believed. */
     expect(judged(here, ROSTER, 2, 1)).toBeNull();
     /* RED WHEN: a record sealed and anchored before the change of the key is refused once the key changes. */
@@ -73,10 +126,20 @@ describe('a record sealed under an older company key than the one in force at it
   });
 
   it('is named in a log by the code of its reason alone, as is a record no filer signed', () => {
-    const here = aCompany(2, [{ read: ROSTER, version: 1, batch: 0 }, { read: ROSTER, version: 2, batch: 3 }]);
+    const here = aCompany(2, [
+      { read: ROSTER, version: 1, batch: 0 },
+      { read: ROSTER, version: 2, batch: 3 }
+    ]);
     /* RED WHEN: a roster refused for being sealed under an older key is logged under another code, or under its sentence. */
     expect(filingRefusalCodeOf(judged(here, ROSTER, 2, 0)!)).toBe('sealed-under-an-older-key');
-    const unsigned = judgeIn(here)(null, ROSTER.kind as never, `${ROSTER.kind}:${ROSTER.id}`, { ...ROSTER, version: 2, digest: digestOf(2) }, false, 1);
+    const unsigned = judgeIn(here)(
+      null,
+      ROSTER.kind as never,
+      `${ROSTER.kind}:${ROSTER.id}`,
+      { ...ROSTER, version: 2, digest: digestOf(2) },
+      false,
+      1
+    );
     /* RED WHEN: a record that carries no filer's signature is logged under another code. */
     expect(filingRefusalCodeOf(unsigned!)).toBe('no-signature');
     /* RED WHEN: a reason this does not know is given a code it is not. */
@@ -98,8 +161,14 @@ describe('a record sealed under an older company key than the one in force at it
 
   /* Proposals listed for the company, each entered in batch 3, after the change of the key anchored in batch 2. */
   const proposal = (id: string, keyEpoch: number) => ({
-    id, accountId: ACC, keyEpoch, digest: 'dd'.repeat(32), chainId: 'ee'.repeat(32), createdAt: 'now',
-    sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body: '33' }, filedBy: { publicKey: ADA.publicKey, signature: '00'.repeat(64) },
+    id,
+    accountId: ACC,
+    keyEpoch,
+    digest: 'dd'.repeat(32),
+    chainId: 'ee'.repeat(32),
+    createdAt: 'now',
+    sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body: '33' },
+    filedBy: { publicKey: ADA.publicKey, signature: '00'.repeat(64) }
   });
   const listing = (proposals: readonly ReturnType<typeof proposal>[], served = proposals) => {
     const here = aCompany(2, []);
@@ -108,9 +177,21 @@ describe('a record sealed under an older company key than the one in force at it
       records: {
         ...here.records,
         asked: { records: new Set(), kinds: new Set(['proposal:proposal:']) },
-        history: new Map(proposals.map((p) => [recordKeyOf({ store: 'proposal', kind: 'proposal', id: p.id }),
-          [{ version: 1, digest: proposalEntry(ACC, p as never).digest, filedBy: ADA.publicKey.toLowerCase() as Hex, batch: 3, dirVersion: 3 }]])),
-      },
+        history: new Map(
+          proposals.map((p) => [
+            recordKeyOf({ store: 'proposal', kind: 'proposal', id: p.id }),
+            [
+              {
+                version: 1,
+                digest: proposalEntry(ACC, p as never).digest,
+                filedBy: ADA.publicKey.toLowerCase() as Hex,
+                batch: 3,
+                dirVersion: 3
+              }
+            ]
+          ])
+        )
+      }
     } as never;
     return () => listedHere(at, 'proposal', served as never, 'proposal');
   };
@@ -132,48 +213,134 @@ describe('a record sealed under an older company key than the one in force at it
     const stale = proposal('prop_stale', 0);
     const here = (store: 'run' | 'proposal', id: string, digest: Hex) => {
       const base = aCompany(2, []);
-      return { ...base, records: { ...base.records, asked: { records: new Set(), kinds: new Set([`${store}:${store}:`]) },
-        history: new Map([[recordKeyOf({ store, kind: store, id }), [{ version: 1, digest, filedBy: ADA.publicKey.toLowerCase() as Hex, batch: 3, dirVersion: 3 }]]]) } } as never;
+      return {
+        ...base,
+        records: {
+          ...base.records,
+          asked: { records: new Set(), kinds: new Set([`${store}:${store}:`]) },
+          history: new Map([
+            [
+              recordKeyOf({ store, kind: store, id }),
+              [{ version: 1, digest, filedBy: ADA.publicKey.toLowerCase() as Hex, batch: 3, dirVersion: 3 }]
+            ]
+          ])
+        }
+      } as never;
     };
-    const run = { id: 'run_stale', accountId: ACC, keyEpoch: 0, proposalIds: ['prop_stale'], sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body: '33' },
-      filedBy: { publicKey: ADA.publicKey, signature: '00'.repeat(64) }, period: '2030-01', status: 'draft' };
-    const runs = { runs: async () => [run], directory: async () => here('run', 'run_stale', runEntry(ACC, run as never, 1).digest) };
+    const run = {
+      id: 'run_stale',
+      accountId: ACC,
+      keyEpoch: 0,
+      proposalIds: ['prop_stale'],
+      sealed: { iv: '11'.repeat(12), tag: '22'.repeat(16), body: '33' },
+      filedBy: { publicKey: ADA.publicKey, signature: '00'.repeat(64) },
+      period: '2030-01',
+      status: 'draft'
+    };
+    const runs = {
+      runs: async () => [run],
+      directory: async () => here('run', 'run_stale', runEntry(ACC, run as never, 1).digest)
+    };
     /* RED WHEN: a run looked for alone and left out for its key is said to be one the company's records do not hold. */
-    await expect(keptRunHere(runs as never, ACC, 'run_stale', '00'.repeat(32))).rejects.toThrow(RecordSealedUnderAnOlderKey);
-    await expect(runRebuiltHere(runs as never, ACC, 'prop_stale', '00'.repeat(32))).rejects.toThrow(RecordSealedUnderAnOlderKey);
-    const proposals = { directory: async () => here('proposal', 'prop_stale', proposalEntry(ACC, stale as never).digest) };
+    await expect(keptRunHere(runs as never, ACC, 'run_stale', '00'.repeat(32))).rejects.toThrow(
+      RecordSealedUnderAnOlderKey
+    );
+    await expect(runRebuiltHere(runs as never, ACC, 'prop_stale', '00'.repeat(32))).rejects.toThrow(
+      RecordSealedUnderAnOlderKey
+    );
+    const proposals = {
+      directory: async () => here('proposal', 'prop_stale', proposalEntry(ACC, stale as never).digest)
+    };
     /* RED WHEN: the list of proposals a payment is made from drops what it left out, so the one looked for reads as never held. */
-    const listed = await proposalsListedHere({ ...proposals, proposals: async () => [stale], roundsOnChain: async () => ({}) } as never);
+    const listed = await proposalsListedHere({
+      ...proposals,
+      proposals: async () => [stale],
+      roundsOnChain: async () => ({})
+    } as never);
     expect(() => refusedForItsKey(listed, 'prop_stale', 'proposal')).toThrow(RecordSealedUnderAnOlderKey);
     /* RED WHEN: a proposal opened to be approved and left out for its key is said to be withdrawn or never held. */
-    await expect(openTheRoundHere({ sealedProposals: async () => [stale] } as never, ACC, 'prop_stale', '00'.repeat(32), false, proposals as never))
-      .rejects.toThrow(/proposal \(prop_stale\) is not believed.*raises it again/su);
+    await expect(
+      openTheRoundHere(
+        { sealedProposals: async () => [stale] } as never,
+        ACC,
+        'prop_stale',
+        '00'.repeat(32),
+        false,
+        proposals as never
+      )
+    ).rejects.toThrow(/proposal \(prop_stale\) is not believed.*raises it again/su);
   });
 
   it('still refuses the whole list for a proposal served as other bytes than the records name', () => {
     const honest = proposal('prop_good', 1);
     const changed = { ...proposal('prop_other', 1), digest: 'ab'.repeat(32) };
     /* RED WHEN: a proposal the service served as other bytes is left out quietly instead of refusing the list. */
-    expect(listing([honest, proposal('prop_other', 1)], [honest, changed])).toThrow(/other bytes than the company's records name/u);
+    expect(listing([honest, proposal('prop_other', 1)], [honest, changed])).toThrow(
+      /other bytes than the company's records name/u
+    );
   });
 
-  it('is held to it only for a record sealed under the company\'s key, never a spending policy sealed to each reader', async () => {
+  it("is held to it only for a record sealed under the company's key, never a spending policy sealed to each reader", async () => {
     const asked: { kind: string; sealedAt: number | undefined }[] = [];
-    const judge = Object.assign((_f: unknown, kind: string, _k: string, _r: unknown, _n?: boolean, sealedAt?: number) => {
-      asked.push({ kind, sealedAt });
-      return null;
-    }, {});
-    const filed = (kind: string, id: string) => signCompanyFiling({
-      company: ACC, kind: kind as never, id, version: 1, keyEpoch: 0, sealed: { iv: '11'.repeat(12) as Hex, tag: '22'.repeat(16) as Hex, body: '33' as Hex },
-      wrapped: kind === 'roster' ? [] : [{ signerId: 'ada', ephemeral: '44'.repeat(32) as Hex, iv: '55'.repeat(12) as Hex, tag: '66'.repeat(16) as Hex, body: '77'.repeat(32) as Hex }],
-    } as never, ADA.secret);
-    const store = new HttpCompanyRecordStore(ACC, storeReachOver(readRoutesOverSend(async (path) => {
-      const kind = path.includes('roster') ? 'roster' : 'spending-policy';
-      return { status: 200, body: { kind, id: kind === 'roster' ? 'roster' : 'pol_1', filed: toCompanyWire(filed(kind, kind === 'roster' ? 'roster' : 'pol_1')) } };
-    }, { directory: 'empty', newest: 'none-entered' }), ACC), ADA.secret, async () => judge as never);
+    const judge = Object.assign(
+      (_f: unknown, kind: string, _k: string, _r: unknown, _n?: boolean, sealedAt?: number) => {
+        asked.push({ kind, sealedAt });
+        return null;
+      },
+      {}
+    );
+    const filed = (kind: string, id: string) =>
+      signCompanyFiling(
+        {
+          company: ACC,
+          kind: kind as never,
+          id,
+          version: 1,
+          keyEpoch: 0,
+          sealed: { iv: '11'.repeat(12) as Hex, tag: '22'.repeat(16) as Hex, body: '33' as Hex },
+          wrapped:
+            kind === 'roster'
+              ? []
+              : [
+                  {
+                    signerId: 'ada',
+                    ephemeral: '44'.repeat(32) as Hex,
+                    iv: '55'.repeat(12) as Hex,
+                    tag: '66'.repeat(16) as Hex,
+                    body: '77'.repeat(32) as Hex
+                  }
+                ]
+        } as never,
+        ADA.secret
+      );
+    const store = new HttpCompanyRecordStore(
+      ACC,
+      storeReachOver(
+        readRoutesOverSend(
+          async (path) => {
+            const kind = path.includes('roster') ? 'roster' : 'spending-policy';
+            return {
+              status: 200,
+              body: {
+                kind,
+                id: kind === 'roster' ? 'roster' : 'pol_1',
+                filed: toCompanyWire(filed(kind, kind === 'roster' ? 'roster' : 'pol_1'))
+              }
+            };
+          },
+          { directory: 'empty', newest: 'none-entered' }
+        ),
+        ACC
+      ),
+      ADA.secret,
+      async () => judge as never
+    );
     await store.get('roster', 'roster');
     await store.get('spending-policy' as never, 'pol_1');
     /* RED WHEN: a roster is judged without the epoch it names, or a spending policy's version is held to the key in force. */
-    expect(asked).toEqual([{ kind: 'roster', sealedAt: 0 }, { kind: 'spending-policy', sealedAt: undefined }]);
+    expect(asked).toEqual([
+      { kind: 'roster', sealedAt: 0 },
+      { kind: 'spending-policy', sealedAt: undefined }
+    ]);
   });
 });

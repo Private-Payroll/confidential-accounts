@@ -27,7 +27,8 @@
  * itself), or a join code a person's own wallet wrote (`join-code`), which the
  * wallet reads and checks itself.
  */
-export type IntentFieldKind = 'company' | 'account' | 'vault' | 'seat' | 'amount' | 'token' | 'record' | 'words' | 'join-code';
+export type IntentFieldKind =
+  'company' | 'account' | 'vault' | 'seat' | 'amount' | 'token' | 'record' | 'words' | 'join-code';
 
 /**
  * A call to the service an action may ask the page to make for it, and the
@@ -128,12 +129,37 @@ export function sendsIn(route: CallRoute, body: string | undefined): boolean {
 }
 
 import {
-  FINISH_COMPANY_RELAYS, FINISH_COMPANY_CALLS, CREATE_VAULT_CALLS,
-  PRIVATE_DEPOSIT_CALLS, ONE_OFF_PAYMENT_CALLS, INVITE_CALLS, APPROVE_PROPOSAL_CALLS, CHANGE_THRESHOLD_CALLS, RETIRE_VAULT_CALLS,
-  RAISE_RUN_CALLS, PAY_RUN_CALLS, WITHDRAW_PROPOSAL_CALLS, REMOVE_SIGNER_CALLS, ROTATE_VAULT_SECRETS_CALLS, SET_POLICY_CALLS,
-  ADMIT_SIGNER_CALLS, ADMIT_PERSON_CALLS, CHANGE_PERSON_CALLS, CHOOSE_COMPANY_SERVICE_CALLS, GRANT_READ_CALLS, CHANGE_ROLE_CALLS,
-  READER_KEYS_CALLS, WITHDRAW_WAITING_SIGNER_CALLS, REISSUE_INVITATION_CALLS, TAKE_REISSUE_CALLS, ADD_SIGNER_BY_CODE_CALLS,
-  RAISE_WAITING_SIGNER_CALLS, RECORDS_AND_UPKEEP_CALLS, SERVICE_CHOICE_READS, FEE_SPONSORED, FEE_SPONSORED_DONE,
+  FINISH_COMPANY_RELAYS,
+  FINISH_COMPANY_CALLS,
+  CREATE_VAULT_CALLS,
+  PRIVATE_DEPOSIT_CALLS,
+  ONE_OFF_PAYMENT_CALLS,
+  INVITE_CALLS,
+  APPROVE_PROPOSAL_CALLS,
+  CHANGE_THRESHOLD_CALLS,
+  RETIRE_VAULT_CALLS,
+  RAISE_RUN_CALLS,
+  PAY_RUN_CALLS,
+  WITHDRAW_PROPOSAL_CALLS,
+  REMOVE_SIGNER_CALLS,
+  ROTATE_VAULT_SECRETS_CALLS,
+  SET_POLICY_CALLS,
+  ADMIT_SIGNER_CALLS,
+  ADMIT_PERSON_CALLS,
+  CHANGE_PERSON_CALLS,
+  CHOOSE_COMPANY_SERVICE_CALLS,
+  GRANT_READ_CALLS,
+  CHANGE_ROLE_CALLS,
+  READER_KEYS_CALLS,
+  WITHDRAW_WAITING_SIGNER_CALLS,
+  REISSUE_INVITATION_CALLS,
+  TAKE_REISSUE_CALLS,
+  ADD_SIGNER_BY_CODE_CALLS,
+  RAISE_WAITING_SIGNER_CALLS,
+  RECORDS_AND_UPKEEP_CALLS,
+  SERVICE_CHOICE_READS,
+  FEE_SPONSORED,
+  FEE_SPONSORED_DONE
 } from './act-intent-calls.js';
 
 export { FINISH_COMPANY_RELAYS, SERVICE_CHOICE_READS, FEE_SPONSORED, FEE_SPONSORED_DONE };
@@ -147,7 +173,9 @@ export const ACT_INTENTS = Object.freeze({
    * proposal written down in the company's records, raised, and the key committed and sealed.
    */
   'finish-company': Object.freeze({
-    fields: Object.freeze({ company: 'company' as const }), relays: FINISH_COMPANY_RELAYS, calls: FINISH_COMPANY_CALLS,
+    fields: Object.freeze({ company: 'company' as const }),
+    relays: FINISH_COMPANY_RELAYS,
+    calls: FINISH_COMPANY_CALLS
   }),
   /**
    * Give this seat's vault keys to the company it holds a seat on: its directory entry, its vault keys offered and
@@ -157,7 +185,7 @@ export const ACT_INTENTS = Object.freeze({
   'give-vault-keys': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
     calls: RECORDS_AND_UPKEEP_CALLS,
-    outcome: UPKEEP_OUTCOME,
+    outcome: UPKEEP_OUTCOME
   }),
   /**
    * Create a vault, or carry on setting one up (`vault`): the vault keys given
@@ -168,15 +196,26 @@ export const ACT_INTENTS = Object.freeze({
    */
   'create-vault': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
-      title: 'words' as const, about: 'words' as const, readers: 'words' as const, retired: 'record' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const,
+      title: 'words' as const,
+      about: 'words' as const,
+      readers: 'words' as const,
+      retired: 'record' as const
     }),
     optional: Object.freeze(['vault', 'title', 'about', 'readers', 'retired']),
     calls: CREATE_VAULT_CALLS,
     outcome: Object.freeze({
-      vault: 'vault' as const, round: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
-      said: 'code' as const, stopped: 'code' as const, ...UPKEEP_OUTCOME,
-    }),
+      vault: 'vault' as const,
+      round: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      said: 'code' as const,
+      stopped: 'code' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /**
    * Put `amount` of the private token `token` into `vault` of the company: the deposit built, proved and paid in the
@@ -186,11 +225,20 @@ export const ACT_INTENTS = Object.freeze({
    */
   'private-deposit': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
-      token: 'token' as const, amount: 'amount' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      amount: 'amount' as const
     }),
     calls: PRIVATE_DEPOSIT_CALLS,
-    outcome: Object.freeze({ vault: 'vault' as const, state: 'code' as const, created: 'vault' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      vault: 'vault' as const,
+      state: 'code' as const,
+      created: 'vault' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /**
    * Pay `amount` of the currency `token` out of `vault` to the address `payee`, once: the proposal raised, the
@@ -206,13 +254,27 @@ export const ACT_INTENTS = Object.freeze({
    */
   'one-off-payment': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const,
-      token: 'token' as const, amount: 'amount' as const, payee: 'words' as const, payeeName: 'words' as const, reason: 'words' as const,
-      proposal: 'record' as const, vendor: 'record' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      amount: 'amount' as const,
+      payee: 'words' as const,
+      payeeName: 'words' as const,
+      reason: 'words' as const,
+      proposal: 'record' as const,
+      vendor: 'record' as const
     }),
     optional: Object.freeze(['vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'proposal', 'vendor']),
     calls: ONE_OFF_PAYMENT_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, charge: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      charge: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * A person or vendor added by the unshielded address the inviter typed claims their record: the wallet opens the
@@ -224,12 +286,16 @@ export const ACT_INTENTS = Object.freeze({
    */
   'claim-by-address': Object.freeze({
     fields: Object.freeze({
-      company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const, address: 'words' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      record: 'record' as const,
+      token: 'token' as const,
+      address: 'words' as const
     }),
     calls: Object.freeze([
       Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
-      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' }),
-    ]),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' })
+    ])
   }),
   /*
    * A person or vendor invited by link, or by a private address, joins from their own wallet: the wallet opens the
@@ -240,11 +306,16 @@ export const ACT_INTENTS = Object.freeze({
    * fingerprint the inviter checks is shown in the wallet's own window and never sent to the page.
    */
   'join-by-code': Object.freeze({
-    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    fields: Object.freeze({
+      company: 'company' as const,
+      account: 'account' as const,
+      record: 'record' as const,
+      token: 'token' as const
+    }),
     calls: Object.freeze([
       Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
-      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' }),
-    ]),
+      Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-payee' })
+    ])
   }),
   /*
    * Invite an employee, a vendor or a signer (`kind`) to the company, with the seat this wallet holds there: the
@@ -260,18 +331,53 @@ export const ACT_INTENTS = Object.freeze({
    */
   invite: Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, token: 'token' as const, kind: 'words' as const,
-      personName: 'words' as const, email: 'words' as const, title: 'words' as const, startDate: 'words' as const, endDate: 'words' as const,
-      classification: 'words' as const, address: 'words' as const, asset: 'token' as const, amount: 'amount' as const,
-      terms: 'words' as const, termsAsset: 'token' as const, termsAmount: 'amount' as const, role: 'words' as const, scope: 'seat' as const,
-      threshold: 'amount' as const, vaults: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      token: 'token' as const,
+      kind: 'words' as const,
+      personName: 'words' as const,
+      email: 'words' as const,
+      title: 'words' as const,
+      startDate: 'words' as const,
+      endDate: 'words' as const,
+      classification: 'words' as const,
+      address: 'words' as const,
+      asset: 'token' as const,
+      amount: 'amount' as const,
+      terms: 'words' as const,
+      termsAsset: 'token' as const,
+      termsAmount: 'amount' as const,
+      role: 'words' as const,
+      scope: 'seat' as const,
+      threshold: 'amount' as const,
+      vaults: 'words' as const
     }),
     optional: Object.freeze([
-      'token', 'email', 'title', 'startDate', 'endDate', 'classification', 'address', 'asset', 'amount', 'terms', 'termsAsset', 'termsAmount', 'role',
-      'scope', 'threshold', 'vaults',
+      'token',
+      'email',
+      'title',
+      'startDate',
+      'endDate',
+      'classification',
+      'address',
+      'asset',
+      'amount',
+      'terms',
+      'termsAsset',
+      'termsAmount',
+      'role',
+      'scope',
+      'threshold',
+      'vaults'
     ]),
     calls: INVITE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * A signer invited by address takes the seat from their own wallet: the wallet opens the offer with the link's
@@ -280,7 +386,12 @@ export const ACT_INTENTS = Object.freeze({
    * it picks a seat number it asks the invitation's route which of its seats and keys the company's directory already names.
    */
   'seat-invited': Object.freeze({
-    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    fields: Object.freeze({
+      company: 'company' as const,
+      account: 'account' as const,
+      record: 'record' as const,
+      token: 'token' as const
+    }),
     calls: Object.freeze([
       Object.freeze({ method: 'GET' as const, path: '/api/invites/:invitation/offer' }),
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/seat', sends: true }),
@@ -288,8 +399,9 @@ export const ACT_INTENTS = Object.freeze({
       Object.freeze({ method: 'POST' as const, path: '/api/invites/:invitation/accept-signer' }),
       Object.freeze({ method: 'GET' as const, path: '/api/accounts/:record/directory' }),
       /* The fee of the seat's entry in the private registry, paid by our service and handed back. */
-      FEE_SPONSORED, FEE_SPONSORED_DONE,
-    ]),
+      FEE_SPONSORED,
+      FEE_SPONSORED_DONE
+    ])
   }),
   /*
    * Approve, with the seat this wallet holds, the proposal (`proposal`, its name in the company's records) another seat
@@ -328,26 +440,90 @@ export const ACT_INTENTS = Object.freeze({
    */
   'approve-proposal': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, kind: 'words' as const,
-      personName: 'words' as const, role: 'words' as const, address: 'seat' as const, scope: 'seat' as const, coinKey: 'seat' as const,
-      vault: 'vault' as const, token: 'token' as const, amount: 'amount' as const, payee: 'words' as const, payeeName: 'words' as const,
-      reason: 'words' as const, vendor: 'record' as const, threshold: 'amount' as const, leaf: 'seat' as const,
-      run: 'record' as const, period: 'words' as const, form: 'words' as const, payees: 'amount' as const, total: 'amount' as const,
-      salt: 'seat' as const, latest: 'amount' as const, lastRecovery: 'seat' as const, resumesFrom: 'seat' as const, root: 'seat' as const,
-      seq: 'amount' as const, periodLimit: 'amount' as const, periodStart: 'amount' as const, periodLength: 'amount' as const,
-      bands: 'words' as const, bar: 'amount' as const, readers: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      proposal: 'record' as const,
+      kind: 'words' as const,
+      personName: 'words' as const,
+      role: 'words' as const,
+      address: 'seat' as const,
+      scope: 'seat' as const,
+      coinKey: 'seat' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      amount: 'amount' as const,
+      payee: 'words' as const,
+      payeeName: 'words' as const,
+      reason: 'words' as const,
+      vendor: 'record' as const,
+      threshold: 'amount' as const,
+      leaf: 'seat' as const,
+      run: 'record' as const,
+      period: 'words' as const,
+      form: 'words' as const,
+      payees: 'amount' as const,
+      total: 'amount' as const,
+      salt: 'seat' as const,
+      latest: 'amount' as const,
+      lastRecovery: 'seat' as const,
+      resumesFrom: 'seat' as const,
+      root: 'seat' as const,
+      seq: 'amount' as const,
+      periodLimit: 'amount' as const,
+      periodStart: 'amount' as const,
+      periodLength: 'amount' as const,
+      bands: 'words' as const,
+      bar: 'amount' as const,
+      readers: 'words' as const
     }),
     optional: Object.freeze([
-      'personName', 'role', 'address', 'scope', 'coinKey', 'vault', 'token', 'amount', 'payee', 'payeeName', 'reason', 'vendor', 'threshold', 'leaf',
-      'run', 'period', 'form', 'payees', 'total', 'salt', 'latest', 'lastRecovery', 'resumesFrom', 'root', 'seq',
-      'periodLimit', 'periodStart', 'periodLength', 'bands', 'bar', 'readers',
+      'personName',
+      'role',
+      'address',
+      'scope',
+      'coinKey',
+      'vault',
+      'token',
+      'amount',
+      'payee',
+      'payeeName',
+      'reason',
+      'vendor',
+      'threshold',
+      'leaf',
+      'run',
+      'period',
+      'form',
+      'payees',
+      'total',
+      'salt',
+      'latest',
+      'lastRecovery',
+      'resumesFrom',
+      'root',
+      'seq',
+      'periodLimit',
+      'periodStart',
+      'periodLength',
+      'bands',
+      'bar',
+      'readers'
     ]),
     calls: APPROVE_PROPOSAL_CALLS,
     outcome: Object.freeze({
-      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, charge: 'code' as const, said: 'code' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME,
-      ...UPKEEP_OUTCOME,
-    }),
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      charge: 'code' as const,
+      said: 'code' as const,
+      rotation: 'code' as const,
+      vaultSecrets: 'code' as const,
+      vaultSecretsWhy: 'code' as const,
+      ...VAULTS_CHANGED_OUTCOME,
+      ...RETIREMENT_OUTCOME,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Retire, with the seat this wallet holds, `vault` from the company's account, whatever it holds: the wallet raises
@@ -356,12 +532,21 @@ export const ACT_INTENTS = Object.freeze({
    * approvals the chain shows and needs, whether the upkeep was all done and how many records it anchored.
    */
   'retire-vault': Object.freeze({
-    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const }),
+    fields: Object.freeze({
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const
+    }),
     optional: Object.freeze([]),
     calls: RETIRE_VAULT_CALLS,
     outcome: Object.freeze({
-      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, said: 'code' as const, ...UPKEEP_OUTCOME,
-    }),
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      said: 'code' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Change, with the seat this wallet holds, the approvals the company's account needs to `threshold`, or with `vault`
@@ -373,11 +558,20 @@ export const ACT_INTENTS = Object.freeze({
    */
   'change-threshold': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, threshold: 'amount' as const, vault: 'vault' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      threshold: 'amount' as const,
+      vault: 'vault' as const
     }),
     optional: Object.freeze(['vault']),
     calls: CHANGE_THRESHOLD_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Set, with the seat this wallet holds, `vault`'s spending policy for the currency `token`: four bands written
@@ -389,11 +583,24 @@ export const ACT_INTENTS = Object.freeze({
    */
   'set-spending-policy': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const, token: 'token' as const,
-      periodLimit: 'amount' as const, periodStart: 'amount' as const, periodLength: 'amount' as const, bands: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      periodLimit: 'amount' as const,
+      periodStart: 'amount' as const,
+      periodLength: 'amount' as const,
+      bands: 'words' as const
     }),
     calls: SET_POLICY_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      proposal: 'record' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Change, with the seat this wallet holds, the approvals any change to a spending policy needs to `bar`, which is
@@ -401,9 +608,20 @@ export const ACT_INTENTS = Object.freeze({
    * `set-spending-policy` tells.
    */
   'set-policy-bar': Object.freeze({
-    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, bar: 'amount' as const }),
+    fields: Object.freeze({
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      bar: 'amount' as const
+    }),
     calls: SET_POLICY_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      proposal: 'record' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /**
    * Raises a payroll run's leg, or a retry of some of its people, from a vault, in the wallet: opens the run and refuses
@@ -414,16 +632,32 @@ export const ACT_INTENTS = Object.freeze({
    */
   'raise-run': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, run: 'record' as const, period: 'words' as const,
-      list: 'words' as const, vault: 'vault' as const, token: 'token' as const, form: 'words' as const, payees: 'amount' as const,
-      total: 'amount' as const, opensAt: 'amount' as const, closesAt: 'amount' as const, indices: 'words' as const, proposal: 'record' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      run: 'record' as const,
+      period: 'words' as const,
+      list: 'words' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      form: 'words' as const,
+      payees: 'amount' as const,
+      total: 'amount' as const,
+      opensAt: 'amount' as const,
+      closesAt: 'amount' as const,
+      indices: 'words' as const,
+      proposal: 'record' as const
     }),
     optional: Object.freeze(['run', 'list', 'payees', 'total', 'opensAt', 'closesAt', 'indices', 'proposal']),
     calls: RAISE_RUN_CALLS,
     outcome: Object.freeze({
-      state: 'code' as const, run: 'record' as const, proposal: 'record' as const, approvals: 'count' as const, needed: 'count' as const,
-      ...UPKEEP_OUTCOME,
-    }),
+      state: 'code' as const,
+      run: 'record' as const,
+      proposal: 'record' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /**
    * Pays an approved payroll run's leg, or a retry raised on it, from its vault, in the wallet: opens the proposal and
@@ -437,17 +671,31 @@ export const ACT_INTENTS = Object.freeze({
    */
   'pay-run': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, run: 'record' as const,
-      period: 'words' as const, list: 'words' as const, vault: 'vault' as const, token: 'token' as const, form: 'words' as const,
-      payees: 'amount' as const, total: 'amount' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      proposal: 'record' as const,
+      run: 'record' as const,
+      period: 'words' as const,
+      list: 'words' as const,
+      vault: 'vault' as const,
+      token: 'token' as const,
+      form: 'words' as const,
+      payees: 'amount' as const,
+      total: 'amount' as const
     }),
     optional: Object.freeze(['run', 'list']),
     calls: PAY_RUN_CALLS,
     outcome: Object.freeze({
-      state: 'code' as const, paid: 'count' as const, owed: 'count' as const, unseen: 'count' as const, charge: 'code' as const,
+      state: 'code' as const,
+      paid: 'count' as const,
+      owed: 'count' as const,
+      unseen: 'count' as const,
+      charge: 'code' as const,
       approvals: 'count' as const,
-      needed: 'count' as const, ...UPKEEP_OUTCOME,
-    }),
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /**
    * A recovery of the company's records, run on the chain and the person's own wallet alone: `step` `raise` raises one
@@ -458,16 +706,32 @@ export const ACT_INTENTS = Object.freeze({
    */
   recovery: Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, step: 'words' as const, latest: 'amount' as const,
-      proposal: 'record' as const, salt: 'seat' as const, lastRecovery: 'seat' as const, resumesFrom: 'seat' as const, root: 'seat' as const,
-      seq: 'amount' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      step: 'words' as const,
+      latest: 'amount' as const,
+      proposal: 'record' as const,
+      salt: 'seat' as const,
+      lastRecovery: 'seat' as const,
+      resumesFrom: 'seat' as const,
+      root: 'seat' as const,
+      seq: 'amount' as const
     }),
     optional: Object.freeze(['proposal', 'salt', 'lastRecovery', 'resumesFrom', 'root', 'seq']),
     calls: Object.freeze([]) as readonly CallRoute[],
     outcome: Object.freeze({
-      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const, proposal: 'record' as const, salt: 'record' as const,
-      latest: 'record' as const, lastRecovery: 'record' as const, resumesFrom: 'record' as const, root: 'record' as const, seq: 'count' as const,
-    }),
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      proposal: 'record' as const,
+      salt: 'record' as const,
+      latest: 'record' as const,
+      lastRecovery: 'record' as const,
+      resumesFrom: 'record' as const,
+      root: 'record' as const,
+      seq: 'count' as const
+    })
   }),
   /**
    * Withdraw a proposal of any kind the wallet withdraws, named by its record and the kind the page shows: a run before
@@ -476,10 +740,14 @@ export const ACT_INTENTS = Object.freeze({
    */
   'withdraw-proposal': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, proposal: 'record' as const, kind: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      proposal: 'record' as const,
+      kind: 'words' as const
     }),
     calls: WITHDRAW_PROPOSAL_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const }),
+    outcome: Object.freeze({ state: 'code' as const, proposal: 'record' as const })
   }),
   /**
    * Removing a signer, from the wallet: the leaf the chain takes off and, where it changes, the approvals the account
@@ -488,14 +756,25 @@ export const ACT_INTENTS = Object.freeze({
    */
   'remove-signer': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const, threshold: 'amount' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      leaf: 'seat' as const,
+      threshold: 'amount' as const
     }),
     optional: Object.freeze(['threshold']),
     calls: REMOVE_SIGNER_CALLS,
     outcome: Object.freeze({
-      state: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME, ...UPKEEP_OUTCOME,
-    }),
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      rotation: 'code' as const,
+      vaultSecrets: 'code' as const,
+      vaultSecretsWhy: 'code' as const,
+      ...VAULTS_CHANGED_OUTCOME,
+      ...RETIREMENT_OUTCOME,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Changing the company's vault secrets after a signer is removed, from a signer who stays: for `vault`, or for every
@@ -504,10 +783,15 @@ export const ACT_INTENTS = Object.freeze({
    * raised again. It tells the page how many vaults ended in each state. The Signers screen asks for it.
    */
   'rotate-vault-secrets': Object.freeze({
-    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, vault: 'vault' as const }),
+    fields: Object.freeze({
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      vault: 'vault' as const
+    }),
     optional: Object.freeze(['vault']),
     calls: ROTATE_VAULT_SECRETS_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...UPKEEP_OUTCOME })
   }),
   /*
    * Admit, with the seat this wallet holds, the signer waiting under `signer` whose own wallet took their seat by
@@ -518,11 +802,14 @@ export const ACT_INTENTS = Object.freeze({
    */
   'admit-signer': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
-      personName: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      signer: 'record' as const,
+      personName: 'words' as const
     }),
     calls: ADMIT_SIGNER_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Withdraw, with the seat this wallet holds, the person waiting for a seat under `signer`, whom no proposal can still
@@ -532,11 +819,14 @@ export const ACT_INTENTS = Object.freeze({
    */
   'withdraw-waiting-signer': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
-      personName: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      signer: 'record' as const,
+      personName: 'words' as const
     }),
     calls: WITHDRAW_WAITING_SIGNER_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Sign again, with the seat this wallet holds, the invitation the person seated at `leaf` was proposed under, with
@@ -545,11 +835,14 @@ export const ACT_INTENTS = Object.freeze({
    */
   'reissue-invitation': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const,
-      personName: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      leaf: 'seat' as const,
+      personName: 'words' as const
     }),
     calls: REISSUE_INVITATION_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Keep, in the wallet of the person it is for, the re-issued invitation under the link's `token` for the seat this
@@ -557,9 +850,14 @@ export const ACT_INTENTS = Object.freeze({
    * whether it was kept.
    */
   'take-reissue': Object.freeze({
-    fields: Object.freeze({ company: 'company' as const, account: 'account' as const, record: 'record' as const, token: 'token' as const }),
+    fields: Object.freeze({
+      company: 'company' as const,
+      account: 'account' as const,
+      record: 'record' as const,
+      token: 'token' as const
+    }),
     calls: TAKE_REISSUE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const }),
+    outcome: Object.freeze({ state: 'code' as const })
   }),
   /*
    * File, with the seat this wallet holds, an invitation and a request for a seat from the `code` a person's own wallet
@@ -569,11 +867,15 @@ export const ACT_INTENTS = Object.freeze({
    */
   'add-signer-by-code': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, code: 'join-code' as const,
-      personName: 'words' as const, role: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      code: 'join-code' as const,
+      personName: 'words' as const,
+      role: 'words' as const
     }),
     calls: ADD_SIGNER_BY_CODE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, signer: 'record' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, signer: 'record' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Raise, with the seat this wallet holds, the proposal to seat the person waiting under `signer` who joined by a link
@@ -582,11 +884,15 @@ export const ACT_INTENTS = Object.freeze({
    */
   'raise-waiting-signer': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, signer: 'record' as const,
-      personName: 'words' as const, readOut: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      signer: 'record' as const,
+      personName: 'words' as const,
+      readOut: 'words' as const
     }),
     calls: RAISE_WAITING_SIGNER_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Admit, with the seat this wallet holds, the employee or vendor (`kind`) waiting under `person`: their wallet's
@@ -597,12 +903,17 @@ export const ACT_INTENTS = Object.freeze({
    */
   'admit-person': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, kind: 'words' as const,
-      person: 'record' as const, personName: 'words' as const, fingerprint: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      kind: 'words' as const,
+      person: 'record' as const,
+      personName: 'words' as const,
+      fingerprint: 'words' as const
     }),
     optional: Object.freeze(['fingerprint']),
     calls: ADMIT_PERSON_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
 
   /*
@@ -615,18 +926,41 @@ export const ACT_INTENTS = Object.freeze({
    */
   'change-person': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, kind: 'words' as const,
-      person: 'record' as const, personName: 'words' as const, payAmount: 'amount' as const, asset: 'token' as const,
-      payFrom: 'words' as const, classification: 'words' as const, classificationFrom: 'words' as const, endDate: 'words' as const,
-      leavingDate: 'words' as const, status: 'words' as const, terms: 'words' as const, termsAsset: 'token' as const,
-      termsAmount: 'amount' as const, clear: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      kind: 'words' as const,
+      person: 'record' as const,
+      personName: 'words' as const,
+      payAmount: 'amount' as const,
+      asset: 'token' as const,
+      payFrom: 'words' as const,
+      classification: 'words' as const,
+      classificationFrom: 'words' as const,
+      endDate: 'words' as const,
+      leavingDate: 'words' as const,
+      status: 'words' as const,
+      terms: 'words' as const,
+      termsAsset: 'token' as const,
+      termsAmount: 'amount' as const,
+      clear: 'words' as const
     }),
     optional: Object.freeze([
-      'payAmount', 'asset', 'payFrom', 'classification', 'classificationFrom', 'endDate', 'leavingDate', 'status', 'terms',
-      'termsAsset', 'termsAmount', 'clear',
+      'payAmount',
+      'asset',
+      'payFrom',
+      'classification',
+      'classificationFrom',
+      'endDate',
+      'leavingDate',
+      'status',
+      'terms',
+      'termsAsset',
+      'termsAmount',
+      'clear'
     ]),
     calls: CHANGE_PERSON_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * File, with the seat this wallet holds, the company's choice of the service its calls go through (`service`: ours,
@@ -636,11 +970,20 @@ export const ACT_INTENTS = Object.freeze({
    */
   'choose-company-service': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, service: 'words' as const, at: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      service: 'words' as const,
+      at: 'words' as const
     }),
     optional: Object.freeze(['at']),
     calls: CHOOSE_COMPANY_SERVICE_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, filed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      filed: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Give a read grant (`code`, the join code the reader's own wallet signed over its key for this company and its person
@@ -652,12 +995,22 @@ export const ACT_INTENTS = Object.freeze({
    */
   'grant-read': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, recipient: 'seat' as const,
-      code: 'words' as const, role: 'words' as const, away: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      recipient: 'seat' as const,
+      code: 'words' as const,
+      role: 'words' as const,
+      away: 'words' as const
     }),
     optional: Object.freeze(['recipient', 'code', 'role', 'away']),
     calls: GRANT_READ_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, filed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      filed: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Change a signer's role (`leaf`, the seat; `role`, the new signer role): while the chain holds the seat, its removal
@@ -668,14 +1021,27 @@ export const ACT_INTENTS = Object.freeze({
    */
   'change-role': Object.freeze({
     fields: Object.freeze({
-      record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const, role: 'words' as const,
-      address: 'words' as const, personName: 'words' as const,
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      leaf: 'seat' as const,
+      role: 'words' as const,
+      address: 'words' as const,
+      personName: 'words' as const
     }),
     calls: CHANGE_ROLE_CALLS,
     outcome: Object.freeze({
-      stage: 'code' as const, state: 'code' as const, approvals: 'count' as const, needed: 'count' as const,
-      rotation: 'code' as const, vaultSecrets: 'code' as const, vaultSecretsWhy: 'code' as const, ...VAULTS_CHANGED_OUTCOME, ...RETIREMENT_OUTCOME, ...UPKEEP_OUTCOME,
-    }),
+      stage: 'code' as const,
+      state: 'code' as const,
+      approvals: 'count' as const,
+      needed: 'count' as const,
+      rotation: 'code' as const,
+      vaultSecrets: 'code' as const,
+      vaultSecretsWhy: 'code' as const,
+      ...VAULTS_CHANGED_OUTCOME,
+      ...RETIREMENT_OUTCOME,
+      ...UPKEEP_OUTCOME
+    })
   }),
   /*
    * Repair the company's key from this seat: a new key made from the newest one this seat holds, wrapped to every signer
@@ -686,7 +1052,7 @@ export const ACT_INTENTS = Object.freeze({
   'repair-company-key': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
     calls: RECORDS_AND_UPKEEP_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, epoch: 'count' as const, ...UPKEEP_OUTCOME }),
+    outcome: Object.freeze({ state: 'code' as const, epoch: 'count' as const, ...UPKEEP_OUTCOME })
   }),
   /*
    * Drop the role change this wallet keeps for one seat (`leaf`), so a role change abandoned before its invitation is
@@ -694,9 +1060,14 @@ export const ACT_INTENTS = Object.freeze({
    * removal already raised stays raised. It tells the page whether there was one to drop (`state`).
    */
   'drop-role-change': Object.freeze({
-    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, leaf: 'seat' as const }),
+    fields: Object.freeze({
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      leaf: 'seat' as const
+    }),
     calls: Object.freeze([]) as readonly CallRoute[],
-    outcome: Object.freeze({ state: 'code' as const }),
+    outcome: Object.freeze({ state: 'code' as const })
   }),
   /*
    * Read a company as one of its readers: this wallet works out its reader key for the company, believes the newest
@@ -705,7 +1076,7 @@ export const ACT_INTENTS = Object.freeze({
    */
   'reader-keys': Object.freeze({
     fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const }),
-    calls: READER_KEYS_CALLS,
+    calls: READER_KEYS_CALLS
   }),
   /*
    * Set the company's recovery window to `seconds`, or add this seat's signature to a change to that length still
@@ -714,10 +1085,20 @@ export const ACT_INTENTS = Object.freeze({
    * the page whether the change is in force, how many signers have signed it and how many it needs, and how the upkeep went.
    */
   'set-recovery-window': Object.freeze({
-    fields: Object.freeze({ record: 'record' as const, company: 'company' as const, account: 'account' as const, seconds: 'amount' as const }),
+    fields: Object.freeze({
+      record: 'record' as const,
+      company: 'company' as const,
+      account: 'account' as const,
+      seconds: 'amount' as const
+    }),
     calls: RECORDS_AND_UPKEEP_CALLS,
-    outcome: Object.freeze({ state: 'code' as const, signed: 'count' as const, needed: 'count' as const, ...UPKEEP_OUTCOME }),
-  }),
+    outcome: Object.freeze({
+      state: 'code' as const,
+      signed: 'count' as const,
+      needed: 'count' as const,
+      ...UPKEEP_OUTCOME
+    })
+  })
 }) satisfies Readonly<Record<string, IntentShape>>;
 
 export type ActIntentName = keyof typeof ACT_INTENTS & string;

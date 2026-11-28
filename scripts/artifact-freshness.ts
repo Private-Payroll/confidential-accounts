@@ -93,7 +93,7 @@ export type ArtifactPair = {
 export const CONTRACT_ARTIFACTS: readonly ArtifactPair[] = Object.values(CONTRACT_TABLE).map((c) => ({
   source: c.source,
   artifact: `${c.compiled}/contract/index.js`,
-  door: 'npm run compact:fast',
+  door: 'npm run compact:fast'
 }));
 
 export type RefusalKind =
@@ -141,7 +141,7 @@ export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refu
     throw new Error(
       'artifact-freshness: asked to check ZERO source/artifact pairs. A check over ' +
         'nothing cannot fail, so this is an error rather than a pass. Something has ' +
-        'emptied CONTRACT_ARTIFACTS.',
+        'emptied CONTRACT_ARTIFACTS.'
     );
   }
 
@@ -170,7 +170,8 @@ export function findRefusals(root: string, pairs: readonly ArtifactPair[]): Refu
       ? (JSON.parse(readFileSync(record, 'utf8')) as { sources?: Record<string, string> }).sources
       : undefined;
     if (want?.[pair.source] !== undefined) {
-      if (files.some((f) => codeHash(under(root, f)) !== want[f])) refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
+      if (files.some((f) => codeHash(under(root, f)) !== want[f]))
+        refusals.push({ kind: 'stale', pair, sourceMs, artifactMs });
       continue;
     }
     if (sourceMs > artifactMs) {
@@ -191,7 +192,7 @@ const ist = (ms: number | null): string =>
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        hour12: false,
+        hour12: false
       }) + ' IST';
 
 const pad = (s: string, n: number): string => (s.length >= n ? s : s + ' '.repeat(n - s.length));
@@ -215,7 +216,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
     const width = Math.max(r.pair.source.length, r.pair.artifact.length) + 2;
     if (r.kind === 'source-missing') {
       out.push(`  ${r.pair.source}`);
-      out.push('      is named in this guard\'s own table and is not on disk. The guard cannot');
+      out.push("      is named in this guard's own table and is not on disk. The guard cannot");
       out.push('      answer the question it exists to answer, so it refuses rather than');
       out.push('      passing a pair it could not read.');
       out.push('');
@@ -243,10 +244,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
 
   const unique = doors.filter((d, i) => doors.indexOf(d) === i);
   if (unique.length > 0) {
-    const list =
-      unique.length === 1
-        ? unique[0]
-        : unique.slice(0, -1).join(', ') + ' and ' + unique[unique.length - 1];
+    const list = unique.length === 1 ? unique[0] : unique.slice(0, -1).join(', ') + ' and ' + unique[unique.length - 1];
     out.push(`  Run ${list}, then run this again.`);
     out.push('');
   }
@@ -257,10 +255,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
  * The whole guard in one call: read the two pairs, and throw the refusal if
  * there is one. `globalSetup` calls this and nothing else.
  */
-export function assertArtifactsFresh(
-  root: string,
-  pairs: readonly ArtifactPair[] = CONTRACT_ARTIFACTS,
-): void {
+export function assertArtifactsFresh(root: string, pairs: readonly ArtifactPair[] = CONTRACT_ARTIFACTS): void {
   const refusals = findRefusals(root, pairs);
   if (refusals.length > 0) {
     throw new Error(refusalText(refusals));

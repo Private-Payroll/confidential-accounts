@@ -36,16 +36,14 @@ export class ErrorBoundary extends Component<{ readonly children: ReactNode }, C
       <div className="shell">
         <main className="content narrow">
           <h1>Something broke while drawing this page.</h1>
-          <div className="error" role="alert">{describeFailure(this.state.error)}</div>
+          <div className="error" role="alert">
+            {describeFailure(this.state.error)}
+          </div>
           <p className="muted" style={{ marginTop: '1rem' }}>
-            Your account has not been touched — nothing stored in this browser changed.
-            The browser console has the full trace.
+            Your account has not been touched — nothing stored in this browser changed. The browser console has the full
+            trace.
           </p>
-          <button
-            type="button"
-            className="primary"
-            onClick={() => this.setState({ error: null })}
-          >
+          <button type="button" className="primary" onClick={() => this.setState({ error: null })}>
             Try again
           </button>
         </main>

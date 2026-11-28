@@ -34,7 +34,8 @@ async function driveToDone(): Promise<void> {
   fireEvent.click(screen.getByText('Cut the account into pieces'));
   await waitFor(() => expect(screen.getByTestId('piece-bytes-0')).toBeTruthy());
   const bytesByIndex = [0, 1, 2].map((i) =>
-    (screen.getByTestId(`piece-bytes-${i}`).textContent ?? '').replace(/\s+/g, ''));
+    (screen.getByTestId(`piece-bytes-${i}`).textContent ?? '').replace(/\s+/g, '')
+  );
   for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);
   fireEvent.click(screen.getByText(/are placed — continue/));
   /* The prove step names which piece it wants; no bytes are on screen. */
@@ -77,8 +78,7 @@ describe('the rules, live, in the library’s own words', () => {
     mount(newSecret());
     fireEvent.click(screen.getByLabelText('More pieces needed'));
     expect(screen.getByText(/Lose any one of them/)).toBeTruthy();
-    expect((screen.getByText('Cut the account into pieces') as HTMLButtonElement).disabled)
-      .toBe(false);
+    expect((screen.getByText('Cut the account into pieces') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('the SAME place under two different kinds is ONE holder', () => {
@@ -93,16 +93,13 @@ describe('the rules, live, in the library’s own words', () => {
     fireEvent.change(kinds[1] as Element, { target: { value: 'file' } });
     fireEvent.change(details[1] as Element, { target: { value: 'My  google DRIVE' } });
     expect(screen.getByText(/Two pieces in one place are one piece/)).toBeTruthy();
-    expect((screen.getByText('Cut the account into pieces') as HTMLButtonElement).disabled)
-      .toBe(true);
+    expect((screen.getByText('Cut the account into pieces') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('other direction: different places under one kind do NOT collide', () => {
-    expect(holderOf({ kind: 'cloud', detail: 'Drive A' }))
-      .not.toBe(holderOf({ kind: 'cloud', detail: 'Drive B' }));
+    expect(holderOf({ kind: 'cloud', detail: 'Drive A' })).not.toBe(holderOf({ kind: 'cloud', detail: 'Drive B' }));
     /* And the kind carries nothing: same detail, any kinds, one holder. */
-    expect(holderOf({ kind: 'cloud', detail: ' My Drive ' }))
-      .toBe(holderOf({ kind: 'file', detail: 'my  drive' }));
+    expect(holderOf({ kind: 'cloud', detail: ' My Drive ' })).toBe(holderOf({ kind: 'file', detail: 'my  drive' }));
   });
 
   it('an empty detail is refused with checkPlan’s who-controls-it sentence', () => {
@@ -134,9 +131,12 @@ describe('cards and printing', () => {
      * assertion finally claim the same thing (a later finding). */
     const targetsAtPrintTime: string[][] = [];
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {
-      targetsAtPrintTime.push(Array.from(
-        document.querySelectorAll('.print-target [data-testid^="piece-bytes-"]'),
-        (el) => el.getAttribute('data-testid') ?? ''));
+      targetsAtPrintTime.push(
+        Array.from(
+          document.querySelectorAll('.print-target [data-testid^="piece-bytes-"]'),
+          (el) => el.getAttribute('data-testid') ?? ''
+        )
+      );
     });
     mount(newSecret());
     fireEvent.click(screen.getByText('Cut the account into pieces'));
@@ -161,7 +161,8 @@ describe('the finish consumes evidence — §7.14', () => {
     expect(loadSecuredSetup(secret)).toBeNull();
 
     const bytesByIndex = [0, 1, 2].map((i) =>
-      (screen.getByTestId(`piece-bytes-${i}`).textContent ?? '').replace(/\s+/g, ''));
+      (screen.getByTestId(`piece-bytes-${i}`).textContent ?? '').replace(/\s+/g, '')
+    );
     for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);
     fireEvent.click(screen.getByText(/are placed — continue/));
     await screen.findByText(/Read one piece back from its card/);
@@ -212,8 +213,7 @@ describe('re-cutting', () => {
     await driveToDone();
     const record = loadSecuredSetup(secret);
     expect(record?.superseded).toHaveLength(1);
-    expect(record?.superseded[0]?.pieces.map((p) => p.label).join(' '))
-      .toContain('cloud account');
+    expect(record?.superseded[0]?.pieces.map((p) => p.label).join(' ')).toContain('cloud account');
   });
 });
 
@@ -234,8 +234,7 @@ describe('the sheet — names ride with the map, and printing it prints it alone
     expect(screen.getByText('“Client money”')).toBeTruthy();
     expect(screen.getByText('Subwallet 1')).toBeTruthy();
     /* The honest half, printed ON the sheet: it is a snapshot. */
-    expect(screen.getAllByText(/names given or changed after it was made are not on\s+it/i)
-      .length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/names given or changed after it was made are not on\s+it/i).length).toBeGreaterThan(0);
     /* And a print button whose job is this page. */
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
     fireEvent.click(screen.getByText('Print this sheet'));

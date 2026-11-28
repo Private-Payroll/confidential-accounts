@@ -39,80 +39,149 @@ const VAULT = '54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e'
 const NIGHT = '00'.repeat(32);
 const ME = '46'.repeat(32);
 
-const ask = parseAsk({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'balance',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'Put money into your company vault.',
-  nonce: 'b1', expiresAt: NOW + 600_000, company: CO, account: ACCOUNT, vault: VAULT, transaction: 'AAECAw==',
-}, ORIGIN, NOW) as BalanceRequest;
+const ask = parseAsk(
+  {
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind: 'balance',
+    requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+    purpose: 'Put money into your company vault.',
+    nonce: 'b1',
+    expiresAt: NOW + 600_000,
+    company: CO,
+    account: ACCOUNT,
+    vault: VAULT,
+    transaction: 'AAECAw=='
+  },
+  ORIGIN,
+  NOW
+) as BalanceRequest;
 
 const effects = {
-  claimedNullifiers: [], claimedShieldedReceives: [], claimedShieldedSpends: [], claimedContractCalls: [],
-  shieldedMints: new Map(), unshieldedMints: new Map(), unshieldedOutputs: new Map(), claimedUnshieldedSpends: new Map(),
-  unshieldedInputs: new Map([[{ tag: 'unshielded', raw: NIGHT }, 2_500_000n]]),
+  claimedNullifiers: [],
+  claimedShieldedReceives: [],
+  claimedShieldedSpends: [],
+  claimedContractCalls: [],
+  shieldedMints: new Map(),
+  unshieldedMints: new Map(),
+  unshieldedOutputs: new Map(),
+  claimedUnshieldedSpends: new Map(),
+  unshieldedInputs: new Map([[{ tag: 'unshielded', raw: NIGHT }, 2_500_000n]])
 };
 /** A part of the wallet that has read the chain to the end. */
 const read = (): WalletPartForBalancing => ({
-  state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } },
+  state: {
+    subscribe: (o) => {
+      o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } });
+      return { unsubscribe: () => {} };
+    }
+  }
 });
 /** One that has connected and is still reading. */
 const stillReading = (): WalletPartForBalancing => ({
-  state: { subscribe: (o) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => false } }); return { unsubscribe: () => {} }; } },
+  state: {
+    subscribe: (o) => {
+      o.next({ progress: { isConnected: true, isStrictlyComplete: () => false } });
+      return { unsubscribe: () => {} };
+    }
+  }
 });
-const doorsWith = (log: string[], facade: Record<string, unknown> = {}) => (): BalanceDoors => ({
-  ledger: async () => ({
-    Transaction: {
-      deserialize: () => ({
-        intents: new Map([[1, { actions: [{ address: VAULT, entryPoint: 'depositUnshielded', guaranteedTranscript: { effects } }] }]]),
-        imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'unshielded', raw: NIGHT }, -2_500_000n]] : []),
-        serialize: () => new Uint8Array([1]),
-      }),
-    },
-  }),
-  facade: async () => ({
-    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
-    adoptTransaction: () => 'handle',
-    balanceUnboundTransaction: async (_t: unknown, o: { tokenKindsToBalance?: 'all' | readonly string[] }) => {
-      const kinds = o.tokenKindsToBalance;
-      log.push(`balance ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
-      return {
-        type: 'UNBOUND_TRANSACTION',
-        baseTransaction: { intents: new Map([[1, { guaranteedUnshieldedOffer: {
-          inputs: [{ value: 3_000_000n, type: NIGHT }], outputs: [{ value: 500_000n, type: NIGHT, owner: ME }],
-        } }]]), imbalances: () => new Map() },
-      };
-    },
-    signRecipe: async () => { log.push('sign'); return 'signed'; },
-    finalizeRecipe: async () => { log.push('finish'); return { serialize: () => new Uint8Array([4, 2]) }; },
-    revert: async () => { log.push('revert'); },
-    shielded: read(),
-    unshielded: read(),
-    ...facade,
-  }) as unknown as FacadeForBalancing,
-  dustKeys: () => ({}) as never,
-  signSegment: () => async () => ({}) as never,
-  ownPublicAddress: () => ME,
-  now: () => NOW,
-});
+const doorsWith =
+  (log: string[], facade: Record<string, unknown> = {}) =>
+  (): BalanceDoors => ({
+    ledger: async () => ({
+      Transaction: {
+        deserialize: () => ({
+          intents: new Map([
+            [1, { actions: [{ address: VAULT, entryPoint: 'depositUnshielded', guaranteedTranscript: { effects } }] }]
+          ]),
+          imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'unshielded', raw: NIGHT }, -2_500_000n]] : []),
+          serialize: () => new Uint8Array([1])
+        })
+      }
+    }),
+    facade: async () =>
+      ({
+        state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+        adoptTransaction: () => 'handle',
+        balanceUnboundTransaction: async (_t: unknown, o: { tokenKindsToBalance?: 'all' | readonly string[] }) => {
+          const kinds = o.tokenKindsToBalance;
+          log.push(`balance ${kinds === undefined || kinds === 'all' ? 'dust,shielded,unshielded' : kinds.join(',')}`);
+          return {
+            type: 'UNBOUND_TRANSACTION',
+            baseTransaction: {
+              intents: new Map([
+                [
+                  1,
+                  {
+                    guaranteedUnshieldedOffer: {
+                      inputs: [{ value: 3_000_000n, type: NIGHT }],
+                      outputs: [{ value: 500_000n, type: NIGHT, owner: ME }]
+                    }
+                  }
+                ]
+              ]),
+              imbalances: () => new Map()
+            }
+          };
+        },
+        signRecipe: async () => {
+          log.push('sign');
+          return 'signed';
+        },
+        finalizeRecipe: async () => {
+          log.push('finish');
+          return { serialize: () => new Uint8Array([4, 2]) };
+        },
+        revert: async () => {
+          log.push('revert');
+        },
+        shielded: read(),
+        unshielded: read(),
+        ...facade
+      }) as unknown as FacadeForBalancing,
+    dustKeys: () => ({}) as never,
+    signSegment: () => async () => ({}) as never,
+    ownPublicAddress: () => ME,
+    now: () => NOW
+  });
 const channelFor = (answers: unknown[]): Channel => recordingChannel(answers);
-const renderWith = (doors: () => BalanceDoors, answers: unknown[]) => render(
-  <ApproveBalance readLabel={carries}
-    request={ask} identity={identity} account={0} channel={channelFor(answers)} consent={{ ok: true } as never}
-    whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
-    doorsFor={doors} now={() => NOW} />);
+const renderWith = (doors: () => BalanceDoors, answers: unknown[]) =>
+  render(
+    <ApproveBalance
+      readLabel={carries}
+      request={ask}
+      identity={identity}
+      account={0}
+      channel={channelFor(answers)}
+      consent={{ ok: true } as never}
+      whoIsAsking={<p>asker</p>}
+      whichWallet={<p>picker</p>}
+      onDecline={() => {}}
+      doorsFor={doors}
+      now={() => NOW}
+    />
+  );
 
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+});
 
 describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
   it('SHOWS THE PUBLIC TOKEN, THE AMOUNT AND THAT THEY ARE PUBLIC BEFORE THE PRESS, AND PAYS NOTHING UNTIL IT', async () => {
-    const log: string[] = []; const answers: unknown[] = [];
+    const log: string[] = [];
+    const answers: unknown[] = [];
     renderWith(doorsWith(log), answers);
     /* RED WHEN: the screen names another amount or token, or does not say they are public, before the press. */
     expect(await screen.findByText('2.5 NIGHT, from your public balance')).toBeTruthy();
     expect(screen.getByText(`unshielded token ${NIGHT}`)).toBeTruthy();
-    expect(document.querySelector('[data-public-deposit]')?.textContent).toMatch(/anyone reading the chain can see them/);
+    expect(document.querySelector('[data-public-deposit]')?.textContent).toMatch(
+      /anyone reading the chain can see them/
+    );
     expect(document.querySelector('[data-headline]')?.textContent).toMatch(/^Pay publicly into a company vault for /);
     /* RED WHEN: spending NIGHT publicly is shown without saying it can stop this wallet's DUST. */
-    expect(document.querySelector('[data-night-stops-dust]')?.textContent).toMatch(/^NIGHT that goes into the vault no longer generates DUST for this wallet\.$/);
+    expect(document.querySelector('[data-night-stops-dust]')?.textContent).toMatch(
+      /^NIGHT that goes into the vault no longer generates DUST for this wallet\.$/
+    );
     expect(document.querySelector('[data-pay]')?.textContent).toBe('Pay publicly into the vault');
     await settled(20);
     expect(log).toEqual([]);
@@ -122,37 +191,66 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     /* RED WHEN: a public deposit is balanced in anything but public money, or answered without the public amount it paid. */
     expect(log).toEqual(['balance unshielded', 'sign', 'finish']);
     expect(answers.length).toBe(1);
-    expect((answers[0] as { leaves: unknown }).leaves).toEqual([{ token: NIGHT, amount: '2500000', kind: 'unshielded' }]);
+    expect((answers[0] as { leaves: unknown }).leaves).toEqual([
+      { token: NIGHT, amount: '2500000', kind: 'unshielded' }
+    ]);
   });
 
   it('WHILE ITS PUBLIC COINS ARE STILL BEING READ, IT SAYS SO AND ADDS NOTHING', async () => {
-    const log: string[] = []; const answers: unknown[] = [];
+    const log: string[] = [];
+    const answers: unknown[] = [];
     renderWith(doorsWith(log, { unshielded: stillReading() }), answers);
     await screen.findByText('2.5 NIGHT, from your public balance');
     fireEvent.click(document.querySelector('[data-pay]')!);
     await settled(20);
     /* RED WHEN: the public deposit is balanced before its public coins are read, or the screen says nothing while it waits. */
     expect(log).toEqual([]);
-    expect(document.querySelector('[data-reading-the-chain]')?.textContent).toMatch(/^Your wallet is reading the network to find your public coins before it adds them\./);
+    expect(document.querySelector('[data-reading-the-chain]')?.textContent).toMatch(
+      /^Your wallet is reading the network to find your public coins before it adds them\./
+    );
     expect(answers).toEqual([]);
   });
 
   it('A PUBLIC DEPOSIT NEVER SAYS IT IS PROVING, TO THE PAGE OR ON ITS OWN SCREEN, AND STILL TELLS THE PAGE IT IS AT WORK', async () => {
-    const log: string[] = []; const answers: unknown[] = []; const progress: string[] = [];
+    const log: string[] = [];
+    const answers: unknown[] = [];
+    const progress: string[] = [];
     const watching: { to: ((e: { op: 'prove' | 'check'; at: 'start' | 'end' }) => void) | null } = { to: null };
     let release: (v: unknown) => void = () => {};
-    const held = new Promise((res) => { release = res; });
+    const held = new Promise((res) => {
+      release = res;
+    });
     const plain = doorsWith(log);
-    const make = doorsWith(log, { balanceUnboundTransaction: (async (...a: unknown[]) => {
-      await held;
-      return (await plain().facade()).balanceUnboundTransaction(...(a as [never, never]));
-    }) as never });
-    const doors = (): BalanceDoors => ({ ...make(), watchProofs: (w) => { watching.to = w; return () => { watching.to = null; }; } });
+    const make = doorsWith(log, {
+      balanceUnboundTransaction: (async (...a: unknown[]) => {
+        await held;
+        return (await plain().facade()).balanceUnboundTransaction(...(a as [never, never]));
+      }) as never
+    });
+    const doors = (): BalanceDoors => ({
+      ...make(),
+      watchProofs: (w) => {
+        watching.to = w;
+        return () => {
+          watching.to = null;
+        };
+      }
+    });
     render(
-      <ApproveBalance readLabel={carries}
-        request={ask} identity={identity} account={0} channel={recordingChannel(answers, progress as never)} consent={{ ok: true } as never}
-        whoIsAsking={<p>asker</p>} whichWallet={<p>picker</p>} onDecline={() => {}}
-        doorsFor={doors} now={() => NOW} />);
+      <ApproveBalance
+        readLabel={carries}
+        request={ask}
+        identity={identity}
+        account={0}
+        channel={recordingChannel(answers, progress as never)}
+        consent={{ ok: true } as never}
+        whoIsAsking={<p>asker</p>}
+        whichWallet={<p>picker</p>}
+        onDecline={() => {}}
+        doorsFor={doors}
+        now={() => NOW}
+      />
+    );
     await screen.findByText('2.5 NIGHT, from your public balance');
     fireEvent.click(document.querySelector('[data-pay]')!);
     await settled(10);
@@ -165,22 +263,40 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     expect(progress.length).toBeGreaterThan(0);
     /* RED WHEN: a public deposit's own screen says it is proving. */
     expect(document.querySelector('[data-proving]')).toBeNull();
-    expect(document.querySelector('[data-paying]')?.textContent).toMatch(/^Adding your public coins and signing in this browser\./);
+    expect(document.querySelector('[data-paying]')?.textContent).toMatch(
+      /^Adding your public coins and signing in this browser\./
+    );
     release(null);
     await settled(20);
     expect(answers.length).toBe(1);
   });
 
   it('WHEN WHAT THE WALLET WOULD ADD IS NOT WHAT IT SHOWED, NOTHING IS SIGNED OR HANDED BACK', async () => {
-    const log: string[] = []; const answers: unknown[] = [];
-    renderWith(doorsWith(log, {
-      balanceUnboundTransaction: async () => {
-        log.push('balance');
-        return { baseTransaction: { intents: new Map([[1, { guaranteedUnshieldedOffer: {
-          inputs: [{ value: 3_000_000n, type: NIGHT }], outputs: [{ value: 500_000n, type: NIGHT, owner: '33'.repeat(32) }],
-        } }]]) } };
-      },
-    }), answers);
+    const log: string[] = [];
+    const answers: unknown[] = [];
+    renderWith(
+      doorsWith(log, {
+        balanceUnboundTransaction: async () => {
+          log.push('balance');
+          return {
+            baseTransaction: {
+              intents: new Map([
+                [
+                  1,
+                  {
+                    guaranteedUnshieldedOffer: {
+                      inputs: [{ value: 3_000_000n, type: NIGHT }],
+                      outputs: [{ value: 500_000n, type: NIGHT, owner: '33'.repeat(32) }]
+                    }
+                  }
+                ]
+              ])
+            }
+          };
+        }
+      }),
+      answers
+    );
     await screen.findByText('2.5 NIGHT, from your public balance');
     fireEvent.click(document.querySelector('[data-pay]')!);
     await settled(20);
@@ -188,17 +304,23 @@ describe('A PAGE ASKING THIS WALLET TO PAY FOR A PUBLIC DEPOSIT', () => {
     expect(log).toEqual(['balance', 'revert']);
     /* RED WHEN: the page is handed a transaction, or is told anything but that what was about to be paid was not what was approved. */
     expect(answers).toEqual([{ refused: 'failed', why: 'not-as-approved' }]);
-    expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(/someone other than itself, so it signed nothing/);
+    expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(
+      /someone other than itself, so it signed nothing/
+    );
     /* RED WHEN: the person is not told the page heard that the payment failed. */
-    expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(/The page was given nothing and has been told this payment failed\.$/);
+    expect(document.querySelector('[data-balance-failed]')?.textContent).toMatch(
+      /The page was given nothing and has been told this payment failed\.$/
+    );
   });
 });
 
-describe('THE WALLET\'S OWN PUBLIC ADDRESS, AS THE PRESS CHECKS CHANGE AGAINST IT', () => {
-  it('IS THE ADDRESS THE WALLET SDK WRITES ON THIS WALLET\'S OWN CHANGE, AS THE LEDGER WRITES IT', () => {
+describe("THE WALLET'S OWN PUBLIC ADDRESS, AS THE PRESS CHECKS CHANGE AGAINST IT", () => {
+  it("IS THE ADDRESS THE WALLET SDK WRITES ON THIS WALLET'S OWN CHANGE, AS THE LEDGER WRITES IT", () => {
     const doors = liveBalanceDoors(identity, 0);
     /* RED WHEN: the door answers the address in any other form, so every public deposit's change reads as a stranger's. */
     expect(doors.ownPublicAddress!()).toMatch(/^[0-9a-f]{64}$/);
-    expect(doors.ownPublicAddress!()).toBe(String((PublicKey as any).fromKeyStore(unshieldedKeystoreFor(identity, 0)).addressHex));
+    expect(doors.ownPublicAddress!()).toBe(
+      String((PublicKey as any).fromKeyStore(unshieldedKeystoreFor(identity, 0)).addressHex)
+    );
   });
 });

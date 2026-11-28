@@ -24,8 +24,6 @@ export class StorageError extends Error {
   }
 }
 
-export const isRealNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value);
+export const isRealNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 
-export const isNamed = (value: unknown): boolean =>
-  typeof value === 'string' && value.trim() !== '';
+export const isNamed = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '';

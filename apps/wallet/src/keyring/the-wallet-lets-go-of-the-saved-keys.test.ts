@@ -15,7 +15,7 @@ vi.mock('./seal-key.js', async (original) => {
       const k = real.keyringKeyBeforeTheSeal(...args);
       derived.push(k);
       return k;
-    },
+    }
   };
 });
 
@@ -33,17 +33,30 @@ import { openHeldKeyring, type KeyringMarks } from './held-keyring.js';
  */
 
 const identity = identityFromSecret(newSecret());
-const ASK = { requester: { origin: 'https://app.payroll.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a' };
+const ASK = {
+  requester: { origin: 'https://app.payroll.example', name: 'Payroll', rdns: 'example.payroll' },
+  person: 'usr_a'
+};
 const KEY = toHex(keyringSealKeyFor(identity, ASK));
 const OLD = toHex(keyringKeyFor(identity, ASK));
-const SEAT = { signerId: 'sig_1', signingSecret: '11'.repeat(32), wrappingSecret: '22'.repeat(32), blinding: '33'.repeat(32), scope: '44'.repeat(32) };
+const SEAT = {
+  signerId: 'sig_1',
+  signingSecret: '11'.repeat(32),
+  wrappingSecret: '22'.repeat(32),
+  blinding: '33'.repeat(32),
+  scope: '44'.repeat(32)
+};
 const marks = (): KeyringMarks => ({ markOf: () => null, raise: () => {} });
-const opened = () => openHeldKeyring({
-  identity, ask: ASK, handedIn: { sealed: sealKeyring({ accounts: { acc_A: SEAT } }, KEY).sealed, version: 1 }, marks: marks(),
-});
+const opened = () =>
+  openHeldKeyring({
+    identity,
+    ask: ASK,
+    handedIn: { sealed: sealKeyring({ accounts: { acc_A: SEAT } }, KEY).sealed, version: 1 },
+    marks: marks()
+  });
 
 describe('the wallet lets go of the key and the saved keys', () => {
-  it('zeroes the keyring key\'s bytes once it has the key in the form the seal takes', () => {
+  it("zeroes the keyring key's bytes once it has the key in the form the seal takes", () => {
     derived.length = 0;
     opened();
     /* RED WHEN: the 32 bytes the key was derived as are left in memory after opening. */
@@ -51,9 +64,14 @@ describe('the wallet lets go of the key and the saved keys', () => {
     expect([...derived[0]!].every((b) => b === 0)).toBe(true);
   });
 
-  it('zeroes the old key\'s bytes too, when a copy sealed under it is opened once', () => {
+  it("zeroes the old key's bytes too, when a copy sealed under it is opened once", () => {
     derived.length = 0;
-    openHeldKeyring({ identity, ask: ASK, handedIn: { sealed: sealKeyring({ accounts: { acc_A: SEAT } }, OLD).sealed, version: 1 }, marks: marks() });
+    openHeldKeyring({
+      identity,
+      ask: ASK,
+      handedIn: { sealed: sealKeyring({ accounts: { acc_A: SEAT } }, OLD).sealed, version: 1 },
+      marks: marks()
+    });
     /* RED WHEN: the old key, or the new, is left in memory after a copy under the old key is opened. */
     expect(derived).toHaveLength(2);
     for (const d of derived) expect([...d].every((b) => b === 0)).toBe(true);

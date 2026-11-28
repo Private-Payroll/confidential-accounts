@@ -16,13 +16,21 @@ import type { EndedHere } from '../actions/ended-here.js';
 export function AskOver({ framed }: { readonly framed: boolean }): ReactNode {
   const t = useText();
   const heading = useRef<HTMLHeadingElement | null>(null);
-  useEffect(() => { heading.current?.focus(); }, []);
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
   return (
     <>
-      <h1 ref={heading} tabIndex={-1} data-ask-over>{t('ask.over.title')}</h1>
+      <h1 ref={heading} tabIndex={-1} data-ask-over>
+        {t('ask.over.title')}
+      </h1>
       <p className="lede">{t('ask.over.lede')}</p>
       <p className="m-0 text-sm text-muted-foreground">{t(framed ? 'ask.over.framed' : 'ask.over.close')}</p>
-      {!framed && <p style={{ marginTop: '1.5rem' }}><a href={hrefOf('home')}>&larr; {t('ask.over.home')}</a></p>}
+      {!framed && (
+        <p style={{ marginTop: '1.5rem' }}>
+          <a href={hrefOf('home')}>&larr; {t('ask.over.home')}</a>
+        </p>
+      )}
     </>
   );
 }
@@ -37,7 +45,7 @@ const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
   'private-deposit': 'act.private-deposit.over.continue',
   'one-off-payment': 'act.one-off-payment.over.continue',
   'change-threshold': 'act.change-threshold.over.continue',
-  'remove-signer': 'act.remove-signer.over.continue',
+  'remove-signer': 'act.remove-signer.over.continue'
 });
 
 /**
@@ -46,16 +54,20 @@ const CONTINUE: Readonly<Record<string, string>> = Object.freeze({
  */
 const AWAITING: Readonly<Record<string, string>> = Object.freeze({
   'one-off-payment': 'act.one-off-payment.over.awaiting',
-  'approve-proposal': 'act.one-off-payment.over.awaiting',
+  'approve-proposal': 'act.one-off-payment.over.awaiting'
 });
 
 /** The awaiting words for an end that is done with what it proposed still short of its approvals, else null. */
-export const awaitingOf = (ended: EndedHere['ended']): { readonly key: string; readonly approvals: number; readonly needed: number } | null => {
+export const awaitingOf = (
+  ended: EndedHere['ended']
+): { readonly key: string; readonly approvals: number; readonly needed: number } | null => {
   const o = ended.outcome;
   if (ended.ended !== 'done' || o === undefined || o['state'] !== 'awaiting-approvals') return null;
   if (!Object.prototype.hasOwnProperty.call(AWAITING, ended.intent)) return null;
   const { approvals, needed } = o;
-  return typeof approvals === 'number' && typeof needed === 'number' ? { key: AWAITING[ended.intent]!, approvals, needed } : null;
+  return typeof approvals === 'number' && typeof needed === 'number'
+    ? { key: AWAITING[ended.intent]!, approvals, needed }
+    : null;
 };
 
 /**
@@ -84,32 +96,59 @@ const titleOf = (ended: EndedHere['ended']): string => {
 export function ActOver({ end, framed }: { readonly end: EndedHere; readonly framed: boolean }): ReactNode {
   const t = useText();
   const heading = useRef<HTMLHeadingElement | null>(null);
-  useEffect(() => { heading.current?.focus(); }, []);
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
   const { ended, says } = end;
   const shown = says === null ? [] : [says, ...(end.more ?? [])];
-  const shownAtTheEnd = shown.map((w, i) => <p key={i} className="m-0 font-mono" data-act-shown-at-the-end>{t(w.key, { ...(w.values ?? {}) })}</p>);
+  const shownAtTheEnd = shown.map((w, i) => (
+    <p key={i} className="m-0 font-mono" data-act-shown-at-the-end>
+      {t(w.key, { ...(w.values ?? {}) })}
+    </p>
+  ));
   const stopped = ended.ended === 'stopped';
   const awaiting = awaitingOf(ended);
   return (
     <>
       <h1 ref={heading} tabIndex={-1} data-ask-over data-act-ended={ended.ended}>
-        {stopped ? t('act.over.stopped-title', { step: ended.step, steps: ended.steps })
-          : awaiting !== null ? t(`${awaiting.key}-title`) : t('act.over.done-title')}
+        {stopped
+          ? t('act.over.stopped-title', { step: ended.step, steps: ended.steps })
+          : awaiting !== null
+            ? t(`${awaiting.key}-title`)
+            : t('act.over.done-title')}
       </h1>
       {stopped ? (
         <StatusAlert tone="warning" title={t(titleOf(ended))}>
-          {says !== null && <p className="m-0" data-act-says>{t(says.key, { ...(says.values ?? {}) })}</p>}
-          <p className="m-0" data-act-relayed>{t('act.over.relayed', { relayed: ended.relayed })}</p>
-          {ended.unconfirmed > 0 && (
-            <p className="m-0" data-act-unconfirmed>{t('act.over.unconfirmed', { count: ended.unconfirmed })}</p>
+          {says !== null && (
+            <p className="m-0" data-act-says>
+              {t(says.key, { ...(says.values ?? {}) })}
+            </p>
           )}
-          <p className="m-0" data-act-continue>{t(Object.prototype.hasOwnProperty.call(CONTINUE, ended.intent) ? CONTINUE[ended.intent]! : 'act.over.continue')}</p>
+          <p className="m-0" data-act-relayed>
+            {t('act.over.relayed', { relayed: ended.relayed })}
+          </p>
+          {ended.unconfirmed > 0 && (
+            <p className="m-0" data-act-unconfirmed>
+              {t('act.over.unconfirmed', { count: ended.unconfirmed })}
+            </p>
+          )}
+          <p className="m-0" data-act-continue>
+            {t(
+              Object.prototype.hasOwnProperty.call(CONTINUE, ended.intent)
+                ? CONTINUE[ended.intent]!
+                : 'act.over.continue'
+            )}
+          </p>
         </StatusAlert>
       ) : awaiting !== null ? (
-        <p className="lede" data-act-awaiting>{t(awaiting.key, { approvals: awaiting.approvals, needed: awaiting.needed })}</p>
+        <p className="lede" data-act-awaiting>
+          {t(awaiting.key, { approvals: awaiting.approvals, needed: awaiting.needed })}
+        </p>
       ) : (
         <>
-          <p className="lede" data-act-relayed>{t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}</p>
+          <p className="lede" data-act-relayed>
+            {t('act.over.done', { steps: ended.steps, relayed: ended.relayed })}
+          </p>
           {shownAtTheEnd}
         </>
       )}

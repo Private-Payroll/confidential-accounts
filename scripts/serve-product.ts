@@ -21,7 +21,13 @@ const children: ChildProcess[] = [];
 
 /** Stop every page this process started. */
 export const stopChildren = (): void => {
-  for (const c of children) { try { c.kill('SIGTERM'); } catch { /* gone */ } }
+  for (const c of children) {
+    try {
+      c.kill('SIGTERM');
+    } catch {
+      /* gone */
+    }
+  }
 };
 
 let installed = false;
@@ -34,7 +40,10 @@ export function stopEverythingOnExit(): void {
   installed = true;
   process.on('exit', stopChildren);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-    process.on(sig, () => { stopChildren(); process.exit(130); });
+    process.on(sig, () => {
+      stopChildren();
+      process.exit(130);
+    });
   }
 }
 
@@ -52,11 +61,13 @@ export async function startTheServer(root: string): Promise<{ said: string; port
   const port = Number(process.env.PORT ?? 8787);
   let said = '';
   for (let i = 0; i < 30 && !said; i++) {
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 500));
     try {
       const r = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(2000) });
       said = String((await r.json())?.ledger ?? '');
-    } catch { /* not listening yet */ }
+    } catch {
+      /* not listening yet */
+    }
   }
   return { said, port };
 }
@@ -67,9 +78,7 @@ export async function startTheServer(root: string): Promise<{ said: string; port
  * **ON THIS MACHINE'S OWN LOOPBACK, ON THE NAMED PORT, AND ON NO OTHER.** A page
  * that took the next free port would be on an origin nothing else knows about.
  */
-export function startThePages(
-  root: string, starts: readonly PageStart[], env: NodeJS.ProcessEnv,
-): ChildProcess[] {
+export function startThePages(root: string, starts: readonly PageStart[], env: NodeJS.ProcessEnv): ChildProcess[] {
   const started: ChildProcess[] = [];
   for (const s of starts) {
     const [bin, ...args] = s.command;

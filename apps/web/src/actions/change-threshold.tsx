@@ -1,6 +1,21 @@
 import { useEffect, useId, useState } from 'react';
-import { Alert, AlertDescription, Button, FieldDescription, FieldError, FieldLegend, FieldSet, useText } from 'vaults-ui';
-import { changeThreshold, THRESHOLD_ACTED, THRESHOLD_PROBLEM, type ThresholdActed, type ThresholdProblem } from '../adapters/proposal-acts.js';
+import {
+  Alert,
+  AlertDescription,
+  Button,
+  FieldDescription,
+  FieldError,
+  FieldLegend,
+  FieldSet,
+  useText
+} from 'vaults-ui';
+import {
+  changeThreshold,
+  THRESHOLD_ACTED,
+  THRESHOLD_PROBLEM,
+  type ThresholdActed,
+  type ThresholdProblem
+} from '../adapters/proposal-acts.js';
 import { readHolders, whatAChangeCosts, type ChangeHolders } from '../adapters/policy-acts.js';
 import { CHANGE_ASKED } from '../adapters/change-asked.js';
 import { OPENED, READ, type Read } from '../adapters/reads.js';
@@ -39,10 +54,20 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
   const open = company?.of === OPENED.open ? company : null;
   const vaultsRead = open?.vaults;
   const vaultRows = vaultsRead?.of === READ.read ? vaultsRead.value : null;
-  const vaultAt = vault === undefined || vaultRows === null ? -1 : vaultRows.findIndex((v) => v.vault.toLowerCase() === vault.toLowerCase());
+  const vaultAt =
+    vault === undefined || vaultRows === null
+      ? -1
+      : vaultRows.findIndex((v) => v.vault.toLowerCase() === vault.toLowerCase());
   const vaultName = vaultAt < 0 ? null : t('vaults.tile.name', { number: vaultAt + 1 });
   const nowRead = open?.approvalsNeeded;
-  const now = vault !== undefined ? (vaultAt < 0 ? null : vaultRows?.[vaultAt]?.approvals ?? null) : nowRead?.of === READ.read ? nowRead.value : null;
+  const now =
+    vault !== undefined
+      ? vaultAt < 0
+        ? null
+        : (vaultRows?.[vaultAt]?.approvals ?? null)
+      : nowRead?.of === READ.read
+        ? nowRead.value
+        : null;
   const seatsRead = open?.approvalsForSigners;
   const seatedRead = seatsRead?.of === READ.read ? seatsRead.value.seated : null;
   const seated = typeof seatedRead === 'number' ? seatedRead : null;
@@ -51,50 +76,137 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
   const from = chosen ?? now ?? 1;
   const canMore = readable && from < seated;
   const canFewer = readable && from > 1;
-  const shown = chosen !== null ? t('changeThreshold.value', { count: chosen }) : now === null ? '' : t('changeThreshold.keeps', { count: now });
+  const shown =
+    chosen !== null
+      ? t('changeThreshold.value', { count: chosen })
+      : now === null
+        ? ''
+        : t('changeThreshold.keeps', { count: now });
 
   useEffect(() => {
     if (view === null) return undefined;
     let alive = true;
     setHeld(null);
-    void readHolders(person.id, view).then((read) => { if (alive) setHeld(read); });
-    return () => { alive = false; };
+    void readHolders(person.id, view).then((read) => {
+      if (alive) setHeld(read);
+    });
+    return () => {
+      alive = false;
+    };
   }, [person.id, view, company]);
 
   const raise = async (): Promise<void> => {
     if (view === null || busy || chosen === null) return;
     setAsked(null);
     setPhase({ step: 0, steps: 0 });
-    const acted = await changeThreshold(person.id, view, chosen, { now, seated }, (step, steps) => setPhase({ step, steps }), vault);
+    const acted = await changeThreshold(
+      person.id,
+      view,
+      chosen,
+      { now, seated },
+      (step, steps) => setPhase({ step, steps }),
+      vault
+    );
     setPhase(null);
     setAsked({ wanted: chosen, acted });
-    const wentThrough = acted.of === THRESHOLD_ACTED.done || (acted.of === THRESHOLD_ACTED.stopped && (acted.partial || acted.handedOver));
+    const wentThrough =
+      acted.of === THRESHOLD_ACTED.done ||
+      (acted.of === THRESHOLD_ACTED.stopped && (acted.partial || acted.handedOver));
     if (!wentThrough) return;
     if (acted.of === THRESHOLD_ACTED.done) setChosen(null);
-    if (onChanged === undefined) reload(); else onChanged();
+    if (onChanged === undefined) reload();
+    else onChanged();
   };
 
   return (
-    <form id={formId} className="flex max-w-xl flex-col gap-4 text-sm" data-action="change-threshold" onSubmit={(e) => { e.preventDefault(); void raise(); }}>
+    <form
+      id={formId}
+      className="flex max-w-xl flex-col gap-4 text-sm"
+      data-action="change-threshold"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void raise();
+      }}
+    >
       <FieldSet disabled={busy}>
-        <FieldLegend variant="label">{vault === undefined ? t('changeThreshold.label') : t('changeThreshold.vault.label')}</FieldLegend>
+        <FieldLegend variant="label">
+          {vault === undefined ? t('changeThreshold.label') : t('changeThreshold.vault.label')}
+        </FieldLegend>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" variant="outline" disabled={busy || !canFewer} aria-label={t('changeThreshold.fewer')} data-action="threshold-fewer" onClick={() => setChosen(Math.max(from - 1, 1))}>-</Button>
-          <span className="min-w-32 text-center" data-change-threshold-value>{shown}</span>
-          <Button type="button" size="sm" variant="outline" disabled={busy || !canMore} aria-label={t('changeThreshold.more')} data-action="threshold-more" onClick={() => setChosen(Math.min(from + 1, seated ?? from))}>+</Button>
-          {chosen === null ? null : <Button type="button" size="sm" variant="ghost" disabled={busy} data-action="threshold-keep" onClick={() => setChosen(null)}>{t('changeThreshold.keep')}</Button>}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || !canFewer}
+            aria-label={t('changeThreshold.fewer')}
+            data-action="threshold-fewer"
+            onClick={() => setChosen(Math.max(from - 1, 1))}
+          >
+            -
+          </Button>
+          <span className="min-w-32 text-center" data-change-threshold-value>
+            {shown}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || !canMore}
+            aria-label={t('changeThreshold.more')}
+            data-action="threshold-more"
+            onClick={() => setChosen(Math.min(from + 1, seated ?? from))}
+          >
+            +
+          </Button>
+          {chosen === null ? null : (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              data-action="threshold-keep"
+              onClick={() => setChosen(null)}
+            >
+              {t('changeThreshold.keep')}
+            </Button>
+          )}
         </div>
-        {seated === null ? null : <FieldDescription data-change-threshold-hint>{t('changeThreshold.hint', { count: seated })}</FieldDescription>}
-        {readable ? null : <FieldError data-change-threshold-unread>{vault === undefined ? t('changeThreshold.unread') : t('changeThreshold.vault.unread')}</FieldError>}
+        {seated === null ? null : (
+          <FieldDescription data-change-threshold-hint>{t('changeThreshold.hint', { count: seated })}</FieldDescription>
+        )}
+        {readable ? null : (
+          <FieldError data-change-threshold-unread>
+            {vault === undefined ? t('changeThreshold.unread') : t('changeThreshold.vault.unread')}
+          </FieldError>
+        )}
       </FieldSet>
-      {now === null ? null : <p className="text-muted-foreground" data-needed-because>{vaultName === null ? t('changeThreshold.because', { count: now }) : t('changeThreshold.vault.because', { count: now, vault: vaultName })}</p>}
-      {chosen === null || chosen === now || held?.of !== READ.read ? null : <ThresholdReview held={held.value} chosen={chosen} vault={vault} vaultName={vaultName} />}
-      {vault !== undefined ? null : <p className="text-muted-foreground" data-checks-every-vault>{t('changeThreshold.checks')}</p>}
+      {now === null ? null : (
+        <p className="text-muted-foreground" data-needed-because>
+          {vaultName === null
+            ? t('changeThreshold.because', { count: now })
+            : t('changeThreshold.vault.because', { count: now, vault: vaultName })}
+        </p>
+      )}
+      {chosen === null || chosen === now || held?.of !== READ.read ? null : (
+        <ThresholdReview held={held.value} chosen={chosen} vault={vault} vaultName={vaultName} />
+      )}
+      {vault !== undefined ? null : (
+        <p className="text-muted-foreground" data-checks-every-vault>
+          {t('changeThreshold.checks')}
+        </p>
+      )}
       <p className="text-muted-foreground">{t('changeThreshold.walletNote')}</p>
       <PanelFooter>
         <div className="flex flex-col gap-4">
           <div>
-            <Button type="submit" form={formId} disabled={busy || companyId === null || chosen === null || chosen === now} data-action="raise-threshold">{t('changeThreshold.raise')}</Button>
+            <Button
+              type="submit"
+              form={formId}
+              disabled={busy || companyId === null || chosen === null || chosen === now}
+              data-action="raise-threshold"
+            >
+              {t('changeThreshold.raise')}
+            </Button>
           </div>
           <Result phase={phase} asked={asked} vaultName={vaultName} />
         </div>
@@ -109,25 +221,62 @@ export function ChangeThreshold({ onChanged, vault }: { onChanged?: () => void; 
  * the change raises it or leaves it above the account's number. A vault's change is counted by `whatAChangeCosts`; the account's is
  * carried at the account's own number.
  */
-function ThresholdReview({ held, chosen, vault, vaultName }: { held: ChangeHolders; chosen: number; vault: string | undefined; vaultName: string | null }) {
+function ThresholdReview({
+  held,
+  chosen,
+  vault,
+  vaultName
+}: {
+  held: ChangeHolders;
+  chosen: number;
+  vault: string | undefined;
+  vaultName: string | null;
+}) {
   const t = useText();
-  const cost = vault === undefined || vaultName === null ? null : whatAChangeCosts(held, { kind: CHANGE_ASKED.vaultThreshold, vault, threshold: chosen });
+  const cost =
+    vault === undefined || vaultName === null
+      ? null
+      : whatAChangeCosts(held, { kind: CHANGE_ASKED.vaultThreshold, vault, threshold: chosen });
   const needed = cost?.needed ?? held.approvals;
-  const because = cost === null || cost.because === 'account' ? t('changeThreshold.review.because.account')
-    : cost.because === 'policy-bar' ? t('changeThreshold.review.because.bar') : t('changeThreshold.review.because.vault', { vault: vaultName ?? '' });
+  const because =
+    cost === null || cost.because === 'account'
+      ? t('changeThreshold.review.because.account')
+      : cost.because === 'policy-bar'
+        ? t('changeThreshold.review.because.bar')
+        : t('changeThreshold.review.because.vault', { vault: vaultName ?? '' });
   const after = cost?.barRaisedTo ?? held.seatBar;
-  const staysRaised = cost === null ? chosen < held.approvals && (held.policyBar ?? 0) > chosen : cost.barRaisedTo === undefined && after > held.approvals;
+  const staysRaised =
+    cost === null
+      ? chosen < held.approvals && (held.policyBar ?? 0) > chosen
+      : cost.barRaisedTo === undefined && after > held.approvals;
   return (
     <div className="flex flex-col gap-2 text-muted-foreground" data-threshold-review>
-      <p data-review-needs={needed}>{t('changeThreshold.review.needs', { count: needed })} <span data-review-because>{because}</span></p>
+      <p data-review-needs={needed}>
+        {t('changeThreshold.review.needs', { count: needed })} <span data-review-because>{because}</span>
+      </p>
       {chosen !== held.seated || held.seated < 2 ? null : (
         <Alert variant="destructive" data-warning="every-signer">
-          <AlertDescription>{vaultName === null ? t('changeThreshold.warn.every-signer', { seated: held.seated }) : t('changeThreshold.vault.warn.every-signer', { seated: held.seated, vault: vaultName })}</AlertDescription>
+          <AlertDescription>
+            {vaultName === null
+              ? t('changeThreshold.warn.every-signer', { seated: held.seated })
+              : t('changeThreshold.vault.warn.every-signer', { seated: held.seated, vault: vaultName })}
+          </AlertDescription>
         </Alert>
       )}
-      {cost?.barRaisedTo === undefined ? null : <Alert data-warning="bar-raised"><AlertDescription>{t('changeThreshold.warn.bar-raised', { bar: cost.barRaisedTo })}</AlertDescription></Alert>}
+      {cost?.barRaisedTo === undefined ? null : (
+        <Alert data-warning="bar-raised">
+          <AlertDescription>{t('changeThreshold.warn.bar-raised', { bar: cost.barRaisedTo })}</AlertDescription>
+        </Alert>
+      )}
       {!staysRaised ? null : (
-        <Alert data-warning="bar-stays"><AlertDescription>{t('changeThreshold.warn.bar-stays', { bar: cost === null ? held.policyBar ?? after : after, approvals: cost === null ? chosen : held.approvals })}</AlertDescription></Alert>
+        <Alert data-warning="bar-stays">
+          <AlertDescription>
+            {t('changeThreshold.warn.bar-stays', {
+              bar: cost === null ? (held.policyBar ?? after) : after,
+              approvals: cost === null ? chosen : held.approvals
+            })}
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );
@@ -138,17 +287,34 @@ function Result({ phase, asked, vaultName }: { phase: ActPhase; asked: Asked | n
   const problems: Record<ThresholdProblem, (most: number) => string> = {
     [THRESHOLD_PROBLEM.notWhole]: () => t('changeThreshold.problem.not-whole'),
     [THRESHOLD_PROBLEM.tooHigh]: (most) => t('changeThreshold.problem.too-high', { count: most }),
-    [THRESHOLD_PROBLEM.same]: () => (vaultName === null ? t('changeThreshold.problem.same') : t('changeThreshold.vault.problem.same', { vault: vaultName })),
-    [THRESHOLD_PROBLEM.unread]: () => t('changeThreshold.problem.unread'),
+    [THRESHOLD_PROBLEM.same]: () =>
+      vaultName === null
+        ? t('changeThreshold.problem.same')
+        : t('changeThreshold.vault.problem.same', { vault: vaultName }),
+    [THRESHOLD_PROBLEM.unread]: () => t('changeThreshold.problem.unread')
   };
   const acted = asked?.acted ?? null;
-  if (acted !== null && acted.of === THRESHOLD_ACTED.problem) return <FieldError data-problem={acted.problem}>{problems[acted.problem](acted.most ?? 0)}</FieldError>;
+  if (acted !== null && acted.of === THRESHOLD_ACTED.problem)
+    return <FieldError data-problem={acted.problem}>{problems[acted.problem](acted.most ?? 0)}</FieldError>;
   if (acted !== null && acted.of === THRESHOLD_ACTED.walletRefused) {
-    return <Alert variant="destructive" data-wallet-refused><AlertDescription>{t('changeThreshold.refused')}</AlertDescription></Alert>;
+    return (
+      <Alert variant="destructive" data-wallet-refused>
+        <AlertDescription>{t('changeThreshold.refused')}</AlertDescription>
+      </Alert>
+    );
   }
-  const shown = acted !== null && (acted.of === THRESHOLD_ACTED.done || acted.of === THRESHOLD_ACTED.stopped || acted.of === THRESHOLD_ACTED.refused) ? acted : null;
-  const done = shown?.of === THRESHOLD_ACTED.done && shown.state === 'carried-out'
-    ? (vaultName === null ? t('changeThreshold.done.carried', { count: asked?.wanted ?? 0 }) : t('changeThreshold.vault.done.carried', { count: asked?.wanted ?? 0, vault: vaultName }))
-    : (vaultName === null ? t('changeThreshold.done.waiting', { page: t('page.proposals.name') }) : t('changeThreshold.vault.done.waiting', { page: t('page.proposals.name'), vault: vaultName }));
+  const shown =
+    acted !== null &&
+    (acted.of === THRESHOLD_ACTED.done || acted.of === THRESHOLD_ACTED.stopped || acted.of === THRESHOLD_ACTED.refused)
+      ? acted
+      : null;
+  const done =
+    shown?.of === THRESHOLD_ACTED.done && shown.state === 'carried-out'
+      ? vaultName === null
+        ? t('changeThreshold.done.carried', { count: asked?.wanted ?? 0 })
+        : t('changeThreshold.vault.done.carried', { count: asked?.wanted ?? 0, vault: vaultName })
+      : vaultName === null
+        ? t('changeThreshold.done.waiting', { page: t('page.proposals.name') })
+        : t('changeThreshold.vault.done.waiting', { page: t('page.proposals.name'), vault: vaultName });
   return <ActedSays phase={phase} result={shown} done={done} />;
 }

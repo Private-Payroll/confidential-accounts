@@ -60,7 +60,7 @@ export const browserPort = (): Port => localStorage;
 const parse = (raw: string): SealedProfile | null => {
   try {
     const parsed = JSON.parse(raw) as SealedProfile;
-    return (typeof parsed === 'object' && parsed !== null) ? parsed : null;
+    return typeof parsed === 'object' && parsed !== null ? parsed : null;
   } catch {
     return null;
   }
@@ -95,14 +95,18 @@ export function putSealed(port: Port, blob: SealedProfile): void {
  * not provably anybody's.
  */
 const provablyThisWallets = (state: Opened): boolean =>
-  state.of === 'profile'
-  || (state.of === 'unopenable' && (state.cause === 'unreadable' || state.cause === 'not-a-profile'));
+  state.of === 'profile' ||
+  (state.of === 'unopenable' && (state.cause === 'unreadable' || state.cause === 'not-a-profile'));
 
 /**
  * **WHERE THIS WALLET'S PROFILE IS, AND WHAT IS THERE.** The shared name when
  * the record there is provably this wallet's; otherwise this wallet's own name.
  */
-async function locate(port: Port, identity: Identity, key: CryptoKey): Promise<{
+async function locate(
+  port: Port,
+  identity: Identity,
+  key: CryptoKey
+): Promise<{
   readonly name: string;
   readonly blob: SealedProfile | null;
   readonly state: Opened;
@@ -122,14 +126,16 @@ async function locate(port: Port, identity: Identity, key: CryptoKey): Promise<{
    * WALLET'S. Only a wallet holding this secret arrives at this name, so the
    * library's *belong to another account* is not the likely reading here.
    */
-  const state: Opened = opened.of === 'unopenable' && opened.cause === 'another-key'
-    ? {
-      of: 'unopenable',
-      cause: 'another-key',
-      why: 'the details saved for this wallet here will not open with its key, so they are not '
-        + 'what it saved: they have been changed since.',
-    }
-    : opened;
+  const state: Opened =
+    opened.of === 'unopenable' && opened.cause === 'another-key'
+      ? {
+          of: 'unopenable',
+          cause: 'another-key',
+          why:
+            'the details saved for this wallet here will not open with its key, so they are not ' +
+            'what it saved: they have been changed since.'
+        }
+      : opened;
   return { name, blob, state, othersHere: shared !== null };
 }
 
@@ -178,16 +184,19 @@ export class StoreError extends Error {
 }
 
 export async function save(
-  port: Port, identity: Identity, profile: Profile,
-  options: { readonly replacingUnopenable?: boolean } = {},
+  port: Port,
+  identity: Identity,
+  profile: Profile,
+  options: { readonly replacingUnopenable?: boolean } = {}
 ): Promise<void> {
   const key = await profileKey(identity);
   const found = await locate(port, identity, key);
   if (found.state.of === 'unopenable' && options.replacingUnopenable !== true) {
     throw new StoreError(
       'would-overwrite-unopenable',
-      'there are details stored here that this account cannot open. Saving over them '
-      + 'would destroy them. Nothing has been written.');
+      'there are details stored here that this account cannot open. Saving over them ' +
+        'would destroy them. Nothing has been written.'
+    );
   }
   port.setItem(found.name, JSON.stringify(await seal(key, profile)));
 }
@@ -211,11 +220,13 @@ export async function forgetProfile(port: Port, identity: Identity): Promise<voi
  * quietly starting again.
  */
 export async function loadOrEmpty(
-  port: Port, identity: Identity, now: number,
+  port: Port,
+  identity: Identity,
+  now: number
 ): Promise<{ readonly profile: Profile; readonly state: Loaded }> {
   const state = await load(port, identity);
   return {
     state,
-    profile: state.of === 'profile' ? state.profile : emptyProfile(now),
+    profile: state.of === 'profile' ? state.profile : emptyProfile(now)
   };
 }

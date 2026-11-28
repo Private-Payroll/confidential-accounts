@@ -20,9 +20,20 @@
 import type { KeysHeld } from '../../../src/core/company-key.js';
 import { keysByPurpose } from './keys-by-purpose.js';
 import type { Hex } from '../../../src/core/crypto.js';
-import { fromCompanyWire, type CompanyRecordKind, type SealedCompanyRecord } from '../../../src/midnight/sealed-record-wire.js';
+import {
+  fromCompanyWire,
+  type CompanyRecordKind,
+  type SealedCompanyRecord
+} from '../../../src/midnight/sealed-record-wire.js';
 import { openVaultInfo, VAULT_INFO_KIND, VaultInfoRefused } from '../../../src/midnight/vault-info-record.js';
-import { filesThrough, FilingNotBelieved, HttpCompanyRecordStore, type FreshJudge, type ReadsThroughTheView, type ThroughTheView } from './http-sealed-pool-store.js';
+import {
+  filesThrough,
+  FilingNotBelieved,
+  HttpCompanyRecordStore,
+  type FreshJudge,
+  type ReadsThroughTheView,
+  type ThroughTheView
+} from './http-sealed-pool-store.js';
 import type { DirectoryRead } from './vault-page-doors.js';
 import type { RecordsEntered } from './record-entered-here.js';
 
@@ -63,7 +74,6 @@ export type VaultInfoRead =
   | { readonly state: 'none' }
   | { readonly state: 'unread'; readonly why: string; readonly version: number | null };
 
-
 const VAULT = /^[0-9a-f]{64}$/u;
 /** A refusal in the words it was thrown with: the error's message, or what was thrown when it carries none. */
 export const said = (e: unknown): string => String((e as Error)?.message ?? e);
@@ -76,12 +86,16 @@ export const lowerHex = (h: string): Hex => String(h).toLowerCase() as Hex;
 
 export const vaultOf = (vault: string): Hex => {
   const v = String(vault).toLowerCase();
-  if (!VAULT.test(v)) throw new VaultInfoRefused('A vault\'s name is read and filed under the vault\'s address, and this is not one.');
+  if (!VAULT.test(v))
+    throw new VaultInfoRefused("A vault's name is read and filed under the vault's address, and this is not one.");
   return v as Hex;
 };
 
 /** Reads `vault`'s name and description through the one check. Never throws for a record it cannot believe: it says so. */
-export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 'records'>, vault: string): Promise<VaultInfoRead> {
+export async function vaultInfoHere(
+  doors: Pick<VaultInfoDoors, 'companyKeys' | 'records'>,
+  vault: string
+): Promise<VaultInfoRead> {
   const id = vaultOf(vault);
   let rec: SealedCompanyRecord | null;
   try {
@@ -91,12 +105,15 @@ export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 
   }
   if (rec === null) return { state: 'none' };
   try {
-    return { state: 'named', ...openVaultInfo(rec, keysByPurpose(doors.companyKeys).at(rec.keyEpoch)), version: rec.version };
+    return {
+      state: 'named',
+      ...openVaultInfo(rec, keysByPurpose(doors.companyKeys).at(rec.keyEpoch)),
+      version: rec.version
+    };
   } catch (e) {
     return { state: 'unread', why: said(e), version: rec.version };
   }
 }
-
 
 /**
  * The company's records as a device reads and files a vault's name: through
@@ -105,10 +122,23 @@ export async function vaultInfoHere(doors: Pick<VaultInfoDoors, 'companyKeys' | 
  * Given no filing key (null), as on a page that holds no seat secret, it only
  * reads, and may be given a reach that cannot file (`ReadsThroughTheView`).
  */
-export function vaultInfoRecordsFor(accountId: string, signingSecret: Hex | null, judge: FreshJudge, reach: ThroughTheView): VaultInfoRecords;
-export function vaultInfoRecordsFor(accountId: string, signingSecret: null, judge: FreshJudge, reach: ReadsThroughTheView): VaultInfoRecords;
 export function vaultInfoRecordsFor(
-  accountId: string, signingSecret: Hex | null, judge: FreshJudge, reach: ThroughTheView | ReadsThroughTheView,
+  accountId: string,
+  signingSecret: Hex | null,
+  judge: FreshJudge,
+  reach: ThroughTheView
+): VaultInfoRecords;
+export function vaultInfoRecordsFor(
+  accountId: string,
+  signingSecret: null,
+  judge: FreshJudge,
+  reach: ReadsThroughTheView
+): VaultInfoRecords;
+export function vaultInfoRecordsFor(
+  accountId: string,
+  signingSecret: Hex | null,
+  judge: FreshJudge,
+  reach: ThroughTheView | ReadsThroughTheView
 ): VaultInfoRecords {
   const store = filesThrough(reach)
     ? new HttpCompanyRecordStore(accountId, reach, signingSecret, judge)
@@ -117,8 +147,10 @@ export function vaultInfoRecordsFor(
     get: (kind, id) => store.get(kind, id),
     put: (rec) => store.put(rec),
     served: async (kind, id) => {
-      const b = await reach.companyRecord({ kind, id }) as { filed?: unknown } | null;
-      return b?.filed === null || b?.filed === undefined ? null : fromCompanyWire(b.filed, { company: accountId, kind, id }).sealed;
-    },
+      const b = (await reach.companyRecord({ kind, id })) as { filed?: unknown } | null;
+      return b?.filed === null || b?.filed === undefined
+        ? null
+        : fromCompanyWire(b.filed, { company: accountId, kind, id }).sealed;
+    }
   };
 }

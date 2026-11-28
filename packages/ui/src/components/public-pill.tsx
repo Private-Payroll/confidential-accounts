@@ -32,11 +32,17 @@ export function PublicPill({ kind }: { kind: AmountKind }) {
     <Tooltip open={open} onOpenChange={setOpen}>
       <TooltipTrigger asChild onClick={() => setOpen((o) => !o)}>
         <Badge asChild variant="outline">
-          <button type="button" data-slot="public-pill">{t('kit.public.label')}</button>
+          <button type="button" data-slot="public-pill">
+            {t('kit.public.label')}
+          </button>
         </Badge>
       </TooltipTrigger>
       <TooltipContent>
-        {kind === AMOUNT_KIND.held ? t('kit.public.explanation.balance') : kind === AMOUNT_KIND.toBePaid ? t('kit.public.explanation.toBePaid') : t('kit.public.explanation.payment')}
+        {kind === AMOUNT_KIND.held
+          ? t('kit.public.explanation.balance')
+          : kind === AMOUNT_KIND.toBePaid
+            ? t('kit.public.explanation.toBePaid')
+            : t('kit.public.explanation.payment')}
       </TooltipContent>
     </Tooltip>
   );
@@ -45,7 +51,11 @@ export function PublicPill({ kind }: { kind: AmountKind }) {
 /** THE `Private` PILL, where private and public money are listed together and each says which it is. */
 export function PrivatePill() {
   const t = useText();
-  return <Badge variant="outline" data-slot="private-pill">{t('kit.balance.private')}</Badge>;
+  return (
+    <Badge variant="outline" data-slot="private-pill">
+      {t('kit.balance.private')}
+    </Badge>
+  );
 }
 
 /**

@@ -18,13 +18,25 @@
  * device's own public key before it binds anything.
  */
 import { x25519 } from '@noble/curves/ed25519.js';
-import { fromHex, newSigningKeypair, newWrappingKeypair, signingPublicKeyOf, toHex, type Hex } from '../../../src/core/crypto.js';
+import {
+  fromHex,
+  newSigningKeypair,
+  newWrappingKeypair,
+  signingPublicKeyOf,
+  toHex,
+  type Hex
+} from '../../../src/core/crypto.js';
 import { storedSignerLeaf, type LeafScheme } from '../../../src/core/signer-leaf.js';
 import { isSignerRole, type Role } from '../../../src/core/roles.js';
 import { rightsScopeOf, seatRightsRecordOf } from '../../../src/core/seat-rights.js';
 import { newSeatBlinding, seatBlinding, type SeatOpening, type WalletKey } from '../../../src/core/seat-opening.js';
 import type { PendingSeat } from './keyring.js';
-import { proveSeatKeys, type SeatInvitation, type SeatProof, type SeatProofFor } from '../../../src/core/seat-invite-proof.js';
+import {
+  proveSeatKeys,
+  type SeatInvitation,
+  type SeatProof,
+  type SeatProofFor
+} from '../../../src/core/seat-invite-proof.js';
 
 /** The keys a new seat is made of. Public halves leave; the rest never does. */
 export interface NewSeatKeys {
@@ -48,9 +60,12 @@ export function newSeatKeys(walletKey: WalletKey): NewSeatKeys {
   const wk = newWrappingKeypair();
   const { salt, blinding } = newSeatBlinding(walletKey);
   return {
-    signingSecret: sk.secret, signingPublicKey: sk.publicKey,
-    wrappingSecret: wk.secret, wrappingPublicKey: wk.publicKey,
-    blinding, salt,
+    signingSecret: sk.secret,
+    signingPublicKey: sk.publicKey,
+    wrappingSecret: wk.secret,
+    wrappingPublicKey: wk.publicKey,
+    blinding,
+    salt
   };
 }
 
@@ -65,17 +80,24 @@ const HEX32 = /^[0-9a-f]{64}$/u;
  * bytes of hex, and makes nothing then.
  */
 export function seatKeysFrom(
-  walletKey: WalletKey, given: { readonly signingSecret: Hex; readonly wrappingSecret: Hex; readonly salt: Hex },
+  walletKey: WalletKey,
+  given: { readonly signingSecret: Hex; readonly wrappingSecret: Hex; readonly salt: Hex }
 ): NewSeatKeys {
-  const [signingSecret, wrappingSecret, salt] = [given.signingSecret, given.wrappingSecret, given.salt]
-    .map((v) => (typeof v === 'string' ? v.toLowerCase() : ''));
+  const [signingSecret, wrappingSecret, salt] = [given.signingSecret, given.wrappingSecret, given.salt].map((v) =>
+    typeof v === 'string' ? v.toLowerCase() : ''
+  );
   if (![signingSecret, wrappingSecret, salt].every((v) => HEX32.test(v!))) {
-    throw new Error('Your wallet gave keys for your seat that cannot be used, so nothing was created. Close the wallet\'s window, reload this page and start again.');
+    throw new Error(
+      "Your wallet gave keys for your seat that cannot be used, so nothing was created. Close the wallet's window, reload this page and start again."
+    );
   }
   return {
-    signingSecret: signingSecret!, signingPublicKey: signingPublicKeyOf(signingSecret!),
-    wrappingSecret: wrappingSecret!, wrappingPublicKey: toHex(x25519.getPublicKey(fromHex(wrappingSecret!))),
-    blinding: seatBlinding({ tag: walletKey.tag, value: walletKey.value.toLowerCase() }, salt!) as Hex, salt: salt!,
+    signingSecret: signingSecret!,
+    signingPublicKey: signingPublicKeyOf(signingSecret!),
+    wrappingSecret: wrappingSecret!,
+    wrappingPublicKey: toHex(x25519.getPublicKey(fromHex(wrappingSecret!))),
+    blinding: seatBlinding({ tag: walletKey.tag, value: walletKey.value.toLowerCase() }, salt!) as Hex,
+    salt: salt!
   };
 }
 
@@ -95,7 +117,9 @@ export interface SeatDoors {
    * wallet. The secrets are never a field.
    */
   publish(payload: {
-    signingPublicKey: Hex; wrappingPublicKey: Hex; leafCommitment: Hex;
+    signingPublicKey: Hex;
+    wrappingPublicKey: Hex;
+    leafCommitment: Hex;
     /** The leaf's opening: the wallet key and salt its blinding is made from, with the public key and scope it is made over. */
     opening: SeatOpening;
     /** The nonce and the proof. The invitation's secret is not a field either. */
@@ -135,7 +159,7 @@ export async function acceptSeatOnThisDevice(
    * rights on those vaults. Without it, as for a code made before anybody chose a role, the seat is made for every
    * right on every vault.
    */
-  offered?: { readonly role: Role; readonly vaults?: readonly Hex[] },
+  offered?: { readonly role: Role; readonly vaults?: readonly Hex[] }
 ): Promise<AcceptedSeat> {
   if (invitation && invitation.accountId !== accountId) {
     throw new Error('this invitation is for a different company from the one being joined. Nothing was sent.');
@@ -149,13 +173,16 @@ export async function acceptSeatOnThisDevice(
    * device because that is where the circuit's witness reads it, and a writer
    * that took it from somewhere else is a seat nobody can prove.
    */
-  const rights = offered !== undefined && isSignerRole(offered.role) ? seatRightsRecordOf(offered.role, offered.vaults) : null;
+  const rights =
+    offered !== undefined && isSignerRole(offered.role) ? seatRightsRecordOf(offered.role, offered.vaults) : null;
   const scope = rights === null ? commitments.allVaults() : rightsScopeOf(rights);
   /* The seat's opening, kept with its secrets: what shows the company's members that the leaf was made for this wallet key. */
   const opening: SeatOpening = {
     publicKey: String(commitments.signerPublicKey(keys.signingSecret)).toLowerCase(),
-    scope: String(scope).toLowerCase(), blinding: String(keys.blinding).toLowerCase(),
-    walletKey: { tag: walletKey.tag, value: walletKey.value.toLowerCase() }, salt: String(keys.salt).toLowerCase(),
+    scope: String(scope).toLowerCase(),
+    blinding: String(keys.blinding).toLowerCase(),
+    walletKey: { tag: walletKey.tag, value: walletKey.value.toLowerCase() },
+    salt: String(keys.salt).toLowerCase()
   };
   const seat: PendingSeat = {
     accountId,
@@ -165,7 +192,7 @@ export async function acceptSeatOnThisDevice(
     blinding: keys.blinding,
     scope,
     ...(rights === null ? {} : { rights }),
-    opening,
+    opening
   };
 
   /*
@@ -185,11 +212,13 @@ export async function acceptSeatOnThisDevice(
   const published = {
     signingPublicKey: keys.signingPublicKey,
     wrappingPublicKey: keys.wrappingPublicKey,
-    leafCommitment,
+    leafCommitment
   };
-  const signer = await doors.publish(invitation
-    ? { ...published, opening, seatProof: proveSeatKeys(invitation, published, invitation) }
-    : { ...published, opening });
+  const signer = await doors.publish(
+    invitation
+      ? { ...published, opening, seatProof: proveSeatKeys(invitation, published, invitation) }
+      : { ...published, opening }
+  );
 
   if (signer.id !== null) await doors.promote(keys.signingPublicKey, signer.id);
   return { signerId: signer.id, wrappingSecret: keys.wrappingSecret };

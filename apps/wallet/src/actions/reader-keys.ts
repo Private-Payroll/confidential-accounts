@@ -1,11 +1,24 @@
-import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import {
+  readAccountAddress,
+  readCompanyLabel,
+  type AccountAddress,
+  type CompanyLabel
+} from 'midnight-identity/profile/company-label';
 import type { AccountHoldersRead } from 'midnight-identity/profile/records-key';
 import type { ReadKeysReleased } from 'midnight-identity/profile/read-keys-release';
 import { companyJudges } from '../../../../packages/web-shared/src/company-judges.js';
 import { serviceNotReached } from '../../../../packages/web-shared/src/hand-over.js';
-import { grantsReadWith, readerKeysHere, type PurposeWrapsHeld, type ReaderKeysFound } from '../../../../packages/web-shared/src/purpose-wraps.js';
+import {
+  grantsReadWith,
+  readerKeysHere,
+  type PurposeWrapsHeld,
+  type ReaderKeysFound
+} from '../../../../packages/web-shared/src/purpose-wraps.js';
 import type { ViewHeld } from '../../../../packages/web-shared/src/company-view.js';
-import { readerDirectoryFor, type ReaderDirectoryDoors } from '../../../../packages/web-shared/src/reader-directory-here.js';
+import {
+  readerDirectoryFor,
+  type ReaderDirectoryDoors
+} from '../../../../packages/web-shared/src/reader-directory-here.js';
 import { treeKeptInMemory } from '../../../../packages/web-shared/src/tree-kept-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { readerKeypairOfThisWallet } from '../screens/join-code-reader-key.js';
@@ -38,8 +51,13 @@ type ChainReads = Pick<ReaderDirectoryDoors, 'leaves' | 'anchored' | 'invitedSea
   readonly holders: () => Promise<AccountHoldersRead>;
 };
 
-const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({ key: `act.reader-keys.why.${key}`, ...(values === undefined ? {} : { values }) });
-const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => { throw new StepRefused(why(key, values)); };
+const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
+  key: `act.reader-keys.why.${key}`,
+  ...(values === undefined ? {} : { values })
+});
+const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => {
+  throw new StepRefused(why(key, values));
+};
 
 /** The company the page names, or why it names none this wallet can read. */
 const companyOf = (fields: Readonly<Record<string, string>>): ReadCompany | Words => {
@@ -52,7 +70,7 @@ const companyOf = (fields: Readonly<Record<string, string>>): ReadCompany | Word
 /** The keys `held` carries, in the one shape the page reads (`readReleasedReadKeys`). */
 export const releasedOf = (held: PurposeWrapsHeld): ReadKeysReleased => ({
   accountId: held.accountId,
-  byEpoch: Object.fromEntries([...held.byEpoch].map(([epoch, keys]) => [String(epoch), Object.fromEntries(keys)])),
+  byEpoch: Object.fromEntries([...held.byEpoch].map(([epoch, keys]) => [String(epoch), Object.fromEntries(keys)]))
 });
 
 /**
@@ -60,37 +78,71 @@ export const releasedOf = (held: PurposeWrapsHeld): ReadKeysReleased => ({
  * unless `readsFor` reads it: who holds the account, each seat's leaf, the anchor of the company's records, and the seat
  * each signer invitation took.
  */
-function readerViewOf(ctx: StepContext, reach: ReaderKeysReach, c: ReadCompany): ChainReads & { readonly view: ViewHeld<AccountHoldersRead> } {
+function readerViewOf(
+  ctx: StepContext,
+  reach: ReaderKeysReach,
+  c: ReadCompany
+): ChainReads & { readonly view: ViewHeld<AccountHoldersRead> } {
   const chain = (): CompanyChain => reach.chain();
   const builder = (): VaultBuilderClient => reach.builder();
   const given = reach.readsFor?.(c);
-  const holders = given?.holders ?? (async (): Promise<AccountHoldersRead> => {
-    const read = await chain().holders(c.account, c.label);
-    if ('key' in read) throw new StepRefused(read);
-    return read;
-  });
+  const holders =
+    given?.holders ??
+    (async (): Promise<AccountHoldersRead> => {
+      const read = await chain().holders(c.account, c.label);
+      if ('key' in read) throw new StepRefused(read);
+      return read;
+    });
   /* The judges are made after the view they read through, and the view's anchor reads are the judges'. */
   let judges: ReturnType<typeof companyJudges> | null = null;
-  const made = (): ReturnType<typeof companyJudges> => judges ?? (() => { throw new Error('the company was read before its judges were made.'); })();
-  const view = ctx.viewFor(c.accountId, {
-    holders, onChain: async () => companyAnchorsOnChain(builder(), c.account, chain().indexer), builder: { anchorHeads: (ask) => builder().anchorHeads(ask) },
-    kept: () => treeKeptInMemory(),
-    chain: ownChainReadsOf({ callState: (account) => chain().callState(account) }, c.account),
-    directory: async () => { throw new Error('a reader holds no seat, so it believes no seat directory of its own.'); },
-  }, (v, asked) => made().heldReaderFor(c.accountId, c.account)(v, asked));
+  const made = (): ReturnType<typeof companyJudges> =>
+    judges ??
+    (() => {
+      throw new Error('the company was read before its judges were made.');
+    })();
+  const view = ctx.viewFor(
+    c.accountId,
+    {
+      holders,
+      onChain: async () => companyAnchorsOnChain(builder(), c.account, chain().indexer),
+      builder: { anchorHeads: (ask) => builder().anchorHeads(ask) },
+      kept: () => treeKeptInMemory(),
+      chain: ownChainReadsOf({ callState: (account) => chain().callState(account) }, c.account),
+      directory: async () => {
+        throw new Error('a reader holds no seat, so it believes no seat directory of its own.');
+      }
+    },
+    (v, asked) => made().heldReaderFor(c.accountId, c.account)(v, asked)
+  );
   /* A reader has no seat: no key of its own to judge with, no served key, no company key released. */
   judges = companyJudges({
-    indexer: async () => chain().indexer, builder: async () => builder(),
-    view: (id) => { if (id !== c.accountId) throw new Error('that is not the company this action reads.'); return view.current(); },
-    keysFor: () => null, servedKeyFor: () => { throw new Error('a reader is given no company key.'); },
-    released: () => null, askReleased: async () => null, treeKept: () => treeKeptInMemory(),
-    openAccount: async () => null, seatsAdmittedFor: async () => new Set(), noAccount: () => refuse('not-on-chain'),
+    indexer: async () => chain().indexer,
+    builder: async () => builder(),
+    view: (id) => {
+      if (id !== c.accountId) throw new Error('that is not the company this action reads.');
+      return view.current();
+    },
+    keysFor: () => null,
+    servedKeyFor: () => {
+      throw new Error('a reader is given no company key.');
+    },
+    released: () => null,
+    askReleased: async () => null,
+    treeKept: () => treeKeptInMemory(),
+    openAccount: async () => null,
+    seatsAdmittedFor: async () => new Set(),
+    noAccount: () => refuse('not-on-chain')
   });
-  return given !== undefined ? { ...given, view } : {
-    view,
-    holders, leaves: judges.leavesFor(c.account), anchored: judges.anchoredForAReader(c.accountId, c.label, c.account),
-    invitedSeats: judges.invitedSeatsFor(c.label, c.account), proposalIdentity: judges.identityHere,
-  };
+  return given !== undefined
+    ? { ...given, view }
+    : {
+        view,
+        holders,
+        leaves: judges.leavesFor(c.account),
+        anchored: judges.anchoredForAReader(c.accountId, c.label, c.account),
+        invitedSeats: judges.invitedSeatsFor(c.label, c.account),
+        proposalIdentity: judges.identityHere
+      };
 }
 
 /** What the read grants in force give this wallet, read through the reader's view of the company and judged here. */
@@ -98,9 +150,10 @@ async function readKeysInForce(ctx: StepContext, reach: ReaderKeysReach, c: Read
   const { view, holders: _onTheChain, ...reads } = readerViewOf(ctx, reach, c);
   const pair = readerKeypairOfThisWallet(ctx.held.identity, c.label);
   return readerKeysHere({
-    accountId: c.accountId, versions: grantsReadWith((asked) => view.current().records(asked), c.accountId),
+    accountId: c.accountId,
+    versions: grantsReadWith((asked) => view.current().records(asked), c.accountId),
     me: { recipient: pair.publicKey, wrappingSecret: pair.secret },
-    directoryFor: readerDirectoryFor({ view: view.current(), label: c.label, account: c.account, ...reads }),
+    directoryFor: readerDirectoryFor({ view: view.current(), label: c.label, account: c.account, ...reads })
   });
 }
 
@@ -111,31 +164,33 @@ export function readerKeysAction(reach: ReaderKeysReach): ActionDefinition {
     shown: async (intent): Promise<readonly ShownLine[]> => [
       { key: 'act.reader-keys.shown.company', values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
       { key: 'act.reader-keys.shown.keys', from: 'action' },
-      { key: 'act.reader-keys.shown.nothing-else', from: 'action' },
+      { key: 'act.reader-keys.shown.nothing-else', from: 'action' }
     ],
     checks: [{ key: 'act.reader-keys.check.grant' }],
     check: async (intent) => {
       const c = companyOf(intent.fields);
       return 'key' in c ? c : null;
     },
-    steps: () => [{
-      title: { key: 'act.reader-keys.step.read' },
-      run: async (ctx) => {
-        const c = companyOf(ctx.intent.fields);
-        if ('key' in c) throw new StepRefused(c);
-        let found: ReaderKeysFound;
-        try {
-          found = await readKeysInForce(ctx, reach, c);
-        } catch (e) {
-          if (e instanceof ActionStopped || e instanceof StepRefused) throw e;
-          if (serviceNotReached(e)) throw new StepRefused(RECORDS_UNREACHED);
-          if ((e as { status?: unknown } | null)?.status === 404) return refuse('not-a-reader-here');
-          return refuse('not-read', { says: String((e as Error)?.message ?? e) });
+    steps: () => [
+      {
+        title: { key: 'act.reader-keys.step.read' },
+        run: async (ctx) => {
+          const c = companyOf(ctx.intent.fields);
+          if ('key' in c) throw new StepRefused(c);
+          let found: ReaderKeysFound;
+          try {
+            found = await readKeysInForce(ctx, reach, c);
+          } catch (e) {
+            if (e instanceof ActionStopped || e instanceof StepRefused) throw e;
+            if (serviceNotReached(e)) throw new StepRefused(RECORDS_UNREACHED);
+            if ((e as { status?: unknown } | null)?.status === 404) return refuse('not-a-reader-here');
+            return refuse('not-read', { says: String((e as Error)?.message ?? e) });
+          }
+          if (found.of === 'taken-away') return refuse('taken-away');
+          if (found.of === 'none' || found.held.byEpoch.size === 0) return refuse('no-grant');
+          ctx.releaseReadKeys(releasedOf(found.held));
         }
-        if (found.of === 'taken-away') return refuse('taken-away');
-        if (found.of === 'none' || found.held.byEpoch.size === 0) return refuse('no-grant');
-        ctx.releaseReadKeys(releasedOf(found.held));
-      },
-    }],
+      }
+    ]
   } satisfies ActionDefinition);
 }

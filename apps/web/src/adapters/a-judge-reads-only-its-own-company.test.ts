@@ -14,7 +14,13 @@ describe('A JUDGE READS ONLY ITS OWN COMPANY', () => {
   });
 
   it('refuses any other company with the fault that names the mistake, and reads nothing', () => {
-    const refused = (() => { try { return onlyItsOwn(view)('acc_2'); } catch (e) { return e; } })();
+    const refused = (() => {
+      try {
+        return onlyItsOwn(view)('acc_2');
+      } catch (e) {
+        return e;
+      }
+    })();
     expect(refused).toBeInstanceOf(Fault);
     expect(String((refused as Error).message)).toContain(FAULT.judgeAskedAnotherCompany);
   });

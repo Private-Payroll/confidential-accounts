@@ -21,8 +21,7 @@ export function fromBase64Url(value: string): Uint8Array {
   if (!ALPHABET.test(value)) {
     throw new Error('not base64url: it may only contain A-Z a-z 0-9 - and _');
   }
-  const padded = value.replace(/-/gu, '+').replace(/_/gu, '/')
-    + '='.repeat((4 - (value.length % 4)) % 4);
+  const padded = value.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (value.length % 4)) % 4);
   const binary = atob(padded);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);

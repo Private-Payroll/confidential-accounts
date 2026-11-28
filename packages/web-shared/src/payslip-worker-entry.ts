@@ -43,7 +43,7 @@ export const realDeps: PayslipReaderDeps = {
           if (read === null) return null;
           const { ContractState } = await import('@midnight-ntwrk/compact-runtime');
           return decodedState(read.contractState, ContractState);
-        },
+        }
       }));
       reader.catch(() => readers.delete(which));
       readers.set(which, reader);
@@ -54,7 +54,7 @@ export const realDeps: PayslipReaderDeps = {
   movementOf: async (payment) => {
     const { contractCircuits, movementOfPayslip } = await import('./payslip-movement.js');
     return movementOfPayslip(await contractCircuits(), payment);
-  },
+  }
 };
 
 /**

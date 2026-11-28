@@ -11,7 +11,9 @@ import { describe, expect, it } from 'vitest';
 import { afterWrites, watchedStore } from './settled-store.js';
 
 const SEALED = JSON.stringify({ v: 1, iv: 'aaaa', sealed: 'bbbb' });
-const later = (ms: number, act: () => void): void => { setTimeout(act, ms); };
+const later = (ms: number, act: () => void): void => {
+  setTimeout(act, ms);
+};
 
 describe('afterWrites', () => {
   it('WAITS PAST A PLAIN WRITE for the sealed record that follows it', async () => {
@@ -24,9 +26,14 @@ describe('afterWrites', () => {
     const port = watchedStore();
     const written = afterWrites(port);
     let returned = false;
-    const waiting = written().then(() => { returned = true; });
+    const waiting = written().then(() => {
+      returned = true;
+    });
     port.setItem('note', JSON.stringify({ wallet: 'w' }));
-    for (let i = 0; i < 20; i += 1) await new Promise((r) => { setTimeout(r, 0); });
+    for (let i = 0; i < 20; i += 1)
+      await new Promise((r) => {
+        setTimeout(r, 0);
+      });
     expect(returned, 'the wait returned on a plain write, before any sealed record').toBe(false);
     port.setItem('record', SEALED);
     await waiting;

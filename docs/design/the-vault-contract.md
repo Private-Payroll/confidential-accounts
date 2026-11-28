@@ -133,8 +133,8 @@ NIGHT is an UNSHIELDED token by definition — `nativeToken()` returns
 `UnshieldedTokenType` in the ledger's own type declarations — and there is no conversion; a
 token's type is fixed at creation. So a vault that only spoke Zswap could not
 hold the asset this product launches with, and the pool above is half of what
-the design specifies: *"Each vault holds both public and private money, side by
-side. There is no such thing as a 'private vault' or a 'public vault'."*
+the design specifies: _"Each vault holds both public and private money, side by
+side. There is no such thing as a 'private vault' or a 'public vault'."_
 
 THIS SET IS NOT A BALANCE, AND THAT IS THE WHOLE POINT.
 
@@ -148,8 +148,8 @@ by itself, to let this vault send public money it does not have.**
 
 So there is NO NOTE, NO NONCE, NO COMMITMENT, NO MERKLE INDEX and NO POOL on
 this side, and this contract keeps NO SECOND COPY OF THE AMOUNT. The design's
-own warning — *"its own record of what it holds, versus what it actually
-holds, is two records of one fact"* — says that copy is unavoidable for
+own warning — _"its own record of what it holds, versus what it actually
+holds, is two records of one fact"_ — says that copy is unavoidable for
 private coins because the chain will not tell us. Here the chain will tell
 us, so keeping one would be manufacturing the hazard rather than accepting it.
 
@@ -165,7 +165,7 @@ IT IS COMPLETE, AND THAT IS MEASURED RATHER THAN HOPED. A UTXO's owner is a
 `ledger/src/structure.rs` in midnightntwrk/midnight-ledger 8.2.0-rc.1, and the definition of `Utxo` says the same,
 so **nobody can credit this vault's unshielded balance without calling
 `depositUnshielded`.** There is no unshielded equivalent of the shielded
-side's *"funded by anybody who learns its address"*: for public money the
+side's _"funded by anybody who learns its address"_: for public money the
 door is the only way in.
 
 WHAT IT PUBLISHES: which token types this vault has held. Public already —
@@ -720,12 +720,12 @@ vault for some address; the payroll it belongs to stays sealed.
 #### `payoutUnshielded`, at `const details = unshieldedPayoutDetails(recipient, …`
 
 1. ASK THE ACCOUNT, NAMING OURSELVES — `payout`'s step 1, unchanged, and
-that is the point of keying the record on the leaf alone rather than a
-coincidence.
+   that is the point of keying the record on the leaf alone rather than a
+   coincidence.
 
 `recordPayment` takes `details` as 32 opaque bytes and records
 `paidMovementOf(payoutLeaf(details, nonce))`. It never sees a token, a
-recipient or an amount, so *"this leaf has been paid, once, ever"* is the
+recipient or an amount, so _"this leaf has been paid, once, ever"_ is the
 same fact about the same payee whichever kind of money settles it. The
 account needs no change for it.
 
@@ -898,8 +898,8 @@ retired, and a governance decision would be blocked by a balance of zero.
 
 IT CANNOT LIE, AND THAT IS WHY THE SET IS SAFE TO SHRINK. The removal is
 guarded by the ledger's own balance, not by anything this contract or its
-client believes: `unshieldedBalanceLte(token, 0)` is *"the chain says I hold
-none of this"*, and the chain re-checks it when the transaction applies. So
+client believes: `unshieldedBalanceLte(token, 0)` is _"the chain says I hold
+none of this"_, and the chain re-checks it when the transaction applies. So
 the set can only ever lose a colour the vault genuinely has none of.
 
 `unshieldedBalanceLte(…, 0)` RATHER THAN `unshieldedBalance(…) == 0`, for
@@ -932,7 +932,7 @@ chain and the company's rulebook stops naming the thing that holds it. The
 only contract that can see this pool is this one, so the refusal can only be
 written here.
 
-AND THAT REFUSAL IS *"the CONTRACT's rather than the client's"* FOR ONE CONTRACT AND NOT FOR THE PAIR, and the difference is the
+AND THAT REFUSAL IS _"the CONTRACT's rather than the client's"_ FOR ONE CONTRACT AND NOT FOR THE PAIR, and the difference is the
 whole of it: the refusal is THIS contract's and the operation is the
 ACCOUNT's. `ConfidentialAccount.retireVault` is an `export circuit` with
 neither of the two asserts below — it requires an approved retire proposal
@@ -946,13 +946,13 @@ ARE ADVISORY ON THE PATH THAT DOES NOT.
 WHAT THAT COSTS IS NOT FROZEN MONEY — `recordPayment` does not consult
 `vaults`, so a retired vault still pays out an approved run, and the
 paragraph below says so from the other side. What is destroyed is what the
-registry IS: the answer to *which vaults are this company's*, for precisely
+registry IS: the answer to _which vaults are this company's_, for precisely
 the vault that still holds the money. It is recoverable through `adopt` by a
 further governed round, if anyone still knows the address, which is why what
 is lost is the registry's answer rather than the money.
 
 IT IS ACCEPTED AND NOT FIXED, AND THE DECISION IS WRITTEN DOWN RATHER THAN
-REMEMBERED: it is an accepted risk — *leave it*. THERE IS NO
+REMEMBERED: it is an accepted risk — _leave it_. THERE IS NO
 CALLER CHECK TO WRITE. Moving the guard would mean handing the account a
 fact only this contract can assert — a new argument on `retireVault` — and
 THE ACCOUNT CANNOT VERIFY WHAT THIS CONTRACT TELLS IT, so the argument would

@@ -90,20 +90,28 @@ export async function superAdminsHere(
     readonly account: string;
     readonly createdByTheCompany: readonly string[];
     readonly inProgress: SuperAdminChangeInProgress | null;
-  },
+  }
 ): Promise<SuperAdminsHere> {
   const account = input.account.toLowerCase();
-  if (!HEX64.test(account)) throw new Error('a company\'s account is named by its sixty-four character address, and this is not one. Name the account by its address as the page shows it.');
+  if (!HEX64.test(account))
+    throw new Error(
+      "a company's account is named by its sixty-four character address, and this is not one. Name the account by its address as the page shows it."
+    );
   const read = await reads.accountAt(account);
   if (read === null) {
-    throw new Error('the indexer your wallet names does not hold the company\'s account yet, so who its super admins are cannot '
-      + 'be read. Wait for your wallet to catch up, then try again.');
+    throw new Error(
+      "the indexer your wallet names does not hold the company's account yet, so who its super admins are cannot " +
+        'be read. Wait for your wallet to catch up, then try again.'
+    );
   }
   const held = read.authority;
-  if ('why' in held) throw new Error(`who holds the company's account cannot be read, so its super admins are not known: ${held.why}`);
+  if ('why' in held)
+    throw new Error(`who holds the company's account cannot be read, so its super admins are not known: ${held.why}`);
   if (read.vaults === null) {
-    throw new Error('the company\'s account does not list the vaults it adopted and retired, so its contracts cannot be found. '
-      + 'Reload the page; if it happens again, contact support.');
+    throw new Error(
+      "the company's account does not list the vaults it adopted and retired, so its contracts cannot be found. " +
+        'Reload the page; if it happens again, contact support.'
+    );
   }
   const found = new Map<string, FoundBy[]>();
   const add = (address: string, by: FoundBy) => {
@@ -115,25 +123,31 @@ export async function superAdminsHere(
   for (const v of read.vaults.retired) add(v, 'retired');
   for (const v of input.createdByTheCompany) {
     if (!HEX64.test(v.toLowerCase())) {
-      throw new Error(`the company's records name a vault by "${v}", which is not an address, so the records are damaged. Reload the page.`);
+      throw new Error(
+        `the company's records name a vault by "${v}", which is not an address, so the records are damaged. Reload the page.`
+      );
     }
     add(v, 'created by the company');
   }
 
-  const must = input.inProgress === null
-    ? { committee: held.committee, threshold: held.threshold }
-    : { committee: input.inProgress.committee, threshold: input.inProgress.threshold };
-  const isCurrent = (a: ContractAuthority): boolean => sameCommittee({ committee: a.committee, threshold: a.threshold }, must);
+  const must =
+    input.inProgress === null
+      ? { committee: held.committee, threshold: held.threshold }
+      : { committee: input.inProgress.committee, threshold: input.inProgress.threshold };
+  const isCurrent = (a: ContractAuthority): boolean =>
+    sameCommittee({ committee: a.committee, threshold: a.threshold }, must);
 
   const contracts: Array<SuperAdminsHere['contracts'][number]> = [
-    { contract: 'account', address: account, foundBy: [], authority: held, why: null, current: isCurrent(held) },
+    { contract: 'account', address: account, foundBy: [], authority: held, why: null, current: isCurrent(held) }
   ];
   for (const [address, foundBy] of found) {
     const vault = await reads.authorityAt(address);
     const at = vault === null ? { why: 'the indexer your wallet names holds no contract at this address.' } : vault;
-    contracts.push('why' in at
-      ? { contract: 'vault', address, foundBy, authority: null, why: at.why, current: false }
-      : { contract: 'vault', address, foundBy, authority: at, why: null, current: isCurrent(at) });
+    contracts.push(
+      'why' in at
+        ? { contract: 'vault', address, foundBy, authority: null, why: at.why, current: false }
+        : { contract: 'vault', address, foundBy, authority: at, why: null, current: isCurrent(at) }
+    );
   }
   return {
     account,
@@ -141,7 +155,7 @@ export async function superAdminsHere(
     refused: whyNotInstallable(held),
     inProgress: input.inProgress,
     contracts,
-    behind: contracts.filter((c) => !c.current).map((c) => c.address),
+    behind: contracts.filter((c) => !c.current).map((c) => c.address)
   };
 }
 
@@ -165,8 +179,10 @@ export interface SuperAdminShown {
   readonly mine: boolean;
 }
 
-const sameKey = (a: { readonly tag: string; readonly value: string }, b: { readonly tag: string; readonly value: string }): boolean =>
-  a.tag === b.tag && a.value.toLowerCase() === b.value.toLowerCase();
+const sameKey = (
+  a: { readonly tag: string; readonly value: string },
+  b: { readonly tag: string; readonly value: string }
+): boolean => a.tag === b.tag && a.value.toLowerCase() === b.value.toLowerCase();
 
 /**
  * **EVERY SUPER ADMIN, AS A DEVICE SHOWS THEM, AND WHETHER THIS DEVICE IS ONE.**
@@ -182,33 +198,38 @@ const sameKey = (a: { readonly tag: string; readonly value: string }, b: { reado
 export function superAdminsShown(
   superAdmins: Pick<ContractAuthority, 'committee'>,
   seats: readonly Pick<DirectorySeat, 'seat' | 'person' | 'committeeKey'>[],
-  ownWalletKey: { readonly tag: string; readonly value: string } | null,
+  ownWalletKey: { readonly tag: string; readonly value: string } | null
 ): { readonly shown: readonly SuperAdminShown[]; readonly iAmOne: boolean } {
   const shown = superAdmins.committee.map((key) => {
     const proved = seats.find((x) => x.committeeKey !== undefined && sameKey(x.committeeKey, key));
     return {
       key: { tag: key.tag, value: key.value },
       seat: proved === undefined ? null : { seat: proved.seat, person: proved.person },
-      mine: ownWalletKey !== null && sameKey(ownWalletKey, key),
+      mine: ownWalletKey !== null && sameKey(ownWalletKey, key)
     };
   });
   return { shown, iAmOne: shown.some((x) => x.mine) };
 }
 
 /** Said on every device while the account's committee holds one key: never a refusal, the company's own choice. */
-export const ONE_SUPER_ADMIN_LEFT = 'only one super admin\'s key holds the company\'s contracts. If that key is lost, '
-  + 'nobody can ever change who holds them again. Add another super admin while you can.';
+export const ONE_SUPER_ADMIN_LEFT =
+  "only one super admin's key holds the company's contracts. If that key is lost, " +
+  'nobody can ever change who holds them again. Add another super admin while you can.';
 
 /** Said on every device while the account's committee needs every one of its keys: never a refusal, the company's own choice. */
-export const EVERY_SUPER_ADMIN_NEEDED = 'every super admin\'s key is needed to change who holds the company\'s contracts. If any one '
-  + 'of them is lost, nobody can ever change who holds them again. Add another super admin, or need fewer of them, while you can.';
+export const EVERY_SUPER_ADMIN_NEEDED =
+  "every super admin's key is needed to change who holds the company's contracts. If any one " +
+  'of them is lost, nobody can ever change who holds them again. Add another super admin, or need fewer of them, while you can.';
 
 /**
  * **WHAT A DEVICE SAYS OF A COMMITTEE THAT ONE LOST KEY WOULD STRAND**:
  * `ONE_SUPER_ADMIN_LEFT` for a lone key, `EVERY_SUPER_ADMIN_NEEDED` where its
  * threshold is its size, or null. Never a refusal.
  */
-export function committeeWarning(c: { readonly committee: readonly unknown[]; readonly threshold: number }): string | null {
+export function committeeWarning(c: {
+  readonly committee: readonly unknown[];
+  readonly threshold: number;
+}): string | null {
   if (c.committee.length === 1) return ONE_SUPER_ADMIN_LEFT;
   return c.committee.length > 1 && c.threshold >= c.committee.length ? EVERY_SUPER_ADMIN_NEEDED : null;
 }
@@ -234,7 +255,7 @@ export async function superAdminsSeenHere(
   input: Parameters<typeof superAdminsHere>[1] & {
     readonly seats: Parameters<typeof superAdminsShown>[1];
     readonly ownWalletKey: { readonly tag: string; readonly value: string } | null;
-  },
+  }
 ): Promise<SuperAdminsSeen> {
   const here = await superAdminsHere(reads, input);
   const { shown, iAmOne } = superAdminsShown(here.superAdmins, input.seats, input.ownWalletKey);

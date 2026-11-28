@@ -4,7 +4,15 @@
  * the proving worker beside the vault's other transactions; everything it needs is handed in, and the secret is
  * handed in by the page that opened it from the company's records and is kept by nothing here.
  */
-import { DIGITS, fromHex, HEX64, throwawayKeys, vaultCallWithTheAccount, type PayoutChain, type VaultBuilderDeps } from './vault-builder.js';
+import {
+  DIGITS,
+  fromHex,
+  HEX64,
+  throwawayKeys,
+  vaultCallWithTheAccount,
+  type PayoutChain,
+  type VaultBuilderDeps
+} from './vault-builder.js';
 import { SPENDS_NO_COIN } from './contract-call-built.js';
 /**
  * **A SECRET RUN AS IT CROSSES BETWEEN THE PAGE AND THIS WORKER**, a first secret
@@ -34,11 +42,13 @@ export interface SecretRunOnTheWire {
 }
 
 const digitsOf = (what: string, d: unknown): bigint => {
-  if (typeof d !== 'string' || !DIGITS.test(d)) throw new Error(`the secret run's ${what} is not a whole number, so nothing was built.`);
+  if (typeof d !== 'string' || !DIGITS.test(d))
+    throw new Error(`the secret run's ${what} is not a whole number, so nothing was built.`);
   return BigInt(d);
 };
 const hex32Of = (what: string, h: unknown): Uint8Array => {
-  if (typeof h !== 'string' || !HEX64.test(h)) throw new Error(`the secret run's ${what} is not thirty-two bytes, so nothing was built.`);
+  if (typeof h !== 'string' || !HEX64.test(h))
+    throw new Error(`the secret run's ${what} is not thirty-two bytes, so nothing was built.`);
   return fromHex(h);
 };
 
@@ -59,38 +69,58 @@ export async function buildSetNonceSecret(
     readonly account: string;
     readonly run: SecretRunOnTheWire;
     /** The secret the run sets, which the vault takes only from a device that holds it; `earlier` the one it carries. */
-    readonly secret: string; readonly earlier?: string;
+    readonly secret: string;
+    readonly earlier?: string;
     readonly proposal: string;
     readonly opensAt: string;
     readonly closesAt: string;
     readonly chain: PayoutChain;
-  },
+  }
 ): Promise<{ proven: Uint8Array }> {
   const vault = String(input.vault).toLowerCase();
   const account = String(input.account).toLowerCase();
   const r = input.run;
   if (!Array.isArray(r?.edge) || r.edge.length !== 10) {
-    throw new Error('this secret run does not show where its copies end, so nothing was built. Read the vault\'s start again to get a complete run.');
+    throw new Error(
+      "this secret run does not show where its copies end, so nothing was built. Read the vault's start again to get a complete run."
+    );
   }
   if (!HEX64.test(vault) || !HEX64.test(account) || String(r?.vault).toLowerCase() !== vault) {
-    throw new Error('this secret is not for this vault and this company\'s account, so nothing was built.');
+    throw new Error("this secret is not for this vault and this company's account, so nothing was built.");
   }
   const run = {
-    proposal: hex32Of('identity', input.proposal), runVault: fromHex(vault), root: hex32Of('root', r.root),
-    payees: digitsOf('number of leaves', r.payees), opensAt: digitsOf('opening', input.opensAt),
-    closesAt: digitsOf('close', input.closesAt), required: 0n, salt: hex32Of('salt', r.salt),
-    nonce: hex32Of('nonce', r.nonce), asset: hex32Of('asset', r.asset),
-    path: r.path.map((s) => ({ sibling: digitsOf('path', s.sibling), siblingSum: digitsOf('path', s.siblingSum), goesLeft: s.goesLeft === true })),
+    proposal: hex32Of('identity', input.proposal),
+    runVault: fromHex(vault),
+    root: hex32Of('root', r.root),
+    payees: digitsOf('number of leaves', r.payees),
+    opensAt: digitsOf('opening', input.opensAt),
+    closesAt: digitsOf('close', input.closesAt),
+    required: 0n,
+    salt: hex32Of('salt', r.salt),
+    nonce: hex32Of('nonce', r.nonce),
+    asset: hex32Of('asset', r.asset),
+    path: r.path.map((s) => ({
+      sibling: digitsOf('path', s.sibling),
+      siblingSum: digitsOf('path', s.siblingSum),
+      goesLeft: s.goesLeft === true
+    }))
   };
   return vaultCallWithTheAccount(deps, {
-    vault, account, circuitId: 'setNonceSecret', chain: input.chain,
+    vault,
+    account,
+    circuitId: 'setNonceSecret',
+    chain: input.chain,
     args: [
-      run, hex32Of('previous secret', r.previous), hex32Of('commitment', r.commitment),
-      hex32Of('root of copies', r.copiesRoot), digitsOf('number of copies', r.count),
+      run,
+      hex32Of('previous secret', r.previous),
+      hex32Of('commitment', r.commitment),
+      hex32Of('root of copies', r.copiesRoot),
+      digitsOf('number of copies', r.count),
       r.edge.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true })),
       /* A first secret replaces none, so there is no earlier secret to carry. */
-      hex32Of('secret', input.secret), input.earlier === undefined ? new Uint8Array(32) : hex32Of('earlier secret', input.earlier),
-    ],
+      hex32Of('secret', input.secret),
+      input.earlier === undefined ? new Uint8Array(32) : hex32Of('earlier secret', input.earlier)
+    ]
   });
 }
 
@@ -108,34 +138,39 @@ export async function buildWriteSecretCopy(
     readonly place: number;
     readonly state: Uint8Array;
     readonly parameters: Uint8Array;
-  },
+  }
 ): Promise<{ proven: Uint8Array }> {
   const vault = String(input.vault).toLowerCase();
   const copy = input.run?.copies?.[input.place];
   if (!HEX64.test(vault) || String(input.run?.vault).toLowerCase() !== vault || copy === undefined) {
-    throw new Error('this sealed copy is not one of this vault\'s secret run, so nothing was built.');
+    throw new Error("this sealed copy is not one of this vault's secret run, so nothing was built.");
   }
   if (!Array.isArray(copy.parts) || copy.parts.length !== 4) {
     throw new Error('a sealed copy is four parts, and this is not, so nothing was built.');
   }
   if (!(input.parameters instanceof Uint8Array) || input.parameters.length === 0) {
-    throw new Error('the chain\'s current ledger parameters were not handed over, so nothing was built or sent.');
+    throw new Error("the chain's current ledger parameters were not handed over, so nothing was built or sent.");
   }
   const keys = throwawayKeys(deps);
-  const built = await deps.contracts.buildCall(deps.zkConfig, {
-    compiledContract: deps.compiled,
-    circuitId: 'writeSecretCopy',
-    contractAddress: vault,
-    coinPublicKey: keys.coinPublicKey,
-    /* Writing a copy moves no coin, so the builder is given no commitment tree to read. */
-    network: deps.network,
-    read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
-    args: [
-      hex32Of('commitment', input.run.commitment), hex32Of('reader key', copy.reader),
-      copy.parts.map((p) => hex32Of('sealed copy', p)),
-      copy.path.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true })),
-    ],
-  }, keys.encryptionPublicKey);
+  const built = await deps.contracts.buildCall(
+    deps.zkConfig,
+    {
+      compiledContract: deps.compiled,
+      circuitId: 'writeSecretCopy',
+      contractAddress: vault,
+      coinPublicKey: keys.coinPublicKey,
+      /* Writing a copy moves no coin, so the builder is given no commitment tree to read. */
+      network: deps.network,
+      read: { contract: input.state, zswap: SPENDS_NO_COIN, parameters: input.parameters },
+      args: [
+        hex32Of('commitment', input.run.commitment),
+        hex32Of('reader key', copy.reader),
+        copy.parts.map((p) => hex32Of('sealed copy', p)),
+        copy.path.map((s) => ({ sibling: digitsOf('path', s.sibling), goesLeft: s.goesLeft === true }))
+      ]
+    },
+    keys.encryptionPublicKey
+  );
   const proven = await deps.prove(built.private.unprovenTx, 'writeSecretCopy');
   return { proven: proven.serialize() };
 }

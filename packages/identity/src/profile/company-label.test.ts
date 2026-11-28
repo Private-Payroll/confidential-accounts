@@ -4,8 +4,15 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { sampleContractAddress } from '@midnightntwrk/ledger-v9';
 import {
-  COMPANY_LABEL_ENTRY, CompanyLabelError, companyLabelBytes, companyLabelOf, drawCompanyLabel, isCompanyLabel,
-  readAccountAddress, readCompanyLabel, readVaultAddress,
+  COMPANY_LABEL_ENTRY,
+  CompanyLabelError,
+  companyLabelBytes,
+  companyLabelOf,
+  drawCompanyLabel,
+  isCompanyLabel,
+  readAccountAddress,
+  readCompanyLabel,
+  readVaultAddress
 } from './company-label.js';
 import type { AccountAddress, CompanyLabel, VaultAddress } from './company-label.js';
 
@@ -42,9 +49,22 @@ describe('THE LABEL IS co_ AND SIXTY-FOUR LOWER-CASE HEX, AND NOTHING ELSE', () 
   it('HAS ONE SPELLING: upper case, whitespace, another prefix, another width and the zero label are not labels', () => {
     /* RED WHEN: the reader folds, trims, or accepts thirty-two zero bytes. */
     for (const bad of [
-      LABEL.toUpperCase(), `CO_${LABEL.slice(3)}`, `co_${LABEL.slice(3).toUpperCase()}`, ` ${LABEL}`, `${LABEL} `,
-      `co-${LABEL.slice(3)}`, `cx_${LABEL.slice(3)}`, LABEL.slice(0, 66), `${LABEL}0`, `co_${'0'.repeat(64)}`,
-      '', 'co_', 42, null, undefined, {},
+      LABEL.toUpperCase(),
+      `CO_${LABEL.slice(3)}`,
+      `co_${LABEL.slice(3).toUpperCase()}`,
+      ` ${LABEL}`,
+      `${LABEL} `,
+      `co-${LABEL.slice(3)}`,
+      `cx_${LABEL.slice(3)}`,
+      LABEL.slice(0, 66),
+      `${LABEL}0`,
+      `co_${'0'.repeat(64)}`,
+      '',
+      'co_',
+      42,
+      null,
+      undefined,
+      {}
     ]) {
       expect(readCompanyLabel(bad), String(bad)).toBeNull();
       expect(isCompanyLabel(bad), String(bad)).toBe(false);
@@ -52,7 +72,7 @@ describe('THE LABEL IS co_ AND SIXTY-FOUR LOWER-CASE HEX, AND NOTHING ELSE', () 
     expect(() => companyLabelBytes(LABEL.toUpperCase() as CompanyLabel)).toThrow(CompanyLabelError);
   });
 
-  it('an address is read in either case and folded, as Midnight\'s own validator accepts it', () => {
+  it("an address is read in either case and folded, as Midnight's own validator accepts it", () => {
     expect(readAccountAddress(ADDRESS.toUpperCase())).toBe(ADDRESS);
     for (const bad of [`0x${ADDRESS}`, ADDRESS.slice(1), `${ADDRESS}0`, ADDRESS.replace('d', 'g'), '']) {
       expect(readAccountAddress(bad), bad).toBeNull();
@@ -71,12 +91,15 @@ describe('THE DRAW', () => {
   it('takes thirty-two bytes from the generator it is given, and spells them as a label', () => {
     /* RED WHEN: the draw asks for another width, or spells the bytes another way. */
     const asked: number[] = [];
-    const label = drawCompanyLabel((n) => { asked.push(n); return BYTES; });
+    const label = drawCompanyLabel((n) => {
+      asked.push(n);
+      return BYTES;
+    });
     expect(asked).toEqual([32]);
     expect(label).toBe(LABEL);
   });
 
-  it('draws a different label every time from the platform\'s generator', () => {
+  it("draws a different label every time from the platform's generator", () => {
     const seen = new Set(Array.from({ length: 200 }, () => drawCompanyLabel()));
     expect(seen.size).toBe(200);
     for (const label of seen) expect(readCompanyLabel(label)).toBe(label);
@@ -120,7 +143,7 @@ describe('THE THREE TYPES DO NOT STAND IN FOR ONE ANOTHER', () => {
 });
 
 describe('WHERE THE LABEL SITS IN THE ACCOUNT', () => {
-  it('is the key the account\'s constructor writes it under: thirty-two bytes of hex', () => {
+  it("is the key the account's constructor writes it under: thirty-two bytes of hex", () => {
     /* The contract derives it; the test beside the contract holds this copy equal to it. */
     expect(COMPANY_LABEL_ENTRY).toMatch(/^[0-9a-f]{64}$/u);
   });

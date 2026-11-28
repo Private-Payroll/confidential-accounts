@@ -22,12 +22,16 @@ import { pinnedIn } from './seats-the-words-make.test-support.js';
  */
 
 const t = vi.hoisted(() => ({
-  run: null as null | ((doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => Promise<unknown>),
-  doors: null as null | Record<string, any>,
+  run: null as
+    null | ((doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => Promise<unknown>),
+  doors: null as null | Record<string, any>
 }));
 vi.mock('../../../../packages/web-shared/src/vault-private-deposit.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/vault-private-deposit.js')>()),
-  depositIntoCompanyVault: (doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => { t.doors = doors; return t.run!(doors, vault, money); },
+  depositIntoCompanyVault: (doors: Record<string, any>, vault: string, money: { token: string; value: bigint }) => {
+    t.doors = doors;
+    return t.run!(doors, vault, money);
+  }
 }));
 
 const { privateDepositAction, depositDoorsFor } = await import('./private-deposit.js');
@@ -38,89 +42,178 @@ const identity = identityFromSecret(secret);
 const LABEL = drawCompanyLabel();
 const ACCOUNT = 'c0'.repeat(32);
 /* The saved keys hold only the company's pin: the steps here are handed their reach of the company. */
-const PINNED_ONLY = { open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }), keep: async () => {} } as never;
+const PINNED_ONLY = {
+  open: () => ({ read: () => pinnedIn({ accounts: {} }, LABEL, ACCOUNT) }),
+  keep: async () => {}
+} as never;
 const VAULT = 'de'.repeat(32);
 const TOKEN = '9b'.repeat(32);
 const LEAF = 'aa'.repeat(32);
-const SEAT = { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32) };
+const SEAT = {
+  signerId: 's1',
+  signingSecret: '01'.repeat(32),
+  wrappingSecret: '02'.repeat(32),
+  blinding: '03'.repeat(32),
+  scope: '04'.repeat(32)
+};
 const intent = (fields: Record<string, string> = {}): ActIntent =>
-  ({ name: 'private-deposit', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT, vault: VAULT, token: TOKEN, amount: '1500000', ...fields } }) as ActIntent;
+  ({
+    name: 'private-deposit',
+    fields: {
+      record: 'acc_1',
+      company: LABEL,
+      account: ACCOUNT,
+      vault: VAULT,
+      token: TOKEN,
+      amount: '1500000',
+      ...fields
+    }
+  }) as ActIntent;
 
 /** A transaction the ledger reads back as one call of the vault creating one coin of `value` of `token`, owing it. */
 const builtTx = (value: bigint, token = TOKEN, to = VAULT) => ({
   intents: new Map([[1, { actions: [{ address: to, entryPoint: 'deposit' }] }]]),
   guaranteedOffer: { inputs: [], outputs: [{ contractAddress: to }], transients: [] },
   imbalances: (segment: number) => (segment === 0 ? new Map([[{ tag: 'shielded', raw: token }, -value]]) : new Map()),
-  serialize: () => new Uint8Array([9]),
+  serialize: () => new Uint8Array([9])
 });
 
-const balance = (tx: unknown, paid: string[]) => (): never => ({
-  ledger: async () => ({ Transaction: { deserialize: () => tx } }),
-  facade: async () => ({
-    shielded: { state: { subscribe: (o: { next: (s: unknown) => void }) => { o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } }); return { unsubscribe: () => {} }; } } },
-    state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
-    adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
-    balanceUnboundTransaction: async () => { paid.push('balanced'); return { recipe: true }; },
-    signRecipe: async (r: unknown) => r,
-    finalizeRecipe: async () => ({ serialize: () => new Uint8Array([1, 2, 3]) }),
-    revert: async () => { paid.push('reverted'); },
-  }),
-  dustKeys: () => ({}),
-  signSegment: () => (() => {}) as never,
-  stop: async () => { paid.push('stopped'); },
-}) as never;
+const balance = (tx: unknown, paid: string[]) => (): never =>
+  ({
+    ledger: async () => ({ Transaction: { deserialize: () => tx } }),
+    facade: async () => ({
+      shielded: {
+        state: {
+          subscribe: (o: { next: (s: unknown) => void }) => {
+            o.next({ progress: { isConnected: true, isStrictlyComplete: () => true } });
+            return { unsubscribe: () => {} };
+          }
+        }
+      },
+      state: () => of({ activeProtocolVersion: DefaultForkSchedule.v9 }),
+      adoptTransaction: (bytes: Uint8Array) => ({ adopted: bytes }),
+      balanceUnboundTransaction: async () => {
+        paid.push('balanced');
+        return { recipe: true };
+      },
+      signRecipe: async (r: unknown) => r,
+      finalizeRecipe: async () => ({ serialize: () => new Uint8Array([1, 2, 3]) }),
+      revert: async () => {
+        paid.push('reverted');
+      }
+    }),
+    dustKeys: () => ({}),
+    signSegment: () => (() => {}) as never,
+    stop: async () => {
+      paid.push('stopped');
+    }
+  }) as never;
 
 const kept = () => {
   const claims: unknown[] = [];
-  return { claims, inFlight: { isTheWallets: true, claim: async (_v: string, d: unknown) => { claims.push(d); return 'c1'; } }, coins: { isTheWalletsCoins: true } };
+  return {
+    claims,
+    inFlight: {
+      isTheWallets: true,
+      claim: async (_v: string, d: unknown) => {
+        claims.push(d);
+        return 'c1';
+      }
+    },
+    coins: { isTheWalletsCoins: true }
+  };
 };
 
 const ctxWith = (over: Partial<StepContext> & { answers?: Record<string, { status: number; body: unknown }> } = {}) => {
   const calls: string[] = [];
   const told: Record<string, unknown> = {};
   const ctx = stepOverItsCall({
-    intent: intent(), asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
+    intent: intent(),
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_a',
     held: { identity, secret, account: 0, wallet: { drewTheLabel: () => true } },
-    at: { step: 2, steps: 2 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('a deposit is sent through its call, never a bare relay'); },
+    at: { step: 2, steps: 2 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error('a deposit is sent through its call, never a bare relay');
+    },
     call: async (method: string, path: string) => {
       calls.push(`${method} ${path}`);
       return over.answers?.[`${method} ${path}`] ?? { status: 404, body: { error: 'none' } };
     },
-    tell: (o: Record<string, unknown>) => { Object.assign(told, o); },
+    tell: (o: Record<string, unknown>) => {
+      Object.assign(told, o);
+    },
     keyring: PINNED_ONLY,
-    ...over,
+    ...over
   }) as unknown as StepContext;
   return { ctx, calls, told };
 };
 
-const reachOf = (over: Record<string, unknown> = {}) => viewOverItsApi({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: SEAT, leaf: LEAF, companyKey: '11'.repeat(32),
-  api: async (path: string, init?: RequestInit) => { throw Object.assign(new Error(`no answer for ${init?.method ?? 'GET'} ${path}`), { status: 404 }); },
-  send: async () => ({ status: 404, body: {} }),
-  holders: async () => ({ seats: [LEAF], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [VAULT], account: ACCOUNT }),
-  judges: { directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null }), filingJudgeFor: () => async () => null },
-  sealed: {}, companyKeys: {} as never,
-  roster: async () => ({ id: 'acc_1', signers: [] }),
-  builder: { isTheWalletsBuilder: true },
-  chain: { indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' } },
-  ...over,
-}) as never;
+const reachOf = (over: Record<string, unknown> = {}) =>
+  viewOverItsApi({
+    accountId: 'acc_1',
+    label: LABEL,
+    account: ACCOUNT,
+    seat: SEAT,
+    leaf: LEAF,
+    companyKey: '11'.repeat(32),
+    api: async (path: string, init?: RequestInit) => {
+      throw Object.assign(new Error(`no answer for ${init?.method ?? 'GET'} ${path}`), { status: 404 });
+    },
+    send: async () => ({ status: 404, body: {} }),
+    holders: async () => ({
+      seats: [LEAF],
+      committee: [],
+      threshold: 1,
+      approvals: 1,
+      vaultThresholds: [],
+      adoptedVaults: [VAULT],
+      account: ACCOUNT
+    }),
+    judges: {
+      directoryHereFor: () => async () => ({ dir: { seats: [] }, leafOf: () => null }),
+      filingJudgeFor: () => async () => null
+    },
+    sealed: {},
+    companyKeys: {} as never,
+    roster: async () => ({ id: 'acc_1', signers: [] }),
+    builder: { isTheWalletsBuilder: true },
+    chain: { indexer: { indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' } },
+    ...over
+  }) as never;
 
 const MONEY = { token: TOKEN as never, value: 1_500_000n };
-beforeEach(() => { t.run = null; t.doors = null; });
+beforeEach(() => {
+  t.run = null;
+  t.doors = null;
+});
 
 describe('the window lists everything the deposit pays and files before the passkey', () => {
   it('names the amount, the token and the vault as the page asks for them, and every record the deposit may file', async () => {
-    const action = privateDepositAction({ chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never });
+    const action = privateDepositAction({
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never
+    });
     const shown = await action.shown(intent());
     const keys = shown.map((l) => [l.key, l.from]);
     /* RED WHEN: the amount and token, which only the page asks for, are shown as if this wallet had read them, or not shown before the passkey. */
-    expect(shown.find((l) => l.key === 'act.private-deposit.shown.amount')).toEqual({ key: 'act.private-deposit.shown.amount', values: { amount: '1500000', token: TOKEN }, from: 'page' });
+    expect(shown.find((l) => l.key === 'act.private-deposit.shown.amount')).toEqual({
+      key: 'act.private-deposit.shown.amount',
+      values: { amount: '1500000', token: TOKEN },
+      from: 'page'
+    });
     /* RED WHEN: what the wallet pays with that amount is shown as the page's words or as a read. */
     expect(keys).toContainEqual(['act.private-deposit.shown.pays', 'action']);
     /* RED WHEN: the vault, which only the page names until the wallet reads it after the passkey, is shown as the wallet's. */
-    expect(shown.find((l) => l.key === 'act.private-deposit.shown.vault')).toEqual({ key: 'act.private-deposit.shown.vault', values: { vault: VAULT }, from: 'page' });
+    expect(shown.find((l) => l.key === 'act.private-deposit.shown.vault')).toEqual({
+      key: 'act.private-deposit.shown.vault',
+      values: { vault: VAULT },
+      from: 'page'
+    });
     /* RED WHEN: a record the deposit may sign and file is left off the window. */
     for (const record of ['journal', 'pool', 'earlier', 'secret-again', 'manifest']) {
       expect(keys, record).toContainEqual([`act.private-deposit.shown.${record}`, 'action']);
@@ -128,7 +221,10 @@ describe('the window lists everything the deposit pays and files before the pass
     /* RED WHEN: the deposit seals before the company's owed upkeep is done, or ends without anchoring what it filed. */
     const steps = action.steps(intent());
     expect(steps.map((s) => s.title.key)).toEqual([
-      'act.private-deposit.step.seat', 'act.upkeep.step.first', 'act.private-deposit.step.deposit', 'act.upkeep.step.last',
+      'act.private-deposit.step.seat',
+      'act.upkeep.step.first',
+      'act.private-deposit.step.deposit',
+      'act.upkeep.step.last'
     ]);
     /* RED WHEN: the upkeep the deposit may also do is not listed before the passkey, or is listed as the page's words or a read. */
     for (const line of ['may', 'entry', 'rotation', 'roster', 'vaults', 'anchor']) {
@@ -137,43 +233,67 @@ describe('the window lists everything the deposit pays and files before the pass
   });
 
   it('refuses before anything is read an amount of nothing, or a wallet with no account chosen', async () => {
-    const action = privateDepositAction({ chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never });
+    const action = privateDepositAction({
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never
+    });
     const held = { identity, secret, account: 0, wallet: { drewTheLabel: () => true } };
     expect(await action.check(intent(), held as never)).toBeNull();
     /* RED WHEN: a deposit of nothing is built and paid. */
     expect((await action.check(intent({ amount: '0' }), held as never))?.key).toBe('act.private-deposit.why.nothing');
     /* RED WHEN: a deposit is paid from an account the person did not choose. */
-    expect((await action.check(intent(), { ...held, account: undefined } as never))?.key).toBe('act.private-deposit.why.no-account');
+    expect((await action.check(intent(), { ...held, account: undefined } as never))?.key).toBe(
+      'act.private-deposit.why.no-account'
+    );
   });
 });
 
 describe('the window says exactly what the wallet does, no more', () => {
   it('names the account as the one picked before the passkey, and keeps the deposit on its way on this device only', async () => {
     const { readFileSync } = await import('node:fs');
-    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+      string,
+      string
+    >;
     /* RED WHEN: the window says the account that pays is one chosen for the page or named after the passkey, when it is
      * the one the person picks in the window before the passkey. */
     expect(words['act.private-deposit.shown.pays']).not.toMatch(/this page has used before|named after your passkey/);
-    expect(words['act.private-deposit.shown.pays']).toMatch(/the account you pick in this window, before your passkey, and of no other/);
+    expect(words['act.private-deposit.shown.pays']).toMatch(
+      /the account you pick in this window, before your passkey, and of no other/
+    );
     /* RED WHEN: the first screen promises no fee without a confirm, while the record keeping around the deposit may pay its own. */
     expect(words['act.private-deposit.shown.pays']).not.toMatch(/no network fee unless/u);
     expect(words['act.private-deposit.shown.pays']).toMatch(/record keeping before and after the deposit may pay/u);
     /* RED WHEN: the window says no other deposit is made anywhere, when the claim lives in this device's wallet storage only. */
-    for (const key of ['act.private-deposit.shown.nothing-else', 'act.private-deposit.why.not-yet-seen', 'act.private-deposit.check.one-on-its-way']) {
+    for (const key of [
+      'act.private-deposit.shown.nothing-else',
+      'act.private-deposit.why.not-yet-seen',
+      'act.private-deposit.check.one-on-its-way'
+    ]) {
       expect(words[key], key).toMatch(/on this device/);
     }
   });
 
   it('never reads, after a deposit that may still arrive, as advice to deposit again', async () => {
     const { readFileSync } = await import('node:fs');
-    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const words = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+      string,
+      string
+    >;
     for (const key of ['act.private-deposit.why.not-yet-seen', 'act.private-deposit.why.landed-not-recorded']) {
       /* RED WHEN: the deposit's record is said to wait for the person's next deposit, which reads as a reason to make one. */
       expect(words[key], key).not.toMatch(/next deposit/);
-      expect(words[key], key).toMatch(/The next action you take for this company in this wallet, on this device, records it; you do not need to deposit again/);
+      expect(words[key], key).toMatch(
+        /The next action you take for this company in this wallet, on this device, records it; you do not need to deposit again/
+      );
     }
     /* RED WHEN: pressing again after a stopped deposit is said to carry it on, when the page then makes a new deposit. */
-    expect(words['act.private-deposit.over.continue']).toMatch(/makes a new deposit: before you do, press Check my last deposit/);
+    expect(words['act.private-deposit.over.continue']).toMatch(
+      /makes a new deposit: before you do, press Check my last deposit/
+    );
   });
 });
 
@@ -181,34 +301,74 @@ describe('the deposit is paid only as the wallet built it, from its own account'
   it('pays for the coin of the amount and token asked, into the vault asked, and nothing else', async () => {
     const { ctx } = ctxWith();
     const paid: string[] = [];
-    const doors = depositDoorsFor(ctx, reachOf(), {
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: balance(builtTx(1_500_000n), paid), kept: () => kept() as never,
-    }, VAULT as never, MONEY);
+    const doors = depositDoorsFor(
+      ctx,
+      reachOf(),
+      {
+        chain: () => ({}) as never,
+        builder: () => ({}) as never,
+        now: () => 1,
+        pause: async () => {},
+        balance: balance(builtTx(1_500_000n), paid),
+        kept: () => kept() as never
+      },
+      VAULT as never,
+      MONEY
+    );
     const ask = { company: LABEL, account: ACCOUNT, vault: VAULT, transaction: 'AAAA' } as never;
     expect((await doors.pay(ask)).transaction).toBe('AQID');
     /* RED WHEN: the account's wallet is stopped before the service has answered, so a fee the fee payer could not pay opens a second one. */
     expect(paid).toEqual(['balanced']);
     /* RED WHEN: the wallet pays for a deposit of another amount, another token or into another vault than the one it showed. */
-    for (const [tx, name] of [[builtTx(1_500_001n), 'amount'], [builtTx(1_500_000n, 'aa'.repeat(32)), 'token'], [builtTx(1_500_000n, TOKEN, 'ef'.repeat(32)), 'vault']] as const) {
-      const other = depositDoorsFor(ctx, reachOf(), {
-        chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: balance(tx, []), kept: () => kept() as never,
-      }, VAULT as never, MONEY);
+    for (const [tx, name] of [
+      [builtTx(1_500_001n), 'amount'],
+      [builtTx(1_500_000n, 'aa'.repeat(32)), 'token'],
+      [builtTx(1_500_000n, TOKEN, 'ef'.repeat(32)), 'vault']
+    ] as const) {
+      const other = depositDoorsFor(
+        ctx,
+        reachOf(),
+        {
+          chain: () => ({}) as never,
+          builder: () => ({}) as never,
+          now: () => 1,
+          pause: async () => {},
+          balance: balance(tx, []),
+          kept: () => kept() as never
+        },
+        VAULT as never,
+        MONEY
+      );
       await expect(other.pay(ask), name).rejects.toThrow();
     }
     /* RED WHEN: the wallet pays for an ask naming another company or vault than the one this action is on. */
     await expect(doors.pay({ ...(ask as object), vault: 'ef'.repeat(32) } as never)).rejects.toThrow();
   });
 
-  it('keeps the deposit on its way and its coins in the wallet\'s own storage, and reads the chain through the wallet\'s own indexer', async () => {
+  it("keeps the deposit on its way and its coins in the wallet's own storage, and reads the chain through the wallet's own indexer", async () => {
     const { ctx } = ctxWith();
     const k = kept();
-    const doors = depositDoorsFor(ctx, reachOf(), {
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => k as never,
-    }, VAULT as never, MONEY);
+    const doors = depositDoorsFor(
+      ctx,
+      reachOf(),
+      {
+        chain: () => ({}) as never,
+        builder: () => ({}) as never,
+        now: () => 1,
+        pause: async () => {},
+        balance: () => ({}) as never,
+        kept: () => k as never
+      },
+      VAULT as never,
+      MONEY
+    );
     /* RED WHEN: the deposit's claim on its way is kept where the page keeps it, so a page that forgets it lets a second deposit be built. */
     expect(doors.inFlight).toBe(k.inFlight);
     expect(doors.kept).toBe(k.coins);
-    expect(await doors.indexer()).toEqual({ indexerUri: 'https://indexer.wallet.example', indexerWsUri: 'wss://indexer.wallet.example' });
+    expect(await doors.indexer()).toEqual({
+      indexerUri: 'https://indexer.wallet.example',
+      indexerWsUri: 'wss://indexer.wallet.example'
+    });
     expect((doors.builder as unknown as { isTheWalletsBuilder: boolean }).isTheWalletsBuilder).toBe(true);
     expect(await doors.onChain(VAULT as never)).toMatchObject({ holders: { seats: [LEAF] } });
     /* RED WHEN: a deposit reads the readers' keys from the service. */
@@ -218,11 +378,29 @@ describe('the deposit is paid only as the wallet built it, from its own account'
 
 describe('a page that answers the send wrongly never makes the wallet let go of a deposit it built', () => {
   it('a send answered "nothing was sent" is still a deposit that may be on its way', async () => {
-    const { ctx, calls } = ctxWith({ answers: { [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: { status: 500, body: { error: 'Nothing was sent: the network refused it.' } } } });
+    const { ctx, calls } = ctxWith({
+      answers: {
+        [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: {
+          status: 500,
+          body: { error: 'Nothing was sent: the network refused it.' }
+        }
+      }
+    });
     const reach = reachOf({ api: (await import('./step-views.js')).serviceCallOver(callOf(ctx)) });
-    const doors = depositDoorsFor(ctx, reach, {
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-    }, VAULT as never, MONEY);
+    const doors = depositDoorsFor(
+      ctx,
+      reach,
+      {
+        chain: () => ({}) as never,
+        builder: () => ({}) as never,
+        now: () => 1,
+        pause: async () => {},
+        balance: () => ({}) as never,
+        kept: () => kept() as never
+      },
+      VAULT as never,
+      MONEY
+    );
     const failed = await doors.service.deposit(VAULT as never, 'AAAA').catch((e: unknown) => e);
     expect(calls).toEqual([`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]);
     /* RED WHEN: the page's word that it sent nothing is believed, so the claim is let go and a second deposit can be built while the page holds the first. */
@@ -230,87 +408,159 @@ describe('a page that answers the send wrongly never makes the wallet let go of 
   });
 
   it('a send answered with a forged transaction name is kept as no name, and the chain is read for the deposit itself', async () => {
-    const { ctx } = ctxWith({ answers: { [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: { status: 200, body: { txRef: 'x'.repeat(5000), transactionHash: 'not a hash' } } } });
+    const { ctx } = ctxWith({
+      answers: {
+        [`POST /api/accounts/acc_1/vaults/${VAULT}/deposit`]: {
+          status: 200,
+          body: { txRef: 'x'.repeat(5000), transactionHash: 'not a hash' }
+        }
+      }
+    });
     const reach = reachOf({ api: (await import('./step-views.js')).serviceCallOver(callOf(ctx)) });
-    const doors = depositDoorsFor(ctx, reach, {
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-    }, VAULT as never, MONEY);
+    const doors = depositDoorsFor(
+      ctx,
+      reach,
+      {
+        chain: () => ({}) as never,
+        builder: () => ({}) as never,
+        now: () => 1,
+        pause: async () => {},
+        balance: () => ({}) as never,
+        kept: () => kept() as never
+      },
+      VAULT as never,
+      MONEY
+    );
     /* RED WHEN: a forged answer is kept as the deposit's name, or stands for the chain's word. */
     expect(await doors.service.deposit(VAULT as never, 'AAAA')).toEqual({ txRef: '', transactionHash: null });
   });
 });
 
 /** The deposit's own steps, without the upkeep every seat action does, which has its own tests. */
-const ownSteps = (action: ReturnType<typeof privateDepositAction>) => action.steps(intent()).filter((s) => !s.title.key.startsWith('act.upkeep.'));
+const ownSteps = (action: ReturnType<typeof privateDepositAction>) =>
+  action.steps(intent()).filter((s) => !s.title.key.startsWith('act.upkeep.'));
 
 describe('the deposit step tells the page only where it got to', () => {
   const run = async (body: typeof t.run, ctxOver: Partial<StepContext> = {}) => {
     t.run = body;
     const { ctx, told } = ctxWith(ctxOver);
     const action = privateDepositAction({
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-      reachFor: async () => reachOf(),
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never,
+      kept: () => kept() as never,
+      reachFor: async () => reachOf()
     } as never);
     for (const s of ownSteps(action)) await s.run(ctx);
     return told;
   };
 
   it('a deposit recorded tells the vault, recorded, and the transaction the chain made it in', async () => {
-    const told = await run(async () => ({ txRef: 'r', transactionHash: null, note: { nonce: '01'.repeat(32), token: TOKEN, value: 1n, createdIn: 'AB'.repeat(32) } }));
+    const told = await run(async () => ({
+      txRef: 'r',
+      transactionHash: null,
+      note: { nonce: '01'.repeat(32), token: TOKEN, value: 1n, createdIn: 'AB'.repeat(32) }
+    }));
     /* RED WHEN: the page is told anything but the vault, where the deposit got to and the chain's transaction. */
     expect(told).toEqual({ vault: VAULT, state: 'recorded', created: 'ab'.repeat(32) });
   });
 
   it('a deposit the wallet handed back other than the one built refuses as not made, and tells the page no state, so it reads as not sent', async () => {
     let seen: Record<string, unknown> = {};
-    t.run = async () => { throw new op.DepositNotAsBuilt(VAULT as never, 'it does not create the one coin this device built for this vault, exactly once.'); };
+    t.run = async () => {
+      throw new op.DepositNotAsBuilt(
+        VAULT as never,
+        'it does not create the one coin this device built for this vault, exactly once.'
+      );
+    };
     const { ctx, told } = ctxWith();
     const action = privateDepositAction({
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-      reachFor: async () => reachOf(),
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never,
+      kept: () => kept() as never,
+      reachFor: async () => reachOf()
     } as never);
     let refused: unknown = null;
-    for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+    for (const s of ownSteps(action))
+      await s.run(ctx).catch((x: unknown) => {
+        refused = x;
+      });
     seen = told;
     /* RED WHEN: a deposit that was never sent is told to the page as one on its way or landed. */
     expect(refused).toBeInstanceOf(StepRefused);
-    expect((refused as StepRefused).words).toMatchObject({ key: 'act.private-deposit.why.not-made', values: { says: expect.stringMatching(/your wallet handed back a deposit other than the one this device built/) } });
+    expect((refused as StepRefused).words).toMatchObject({
+      key: 'act.private-deposit.why.not-made',
+      values: { says: expect.stringMatching(/your wallet handed back a deposit other than the one this device built/) }
+    });
     expect(seen).toEqual({ vault: VAULT });
   });
 
-  it('a deposit refused while the vault\'s secret is being changed after a removal says so in the wallet\'s own words', async () => {
-    t.run = async () => { throw new VaultSecretBeingChanged(VAULT as never); };
+  it("a deposit refused while the vault's secret is being changed after a removal says so in the wallet's own words", async () => {
+    t.run = async () => {
+      throw new VaultSecretBeingChanged(VAULT as never);
+    };
     const { ctx } = ctxWith();
     const action = privateDepositAction({
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-      reachFor: async () => reachOf(),
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never,
+      kept: () => kept() as never,
+      reachFor: async () => reachOf()
     } as never);
     let refused: unknown = null;
-    for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+    for (const s of ownSteps(action))
+      await s.run(ctx).catch((x: unknown) => {
+        refused = x;
+      });
     /* RED WHEN: the refusal reaches the page as the device's raw words, or as a deposit that may be on its way. */
     expect((refused as StepRefused).words).toEqual({ key: 'act.private-deposit.why.secret-being-changed' });
-    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
-    expect(en['act.private-deposit.why.secret-being-changed'], 'RED WHEN: the refusal has no words').toMatch(/deposits into this vault resume/iu);
+    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+      string,
+      string
+    >;
+    expect(en['act.private-deposit.why.secret-being-changed'], 'RED WHEN: the refusal has no words').toMatch(
+      /deposits into this vault resume/iu
+    );
   });
 
   describe('a stop whose journal line could not be marked keeps its own words and code, and says the line beside them', () => {
-    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const en = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+      string,
+      string
+    >;
     const t18 = createTranslator([{ tag: 'en', messages: en }] as never, 'en');
     const said = (w: { key: string; values?: Record<string, unknown> }) => t18.t(w.key, { ...(w.values ?? {}) });
     const LINE = /This deposit's line in the vault's deposit journal could not be marked as never sent/u;
     const stoppedWith = async (stop: Error) => {
-      t.run = async () => { throw new DepositLineNotEnded(stop, 'the service did not answer'); };
+      t.run = async () => {
+        throw new DepositLineNotEnded(stop, 'the service did not answer');
+      };
       const { ctx } = ctxWith();
       const action = privateDepositAction({
-        chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-        reachFor: async () => reachOf(),
+        chain: () => ({}) as never,
+        builder: () => ({}) as never,
+        now: () => 1,
+        pause: async () => {},
+        balance: () => ({}) as never,
+        kept: () => kept() as never,
+        reachFor: async () => reachOf()
       } as never);
       let refused: unknown = null;
-      for (const s of ownSteps(action)) await s.run(ctx).catch((x: unknown) => { refused = x; });
+      for (const s of ownSteps(action))
+        await s.run(ctx).catch((x: unknown) => {
+          refused = x;
+        });
       return refused;
     };
 
-    it('a refusal of the wallet\'s own keeps its words and its code', async () => {
+    it("a refusal of the wallet's own keeps its words and its code", async () => {
       const refused = await stoppedWith(new StepRefused({ key: 'act.private-deposit.why.not-as-built' }));
       /* RED WHEN: a refusal of the wallet's own whose line could not be marked falls to the device's raw words, or loses its code. */
       expect(refused).toBeInstanceOf(StepRefused);
@@ -320,7 +570,7 @@ describe('the deposit step tells the page only where it got to', () => {
       expect(text).toMatch(LINE);
     });
 
-    it('a deposit refused while the vault\'s secret is being changed keeps its words and says the line', async () => {
+    it("a deposit refused while the vault's secret is being changed keeps its words and says the line", async () => {
       const refused = await stoppedWith(new VaultSecretBeingChanged(VAULT as never));
       /* RED WHEN: the secret's refusal whose line could not be marked reaches the person as the device's raw words. */
       expect(refused).toBeInstanceOf(StepRefused);
@@ -338,17 +588,29 @@ describe('the deposit step tells the page only where it got to', () => {
   });
 
   it('a deposit not yet seen, or landed and not yet recorded, says so and refuses, so the page says it may have been sent', async () => {
-    for (const [e, state] of [[new op.DepositNotYetSeen(VAULT as never, 'r1'), 'not-yet-seen'], [new op.DepositLandedNotYetRecorded(VAULT as never, 'r1'), 'landed-not-recorded']] as const) {
-      const told = await run(async () => { throw e; }).catch((x: unknown) => x);
+    for (const [e, state] of [
+      [new op.DepositNotYetSeen(VAULT as never, 'r1'), 'not-yet-seen'],
+      [new op.DepositLandedNotYetRecorded(VAULT as never, 'r1'), 'landed-not-recorded']
+    ] as const) {
+      const told = await run(async () => {
+        throw e;
+      }).catch((x: unknown) => x);
       /* RED WHEN: a deposit that may be on its way ends as though nothing was built. */
       expect(told, state).toBeInstanceOf(StepRefused);
     }
     let told: Record<string, unknown> = {};
-    t.run = async () => { throw new op.DepositNotYetSeen(VAULT as never, 'r1'); };
+    t.run = async () => {
+      throw new op.DepositNotYetSeen(VAULT as never, 'r1');
+    };
     const { ctx, told: seen } = ctxWith();
     const action = privateDepositAction({
-      chain: () => ({}) as never, builder: () => ({}) as never, now: () => 1, pause: async () => {}, balance: () => ({}) as never, kept: () => kept() as never,
-      reachFor: async () => reachOf(),
+      chain: () => ({}) as never,
+      builder: () => ({}) as never,
+      now: () => 1,
+      pause: async () => {},
+      balance: () => ({}) as never,
+      kept: () => kept() as never,
+      reachFor: async () => reachOf()
     } as never);
     for (const s of ownSteps(action)) await s.run(ctx).catch(() => undefined);
     told = seen;

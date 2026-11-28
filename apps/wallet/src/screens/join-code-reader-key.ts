@@ -24,7 +24,8 @@ const KEY_BYTES = 32;
 /** This wallet's reader keypair for the company `label` names. Refuses a label that is not one. */
 export function readerKeypairOfThisWallet(identity: Identity, label: string): WrappingKeypair {
   const company = readCompanyLabel(label);
-  if (company === null) throw new Error('that is not a company\'s label, so no key to read its records with is worked out.');
+  if (company === null)
+    throw new Error("that is not a company's label, so no key to read its records with is worked out.");
   const parent = identity.authority(Purposes.Reader, READER_PARENT_INDEX);
   const root = hkdf(sha256, parent, READER_SALT, new TextEncoder().encode(company), KEY_BYTES);
   try {
@@ -38,10 +39,14 @@ export function readerKeypairOfThisWallet(identity: Identity, label: string): Wr
 }
 
 /** The public half alone: what a reader's join code carries. */
-export const readerKeyOfThisWallet = (identity: Identity, label: string): string => readerKeypairOfThisWallet(identity, label).publicKey;
+export const readerKeyOfThisWallet = (identity: Identity, label: string): string =>
+  readerKeypairOfThisWallet(identity, label).publicKey;
 
 /** This wallet's own keys a join-code ask needs: its payslip key for a payee's code, its reader key for a reader's. */
-export const ownJoinKeysOf = (identity: Identity, request: JoinCodeRequest): { readonly ownPayslipKey: string | null; readonly ownReaderKey: string | null } => ({
+export const ownJoinKeysOf = (
+  identity: Identity,
+  request: JoinCodeRequest
+): { readonly ownPayslipKey: string | null; readonly ownReaderKey: string | null } => ({
   ownPayslipKey: request.parts.kind === 'payee' ? payslipKeyOfThisWallet(identity, request) : null,
-  ownReaderKey: request.parts.kind === 'reader' ? readerKeyOfThisWallet(identity, request.company) : null,
+  ownReaderKey: request.parts.kind === 'reader' ? readerKeyOfThisWallet(identity, request.company) : null
 });

@@ -12,7 +12,7 @@ import { secondStepIsOn } from './creation-chain.js';
 const holding = (names: readonly string[]) => ({
   operations: () => [...names],
   /* An operation with no serialized form: its key slots cannot be read. */
-  operation: () => ({ verifierKey: new Uint8Array([1]) }),
+  operation: () => ({ verifierKey: new Uint8Array([1]) })
 });
 
 describe('A FINISHED CREATION IS READ BY ITS CIRCUITS', () => {
@@ -22,6 +22,12 @@ describe('A FINISHED CREATION IS READ BY ITS CIRCUITS', () => {
     /* RED WHEN: an account missing one second-step circuit reads as finished. */
     expect(secondStepIsOn(holding([...CREATION_STEPS.first, ...CREATION_STEPS.second.slice(1)]))).toBe(false);
     expect(secondStepIsOn(null)).toBe(false);
-    expect(secondStepIsOn({ operations: () => { throw new Error('no'); } })).toBe(false);
+    expect(
+      secondStepIsOn({
+        operations: () => {
+          throw new Error('no');
+        }
+      })
+    ).toBe(false);
   });
 });

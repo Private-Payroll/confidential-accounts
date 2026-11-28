@@ -13,8 +13,9 @@ const seedFor = (network: string): string => join(ROOT, '.data', network, 'walle
 describe('what an end-to-end check waits for', () => {
   /* RED WHEN: a check with no network named goes on to run against whichever network the build defaults to. */
   it('waits for the network to be named, and asks for nothing else until it is', () => {
-    expect(whatIsMissing({ named: false, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, () => true))
-      .toEqual(['MIDNIGHT_NETWORK_ID naming the network to run against']);
+    expect(whatIsMissing({ named: false, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, () => true)).toEqual([
+      'MIDNIGHT_NETWORK_ID naming the network to run against'
+    ]);
     expect(aNetworkIsNamed({})).toBe(false);
     expect(aNetworkIsNamed({ MIDNIGHT_NETWORK_ID: '  ' })).toBe(false);
     expect(aNetworkIsNamed({ MIDNIGHT_NETWORK_ID: 'preprod' })).toBe(true);
@@ -23,10 +24,15 @@ describe('what an end-to-end check waits for', () => {
   /* RED WHEN: a check that spends a fee runs with no funded wallet, or looks for the seed of another network. */
   it('waits for the funded seed of the network it was given, when it spends a fee', () => {
     const asked: string[] = [];
-    const missing = whatIsMissing({ named: true, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, (p) => { asked.push(p); return false; });
+    const missing = whatIsMissing({ named: true, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, (p) => {
+      asked.push(p);
+      return false;
+    });
     expect(asked).toEqual([join(ROOT, '.data', 'preprod', 'wallet.seed')]);
     expect(missing).toEqual(["a funded wallet's seed at .data/preprod/wallet.seed"]);
-    expect(whatIsMissing({ named: true, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, () => true)).toEqual([]);
+    expect(whatIsMissing({ named: true, network: 'preprod' }, { fundedSeedFor: seedFor }, ROOT, () => true)).toEqual(
+      []
+    );
   });
 
   it('asks for no seed when the check spends nothing', () => {
@@ -37,7 +43,10 @@ describe('what an end-to-end check waits for', () => {
   it('stands down with exit 0 naming what it waits for, and lets the check run when nothing is missing', () => {
     const printed: string[] = [];
     const exits: number[] = [];
-    const exit = ((code: number) => { exits.push(code); throw new Error('exited'); }) as (code: number) => never;
+    const exit = ((code: number) => {
+      exits.push(code);
+      throw new Error('exited');
+    }) as (code: number) => never;
     expect(() => standDownWhenMissing('The chain read', ['x', 'y'], (l) => printed.push(l), exit)).toThrow('exited');
     expect(exits).toEqual([0]);
     expect(printed).toEqual([standDownLine('The chain read', ['x', 'y'])]);

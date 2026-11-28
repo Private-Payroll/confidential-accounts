@@ -6,7 +6,8 @@
  */
 import { listAt, methodsOf } from './writes-in-the-compiled-code.js';
 
-const SELF = /^_descriptor_\d+\.fromValue\(__compactRuntime\.queryLedgerState\(context,[\s\S]*toValue\(0n\)[\s\S]*\)\.value\)\.bytes$/u;
+const SELF =
+  /^_descriptor_\d+\.fromValue\(__compactRuntime\.queryLedgerState\(context,[\s\S]*toValue\(0n\)[\s\S]*\)\.value\)\.bytes$/u;
 
 /** The arguments of one call, split at their own commas. */
 function argumentsOf(call: string): string[] {
@@ -17,7 +18,10 @@ function argumentsOf(call: string): string[] {
     const c = call[i]!;
     if ('([{'.includes(c)) depth += 1;
     else if (')]}'.includes(c)) depth -= 1;
-    else if (c === ',' && depth === 0) { out.push(call.slice(from, i)); from = i + 1; }
+    else if (c === ',' && depth === 0) {
+      out.push(call.slice(from, i));
+      from = i + 1;
+    }
   }
   out.push(call.slice(from, call.length - 1));
   return out.map((a) => a.trim()).filter((a) => a !== '');
@@ -36,7 +40,10 @@ export function callSitesOf(js: string, derivation: string): { in: string; args:
   const out: { in: string; args: string[] }[] = [];
   for (const [method, body] of methodsOf(js)) {
     for (let at = body.indexOf(callee); at >= 0; at = body.indexOf(callee, at + 1)) {
-      out.push({ in: method.replace(/^_|_\d+$/gu, ''), args: argumentsOf(listAt(body, at + callee.length - 1)).map(argumentNamed) });
+      out.push({
+        in: method.replace(/^_|_\d+$/gu, ''),
+        args: argumentsOf(listAt(body, at + callee.length - 1)).map(argumentNamed)
+      });
     }
   }
   return out;

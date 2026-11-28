@@ -1,6 +1,12 @@
 import type { ComponentType } from 'react';
 import type { IconSvgElement } from '@hugeicons/react';
-import { Building03Icon, CheckmarkCircle02Icon, SafeIcon, UserAdd01Icon, UserGroupIcon } from '@hugeicons/core-free-icons';
+import {
+  Building03Icon,
+  CheckmarkCircle02Icon,
+  SafeIcon,
+  UserAdd01Icon,
+  UserGroupIcon
+} from '@hugeicons/core-free-icons';
 import { CreateCompany } from '../actions/create-company.js';
 import { FinishCompany } from '../actions/finish-company.js';
 import { CreateVault } from '../actions/create-vault.js';
@@ -71,30 +77,61 @@ const never = (): boolean => false;
 /** THE LIST, in the order the wizard walks it. */
 export const SETUP_STEPS = {
   [STEP.createCompany]: {
-    name: (t) => t('setup.step.createCompany.name'), line: (t) => t('setup.step.createCompany.line'), icon: Building03Icon,
-    done: (f) => f.company !== null || f.creation?.kept === true, skippable: true, cannotBeUndone: true, shows: { action: CreateCompany },
+    name: (t) => t('setup.step.createCompany.name'),
+    line: (t) => t('setup.step.createCompany.line'),
+    icon: Building03Icon,
+    done: (f) => f.company !== null || f.creation?.kept === true,
+    skippable: true,
+    cannotBeUndone: true,
+    shows: { action: CreateCompany }
   },
   [STEP.finishCompany]: {
-    name: (t) => t('setup.step.finishCompany.name'), line: (t) => t('setup.step.finishCompany.line'), icon: CheckmarkCircle02Icon,
-    done: (f) => f.creation?.confirmedFinished === true, skippable: false, blocksLater: true, cannotBeUndone: true,
-    shows: { action: FinishCompany },
+    name: (t) => t('setup.step.finishCompany.name'),
+    line: (t) => t('setup.step.finishCompany.line'),
+    icon: CheckmarkCircle02Icon,
+    done: (f) => f.creation?.confirmedFinished === true,
+    skippable: false,
+    blocksLater: true,
+    cannotBeUndone: true,
+    shows: { action: FinishCompany }
   },
   [STEP.signers]: {
-    name: (t) => t('setup.step.signers.name'), line: (t) => t('setup.step.signers.line'), icon: UserAdd01Icon,
-    done: never, skippable: true, cannotBeUndone: false, shows: { action: Signers }, page: 'settingsSigners',
+    name: (t) => t('setup.step.signers.name'),
+    line: (t) => t('setup.step.signers.line'),
+    icon: UserAdd01Icon,
+    done: never,
+    skippable: true,
+    cannotBeUndone: false,
+    shows: { action: Signers },
+    page: 'settingsSigners'
   },
   [STEP.vault]: {
-    name: (t) => t('setup.step.vault.name'), line: (t) => t('setup.step.vault.line'), icon: SafeIcon,
-    done: (f) => f.vaults?.some(wasHandedOver) === true, skippable: true, cannotBeUndone: true, shows: { action: CreateVault }, page: 'vaults',
+    name: (t) => t('setup.step.vault.name'),
+    line: (t) => t('setup.step.vault.line'),
+    icon: SafeIcon,
+    done: (f) => f.vaults?.some(wasHandedOver) === true,
+    skippable: true,
+    cannotBeUndone: true,
+    shows: { action: CreateVault },
+    page: 'vaults'
   },
   [STEP.people]: {
-    name: (t) => t('setup.step.people.name'), line: (t) => t('setup.step.people.line'), icon: UserGroupIcon,
-    done: (f) => f.invited, skippable: true, cannotBeUndone: false, shows: { action: InvitePeople }, page: 'people',
-  },
+    name: (t) => t('setup.step.people.name'),
+    line: (t) => t('setup.step.people.line'),
+    icon: UserGroupIcon,
+    done: (f) => f.invited,
+    skippable: true,
+    cannotBeUndone: false,
+    shows: { action: InvitePeople },
+    page: 'people'
+  }
 } as const satisfies Record<StepId, SetupStep>;
 
 /** Every step, with its id, in the list's order. */
-export const EVERY_STEP: readonly (SetupStep & { id: StepId })[] = (Object.keys(SETUP_STEPS) as StepId[]).map((id) => ({ id, ...(SETUP_STEPS[id] as SetupStep) }));
+export const EVERY_STEP: readonly (SetupStep & { id: StepId })[] = (Object.keys(SETUP_STEPS) as StepId[]).map((id) => ({
+  id,
+  ...(SETUP_STEPS[id] as SetupStep)
+}));
 
 /** Whether a step is built: it has a component rather than a line on what it will be. */
 export const isBuiltStep = (step: SetupStep): step is SetupStep & { shows: { action: ComponentType<StepProps> } } =>

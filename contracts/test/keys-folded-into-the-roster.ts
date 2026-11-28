@@ -10,7 +10,12 @@
  */
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { openAccount, sealAccount } from '../../src/core/account.js';
-import { rosterWithVaultKeys, vaultKeyIndexOf, type CompanyVaultKeyIndex, type SignedVaultKeys } from '../../src/core/vault-keys.js';
+import {
+  rosterWithVaultKeys,
+  vaultKeyIndexOf,
+  type CompanyVaultKeyIndex,
+  type SignedVaultKeys
+} from '../../src/core/vault-keys.js';
 import type { SealedAccount } from '../../src/core/types.js';
 import type { Hex } from '../../src/core/crypto.js';
 
@@ -21,11 +26,23 @@ interface RosterStore {
 }
 
 export const keysFoldedIntoTheRoster = async (
-  store: RosterStore, accountId: string, viewingKey: string, label: CompanyLabel | string, account: string,
-  signerId: string, keys: SignedVaultKeys,
+  store: RosterStore,
+  accountId: string,
+  viewingKey: string,
+  label: CompanyLabel | string,
+  account: string,
+  signerId: string,
+  keys: SignedVaultKeys
 ): Promise<void> => {
   const rec = store.getAccount(accountId)!;
-  const next = rosterWithVaultKeys(openAccount(rec, viewingKey as Hex), accountId, label as CompanyLabel, account as AccountAddress, signerId, keys);
+  const next = rosterWithVaultKeys(
+    openAccount(rec, viewingKey as Hex),
+    accountId,
+    label as CompanyLabel,
+    account as AccountAddress,
+    signerId,
+    keys
+  );
   if (next === 'already-given') return;
   store.putAccount(sealAccount(next, viewingKey as Hex, rec.pendingSigners, rec.keyEpoch));
   store.putVaultKeyIndex(vaultKeyIndexOf(next));

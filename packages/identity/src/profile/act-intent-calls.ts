@@ -15,7 +15,11 @@ import type { CallRoute } from './act-intents.js';
  * handed over beside its record (`FINISH_COMPANY_CALLS`).
  */
 export const FINISH_COMPANY_RELAYS = Object.freeze([
-  'creation', 'creation-again', 'creation-finish', 'pay-key-approve', 'pay-key-seal',
+  'creation',
+  'creation-again',
+  'creation-finish',
+  'pay-key-approve',
+  'pay-key-seal'
 ] as const);
 
 /** The call our service pays the fee of, handed back to be sent; and its booking told done once the call is sent. */
@@ -28,31 +32,42 @@ export const FEE_SPONSORED_DONE: CallRoute = Object.freeze({ method: 'POST', pat
  * kept (a call with no `tx` sends nothing); and the fee of the founding seat's registry entry, with its booking told done.
  */
 export const FINISH_COMPANY_CALLS: readonly CallRoute[] = Object.freeze([
-  Object.freeze<CallRoute>({ method: 'POST', path: '/api/accounts/:record/creation/pay-key/proposal', sends: true, sendsWith: 'tx' }),
-  FEE_SPONSORED, FEE_SPONSORED_DONE,
+  Object.freeze<CallRoute>({
+    method: 'POST',
+    path: '/api/accounts/:record/creation/pay-key/proposal',
+    sends: true,
+    sendsWith: 'tx'
+  }),
+  FEE_SPONSORED,
+  FEE_SPONSORED_DONE
 ]);
 
 /**
  * A list of routes with each route once, the first copy kept, every route frozen. `routeOf` answers with the first
  * route that matches, so a later copy would never be read; a list built from shared lists is written through this.
  */
-const once = (routes: readonly CallRoute[]): readonly CallRoute[] => Object.freeze(routes
-  .filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
-  .map((r) => Object.freeze({ ...r })) as CallRoute[]);
+const once = (routes: readonly CallRoute[]): readonly CallRoute[] =>
+  Object.freeze(
+    routes
+      .filter((r, i, all) => all.findIndex((x) => x.method === r.method && x.path === r.path) === i)
+      .map((r) => Object.freeze({ ...r })) as CallRoute[]
+  );
 
 /**
  * Every read of the company's choice of service an act makes, by route: an act that lists every one of them reads the
  * company's choice; one that misses any is handed to our service without reading it.
  */
-export const SERVICE_CHOICE_READS: readonly CallRoute[] = Object.freeze([
-  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
-  { method: 'GET', path: '/api/accounts/:record/directory' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
-  { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
-  { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
-  { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] },
-].map((r) => Object.freeze(r)) as CallRoute[]);
+export const SERVICE_CHOICE_READS: readonly CallRoute[] = Object.freeze(
+  [
+    { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
+    { method: 'GET', path: '/api/accounts/:record/directory' },
+    { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
+    { method: 'POST', path: '/api/accounts/:record/manifest/newest', reads: true },
+    { method: 'POST', path: '/api/accounts/:record/manifest/tree/proofs', reads: true },
+    { method: 'GET', path: '/api/accounts/:record/manifest/tree/pending', query: ['root'] },
+    { method: 'GET', path: '/api/accounts/:record/manifest/tree/headers', query: ['after', 'limit'] }
+  ].map((r) => Object.freeze(r)) as CallRoute[]
+);
 
 /**
  * Every read the company's view makes through the service, in one list that every action reading the company
@@ -76,7 +91,7 @@ export const VIEW_READS: readonly CallRoute[] = once([
   { method: 'GET', path: '/api/accounts/:record/invites' },
   { method: 'GET', path: '/api/accounts/:record/vaults' },
   { method: 'GET', path: '/api/accounts/:record/vault-keys/offers' },
-  { method: 'POST', path: '/api/proposals/:proposal/standing', reads: true },
+  { method: 'POST', path: '/api/proposals/:proposal/standing', reads: true }
 ]);
 
 /**
@@ -93,7 +108,7 @@ export const COMPANY_RECORD_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/accounts/:record/manifest/entries' },
   { method: 'GET', path: '/api/accounts/:record/records/:kind/:id' },
   { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
-  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/:version' },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/:version' }
 ]);
 
 /**
@@ -109,28 +124,29 @@ export const COMPANY_RECORD_CALLS: readonly CallRoute[] = once([
  * person's wallet submits; and the company's read grants read, and filed again
  * wrapped to the company's new key once it changes.
  */
-export const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze([
-  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
-  { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
-  FEE_SPONSORED,
-  FEE_SPONSORED_DONE,
-  { method: 'GET', path: '/api/employees/:employee/handover' },
-  { method: 'PUT', path: '/api/accounts/:record/directory/:version' },
-  { method: 'POST', path: '/api/accounts/:record/roster' },
-  { method: 'POST', path: '/api/accounts/:record/manifest/tree/headers' },
-  { method: 'POST', path: '/api/accounts/:record/proven', sends: true },
-  { method: 'GET', path: '/api/vaults/:vault/records/:kind' },
-  { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
-  { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
-  { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
-  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
-  { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
-  { method: 'POST', path: '/api/proposals/:proposal/carried' },
-].map((r) => Object.freeze(r)) as CallRoute[]);
+export const UPKEEP_CALLS: readonly CallRoute[] = Object.freeze(
+  [
+    { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
+    { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
+    FEE_SPONSORED,
+    FEE_SPONSORED_DONE,
+    { method: 'GET', path: '/api/employees/:employee/handover' },
+    { method: 'PUT', path: '/api/accounts/:record/directory/:version' },
+    { method: 'POST', path: '/api/accounts/:record/roster' },
+    { method: 'POST', path: '/api/accounts/:record/manifest/tree/headers' },
+    { method: 'POST', path: '/api/accounts/:record/proven', sends: true },
+    { method: 'GET', path: '/api/vaults/:vault/records/:kind' },
+    { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
+    { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
+    { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
+    { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
+    { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
+    { method: 'POST', path: '/api/proposals/:proposal/carried' }
+  ].map((r) => Object.freeze(r)) as CallRoute[]
+);
 
 /** Reading and filing the company's records, with the upkeep every seat action does in the same window. */
 export const RECORDS_AND_UPKEEP_CALLS: readonly CallRoute[] = once([...COMPANY_RECORD_CALLS, ...UPKEEP_CALLS]);
-
 
 /**
  * What creating a vault adds: the vault's deploy and the transactions of its
@@ -151,7 +167,7 @@ export const CREATE_VAULT_CALLS: readonly CallRoute[] = once([
   { method: 'GET', path: '/api/vaults/:vault/records/:kind/versions' },
   { method: 'GET', path: '/api/vaults/:vault/records/:kind/:version' },
   { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /**
@@ -174,7 +190,7 @@ export const PRIVATE_DEPOSIT_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/deposit', sends: true },
   { method: 'PUT', path: '/api/accounts/:record/records/roster/:id/:version' },
   { method: 'PUT', path: '/api/accounts/:record/records/grants/:id/:version' },
-  ...UPKEEP_CALLS.filter((u) => !(u.method === 'PUT' && u.path === '/api/accounts/:record/records/:kind/:id/:version')),
+  ...UPKEEP_CALLS.filter((u) => !(u.method === 'PUT' && u.path === '/api/accounts/:record/records/:kind/:id/:version'))
 ]);
 
 /**
@@ -200,7 +216,7 @@ export const ONE_OFF_PAYMENT_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/proposals/:proposal/charge', sends: true },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/payout', sends: true },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/public-payout', sends: true },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /*
@@ -215,7 +231,7 @@ export const INVITE_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
   { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path))
 ]);
 
 /*
@@ -246,7 +262,7 @@ export const APPROVE_PROPOSAL_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/proposals/:proposal/carried' },
   { method: 'POST', path: '/api/accounts/:record/creation/pay-key', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/closed' },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /*
@@ -261,7 +277,7 @@ export const CHANGE_THRESHOLD_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/carry', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/closed' },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path))
 ]);
 
 /*
@@ -292,7 +308,7 @@ export const RAISE_RUN_CALLS: readonly CallRoute[] = once([
   { method: 'PUT', path: '/api/vaults/:vault/records/:kind/:version' },
   { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
   { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /**
@@ -310,7 +326,7 @@ export const PAY_RUN_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/payout', sends: true },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/merge', sends: true },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/public-payout', sends: true },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /**
@@ -325,7 +341,7 @@ export const WITHDRAW_PROPOSAL_CALLS: readonly CallRoute[] = once([
   FEE_SPONSORED,
   FEE_SPONSORED_DONE,
   { method: 'POST', path: '/api/proposals/:proposal/cancel', sends: true, sendsWith: 'tx' },
-  { method: 'POST', path: '/api/proposals/:proposal/closed' },
+  { method: 'POST', path: '/api/proposals/:proposal/closed' }
 ]);
 
 /**
@@ -338,7 +354,7 @@ export const REMOVE_SIGNER_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/proposals/:proposal/retirement' },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/secret', sends: true },
   { method: 'POST', path: '/api/accounts/:record/vaults/:vault/start/copy', sends: true },
-  { method: 'POST', path: '/api/proposals/:proposal/carried' },
+  { method: 'POST', path: '/api/proposals/:proposal/carried' }
 ]);
 
 /**
@@ -351,7 +367,7 @@ export const ROTATE_VAULT_SECRETS_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/accounts/:record/proposals', sends: true, sendsWith: 'tx' },
   { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /*
@@ -361,7 +377,7 @@ export const ROTATE_VAULT_SECRETS_CALLS: readonly CallRoute[] = once([
 export const ADMIT_SIGNER_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'POST', path: '/api/accounts/:record/signers/:signer/admit' },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path))
 ]);
 
 /*
@@ -374,8 +390,11 @@ export const ADMIT_PERSON_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/employees/:employee/admit' },
   { method: 'GET', path: '/api/accounts/:record/vendors/:vendor/handover' },
   { method: 'POST', path: '/api/accounts/:record/vendors/:vendor/admit' },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)
-    && !(u.method === 'GET' && u.path === '/api/employees/:employee/handover')),
+  ...UPKEEP_CALLS.filter(
+    (u) =>
+      !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path) &&
+      !(u.method === 'GET' && u.path === '/api/employees/:employee/handover')
+  )
 ]);
 
 /*
@@ -387,7 +406,7 @@ export const CHANGE_PERSON_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/people/:person/status' },
   { method: 'POST', path: '/api/people/:person/details' },
   { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path))
 ]);
 
 /*
@@ -397,7 +416,7 @@ export const CHANGE_PERSON_CALLS: readonly CallRoute[] = once([
 export const CHOOSE_COMPANY_SERVICE_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
-  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)),
+  ...UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path))
 ]);
 
 /*
@@ -409,7 +428,7 @@ export const GRANT_READ_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'PUT', path: '/api/accounts/:record/records/:kind/:id/:version' },
   { method: 'POST', path: '/api/accounts/:record/readers' },
-  ...UPKEEP_CALLS,
+  ...UPKEEP_CALLS
 ]);
 
 /*
@@ -425,11 +444,13 @@ export const CHANGE_ROLE_CALLS: readonly CallRoute[] = once([...REMOVE_SIGNER_CA
  */
 export const READER_KEYS_CALLS: readonly CallRoute[] = once([
   ...VIEW_READS,
-  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' },
+  { method: 'GET', path: '/api/accounts/:record/records/:kind/:id/versions' }
 ]);
 
 /** The upkeep's routes a list built on the company's records does not already name. */
-const UPKEEP_BEYOND_RECORDS: readonly CallRoute[] = UPKEEP_CALLS.filter((u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path));
+const UPKEEP_BEYOND_RECORDS: readonly CallRoute[] = UPKEEP_CALLS.filter(
+  (u) => !COMPANY_RECORD_CALLS.some((c) => c.method === u.method && c.path === u.path)
+);
 
 /*
  * What withdrawing a person waiting for a seat reads and writes: the company's records its proposals and the seat are
@@ -439,7 +460,7 @@ const UPKEEP_BEYOND_RECORDS: readonly CallRoute[] = UPKEEP_CALLS.filter((u) => !
 export const WITHDRAW_WAITING_SIGNER_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'POST', path: '/api/accounts/:record/signers/:signer/withdraw' },
-  ...UPKEEP_BEYOND_RECORDS,
+  ...UPKEEP_BEYOND_RECORDS
 ]);
 
 /*
@@ -449,7 +470,7 @@ export const WITHDRAW_WAITING_SIGNER_CALLS: readonly CallRoute[] = once([
 export const REISSUE_INVITATION_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'POST', path: '/api/accounts/:record/invites' },
-  ...UPKEEP_BEYOND_RECORDS,
+  ...UPKEEP_BEYOND_RECORDS
 ]);
 
 /*
@@ -461,7 +482,7 @@ export const TAKE_REISSUE_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'GET', path: '/api/invites/:invitation/offer' },
   FEE_SPONSORED,
-  FEE_SPONSORED_DONE,
+  FEE_SPONSORED_DONE
 ]);
 
 /*
@@ -472,7 +493,7 @@ export const ADD_SIGNER_BY_CODE_CALLS: readonly CallRoute[] = once([
   ...COMPANY_RECORD_CALLS,
   { method: 'POST', path: '/api/accounts/:record/invites' },
   { method: 'POST', path: '/api/invites/:invitation/accept-signer' },
-  ...UPKEEP_BEYOND_RECORDS,
+  ...UPKEEP_BEYOND_RECORDS
 ]);
 
 /*
@@ -486,5 +507,5 @@ export const RAISE_WAITING_SIGNER_CALLS: readonly CallRoute[] = once([
   { method: 'POST', path: '/api/proposals/:proposal/send', sends: true },
   { method: 'POST', path: '/api/proposals/:proposal/approve', sends: true },
   { method: 'POST', path: '/api/accounts/:record/signers/:signer/admit' },
-  ...UPKEEP_BEYOND_RECORDS,
+  ...UPKEEP_BEYOND_RECORDS
 ]);

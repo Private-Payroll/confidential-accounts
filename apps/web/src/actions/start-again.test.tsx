@@ -15,7 +15,10 @@ import { ENGLISH } from '../english.test-support.js';
 const kr = vi.hoisted(() => ({ next: null as Promise<unknown> | null, asked: [] as unknown[][] }));
 vi.mock('../adapters/start-again.js', async (real) => ({
   ...(await real<typeof import('../adapters/start-again.js')>()),
-  startAgain: async (...args: unknown[]) => { kr.asked.push(args); return kr.next; },
+  startAgain: async (...args: unknown[]) => {
+    kr.asked.push(args);
+    return kr.next;
+  }
 }));
 
 const { StartAgain, StartAgainWords, forgetWhatStartAgainSaid } = await import('./start-again.js');
@@ -24,9 +27,17 @@ const { lane } = await import('../adapters/sends.js');
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const sessionWith = (): Session => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(),
-  viewer: { signedIn: true, view: VIEWS.employee, signs: false }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-  choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.employee, signs: false },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {})
 });
 
 /** The screen that offers the button: the control can be swapped out for another part of the screen, the words stay. */
@@ -34,46 +45,77 @@ function Screen({ companyId, onStartNew }: { companyId: string | null; onStartNe
   const [shown, setShown] = useState(true);
   return (
     <div>
-      <button data-swap onClick={() => setShown((s) => !s)}>swap</button>
+      <button data-swap onClick={() => setShown((s) => !s)}>
+        swap
+      </button>
       {shown ? <StartAgain companyId={companyId} /> : <p data-other>another part of the screen</p>}
       <StartAgainWords shown={companyId} onStartNew={onStartNew} />
     </div>
   );
 }
-const draw = (companyId: string | null = 'c-1', onStartNew?: () => void) => render(
-  <KitProvider languages={LANGUAGES} pick="en">
-    <SessionProvider session={sessionWith()}><Screen companyId={companyId} onStartNew={onStartNew} /></SessionProvider>
-  </KitProvider>,
-);
-const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
+const draw = (companyId: string | null = 'c-1', onStartNew?: () => void) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <SessionProvider session={sessionWith()}>
+        <Screen companyId={companyId} onStartNew={onStartNew} />
+      </SessionProvider>
+    </KitProvider>
+  );
+const settle = async () => {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
 const press = async (c: HTMLElement) => {
   fireEvent.click(c.querySelector('[data-action=start-again]')!);
-  const sure = [...c.querySelectorAll('[data-slot=confirm-in-your-account] button')].find((b) => b.textContent === EN['kit.confirm.confirm'])!;
-  await act(async () => { fireEvent.click(sure); await Promise.resolve(); });
+  const sure = [...c.querySelectorAll('[data-slot=confirm-in-your-account] button')].find(
+    (b) => b.textContent === EN['kit.confirm.confirm']
+  )!;
+  await act(async () => {
+    fireEvent.click(sure);
+    await Promise.resolve();
+  });
 };
 const said = (c: HTMLElement) => c.querySelector('[data-start-again-said]')?.textContent ?? '';
 
 beforeEach(() => {
   forgetWhatStartAgainSaid();
-  kr.asked = []; kr.next = Promise.resolve({ of: 'done' });
-  lane.carrying = null; lane.pressing = null; lane.holding = null;
+  kr.asked = [];
+  kr.next = Promise.resolve({ of: 'done' });
+  lane.carrying = null;
+  lane.pressing = null;
+  lane.holding = null;
 });
-afterEach(() => { cleanup(); lane.carrying = null; lane.pressing = null; lane.holding = null; });
+afterEach(() => {
+  cleanup();
+  lane.carrying = null;
+  lane.pressing = null;
+  lane.holding = null;
+});
 
 describe('every press of Start it again ends in words', () => {
   /* RED WHEN: a press made while a step is being sent waits with no words, or the words never give way to what it came to. */
   it('says it waits for the send in flight, then says what it came to', async () => {
     let sent!: () => void;
-    lane.carrying = new Promise<void>((r) => { sent = r; });
+    lane.carrying = new Promise<void>((r) => {
+      sent = r;
+    });
     let came!: (v: unknown) => void;
-    kr.next = new Promise((r) => { came = r; });
+    kr.next = new Promise((r) => {
+      came = r;
+    });
     const { container } = draw();
     await press(container);
     expect(said(container)).toContain(EN['setup.again.queued']);
     expect(container.querySelector<HTMLButtonElement>('[data-action=start-again]')!.disabled).toBe(true);
-    sent(); lane.carrying = null;
+    sent();
+    lane.carrying = null;
     await settle();
-    await act(async () => { came({ of: 'landed' }); await Promise.resolve(); });
+    await act(async () => {
+      came({ of: 'landed' });
+      await Promise.resolve();
+    });
     expect(said(container)).toContain(EN['setup.again.landed']);
   });
 
@@ -113,7 +155,7 @@ describe('every press of Start it again ends in words', () => {
       [{ of: 'landed' }, EN['setup.again.landed']],
       [{ of: 'wait', minutes: 7 }, (EN['setup.again.wait'] ?? '').replace('{minutes}', '7')],
       [{ of: 'unsure' }, EN['setup.again.unsure']],
-      [{ of: 'something-new' }, EN['setup.again.unsure']],
+      [{ of: 'something-new' }, EN['setup.again.unsure']]
     ] as [Record<string, unknown>, string][]) {
       kr.next = Promise.resolve(again);
       const { container, unmount } = draw();
@@ -153,7 +195,9 @@ describe('every press of Start it again ends in words', () => {
   it('says nothing was changed when the confirm is dismissed', async () => {
     const { container } = draw();
     fireEvent.click(container.querySelector('[data-action=start-again]')!);
-    const cancel = [...container.querySelectorAll('[data-slot=confirm-in-your-account] button')].find((b) => b.textContent === EN['kit.confirm.cancel'])!;
+    const cancel = [...container.querySelectorAll('[data-slot=confirm-in-your-account] button')].find(
+      (b) => b.textContent === EN['kit.confirm.cancel']
+    )!;
     fireEvent.click(cancel);
     expect(said(container)).toContain(EN['setup.again.cancelled']);
     expect(kr.asked).toEqual([]);
@@ -162,13 +206,18 @@ describe('every press of Start it again ends in words', () => {
   /* RED WHEN: the screen swapping the control for another part (as the creation steps do each look) loses the words, whether the press is still going or has ended. */
   it('keeps the words when the control is swapped out and back, mid-press and after it', async () => {
     let came!: (v: unknown) => void;
-    kr.next = new Promise((r) => { came = r; });
+    kr.next = new Promise((r) => {
+      came = r;
+    });
     const { container } = draw();
     await press(container);
     fireEvent.click(container.querySelector('[data-swap]')!);
     expect(container.querySelector('[data-other]')).not.toBeNull();
     expect(said(container)).toContain(EN['setup.again.working']);
-    await act(async () => { came({ of: 'wait', minutes: 3 }); await Promise.resolve(); });
+    await act(async () => {
+      came({ of: 'wait', minutes: 3 });
+      await Promise.resolve();
+    });
     fireEvent.click(container.querySelector('[data-swap]')!);
     expect(said(container)).toContain((EN['setup.again.wait'] ?? '').replace('{minutes}', '3'));
     expect(container.querySelector<HTMLButtonElement>('[data-action=start-again]')!.disabled).toBe(false);

@@ -122,8 +122,7 @@ export type CallTranscript = {
   readonly published: readonly Published[];
 };
 
-const hex = (u: Uint8Array | ArrayLike<number>): string =>
-  Buffer.from(u as Uint8Array).toString('hex');
+const hex = (u: Uint8Array | ArrayLike<number>): string => Buffer.from(u as Uint8Array).toString('hex');
 
 /**
  * A `Uint<n>` as the on-chain VM encodes it: LITTLE-ENDIAN, MINIMAL LENGTH,
@@ -140,7 +139,10 @@ export const encodeUint = (n: bigint): string => {
   if (n < 0n) throw new Error('a Uint cannot be negative');
   let v = n;
   const out: number[] = [];
-  while (v > 0n) { out.push(Number(v & 0xffn)); v >>= 8n; }
+  while (v > 0n) {
+    out.push(Number(v & 0xffn));
+    v >>= 8n;
+  }
   return hex(Uint8Array.from(out));
 };
 
@@ -169,13 +171,10 @@ export const encodeBytes = (b: Uint8Array): string => {
  * who has read a value off a transcript is handing back what the VM wrote.
  */
 export const asHex = (s: Secret): string =>
-  typeof s === 'bigint' ? encodeUint(s)
-    : typeof s === 'string' ? s.replace(/^0x/, '').toLowerCase()
-      : encodeBytes(s);
+  typeof s === 'bigint' ? encodeUint(s) : typeof s === 'string' ? s.replace(/^0x/, '').toLowerCase() : encodeBytes(s);
 
 /** Every `Uint8Array` field of an `AlignedValue`, or nothing if it is absent. */
-const fieldsOf = (av: any): string[] =>
-  (av && Array.isArray(av.value)) ? av.value.map((u: any) => hex(u)) : [];
+const fieldsOf = (av: any): string[] => (av && Array.isArray(av.value) ? av.value.map((u: any) => hex(u)) : []);
 
 /**
  * Every readable field inside an `EncodedStateValue`.
@@ -188,17 +187,25 @@ const fieldsOf = (av: any): string[] =>
 const fromStateValue = (sv: any, into: string[]): void => {
   if (!sv || typeof sv !== 'object') return;
   switch (sv.tag) {
-    case 'cell': into.push(...fieldsOf(sv.content)); return;
-    case 'map':
-      for (const [k, v] of (sv.content ?? [])) { into.push(...fieldsOf(k)); fromStateValue(v, into); }
+    case 'cell':
+      into.push(...fieldsOf(sv.content));
       return;
-    case 'array': for (const e of (sv.content ?? [])) fromStateValue(e, into); return;
+    case 'map':
+      for (const [k, v] of sv.content ?? []) {
+        into.push(...fieldsOf(k));
+        fromStateValue(v, into);
+      }
+      return;
+    case 'array':
+      for (const e of sv.content ?? []) fromStateValue(e, into);
+      return;
     case 'boundedMerkleTree': {
       const [, leaves] = sv.content ?? [0, new Map()];
       for (const [, pair] of leaves ?? []) if (pair?.[0]) into.push(hex(pair[0]));
       return;
     }
-    default: return;
+    default:
+      return;
   }
 };
 
@@ -211,17 +218,23 @@ const readCall = (cpd: any): CallTranscript => {
   const ops = (cpd.publicTranscript ?? []) as any[];
 
   ops.forEach((op, i) => {
-    if (typeof op === 'string') { tags.push(op); return; }
+    if (typeof op === 'string') {
+      tags.push(op);
+      return;
+    }
     const tag = Object.keys(op)[0]!;
     tags.push(tag);
     const add = (hexes: string[], kind: Published['kind']) => {
       for (const h of hexes) published.push({ hex: h, op: i, kind, circuitId, contractAddress });
     };
-    if (tag === 'push') { const bag: string[] = []; fromStateValue(op.push?.value, bag); add(bag, 'push'); }
-    else if (tag === 'popeq') add(fieldsOf(op.popeq?.result), 'popeq');
+    if (tag === 'push') {
+      const bag: string[] = [];
+      fromStateValue(op.push?.value, bag);
+      add(bag, 'push');
+    } else if (tag === 'popeq') add(fieldsOf(op.popeq?.result), 'popeq');
     else if (tag === 'idx') {
       const bag: string[] = [];
-      for (const k of (op.idx?.path ?? [])) if (k?.tag === 'value') bag.push(...fieldsOf(k.value));
+      for (const k of op.idx?.path ?? []) if (k?.tag === 'value') bag.push(...fieldsOf(k.value));
       add(bag, 'key');
     }
   });
@@ -252,7 +265,8 @@ export class Transcript {
     if (!Array.isArray(trace)) {
       throw new Error(
         'no callProofDataTrace on this context — the runtime did not hand back a transcript, ' +
-        'and asserting over an absent one is the failure this instrument exists to avoid');
+          'and asserting over an absent one is the failure this instrument exists to avoid'
+      );
     }
     return new Transcript(trace.map(readCall));
   }
@@ -277,17 +291,23 @@ export class Transcript {
   }
 
   /** Every readable field, in transcript order, across the whole call tree. */
-  get published(): readonly Published[] { return this.calls.flatMap((c) => c.published); }
+  get published(): readonly Published[] {
+    return this.calls.flatMap((c) => c.published);
+  }
 
   /** Total ops. Zero means there is nothing to assert over — see `assertNotVacuous`. */
-  get opCount(): number { return this.calls.reduce((n, c) => n + c.opCount, 0); }
+  get opCount(): number {
+    return this.calls.reduce((n, c) => n + c.opCount, 0);
+  }
 
   /** Where a value appears, if it does. Whole-field equality, never substring. */
   occurrences(secret: Secret): readonly Published[] {
     const needle = asHex(secret);
     if (needle === '') {
-      throw new Error('the empty encoding is how the VM writes zero and is in every transcript; ' +
-        'asking whether it "appears" is not a question about privacy');
+      throw new Error(
+        'the empty encoding is how the VM writes zero and is in every transcript; ' +
+          'asking whether it "appears" is not a question about privacy'
+      );
     }
     return this.published.filter((p) => p.hex === needle);
   }
@@ -305,15 +325,17 @@ export class Transcript {
       if (hits.length === 0) continue;
       bad.push(
         `  ${name} (${asHex(value)}) appears ${hits.length}× in the PUBLIC TRANSCRIPT:\n` +
-        hits.map((h) => `    ${h.circuitId} op ${h.op} as a ${h.kind}`).join('\n'));
+          hits.map((h) => `    ${h.circuitId} op ${h.op} as a ${h.kind}`).join('\n')
+      );
     }
     if (bad.length > 0) {
       throw new Error(
         'THE PUBLIC TRANSCRIPT PUBLISHES A VALUE THIS TEST CALLS PRIVATE.\n' +
-        bad.join('\n') +
-        `\n  (transcript: ${this.calls.map((c) => `${c.circuitId}=${c.opCount} ops`).join(', ')})\n` +
-        '  A value in a ledger READ argument reaches the transcript verbatim and writes no\n' +
-        '  ledger field, so signer-governance.test.ts:500 cannot see this.');
+          bad.join('\n') +
+          `\n  (transcript: ${this.calls.map((c) => `${c.circuitId}=${c.opCount} ops`).join(', ')})\n` +
+          '  A value in a ledger READ argument reaches the transcript verbatim and writes no\n' +
+          '  ledger field, so signer-governance.test.ts:500 cannot see this.'
+      );
     }
   }
 
@@ -330,8 +352,9 @@ export class Transcript {
       if (this.occurrences(value).length === 0) {
         throw new Error(
           `${name} (${asHex(value)}) was expected in the public transcript and is not there. ` +
-          'Either the contract changed or this instrument has stopped reading — and an ' +
-          'absence check run through a blind instrument is green for no reason.');
+            'Either the contract changed or this instrument has stopped reading — and an ' +
+            'absence check run through a blind instrument is green for no reason.'
+        );
       }
     }
   }
@@ -344,9 +367,9 @@ export class Transcript {
 
   /** For a report, a build log, or a person reading a failure. */
   describe(): string {
-    return this.calls.map((c) =>
-      `${c.circuitId} @${c.contractAddress.slice(0, 8)} — ${c.opCount} ops: ` +
-      `${c.tags.join(' ')}`).join('\n');
+    return this.calls
+      .map((c) => `${c.circuitId} @${c.contractAddress.slice(0, 8)} — ${c.opCount} ops: ` + `${c.tags.join(' ')}`)
+      .join('\n');
   }
 }
 
@@ -388,10 +411,15 @@ export class Tape {
   }
 
   /** Forgets everything recorded so far — for skipping fixture setup. */
-  clear(): this { this.calls.length = 0; return this; }
+  clear(): this {
+    this.calls.length = 0;
+    return this;
+  }
 
   /** Everything recorded since the last `clear()`, across every watched call. */
-  get all(): Transcript { return Transcript.of({ callProofDataTrace: this.calls.flat() }); }
+  get all(): Transcript {
+    return Transcript.of({ callProofDataTrace: this.calls.flat() });
+  }
 
   /**
    * The most recent WATCHED CALL, including everything it called.

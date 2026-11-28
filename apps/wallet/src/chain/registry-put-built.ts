@@ -29,23 +29,37 @@ export type RegistryBuildingDeps = Pick<VaultBuilderDeps, 'ledger' | 'random' | 
 /** The registry's write of `value` at `tag`, proved: the transaction's bytes. */
 export async function registryPutBuilt(
   d: RegistryBuildingDeps,
-  ask: { readonly registry: string; readonly tag: Uint8Array; readonly value: Uint8Array; readonly state: Uint8Array; readonly parameters: Uint8Array },
+  ask: {
+    readonly registry: string;
+    readonly tag: Uint8Array;
+    readonly value: Uint8Array;
+    readonly state: Uint8Array;
+    readonly parameters: Uint8Array;
+  }
 ): Promise<Uint8Array> {
   const keys = throwawayKeys(d);
-  const built = await d.contracts.buildCall(d.registry.zkConfig, {
-    compiledContract: d.registry.compiled,
-    circuitId: REGISTRY_PUT,
-    contractAddress: ask.registry,
-    coinPublicKey: keys.coinPublicKey,
-    network: d.network,
-    read: { contract: ask.state, zswap: SPENDS_NO_COIN, parameters: ask.parameters },
-    args: [ask.tag, ask.value],
-  }, keys.encryptionPublicKey);
+  const built = await d.contracts.buildCall(
+    d.registry.zkConfig,
+    {
+      compiledContract: d.registry.compiled,
+      circuitId: REGISTRY_PUT,
+      contractAddress: ask.registry,
+      coinPublicKey: keys.coinPublicKey,
+      network: d.network,
+      read: { contract: ask.state, zswap: SPENDS_NO_COIN, parameters: ask.parameters },
+      args: [ask.tag, ask.value]
+    },
+    keys.encryptionPublicKey
+  );
   return (await d.prove(built.private.unprovenTx, REGISTRY_PUT)).serialize();
 }
 
 /** What the registry, in `state`, holds at each of `tags`, in order: the value, or null for a tag it does not hold. */
-export function registryValuesAt(registry: Pick<RegistryParts, 'ledger' | 'contractState'>, state: Uint8Array, tags: readonly Uint8Array[]): (Uint8Array | null)[] {
+export function registryValuesAt(
+  registry: Pick<RegistryParts, 'ledger' | 'contractState'>,
+  state: Uint8Array,
+  tags: readonly Uint8Array[]
+): (Uint8Array | null)[] {
   const entries = registry.ledger(registry.contractState.deserialize(state).data).entries;
   return tags.map((t) => (entries.member(t) ? entries.lookup(t) : null));
 }

@@ -1,5 +1,9 @@
 import type { Hex } from '../../../src/core/crypto.js';
-import { NonceSecretUnreadable, openNonceSecrets, recordsKeypairFrom } from '../../../src/midnight/company-nonce-secret.js';
+import {
+  NonceSecretUnreadable,
+  openNonceSecrets,
+  recordsKeypairFrom
+} from '../../../src/midnight/company-nonce-secret.js';
 import { ownCopyOpened } from '../../../src/midnight/sealed-secret-copy.js';
 import type { PoolDoors } from './vault-doors.js';
 import { versionsAsFiledOf } from './http-sealed-pool-store.js';
@@ -22,7 +26,9 @@ export async function recordSecretsOf(doors: Pick<PoolDoors, 'me' | 'records'>, 
   const filed = await doors.records('nonce-secret').get(vault);
   if (filed === null) return [];
   try {
-    return openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets.map((s) => String(s).toLowerCase() as Hex);
+    return openNonceSecrets(filed, vault, recordsKeypairFrom(doors.me.companyKey)).secrets.map(
+      (s) => String(s).toLowerCase() as Hex
+    );
   } catch (e) {
     /* Not opened here: what follows tries this signer's own copy on the chain, and refuses, naming why, without one. */
     if (e instanceof NonceSecretUnreadable) return [];
@@ -67,26 +73,35 @@ async function everyFiledSecretOf(doors: Pick<PoolDoors, 'me' | 'records'>, vaul
  * not open. A secret read here is used only once the vault's own check says it is the one it names.
  */
 export async function ownChainSecret(
-  doors: SpendDoors, vault: Hex, state: string, of: 'commitment' | 'copies-written',
+  doors: SpendDoors,
+  vault: Hex,
+  state: string,
+  of: 'commitment' | 'copies-written'
 ): Promise<{ readonly commitment: Hex | null; readonly secret: Hex | null }> {
   if (doors.builder.ownChainCopy === undefined) return { commitment: null, secret: null };
   const reader = recordsKeypairFrom(doors.me.companyKey).publicKey;
   const copy = await doors.builder.ownChainCopy({ vault, state, reader, of });
-  const commitment = copy.commitment === null ? null : String(copy.commitment).toLowerCase() as Hex;
+  const commitment = copy.commitment === null ? null : (String(copy.commitment).toLowerCase() as Hex);
   /* A copy that does not open here names no secret: the caller goes on as if the chain held none for this signer. */
-  return { commitment, secret: copy.parts === null ? null : ownCopyOpened(doors.me.companyKey, vault, [{ reader, parts: copy.parts }]) };
+  return {
+    commitment,
+    secret: copy.parts === null ? null : ownCopyOpened(doors.me.companyKey, vault, [{ reader, parts: copy.parts }])
+  };
 }
 
-const NO_SECRET_HERE = 'the company\'s records hold no nonce secret for this vault, so nothing is built from one. File it '
-  + 'first: creating the vault again does.';
+const NO_SECRET_HERE =
+  "the company's records hold no nonce secret for this vault, so nothing is built from one. File it " +
+  'first: creating the vault again does.';
 
-const COPIES_STILL_OWED = 'this vault\'s new secret is set on the chain and its signers\' sealed copies of it are still being '
-  + 'written, and the vault pays nothing until they are. Nothing was sent. Finishing the vault\'s secret change on any '
-  + 'signer\'s device writes them; then pay again.';
+const COPIES_STILL_OWED =
+  "this vault's new secret is set on the chain and its signers' sealed copies of it are still being " +
+  "written, and the vault pays nothing until they are. Nothing was sent. Finishing the vault's secret change on any " +
+  "signer's device writes them; then pay again.";
 
-const NOT_YET_FILED = 'neither the company\'s records nor a copy on the chain sealed to your key holds the secret this vault '
-  + 'holds now, so nothing was built from it. Nothing was sent. A signer whose copy is on the chain can pay now; you can '
-  + 'once the company\'s records hold the vault\'s new secret.';
+const NOT_YET_FILED =
+  "neither the company's records nor a copy on the chain sealed to your key holds the secret this vault " +
+  'holds now, so nothing was built from it. Nothing was sent. A signer whose copy is on the chain can pay now; you can ' +
+  "once the company's records hold the vault's new secret.";
 
 /**
  * **THE SECRET A STEP OUT OF THE VAULT IS BUILT WITH**: the one the vault holds now, by the vault's own check over
@@ -98,8 +113,9 @@ export async function theSecretToSpend(doors: SpendDoors, vault: Hex, state: str
   const isTheVaults = (secret: Hex) => doors.builder.secretIsTheVaults({ vault, state, secret });
   for (const secret of await everyFiledSecretOf(doors, vault)) if (await isTheVaults(secret)) return secret;
   const own = await ownChainSecret(doors, vault, state, 'commitment');
-  if (own.secret !== null && await isTheVaults(own.secret)) return own.secret;
-  const written = own.commitment === null ? null : (await ownChainSecret(doors, vault, state, 'copies-written')).commitment;
+  if (own.secret !== null && (await isTheVaults(own.secret))) return own.secret;
+  const written =
+    own.commitment === null ? null : (await ownChainSecret(doors, vault, state, 'copies-written')).commitment;
   throw new Error(own.commitment !== null && written !== own.commitment ? COPIES_STILL_OWED : NOT_YET_FILED);
 }
 
@@ -110,10 +126,15 @@ export async function theSecretToSpend(doors: SpendDoors, vault: Hex, state: str
  */
 export async function secretsToTry(doors: SpendDoors, vault: Hex, state?: string): Promise<Hex[]> {
   const all = await everyFiledSecretOf(doors, vault);
-  const own = state === undefined ? null : (await ownChainSecret(doors, vault, state, 'commitment').catch(() => {
-    /* A copy that cannot be read is no secret to try: the records' secrets are still tried. */
-    return { secret: null };
-  })).secret;
+  const own =
+    state === undefined
+      ? null
+      : (
+          await ownChainSecret(doors, vault, state, 'commitment').catch(() => {
+            /* A copy that cannot be read is no secret to try: the records' secrets are still tried. */
+            return { secret: null };
+          })
+        ).secret;
   if (own !== null && !all.includes(own)) all.push(own);
   if (all.length === 0) throw new Error(NO_SECRET_HERE);
   return all;
@@ -125,8 +146,11 @@ export async function secretsToTry(doors: SpendDoors, vault: Hex, state?: string
  * when none does; a secret no step could be made with proves nothing.
  */
 export async function keptOnTheChainUnder(
-  doors: { readonly builder: Pick<VaultBuilderClient, 'stepKept' | 'commitments'> }, vault: Hex, secrets: readonly Hex[],
-  step: StepOnTheWire, onChain: ReadonlySet<string>,
+  doors: { readonly builder: Pick<VaultBuilderClient, 'stepKept' | 'commitments'> },
+  vault: Hex,
+  secrets: readonly Hex[],
+  step: StepOnTheWire,
+  onChain: ReadonlySet<string>
 ): Promise<{ readonly kept: NoteOnTheWire; readonly output: string } | null> {
   for (const secret of secrets) {
     let kept: NoteOnTheWire | null;

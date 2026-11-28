@@ -12,8 +12,17 @@ import { StepRefused } from '../actions/definition.js';
 
 export { liveCompanyChain } from './company-chain.js';
 export {
-  contractsOnChain, deployFromIndexerAt, fromIndexerAt, holdersOnChain, labelInAccountState, labelOnAccount, seatsInAccountState, vaultOnChain,
-  type HoldersOnChain, type LabelOnAccount, type VaultOnChain,
+  contractsOnChain,
+  deployFromIndexerAt,
+  fromIndexerAt,
+  holdersOnChain,
+  labelInAccountState,
+  labelOnAccount,
+  seatsInAccountState,
+  vaultOnChain,
+  type HoldersOnChain,
+  type LabelOnAccount,
+  type VaultOnChain
 } from './company-label-on-chain.js';
 export { accountAtOneBlockOver, accountPresenceAt } from '../../../../packages/web-shared/src/vault-on-chain-here.js';
 /** The anchors the company's account holds on the chain, read through this wallet's builder and indexer. */
@@ -22,7 +31,7 @@ export { anchorsOnChainAt as companyAnchorsOnChain } from '../../../../packages/
 /** Thrown when this wallet's own indexer does not answer with the company's account at one block. */
 export class AccountNotReadAtOneBlock extends Error {
   constructor() {
-    super('this wallet could not read the company\'s account at one block, so nothing was built or sent.');
+    super("this wallet could not read the company's account at one block, so nothing was built or sent.");
     this.name = 'AccountNotReadAtOneBlock';
   }
 }
@@ -43,14 +52,18 @@ export const ownChainReadsOf = (chain: Pick<CompanyChain, 'callState'>, account:
       if (read === null) throw new AccountNotReadAtOneBlock();
       return { ...read, account };
     },
-    vaultChain: notHere('a vault'), payoutState: notHere('a vault\'s payouts'), authority: notHere('who holds the company\'s account'),
-    committeeChange: notHere('a change of the committee'), vaultKeys: notHere('the vaults\' keys'),
+    vaultChain: notHere('a vault'),
+    payoutState: notHere("a vault's payouts"),
+    authority: notHere("who holds the company's account"),
+    committeeChange: notHere('a change of the committee'),
+    vaultKeys: notHere("the vaults' keys")
   });
 };
 
 /** Who holds the company, read by this wallet off the chain; a refusal the wallet words is the step's. */
-export const holdersOn = (chain: CompanyChain, account: AccountAddress, label: CompanyLabel) => async (): Promise<AccountHoldersRead> => {
-  const now = await chain.holders(account, label);
-  if ('key' in now) throw new StepRefused(now);
-  return now;
-};
+export const holdersOn =
+  (chain: CompanyChain, account: AccountAddress, label: CompanyLabel) => async (): Promise<AccountHoldersRead> => {
+    const now = await chain.holders(account, label);
+    if ('key' in now) throw new StepRefused(now);
+    return now;
+  };

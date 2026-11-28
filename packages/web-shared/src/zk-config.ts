@@ -98,9 +98,14 @@ export const byCircuitName: LocationForCircuit = (circuitId) => circuitId;
  * tell which ledger the contract's keys are for. A manifest that names none is refused, so nothing is built for it.
  */
 export const runtimeVersionOf = (manifest: unknown, whose: string): string => {
-  const version = typeof manifest === 'object' && manifest !== null ? (manifest as { 'runtime-version'?: unknown })['runtime-version'] : undefined;
+  const version =
+    typeof manifest === 'object' && manifest !== null
+      ? (manifest as { 'runtime-version'?: unknown })['runtime-version']
+      : undefined;
   if (typeof version !== 'string' || version === '') {
-    throw new Error(`this copy of the app names no contract runtime for ${whose}, so nothing can be built for it. Reload the page.`);
+    throw new Error(
+      `this copy of the app names no contract runtime for ${whose}, so nothing can be built for it. Reload the page.`
+    );
   }
   return version;
 };
@@ -110,12 +115,14 @@ export const runtimeVersionOf = (manifest: unknown, whose: string): string => {
  * location, never here, so asking it for any other kind is refused naming the contract and circuit.
  */
 export const verifierOnlySource = (
-  key: (circuit: string) => Promise<Uint8Array>, whose: string,
+  key: (circuit: string) => Promise<Uint8Array>,
+  whose: string
 ): Pick<ArtefactSource, 'artefact'> => ({
   artefact: async (kind, circuit) => {
-    if (kind !== 'verifier') throw new Error(`this wallet serves no ${kind} for ${whose}'s "${circuit}" to its builder.`);
+    if (kind !== 'verifier')
+      throw new Error(`this wallet serves no ${kind} for ${whose}'s "${circuit}" to its builder.`);
     return key(circuit);
-  },
+  }
 });
 
 /**
@@ -133,7 +140,7 @@ export const verifierOnlySource = (
 export const zkConfigOver = (
   source: Pick<ArtefactSource, 'artefact'>,
   locationFor: LocationForCircuit,
-  runtimeVersion: string,
+  runtimeVersion: string
 ): ZKConfigProvider<string> => {
   /**
    * One request per artefact in flight, however many callers want it.
@@ -150,7 +157,9 @@ export const zkConfigOver = (
     const already = inFlight.get(key);
     if (already !== undefined) return already;
 
-    const started = source.artefact(kind, keyLocation).finally(() => { inFlight.delete(key); });
+    const started = source.artefact(kind, keyLocation).finally(() => {
+      inFlight.delete(key);
+    });
     inFlight.set(key, started);
     return started;
   };
@@ -171,14 +180,15 @@ export const zkConfigOver = (
      * set while a transaction is assembled. The proving key is not among them.
      */
     getVerifierKeys: async (circuitIds) =>
-      Promise.all(circuitIds.map(async (id): Promise<[string, VerifierKey]> =>
-        [id, await provider.getVerifierKey(id)])),
+      Promise.all(
+        circuitIds.map(async (id): Promise<[string, VerifierKey]> => [id, await provider.getVerifierKey(id)])
+      ),
 
     get: async (circuitId): Promise<ZKConfig<string>> => {
       const [proverKey, verifierKey, zkir] = await Promise.all([
         provider.getProverKey(circuitId),
         provider.getVerifierKey(circuitId),
-        provider.getZKIR(circuitId),
+        provider.getZKIR(circuitId)
       ]);
       return { circuitId, proverKey, verifierKey, zkir };
     },
@@ -195,8 +205,8 @@ export const zkConfigOver = (
     asKeyMaterialProvider: () => ({
       getZKIR: (circuitKeyLocation) => atLocation('ir', circuitKeyLocation),
       getProverKey: (circuitKeyLocation) => atLocation('prover', circuitKeyLocation),
-      getVerifierKey: (circuitKeyLocation) => atLocation('verifier', circuitKeyLocation),
-    }),
+      getVerifierKey: (circuitKeyLocation) => atLocation('verifier', circuitKeyLocation)
+    })
   };
 
   return provider;

@@ -17,7 +17,10 @@ export async function whileNothingIsSent<T>(work: () => Promise<T>): Promise<T> 
     await Promise.allSettled([lane.carrying, lane.pressing, lane.holding]);
   }
   const mine = work();
-  const mark = mine.then(() => undefined, () => undefined);
+  const mark = mine.then(
+    () => undefined,
+    () => undefined
+  );
   lane.holding = mark;
   try {
     return await mine;

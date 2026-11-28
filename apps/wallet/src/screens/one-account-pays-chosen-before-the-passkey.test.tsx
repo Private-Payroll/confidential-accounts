@@ -12,13 +12,15 @@ import { IDBFactory } from 'fake-indexeddb';
 
 const until = (check: () => void): Promise<void> => waitFor(check, { timeout: 15_000 });
 
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -27,12 +29,12 @@ vi.mock('midnight-identity', async (importOriginal) => {
 });
 
 vi.mock('midnight-identity/profile/act-intents', async (importOriginal) => ({
-  ...await importOriginal<typeof import('midnight-identity/profile/act-intents')>(),
+  ...(await importOriginal<typeof import('midnight-identity/profile/act-intents')>()),
   ACT_INTENTS: Object.freeze({
     'private-deposit': { fields: { vault: 'vault' } },
     /* An action whose only cost from the account picked is a call's network fee. */
-    'give-vault-keys': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/sent', sends: true }] },
-  }),
+    'give-vault-keys': { fields: { vault: 'vault' }, calls: [{ method: 'POST', path: '/api/sent', sends: true }] }
+  })
 }));
 
 /* The account each run paid from, as the action's own step reads it. */
@@ -44,14 +46,14 @@ vi.mock('../actions/registry.js', async () => {
     run: async (c: { held: { account?: number }; relay(tx: string): Promise<void> }) => {
       paid.accounts.push(c.held.account);
       await c.relay('dHg1');
-    },
+    }
   };
   const action = {
     headline: 'ask.act.headline',
     shown: async () => [{ key: 'ask.committee.check', from: 'action' }],
     checks: [{ key: 'ask.committee.check' }],
     check: async () => null,
-    steps: () => [pays],
+    steps: () => [pays]
   };
   const acts: Record<string, unknown> = { 'private-deposit': action, 'give-vault-keys': action };
   return { ACTIONS: acts, actionFor: (name: string) => acts[name] ?? null };
@@ -68,7 +70,13 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { toBase64Url } from 'midnight-identity/passkey/bytes';
 import { fingerprintOf } from 'midnight-identity/recovery/pieces';
 import {
-  ACT_CALLED_SCHEMA, ACT_CALL_SCHEMA, ACT_ENDED_SCHEMA, ACT_RELAYED_SCHEMA, ACT_RELAY_SCHEMA, PROGRESS_SCHEMA, READY_PING,
+  ACT_CALLED_SCHEMA,
+  ACT_CALL_SCHEMA,
+  ACT_ENDED_SCHEMA,
+  ACT_RELAYED_SCHEMA,
+  ACT_RELAY_SCHEMA,
+  PROGRESS_SCHEMA,
+  READY_PING
 } from 'midnight-identity/profile/channel';
 import { App } from '../app.js';
 import { SessionProvider } from '../session.js';
@@ -91,13 +99,24 @@ const mockUsePasskey = vi.mocked(usePasskey);
 const mockVerifyAssertion = vi.mocked(verifyAssertion);
 
 const passkeyFixture = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7, signCount: 0,
-  provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false, transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 const passkeyAnswers = (credentialId: string): void => {
   mockUsePasskey.mockResolvedValueOnce({
-    credentialId, clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(), signature: new Uint8Array(),
-    userHandle: 'cGVyc29uLTE',
+    credentialId,
+    clientDataJSON: new Uint8Array(),
+    authenticatorData: new Uint8Array(),
+    signature: new Uint8Array(),
+    userHandle: 'cGVyc29uLTE'
   } as never);
   mockVerifyAssertion.mockResolvedValueOnce({ passkey: passkeyFixture(credentialId) } as never);
 };
@@ -114,11 +133,11 @@ const depositAsk = (): Record<string, unknown> => ({
   schema: 'midnight-identity/disclosure-request/v1',
   kind: 'act',
   requester: { name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'To pay into your company\'s vault.',
+  purpose: "To pay into your company's vault.",
   nonce: `deposit-${(asked += 1)}`,
   expiresAt: Date.now() + 20 * 60_000,
   progress: PROGRESS_SCHEMA,
-  intent: { name: 'private-deposit', vault: VAULT },
+  intent: { name: 'private-deposit', vault: VAULT }
 });
 
 /* The page that opened this window: it sends its ask when the wallet listens, and sends every transaction handed to it. */
@@ -141,9 +160,13 @@ const page = {
       setTimeout(() => send({ schema: ACT_RELAYED_SCHEMA, nonce: m['nonce'], n: m['n'], outcome: 'relayed' }), 0);
     }
     if (m['schema'] === ACT_CALL_SCHEMA) {
-      setTimeout(() => send({ schema: ACT_CALLED_SCHEMA, nonce: m['nonce'], n: m['n'], outcome: 'answered', status: 200, body: {} }), 0);
+      setTimeout(
+        () =>
+          send({ schema: ACT_CALLED_SCHEMA, nonce: m['nonce'], n: m['n'], outcome: 'answered', status: 200, body: {} }),
+        0
+      );
     }
-  },
+  }
 };
 const of = (schema: string) => posted.filter((m) => m['schema'] === schema);
 const press = (selector: string): void => {
@@ -189,11 +212,18 @@ describe('the window before the passkey of a paying action', () => {
   it('lists every wallet here with each of its accounts by name, in one list', async () => {
     const { everyday, work } = await twoWallets();
     asking = depositAsk();
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-ask-window="act"]')).not.toBeNull());
     /* RED WHEN: the window before the passkey does not list the wallets with their accounts, so the account that
      * pays is chosen after the passkey or not at all. */
-    expect([...document.querySelectorAll('[data-paying-wallet]')].map((e) => e.textContent)).toEqual(['Everyday', 'Work']);
+    expect([...document.querySelectorAll('[data-paying-wallet]')].map((e) => e.textContent)).toEqual([
+      'Everyday',
+      'Work'
+    ]);
     expect(document.querySelector(`[data-pays-from="${work.id}:3"]`)?.closest('label')?.textContent).toContain('Rent');
     expect(document.querySelector(`[data-pays-from="${everyday.id}:0"]`)).not.toBeNull();
     /* RED WHEN: a second list of wallets alone is offered beside the accounts, so the person is asked twice. */
@@ -205,7 +235,11 @@ describe('the window before the passkey says what the account picked pays', () =
   it('a fee-only action says the fee, starts on the account kept for the site, and checks no account', async () => {
     await twoWallets();
     asking = { ...depositAsk(), intent: { name: 'give-vault-keys', vault: VAULT } };
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-accounts-to-choose]')).not.toBeNull());
     const said = document.body.textContent ?? '';
     /* RED WHEN: the window tells the person the coins of a fee-only action come from the account they pick. */
@@ -221,12 +255,18 @@ describe('the window before the passkey says what the account picked pays', () =
   it('a deposit says the coins, and starts on the main account of the wallet that opens', async () => {
     const { everyday } = await twoWallets();
     asking = depositAsk();
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-accounts-to-choose]')).not.toBeNull());
     /* RED WHEN: a deposit's window says only a fee is paid, or its pick no longer starts on the main account. */
     expect(document.body.textContent).toContain('The coins come from the account you pick here');
     expect(document.querySelector('[data-pays-from-offered]')).toBeNull();
-    expect((document.querySelector(`[data-pays-from="${everyday.id}:0"]`) as HTMLInputElement | null)?.checked).toBe(true);
+    expect((document.querySelector(`[data-pays-from="${everyday.id}:0"]`) as HTMLInputElement | null)?.checked).toBe(
+      true
+    );
   });
 });
 
@@ -234,7 +274,11 @@ describe('a paying action pays from the account picked before the passkey', () =
   it('pays from the account picked, not the one open last, and asks no second choice', async () => {
     const { work } = await twoWallets();
     asking = depositAsk();
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector(`[data-pays-from="${work.id}:3"]`)).not.toBeNull());
     press(`[data-pays-from="${work.id}:3"]`);
     passkeyAnswers('cred-b');
@@ -256,7 +300,11 @@ describe('an opened wallet that is not the one picked pays nothing', () => {
     const { everyday, work } = await twoWallets();
     asking = depositAsk();
     /* Everyday's main account is picked in the window, and the passkey prompt is left open. */
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector(`[data-pays-from="${everyday.id}:0"]`)).not.toBeNull());
     press(`[data-pays-from="${everyday.id}:0"]`);
     mockUsePasskey.mockReturnValueOnce(new Promise(() => {}) as never);
@@ -265,10 +313,16 @@ describe('an opened wallet that is not the one picked pays nothing', () => {
     cleanup();
     /* The wallet that opens is Work. */
     openWallet(work.id);
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-pays-from-refused]')).not.toBeNull());
     /* RED WHEN: a wallet other than the one picked is offered to pay, or the refusal does not say what resolves it. */
-    expect(document.querySelector('[data-pays-from-refused]')?.getAttribute('data-pays-from-refused')).toBe('another-wallet');
+    expect(document.querySelector('[data-pays-from-refused]')?.getAttribute('data-pays-from-refused')).toBe(
+      'another-wallet'
+    );
     expect(document.querySelector('[data-pick-again]')).not.toBeNull();
     expect(document.querySelector('[data-approve]')).toBeNull();
     expect(paid.accounts).toEqual([]);
@@ -278,7 +332,11 @@ describe('an opened wallet that is not the one picked pays nothing', () => {
     const { work } = await twoWallets();
     asking = depositAsk();
     openWallet(work.id);
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-accounts-in-open-wallet]')).not.toBeNull());
     /* RED WHEN: a paying ask reaching an open wallet runs, or pays from the account open last, before an account is picked. */
     expect(document.querySelector('[data-approve]')).toBeNull();
@@ -313,7 +371,7 @@ const balanceAsk = (): Record<string, unknown> => ({
   company: 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071',
   account: 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8',
   vault: 'aa'.repeat(32),
-  transaction: 'AAAA',
+  transaction: 'AAAA'
 });
 
 describe('every ask that pays is picked once, before the passkey', () => {
@@ -328,7 +386,11 @@ describe('every ask that pays is picked once, before the passkey', () => {
   it('the window before the passkey of a balance ask lists the accounts, and no list of wallets alone', async () => {
     const { work } = await twoWallets();
     asking = balanceAsk();
-    render(<SessionProvider><App /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-ask-window="balance"]')).not.toBeNull());
     /* RED WHEN: a balance ask's account is not picked in the window before the passkey. */
     expect(document.querySelector(`[data-pays-from="${work.id}:3"]`)?.closest('label')?.textContent).toContain('Rent');
@@ -339,7 +401,11 @@ describe('every ask that pays is picked once, before the passkey', () => {
     const { work } = await twoWallets();
     asking = balanceAsk();
     openWallet(work.id);
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-accounts-in-open-wallet]')).not.toBeNull());
     /* RED WHEN: a balance ask pays from the account chosen after the passkey, or the account open last. */
     expect(document.querySelector('[data-pays-from-account]')).toBeNull();
@@ -353,9 +419,17 @@ describe('every ask that pays is picked once, before the passkey', () => {
   it('a balance ask with an account picked in its wallet names that account and offers no second choice', async () => {
     const { work } = await twoWallets();
     asking = balanceAsk();
-    keepPayingPick(parseAsk(asking, ASKER, Date.now()), { walletId: work.id, fingerprint: work.fingerprint, account: 3 });
+    keepPayingPick(parseAsk(asking, ASKER, Date.now()), {
+      walletId: work.id,
+      fingerprint: work.fingerprint,
+      account: 3
+    });
     openWallet(work.id);
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-pays-from-account]')).not.toBeNull());
     /* RED WHEN: the opened window of a balance ask names another account, or offers a second choice of it. */
     expect(document.querySelector('[data-pays-from-account]')?.textContent).toContain('Rent');
@@ -365,7 +439,17 @@ describe('every ask that pays is picked once, before the passkey', () => {
 
   it('an account another site already has is said beside the account that pays', async () => {
     const { work } = await twoWallets();
-    render(<SessionProvider><PaysFromAccount request={parseAsk(depositAsk(), ASKER, Date.now())} how="before" secret={work.secret} account={3} shared={['https://other.example']} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <PaysFromAccount
+          request={parseAsk(depositAsk(), ASKER, Date.now())}
+          how="before"
+          secret={work.secret}
+          account={3}
+          shared={['https://other.example']}
+        />
+      </SessionProvider>
+    );
     /* RED WHEN: paying from an account whose address another site holds is not said before the press. */
     expect(document.querySelector('[data-pays-from-shared]')?.textContent).toContain('https://other.example');
   });
@@ -374,13 +458,25 @@ describe('every ask that pays is picked once, before the passkey', () => {
     const { work } = await twoWallets();
     /* An ask left unanswered: the opened window waits for its own Approve. */
     asking = depositAsk();
-    keepPayingPick(parseAsk(asking, ASKER, Date.now()), { walletId: work.id, fingerprint: work.fingerprint, account: 3 });
+    keepPayingPick(parseAsk(asking, ASKER, Date.now()), {
+      walletId: work.id,
+      fingerprint: work.fingerprint,
+      account: 3
+    });
     openWallet(work.id);
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-pays-from-account]')).not.toBeNull());
     cleanup();
     /* The page sends the very same ask, nonce included, to the wallet still open. */
-    render(<SessionProvider><Approve identity={identityFromSecret(work.secret)} secret={work.secret} /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Approve identity={identityFromSecret(work.secret)} secret={work.secret} />
+      </SessionProvider>
+    );
     await until(() => expect(document.querySelector('[data-accounts-in-open-wallet]')).not.toBeNull());
     /* RED WHEN: an ask repeated while the wallet is open pays from the earlier pick instead of asking for its own. */
     expect(document.querySelector('[data-pays-from-account]')).toBeNull();
@@ -393,7 +489,14 @@ describe('every ask that pays is picked once, before the passkey', () => {
     keepPayingPick(first, { walletId: work.id, fingerprint: work.fingerprint, account: 3 });
     const shown = (a: Ask) => (
       <SessionProvider>
-        <PaysWhenPicked request={a} thisWallet={work.fingerprint} secret={work.secret} onDecline={() => undefined} offered={null} render={(n) => <p data-runs-from={n} />} />
+        <PaysWhenPicked
+          request={a}
+          thisWallet={work.fingerprint}
+          secret={work.secret}
+          onDecline={() => undefined}
+          offered={null}
+          render={(n) => <p data-runs-from={n} />}
+        />
       </SessionProvider>
     );
     const { rerender } = render(shown(first));

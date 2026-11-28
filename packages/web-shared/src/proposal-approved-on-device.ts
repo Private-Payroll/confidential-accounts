@@ -11,7 +11,15 @@ import type { KeysHeld } from '../../../src/core/company-key.js';
 import type { GovernanceOnTheWire } from './governed-call-builder.js';
 import type { RetirementSignature } from '../../../src/core/types.js';
 import { handedOver } from './hand-over.js';
-import { filerHere, type GovernedCallDoors, onChainHere, opensFor, type RoundOnThePage, theRoundAsked, waitFor } from './governed-call-on-device.js';
+import {
+  filerHere,
+  type GovernedCallDoors,
+  onChainHere,
+  opensFor,
+  type RoundOnThePage,
+  theRoundAsked,
+  waitFor
+} from './governed-call-on-device.js';
 import { refuseWhatALeaverFiledHere } from './seats-leaving-here.js';
 
 /** What the contract says when a proposal is carried out with fewer approvals than the account asks for it now. */
@@ -21,7 +29,8 @@ const NOT_ENOUGH_APPROVALS = 'not enough approvals yet';
  * Whether a refusal is the chain's: the proposal has fewer approvals than the account asks for it now. A vault's
  * spending policy, or a signer removed since the proposal was raised, can ask more than the proposal named.
  */
-export const notEnoughApprovalsYet = (e: unknown): boolean => String((e as Error | null)?.message ?? '').includes(NOT_ENOUGH_APPROVALS);
+export const notEnoughApprovalsYet = (e: unknown): boolean =>
+  String((e as Error | null)?.message ?? '').includes(NOT_ENOUGH_APPROVALS);
 
 /**
  * **ONE APPROVAL, FROM THIS DEVICE.** The approval is built and proved in the
@@ -51,7 +60,8 @@ export const notEnoughApprovalsYet = (e: unknown): boolean => String((e as Error
  * `NothingToApprove`. Every answer of the service is held to the proposal asked about (`theRoundAsked`).
  */
 export async function approveOnDevice(
-  doors: GovernedCallDoors, input: { round: RoundOnThePage; viewingKey: KeysHeld },
+  doors: GovernedCallDoors,
+  input: { round: RoundOnThePage; viewingKey: KeysHeld }
 ): Promise<RoundOnThePage> {
   const done = await approveHere(doors, input, false);
   if (done.counted) throw new ApprovalNotOwed('counted');
@@ -66,13 +76,14 @@ export async function approveOnDevice(
 export async function approveHere(
   doors: GovernedCallDoors,
   input: {
-    round: RoundOnThePage; viewingKey: KeysHeld;
+    round: RoundOnThePage;
+    viewingKey: KeysHeld;
     /** For a governance change: what it changes and its salt, which the approval is refused unless it matches. */
     of?: { governance: GovernanceOnTheWire; proposalSalt: string };
     /** For a removal: this seat's signature over the retirement it carries, sent with the approval. */
     retirement?: RetirementSignature;
   },
-  aChangeCheckedHere: boolean,
+  aChangeCheckedHere: boolean
 ): Promise<{ readonly counted: boolean; readonly round: RoundOnThePage }> {
   const { service } = doors;
   const named = theRoundAsked(await service.standing(input.round.id), input.round.id);
@@ -82,16 +93,22 @@ export async function approveHere(
   }
   const opened = await opensFor(doors)(input.round.id, input.viewingKey, false);
   if (String(opened.chainId).toLowerCase() !== String(input.round.chainId).toLowerCase()) {
-    throw new Error('the company\'s record of this proposal does not match the proposal on this page. Nothing was built or '
-      + 'sent. Reload the page and try again. If it happens again, do not approve it.');
+    throw new Error(
+      "the company's record of this proposal does not match the proposal on this page. Nothing was built or " +
+        'sent. Reload the page and try again. If it happens again, do not approve it.'
+    );
   }
   if (input.round.summary !== undefined && opened.summary !== input.round.summary) {
-    throw new Error('the company\'s record of this proposal says something different from what this page shows. Nothing '
-      + 'was built or sent. Reload the page and try again. If it happens again, do not approve it.');
+    throw new Error(
+      "the company's record of this proposal says something different from what this page shows. Nothing " +
+        'was built or sent. Reload the page and try again. If it happens again, do not approve it.'
+    );
   }
   if (opened.governance !== undefined && !aChangeCheckedHere) {
-    throw new Error('this proposal changes the company - who is seated, or how many approvals are needed - and such a change '
-      + 'is approved where it is made, where this device first checks what it does. Nothing was built or sent.');
+    throw new Error(
+      'this proposal changes the company - who is seated, or how many approvals are needed - and such a change ' +
+        'is approved where it is made, where this device first checks what it does. Nothing was built or sent.'
+    );
   }
   /* A change is checked for who filed it where it is made (`governOnDevice`); a run is checked here. */
   if (!aChangeCheckedHere) await refuseWhatALeaverFiledHere(doors, input.viewingKey, input.round.id, opened);
@@ -99,8 +116,10 @@ export async function approveHere(
   /* Whether this seat's approval is already counted is the chain's answer, never the service's. */
   const before = await onChainHere(doors, named);
   if (before.approvedHere === undefined) {
-    throw new Error('whether your approval of this proposal is already counted was not read from the chain, so nothing was built or '
-      + 'sent. Reload the page and try again.');
+    throw new Error(
+      'whether your approval of this proposal is already counted was not read from the chain, so nothing was built or ' +
+        'sent. Reload the page and try again.'
+    );
   }
   /*
    * Closed on the chain, it is owed no approval: the chain keeps this seat's approval marker after it closes, so an
@@ -114,17 +133,25 @@ export async function approveHere(
   const { tx } = await doors.builder.governedCall({
     account: chain.account,
     order: { circuit: 'approve', proposal: opened.chainId, ...(input.of === undefined ? {} : { of: input.of }) },
-    material: doors.material, chain, opened,
+    material: doors.material,
+    chain,
+    opened
   });
   doors.progress?.('sending');
   const answer = await handedOver(doors.handOver, {
-    tx, call: { kind: 'account-call', contract: chain.account, circuit: 'approve' },
-    viaService: () => service.approve(input.round.id, {
-      tx, filer: filerHere(doors), ...(input.retirement === undefined ? {} : { retirement: input.retirement }),
-    }),
+    tx,
+    call: { kind: 'account-call', contract: chain.account, circuit: 'approve' },
+    viaService: () =>
+      service.approve(input.round.id, {
+        tx,
+        filer: filerHere(doors),
+        ...(input.retirement === undefined ? {} : { retirement: input.retirement })
+      }),
     /* A removal's retirement signature is kept only by the service, so it is handed there before the approval goes. */
-    before: async () => { if (input.retirement !== undefined) await retirementHanded(doors, input.round, input.retirement); },
-    after: () => service.standing(input.round.id),
+    before: async () => {
+      if (input.retirement !== undefined) await retirementHanded(doors, input.round, input.retirement);
+    },
+    after: () => service.standing(input.round.id)
   });
   const sent = await onChainHere(doors, theRoundAsked(answer, input.round.id, opened.chainId));
   /* This seat's own approval, never a count another signer's approval can also raise, or the proposal closed. */
@@ -138,10 +165,16 @@ export async function approveHere(
  * Hands this seat's signature over a removal's retirement to the service on its own, through the route that takes one,
  * as a raise that counted this seat's approval leaves no approval to carry it.
  */
-export const retirementHanded = async (doors: GovernedCallDoors, round: RoundOnThePage, signature: RetirementSignature): Promise<void> => {
+export const retirementHanded = async (
+  doors: GovernedCallDoors,
+  round: RoundOnThePage,
+  signature: RetirementSignature
+): Promise<void> => {
   if (doors.service.retire === undefined) {
-    throw new Error('the removal is raised, and this page cannot send your signature over its retirement, which the removal needs before '
-      + 'it is carried out. Reload the page to get the current version, then make the removal again: it signs the retirement again.');
+    throw new Error(
+      'the removal is raised, and this page cannot send your signature over its retirement, which the removal needs before ' +
+        'it is carried out. Reload the page to get the current version, then make the removal again: it signs the retirement again.'
+    );
   }
   await doors.service.retire(round.id, { signature, filer: filerHere(doors) });
 };
@@ -150,8 +183,10 @@ export const retirementHanded = async (doors: GovernedCallDoors, round: RoundOnT
 export class WithdrawnWhileSent extends Error {
   readonly nothingWasSent = false;
   constructor() {
-    super('this proposal was withdrawn while this approval was being sent. Your approval was sent, and the proposal is closed, '
-      + 'so there is nothing more to approve.');
+    super(
+      'this proposal was withdrawn while this approval was being sent. Your approval was sent, and the proposal is closed, ' +
+        'so there is nothing more to approve.'
+    );
     this.name = 'WithdrawnWhileSent';
   }
 }
@@ -160,8 +195,10 @@ export class WithdrawnWhileSent extends Error {
 export class NothingToApprove extends Error {
   readonly nothingWasSent = true;
   constructor() {
-    super('The company holds no proposal raised on the chain for this change that this device was asked to approve, so nothing '
-      + 'was approved. Nothing was sent. Reload the page: it may have been withdrawn, or not raised yet.');
+    super(
+      'The company holds no proposal raised on the chain for this change that this device was asked to approve, so nothing ' +
+        'was approved. Nothing was sent. Reload the page: it may have been withdrawn, or not raised yet.'
+    );
     this.name = 'NothingToApprove';
   }
 }
@@ -174,9 +211,11 @@ export class NothingToApprove extends Error {
 export class ApprovalNotOwed extends Error {
   readonly nothingWasSent = true;
   constructor(readonly why: 'counted' | 'carried-out') {
-    super(why === 'counted'
-      ? 'The network already counts your approval of this proposal, so nothing was approved again. Nothing was sent.'
-      : 'The network has already carried this proposal out, so there is nothing left to approve. Nothing was sent.');
+    super(
+      why === 'counted'
+        ? 'The network already counts your approval of this proposal, so nothing was approved again. Nothing was sent.'
+        : 'The network has already carried this proposal out, so there is nothing left to approve. Nothing was sent.'
+    );
     this.name = 'ApprovalNotOwed';
   }
 }

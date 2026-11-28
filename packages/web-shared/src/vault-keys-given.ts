@@ -2,7 +2,11 @@ import type { Hex } from '../../../src/core/crypto.js';
 import type { CompanyKeys } from '../../../src/core/company-key.js';
 import type { CommitteeKey } from '../../../src/midnight/seat-directory.js';
 import type { Signer } from '../../../src/core/types.js';
-import { recordsKeySignedBy, type DirectoryEntryStatement, type RecordsKeyStatement } from 'midnight-identity/profile/records-key';
+import {
+  recordsKeySignedBy,
+  type DirectoryEntryStatement,
+  type RecordsKeyStatement
+} from 'midnight-identity/profile/records-key';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import type { OwedDirectoryEntry } from './keyring-blob.js';
 import { fileTheOwedDirectoryEntry, type EntryView, type OwedEntryFiled } from './directory-filed-here.js';
@@ -24,10 +28,19 @@ import type { RosterViewHeld } from './roster-through-the-view.js';
 
 /** Files the directory entry this seat owes, if it owes one: as `fileTheOwedDirectoryEntry` says. */
 export const ownEntryFiled = (
-  accountId: string, owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
-  seat: { readonly signingSecret: Hex; readonly companyKeys: CompanyKeys }, founding: () => Promise<string | null>, view: EntryView,
+  accountId: string,
+  owed: { read(): OwedDirectoryEntry | null; settle(): Promise<void> },
+  seat: { readonly signingSecret: Hex; readonly companyKeys: CompanyKeys },
+  founding: () => Promise<string | null>,
+  view: EntryView
 ): Promise<OwedEntryFiled> =>
-  fileTheOwedDirectoryEntry(accountId, owed, async () => ({ signingSecret: seat.signingSecret, viewingKey: seat.companyKeys }), founding, view);
+  fileTheOwedDirectoryEntry(
+    accountId,
+    owed,
+    async () => ({ signingSecret: seat.signingSecret, viewingKey: seat.companyKeys }),
+    founding,
+    view
+  );
 
 /**
  * Files the company's roster again from this seat when no device believes the
@@ -40,20 +53,37 @@ export const ownEntryFiled = (
  * again (none when the roster could not be filed here).
  */
 export const rosterFollowed = async (input: {
-  readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress;
-  readonly signingSecret: Hex; readonly companyKeys: CompanyKeys; readonly reads: RosterReads; readonly entered: RecordsEntered;
+  readonly accountId: string;
+  readonly label: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly signingSecret: Hex;
+  readonly companyKeys: CompanyKeys;
+  readonly reads: RosterReads;
+  readonly entered: RecordsEntered;
   readonly view: RosterViewHeld;
-}): Promise<{ readonly changed: boolean; readonly refused: readonly { readonly seat: string; readonly why: string }[] }> => {
+}): Promise<{
+  readonly changed: boolean;
+  readonly refused: readonly { readonly seat: string; readonly why: string }[];
+}> => {
   const doors = {
-    accountId: input.accountId, viewingKey: input.companyKeys, signingSecret: input.signingSecret,
-    label: input.label, account: input.account, reads: input.reads, entered: input.entered, view: input.view,
+    accountId: input.accountId,
+    viewingKey: input.companyKeys,
+    signingSecret: input.signingSecret,
+    label: input.label,
+    account: input.account,
+    reads: input.reads,
+    entered: input.entered,
+    view: input.view
   };
   const followed = await fileTheRosterFollowedHere(doors);
   const folded = await foldOffersHere(doors).catch((e: unknown) => {
     if (e instanceof RosterNotFiled) return null;
     throw e;
   });
-  return { changed: followed !== null || (folded !== null && folded.folded.length > 0), refused: folded?.refused ?? [] };
+  return {
+    changed: followed !== null || (folded !== null && folded.folded.length > 0),
+    refused: folded?.refused ?? []
+  };
 };
 
 /** What a roster holds for one seat that an offer of its vault keys would change: its vault keys and its own directory entry. */
@@ -68,17 +98,28 @@ export type HeldForTheSeat = Pick<Signer, 'vaultKeys' | 'directoryEntry'>;
  */
 export const offerAlreadyHeld = (
   held: HeldForTheSeat | undefined,
-  offer: { readonly committeeKey: CommitteeKey; readonly recordsKey: RecordsKeyStatement; readonly entry: DirectoryEntryStatement },
-  company: { readonly label: CompanyLabel; readonly account: AccountAddress },
+  offer: {
+    readonly committeeKey: CommitteeKey;
+    readonly recordsKey: RecordsKeyStatement;
+    readonly entry: DirectoryEntryStatement;
+  },
+  company: { readonly label: CompanyLabel; readonly account: AccountAddress }
 ): boolean => {
   const [keys, entry] = [held?.vaultKeys ?? null, held?.directoryEntry ?? null];
   if (keys === null || entry === null || !keys.recordsKeyStatement || !keys.recordsKeySeat) return false;
   const statement = { recordsKey: keys.recordsKey, seat: keys.recordsKeySeat, signature: keys.recordsKeyStatement };
   if (!recordsKeySignedBy(company.label, company.account, keys.committeeKey, statement)) return false;
-  const same = (a: unknown, b: unknown): boolean => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
-  const sameKey = (k: CommitteeKey): boolean => k.tag === offer.committeeKey.tag && same(k.value, offer.committeeKey.value);
-  return sameKey(keys.committeeKey) && same(keys.recordsKey, offer.recordsKey.recordsKey) && same(keys.recordsKeySeat, offer.recordsKey.seat)
-    && sameKey(entry.committeeKey) && (['account', 'signingKey', 'wrappingKey', 'seat'] as const).every((k) => same(entry.statement[k], offer.entry[k]));
+  const same = (a: unknown, b: unknown): boolean =>
+    typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+  const sameKey = (k: CommitteeKey): boolean =>
+    k.tag === offer.committeeKey.tag && same(k.value, offer.committeeKey.value);
+  return (
+    sameKey(keys.committeeKey) &&
+    same(keys.recordsKey, offer.recordsKey.recordsKey) &&
+    same(keys.recordsKeySeat, offer.recordsKey.seat) &&
+    sameKey(entry.committeeKey) &&
+    (['account', 'signingKey', 'wrappingKey', 'seat'] as const).every((k) => same(entry.statement[k], offer.entry[k]))
+  );
 };
 
 /**
@@ -87,22 +128,52 @@ export const offerAlreadyHeld = (
  * make, so one that does not go through here is left for the next seat that opens the company's vaults.
  */
 export async function vaultKeysOfferedAndFolded(input: {
-  readonly accountId: string; readonly label: CompanyLabel; readonly account: AccountAddress;
-  readonly signerId: string; readonly signingSecret: Hex; readonly companyKey: Hex; readonly companyKeys: CompanyKeys;
-  readonly committeeKey: CommitteeKey; readonly recordsKey: RecordsKeyStatement; readonly entry: DirectoryEntryStatement;
+  readonly accountId: string;
+  readonly label: CompanyLabel;
+  readonly account: AccountAddress;
+  readonly signerId: string;
+  readonly signingSecret: Hex;
+  readonly companyKey: Hex;
+  readonly companyKeys: CompanyKeys;
+  readonly committeeKey: CommitteeKey;
+  readonly recordsKey: RecordsKeyStatement;
+  readonly entry: DirectoryEntryStatement;
   readonly held?: HeldForTheSeat;
-  readonly reads: RosterReads; readonly entered: RecordsEntered; readonly view: RosterViewHeld;
+  readonly reads: RosterReads;
+  readonly entered: RecordsEntered;
+  readonly view: RosterViewHeld;
 }): Promise<void> {
-  if (!offerAlreadyHeld(input.held, { committeeKey: input.committeeKey, recordsKey: input.recordsKey, entry: input.entry }, input)) {
-    await offerVaultKeysHere(input.accountId, {
-      signerId: input.signerId, signingSecret: input.signingSecret, companyKey: input.companyKey,
-      committeeKey: input.committeeKey as never, recordsKey: input.recordsKey, entry: input.entry, viewingKey: input.companyKeys,
-    }, input.view);
+  if (
+    !offerAlreadyHeld(
+      input.held,
+      { committeeKey: input.committeeKey, recordsKey: input.recordsKey, entry: input.entry },
+      input
+    )
+  ) {
+    await offerVaultKeysHere(
+      input.accountId,
+      {
+        signerId: input.signerId,
+        signingSecret: input.signingSecret,
+        companyKey: input.companyKey,
+        committeeKey: input.committeeKey as never,
+        recordsKey: input.recordsKey,
+        entry: input.entry,
+        viewingKey: input.companyKeys
+      },
+      input.view
+    );
   }
   try {
     await foldOffersHere({
-      accountId: input.accountId, viewingKey: input.companyKeys, signingSecret: input.signingSecret,
-      label: input.label, account: input.account, reads: input.reads, entered: input.entered, view: input.view,
+      accountId: input.accountId,
+      viewingKey: input.companyKeys,
+      signingSecret: input.signingSecret,
+      label: input.label,
+      account: input.account,
+      reads: input.reads,
+      entered: input.entered,
+      view: input.view
     });
   } catch {
     /* The fold is any seat's to make: an offer left unfolded here is folded by the next seat that opens the company's vaults. */

@@ -14,13 +14,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  appliedOverhead,
-  arrivedOverhead,
-  feeFloorFrom,
-  feeFloorVerdict,
-  floorKnownAbsent,
-} from './dust-fee-floor.js';
+import { appliedOverhead, arrivedOverhead, feeFloorFrom, feeFloorVerdict, floorKnownAbsent } from './dust-fee-floor.js';
 
 describe('THE VERDICT — what makes a floor in force, and what stops a run', () => {
   it('passes when all three numbers agree, and says the number the wallet carries', () => {
@@ -118,14 +112,15 @@ describe('APPLIED — the overhead the arithmetic actually adds', () => {
   const deps = (fee: bigint, bare: bigint) => ({
     makeTransacting: () => ({ calculateFee: () => fee }),
     newTransaction: () => ({ feesWithMargin: () => bare }),
-    params: () => ({}),
+    params: () => ({})
   });
 
   it('is the difference between the fee and the fee without the floor', () => {
     // TURNS RED IF: the subtraction is dropped and the configured value is
     // reported instead. That would rebuild the defect this module removes.
-    expect(appliedOverhead({ feeBlocksMargin: 5 }, deps(1_831_100_897_546n, 1_831_099_897_546n)).value)
-      .toBe(1_000_000n);
+    expect(appliedOverhead({ feeBlocksMargin: 5 }, deps(1_831_100_897_546n, 1_831_099_897_546n)).value).toBe(
+      1_000_000n
+    );
   });
 
   it('reads zero when the arithmetic adds nothing', () => {
@@ -138,11 +133,16 @@ describe('APPLIED — the overhead the arithmetic actually adds', () => {
     // TURNS RED IF: the guard is removed. This runs inside wallet set-up, where
     // a throw would be reported as a wallet failure rather than as a
     // measurement that could not be taken.
-    const r = appliedOverhead({ feeBlocksMargin: 5 }, {
-      makeTransacting: () => { throw new Error('the library moved'); },
-      newTransaction: () => ({ feesWithMargin: () => 0n }),
-      params: () => ({}),
-    });
+    const r = appliedOverhead(
+      { feeBlocksMargin: 5 },
+      {
+        makeTransacting: () => {
+          throw new Error('the library moved');
+        },
+        newTransaction: () => ({ feesWithMargin: () => 0n }),
+        params: () => ({})
+      }
+    );
     expect(r.value).toBeNull();
     expect(r.problem).toContain('the library moved');
   });
@@ -238,7 +238,12 @@ describe('READING THE FLOOR OFF THE ENVIRONMENT, WHICH USED TO BE ABLE TO THROW'
      * refusal is the only place a person finds out which this is.
      */
     const r = feeFloorFrom('1e6', 1_000_000n);
-    const v = feeFloorVerdict({ passed: r.value, arrived: r.value, applied: r.value, ...(r.problem ? { problem: r.problem } : {}) });
+    const v = feeFloorVerdict({
+      passed: r.value,
+      arrived: r.value,
+      applied: r.value,
+      ...(r.problem ? { problem: r.problem } : {})
+    });
     expect(v.ok).toBe(false);
     expect(v.reason).toBe('not-a-floor');
     expect(v.line).toContain('1e6');

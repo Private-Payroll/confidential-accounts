@@ -11,9 +11,13 @@ const hexBytes = (h: string): Uint8Array => Uint8Array.from(h.match(/../gu) ?? [
 
 /** The account's own `signerLeaf`, run in this wallet. */
 export const liveLeafReader: LeafReader = async (opening) => {
-  const account = await import('../../../../contracts/managed/contract/index.js') as unknown as {
+  const account = (await import('../../../../contracts/managed/contract/index.js')) as unknown as {
     pureCircuits: { signerLeaf(pk: Uint8Array, blinding: Uint8Array, scope: Uint8Array): Uint8Array };
   };
-  const leaf = account.pureCircuits.signerLeaf(hexBytes(opening.publicKey), hexBytes(opening.blinding), hexBytes(opening.scope));
+  const leaf = account.pureCircuits.signerLeaf(
+    hexBytes(opening.publicKey),
+    hexBytes(opening.blinding),
+    hexBytes(opening.scope)
+  );
   return Array.from(leaf, (b) => b.toString(16).padStart(2, '0')).join('');
 };

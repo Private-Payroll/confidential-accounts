@@ -7,7 +7,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 import { Buffer as PolyfillBuffer } from 'buffer/';
@@ -47,29 +47,43 @@ const signIn = (): Record<string, unknown> => ({
   requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
   purpose: 'So we know it is you.',
   nonce: 'n1',
-  expiresAt: NOW + 600_000,
+  expiresAt: NOW + 600_000
 });
 
 /** The wallet document, framed by `parent`. */
 const framed = () => {
   const posted: Array<{ message: unknown; target: string }> = [];
-  const parent = { postMessage: (message: unknown, target: string) => { posted.push({ message, target }); } };
+  const parent = {
+    postMessage: (message: unknown, target: string) => {
+      posted.push({ message, target });
+    }
+  };
   const handlers: Array<(e: MessageEvent) => void> = [];
   const view = {
     opener: null,
     parent,
     self: undefined as unknown,
     location: { ancestorOrigins: [EMBEDDER] },
-    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handlers.push(h); },
-    removeEventListener: () => {},
+    addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {}
   };
   view.self = view;
   const from = (origin: string, data: unknown = signIn()) =>
-    act(() => { for (const h of handlers) h({ source: parent, origin, data } as unknown as MessageEvent); });
+    act(() => {
+      for (const h of handlers) h({ source: parent, origin, data } as unknown as MessageEvent);
+    });
   return { view: view as unknown as ChannelWindow, posted, from };
 };
 
-const wait = (ms: number) => act(() => new Promise<void>((r) => { setTimeout(r, ms); }));
+const wait = (ms: number) =>
+  act(
+    () =>
+      new Promise<void>((r) => {
+        setTimeout(r, ms);
+      })
+  );
 
 beforeEach(() => {
   localStorage.clear();
@@ -77,12 +91,23 @@ beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 460 });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
 });
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+});
 
 describe('§1 - A FRAMED APPROVAL ANSWERS ITS EMBEDDER AND NOBODY ELSE', () => {
   it('WAITS, rather than saying nothing is asking, while the embedder prepares its request', async () => {
     const { view, posted } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     await settled();
     expect(document.querySelector('[data-waiting-for-ask]')).not.toBeNull();
     expect(screen.queryByText('Nothing is asking')).toBeNull();
@@ -91,7 +116,16 @@ describe('§1 - A FRAMED APPROVAL ANSWERS ITS EMBEDDER AND NOBODY ELSE', () => {
 
   it('IGNORES the parent speaking from any other origin', async () => {
     const { view, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     from(STRANGER);
     await settled();
     expect(document.querySelector('[data-approve]')).toBeNull();
@@ -102,7 +136,16 @@ describe('§1 - A FRAMED APPROVAL ANSWERS ITS EMBEDDER AND NOBODY ELSE', () => {
 describe('§2 - THE VISIBILITY GUARD HOLDS THE PRESS UNTIL THE APPROVAL COULD BE READ', () => {
   it('the button is DISABLED, with its reason, until the frame has been in view long enough - then it answers', async () => {
     const { view, posted, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     from(EMBEDDER);
     await settled();
     const button = document.querySelector<HTMLButtonElement>('[data-approve]')!;
@@ -121,7 +164,16 @@ describe('§2 - THE VISIBILITY GUARD HOLDS THE PRESS UNTIL THE APPROVAL COULD BE
   it('a frame drawn TOO SMALL to read is never pressable, however long it waits', async () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 40 });
     const { view, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     from(EMBEDDER);
     await settled();
     await wait(DWELL_MS + 100);
@@ -133,10 +185,25 @@ describe('§2 - THE VISIBILITY GUARD HOLDS THE PRESS UNTIL THE APPROVAL COULD BE
     const opener = { postMessage: () => {} };
     const handlers: Array<(e: MessageEvent) => void> = [];
     const view: ChannelWindow = {
-      opener, addEventListener: (_t, h) => { handlers.push(h); }, removeEventListener: () => {},
+      opener,
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {}
     };
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
-    act(() => { for (const h of handlers) h({ source: opener, origin: EMBEDDER, data: signIn() } as unknown as MessageEvent); });
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
+    act(() => {
+      for (const h of handlers) h({ source: opener, origin: EMBEDDER, data: signIn() } as unknown as MessageEvent);
+    });
     await settled();
     expect(document.querySelector<HTMLButtonElement>('[data-approve]')!.disabled).toBe(false);
   });
@@ -145,12 +212,23 @@ describe('§2 - THE VISIBILITY GUARD HOLDS THE PRESS UNTIL THE APPROVAL COULD BE
 describe('§2b - THE WAIT IS TIMED FROM THE REQUEST, NOT FROM THE SCREEN', () => {
   it('a request held back past the wait still arrives with its button held', async () => {
     const { view, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     await wait(DWELL_MS + 100);
     from(EMBEDDER);
     await settled();
-    expect(document.querySelector<HTMLButtonElement>('[data-approve]')!.disabled,
-      'a request the page held back arrived pressable').toBe(true);
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-approve]')!.disabled,
+      'a request the page held back arrived pressable'
+    ).toBe(true);
     expect(document.querySelector('[data-consent-refused]')?.textContent).toContain('only just appeared');
   });
 
@@ -159,11 +237,26 @@ describe('§2b - THE WAIT IS TIMED FROM THE REQUEST, NOT FROM THE SCREEN', () =>
     /* The account is read off the chain and carries the label, so the frame's own guard is the only thing holding the press. */
     const label = `co_${'c0'.repeat(32)}`;
     const carries = async () => ({ of: 'carries' as const, label: label as never });
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} readLabel={carries} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+        readLabel={carries}
+      />
+    );
     from(EMBEDDER, {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'unlock',
-      requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'So we can show you your payslips.',
-      company: label, account: 'b1'.repeat(32), nonce: 'n1', expiresAt: NOW + 600_000,
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'unlock',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'So we can show you your payslips.',
+      company: label,
+      account: 'b1'.repeat(32),
+      nonce: 'n1',
+      expiresAt: NOW + 600_000
     });
     await settled();
     const give = document.querySelector<HTMLButtonElement>('[data-unlock]');
@@ -176,12 +269,18 @@ describe('§2b - THE WAIT IS TIMED FROM THE REQUEST, NOT FROM THE SCREEN', () =>
 });
 
 describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', () => {
-  it('a LOCKED wallet\'s entry, buttons and all, is not shown before the allowed page asks', async () => {
+  it("a LOCKED wallet's entry, buttons and all, is not shown before the allowed page asks", async () => {
     const { view, from } = framed();
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'locked' } as never} entry={<button type="button">Unlock with your passkey</button>} view={view} now={() => NOW} embedder={EMBEDDER} />
-      </SessionProvider>,
+        <ApproveEntry
+          phase={{ name: 'locked' } as never}
+          entry={<button type="button">Unlock with your passkey</button>}
+          view={view}
+          now={() => NOW}
+          embedder={EMBEDDER}
+        />
+      </SessionProvider>
     );
     await settled();
     expect(document.querySelectorAll('button')).toHaveLength(0);
@@ -199,8 +298,14 @@ describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', 
     const { view, from } = framed();
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
-      </SessionProvider>,
+        <ApproveEntry
+          phase={{ name: 'welcome' }}
+          entry={<p>entry</p>}
+          view={view}
+          now={() => NOW}
+          embedder={EMBEDDER}
+        />
+      </SessionProvider>
     );
     await settled();
     expect(document.querySelectorAll('button')).toHaveLength(0);
@@ -215,8 +320,14 @@ describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', 
     const { view, from } = framed();
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
-      </SessionProvider>,
+        <ApproveEntry
+          phase={{ name: 'welcome' }}
+          entry={<p>entry</p>}
+          view={view}
+          now={() => NOW}
+          embedder={EMBEDDER}
+        />
+      </SessionProvider>
     );
     from(EMBEDDER);
     await settled();
@@ -228,7 +339,16 @@ describe('§3 - A FRAMED ENTRY SHOWS NO CONTROL UNTIL THE EMBEDDER HAS SPOKEN', 
 describe('§4 - A REQUEST THAT HAS BEEN ANSWERED IS NEVER WAITED FOR AGAIN', () => {
   it('after Do not sign in, the framed wallet says the request is finished, puts focus there, and does not say it is waiting', async () => {
     const { view, from } = framed();
-    render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     from(EMBEDDER);
     await settled();
     fireEvent.click(document.querySelector('[data-decline]')!);
@@ -242,7 +362,16 @@ describe('§4 - A REQUEST THAT HAS BEEN ANSWERED IS NEVER WAITED FOR AGAIN', () 
 
   it('a framed entry shown again after this window answered the ask says it is finished, and does not wait for it', async () => {
     const { view, from } = framed();
-    const first = render(<Approve identity={identity} secret={SECRET} port={watchedStore()} view={view} now={() => NOW} embedder={EMBEDDER} />);
+    const first = render(
+      <Approve
+        identity={identity}
+        secret={SECRET}
+        port={watchedStore()}
+        view={view}
+        now={() => NOW}
+        embedder={EMBEDDER}
+      />
+    );
     from(EMBEDDER);
     await settled();
     fireEvent.click(document.querySelector('[data-decline]')!);
@@ -251,8 +380,14 @@ describe('§4 - A REQUEST THAT HAS BEEN ANSWERED IS NEVER WAITED FOR AGAIN', () 
     /* The wallet is put away and shown again in the same window - its entry listening afresh - and the page sends the same ask. */
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
-      </SessionProvider>,
+        <ApproveEntry
+          phase={{ name: 'welcome' }}
+          entry={<p>entry</p>}
+          view={view}
+          now={() => NOW}
+          embedder={EMBEDDER}
+        />
+      </SessionProvider>
     );
     from(EMBEDDER);
     await settled();
@@ -265,8 +400,14 @@ describe('§4 - A REQUEST THAT HAS BEEN ANSWERED IS NEVER WAITED FOR AGAIN', () 
     const { view, from } = framed();
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'welcome' }} entry={<p>entry</p>} view={view} now={() => NOW} embedder={EMBEDDER} />
-      </SessionProvider>,
+        <ApproveEntry
+          phase={{ name: 'welcome' }}
+          entry={<p>entry</p>}
+          view={view}
+          now={() => NOW}
+          embedder={EMBEDDER}
+        />
+      </SessionProvider>
     );
     from(EMBEDDER, { ...signIn(), kind: 'approve' });
     await settled();

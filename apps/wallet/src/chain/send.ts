@@ -1,8 +1,6 @@
 import type { WalletFacade } from '@midnightntwrk/wallet-sdk';
 import type { SignSegment } from '@midnightntwrk/wallet-sdk-facade';
-import {
-  MidnightBech32m, UnshieldedAddress,
-} from '@midnightntwrk/wallet-sdk-address-format';
+import { MidnightBech32m, UnshieldedAddress } from '@midnightntwrk/wallet-sdk-address-format';
 import { payeeAddress } from 'midnight-identity';
 import type { PayeeAddress } from 'midnight-identity';
 import type { NetworkName } from 'midnight-identity/network';
@@ -10,7 +8,13 @@ import { STARS_PER_NIGHT } from './amount.js';
 import type { ChainAnswer, PendingOutcome } from './pending.js';
 import { describeFailure } from '../lib/failure-text.js';
 import { feeFromRecipe, unshieldedStarsTo, unsignedUnshieldedInputs } from './send-recipe.js';
-import { SUBMIT_QUIET_MS, authorisedAndProven, balancedAndConfirmed, sendRun, submittedAndWatched } from './send-steps.js';
+import {
+  SUBMIT_QUIET_MS,
+  authorisedAndProven,
+  balancedAndConfirmed,
+  sendRun,
+  submittedAndWatched
+} from './send-steps.js';
 
 export { SUBMIT_QUIET_MS, feeFromRecipe, unshieldedStarsTo, unsignedUnshieldedInputs };
 
@@ -52,12 +56,7 @@ export { SUBMIT_QUIET_MS, feeFromRecipe, unshieldedStarsTo, unsignedUnshieldedIn
 /* ---------------------------------------------------------------- the plan */
 
 export type RecipientFailure =
-  | 'empty'
-  | 'not-an-address'
-  | 'wrong-network'
-  | 'dust-address'
-  | 'half-an-address'
-  | 'unpayable-kind';
+  'empty' | 'not-an-address' | 'wrong-network' | 'dust-address' | 'half-an-address' | 'unpayable-kind';
 
 export class RecipientError extends Error {
   readonly code: RecipientFailure;
@@ -101,10 +100,12 @@ export function parseRecipient(raw: string, network: NetworkName): Recipient {
   try {
     parsed = MidnightBech32m.parse(trimmed);
   } catch (e) {
-    throw new RecipientError('not-an-address',
-      `"${trimmed}" is not a Midnight address: ${(e as Error).message}. An address `
-      + 'carries its own checksum, so a single mistyped character fails here rather '
-      + 'than paying a stranger.');
+    throw new RecipientError(
+      'not-an-address',
+      `"${trimmed}" is not a Midnight address: ${(e as Error).message}. An address ` +
+        'carries its own checksum, so a single mistyped character fails here rather ' +
+        'than paying a stranger.'
+    );
   }
   switch (parsed.type) {
     case 'shield-addr':
@@ -113,25 +114,33 @@ export function parseRecipient(raw: string, network: NetworkName): Recipient {
       return { kind: 'shielded', address: payeeAddress(trimmed, network) };
     case 'addr': {
       if (String(parsed.network) !== network) {
-        throw new RecipientError('wrong-network',
-          `this is an unshielded address for "${String(parsed.network)}", and this `
-          + `wallet pays on ${network}. The same person has a different address here.`);
+        throw new RecipientError(
+          'wrong-network',
+          `this is an unshielded address for "${String(parsed.network)}", and this ` +
+            `wallet pays on ${network}. The same person has a different address here.`
+        );
       }
       const address = parsed.decode(UnshieldedAddress, network);
       return { kind: 'unshielded', bech32: parsed.asString(), hex: address.hexString };
     }
     case 'dust':
-      throw new RecipientError('dust-address',
-        'this is a DUST address. DUST is the fee token: it grows from registered '
-        + 'NIGHT and cannot be paid directly, so nothing can be sent to this address.');
+      throw new RecipientError(
+        'dust-address',
+        'this is a DUST address. DUST is the fee token: it grows from registered ' +
+          'NIGHT and cannot be paid directly, so nothing can be sent to this address.'
+      );
     case 'shield-cpk':
     case 'shield-epk':
-      throw new RecipientError('half-an-address',
-        'this is one half of a shielded address — a single key. Paying somebody '
-        + 'needs both halves in one string, the kind that starts mn_shield-addr.');
+      throw new RecipientError(
+        'half-an-address',
+        'this is one half of a shielded address — a single key. Paying somebody ' +
+          'needs both halves in one string, the kind that starts mn_shield-addr.'
+      );
     default:
-      throw new RecipientError('unpayable-kind',
-        `this is a "${parsed.type}" value, not an address this wallet can pay.`);
+      throw new RecipientError(
+        'unpayable-kind',
+        `this is a "${parsed.type}" value, not an address this wallet can pay.`
+      );
   }
 }
 
@@ -158,21 +167,21 @@ export function starsFromNight(text: string): bigint {
   if (!trimmed) throw new AmountError('empty', 'an amount is needed.');
   const match = /^(?<sign>-?)(?<whole>\d+)?(?:\.(?<fraction>\d+))?$/u.exec(trimmed);
   if (!match?.groups || (!match.groups.whole && !match.groups.fraction)) {
-    throw new AmountError('not-a-number',
-      `"${text}" is not an amount. Digits and one dot, like 12 or 0.5.`);
+    throw new AmountError('not-a-number', `"${text}" is not an amount. Digits and one dot, like 12 or 0.5.`);
   }
   if (match.groups.sign === '-') {
     throw new AmountError('negative', 'an amount below zero cannot be sent.');
   }
   const fraction = match.groups.fraction ?? '';
   if (fraction.length > 6 && /[1-9]/u.test(fraction.slice(6))) {
-    throw new AmountError('too-small',
-      'NIGHT has six decimal places — 1 NIGHT is 1,000,000 STARs — so digits '
-      + 'past the sixth would name money that cannot exist. Nothing was rounded; '
-      + 'shorten the amount instead.');
+    throw new AmountError(
+      'too-small',
+      'NIGHT has six decimal places — 1 NIGHT is 1,000,000 STARs — so digits ' +
+        'past the sixth would name money that cannot exist. Nothing was rounded; ' +
+        'shorten the amount instead.'
+    );
   }
-  const stars = BigInt(match.groups.whole ?? '0') * STARS_PER_NIGHT
-    + BigInt(fraction.slice(0, 6).padEnd(6, '0'));
+  const stars = BigInt(match.groups.whole ?? '0') * STARS_PER_NIGHT + BigInt(fraction.slice(0, 6).padEnd(6, '0'));
   if (stars === 0n) throw new AmountError('zero', 'zero cannot be sent.');
   return stars;
 }
@@ -191,9 +200,10 @@ export const STAGE_WORDS: Record<SendStage, string> = {
   starting: 'Reading what this wallet holds — nothing is being sent.',
   balancing: 'Choosing coins and computing the fee — nothing is being sent.',
   signing: 'Authorising the coins this payment spends — nothing is being sent yet.',
-  proving: 'Building the proof. This can take minutes on a real chain, and the '
-    + 'clock above is this wallet’s own — the screen is working, not stuck.',
-  submitting: 'Handing the transaction to the network.',
+  proving:
+    'Building the proof. This can take minutes on a real chain, and the ' +
+    'clock above is this wallet’s own — the screen is working, not stuck.',
+  submitting: 'Handing the transaction to the network.'
 };
 
 /**
@@ -244,11 +254,11 @@ export type SendState =
    * failed, and the only in-between is the watched one below).
    */
   | {
-    readonly name: 'failed';
-    readonly message: string;
-    readonly identifiers: readonly string[];
-    readonly facts: SendFacts;
-  }
+      readonly name: 'failed';
+      readonly message: string;
+      readonly identifiers: readonly string[];
+      readonly facts: SendFacts;
+    }
   /**
    * THE DANGEROUS MIDDLE: no longer a place to
    * end up. The proof succeeded and the submission failed or has not
@@ -261,12 +271,12 @@ export type SendState =
    * is ALWAYS true — an unwatched middle was the defect.
    */
   | {
-    readonly name: 'unknown';
-    readonly identifiers: readonly string[];
-    readonly message: string;
-    readonly facts: SendFacts;
-    readonly stillWaiting: true;
-  };
+      readonly name: 'unknown';
+      readonly identifiers: readonly string[];
+      readonly message: string;
+      readonly facts: SendFacts;
+      readonly stillWaiting: true;
+    };
 
 /* -------------------------------------------------------------- the doors */
 
@@ -349,11 +359,7 @@ export interface SendController {
  * returned handle carries the person's two decisions (confirm, cancel)
  * and the screen's exit (detach).
  */
-export function startSend(
-  doors: SendDoors,
-  plan: SendPlan,
-  onState: (state: SendState) => void,
-): SendController {
+export function startSend(doors: SendDoors, plan: SendPlan, onState: (state: SendState) => void): SendController {
   const run = sendRun(onState);
   const { tell, leaveStages } = run;
   void (async (): Promise<void> => {
@@ -372,7 +378,7 @@ export function startSend(
       leaveStages();
       tell({
         name: 'refused',
-        message: `${describeFailure(e)}. Nothing was sent and no money moved.`,
+        message: `${describeFailure(e)}. Nothing was sent and no money moved.`
       });
     } finally {
       leaveStages();
@@ -385,6 +391,6 @@ export function startSend(
     /* Detaching silences THIS engine — never the question: the pending
      * record survives in storage, and the home screen (and every start)
      * resolves it against the chain without being asked. */
-    detach: run.detach,
+    detach: run.detach
   };
 }

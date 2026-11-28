@@ -18,7 +18,7 @@ const ACCOUNT = 'ab'.repeat(32) as AccountAddress;
 const secret = new Uint8Array(32).fill(5);
 const me = identityFromSecret(secret);
 
-describe('A READER\'S KEY', () => {
+describe("A READER'S KEY", () => {
   it('IS THE SAME EACH TIME FOR ONE COMPANY, ANOTHER FOR ANOTHER, AND NONE OF THE KEYS THE WALLET RELEASES FOR THE COMPANY', () => {
     const pair = readerKeypairOfThisWallet(me, CO);
     expect(readerKeypairOfThisWallet(me, CO)).toEqual(pair);
@@ -27,9 +27,17 @@ describe('A READER\'S KEY', () => {
     expect(pair.publicKey).toMatch(/^[0-9a-f]{64}$/u);
     /* RED WHEN: one reader key serves every company, so one grant's wraps open another company's. */
     expect(readerKeypairOfThisWallet(me, OTHER).publicKey).not.toBe(pair.publicKey);
-    expect(readerKeypairOfThisWallet(identityFromSecret(new Uint8Array(32).fill(6)), CO).publicKey).not.toBe(pair.publicKey);
+    expect(readerKeypairOfThisWallet(identityFromSecret(new Uint8Array(32).fill(6)), CO).publicKey).not.toBe(
+      pair.publicKey
+    );
     /* RED WHEN: a reader's key is the records key or payslip key of the company key every page of the company is given. */
-    const released = fromHex(companyKeyOf({ held: { identity: me, secret }, asker: { origin: 'https://payroll.example', name: 'P', rdns: 'p' } }, CO, ACCOUNT));
+    const released = fromHex(
+      companyKeyOf(
+        { held: { identity: me, secret }, asker: { origin: 'https://payroll.example', name: 'P', rdns: 'p' } },
+        CO,
+        ACCOUNT
+      )
+    );
     expect(pair.publicKey).not.toBe(recordsKeypairFrom(released).publicKey.toLowerCase());
     expect(pair.publicKey).not.toBe(payslipKeypairFrom(released).publicKey.toLowerCase());
     expect(() => readerKeypairOfThisWallet(me, 'not a label')).toThrow(/not a company's label/u);

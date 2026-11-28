@@ -1,10 +1,38 @@
 import { lazy, Suspense } from 'react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { KeyboardIcon, LanguageSquareIcon, Logout01Icon, Settings01Icon, UnfoldMoreIcon, UserSwitchIcon, Wallet01Icon } from '@hugeicons/core-free-icons';
 import {
-  Avatar, AvatarFallback, ComingSoon, DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
-  DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SectionLoading, usePopupSide, useSidebar, useText,
+  KeyboardIcon,
+  LanguageSquareIcon,
+  Logout01Icon,
+  Settings01Icon,
+  UnfoldMoreIcon,
+  UserSwitchIcon,
+  Wallet01Icon
+} from '@hugeicons/core-free-icons';
+import {
+  Avatar,
+  AvatarFallback,
+  ComingSoon,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SectionLoading,
+  usePopupSide,
+  useSidebar,
+  useText
 } from 'vaults-ui';
 import { LANGUAGES, languageName } from '../languages.js';
 import { SETTINGS_OF, VIEWS } from '../pages.js';
@@ -14,7 +42,6 @@ import { useSession } from '../session.js';
 import { SHORTCUT } from '../shortcuts.js';
 import { usePanel } from './right-panel.js';
 import { ShortcutKeys } from './shortcut-keys.js';
-
 
 /** The account's tokens are fetched when Balances is pressed, so they are not part of what every page loads first. */
 const AccountTokens = lazy(() => import('../actions/account-tokens.js').then((m) => ({ default: m.AccountTokens })));
@@ -44,16 +71,30 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton size="lg" className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground" data-action="account-menu">
-              <Avatar className="size-8 rounded-lg"><AvatarFallback className="rounded-lg">{initial(person.name)}</AvatarFallback></Avatar>
+            <SidebarMenuButton
+              size="lg"
+              className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+              data-action="account-menu"
+            >
+              <Avatar className="size-8 rounded-lg">
+                <AvatarFallback className="rounded-lg">{initial(person.name)}</AvatarFallback>
+              </Avatar>
               <span className="grid flex-1 text-start text-sm leading-tight">
                 <span className="truncate font-medium">{person.name}</span>
-                <span className="truncate text-xs text-muted-foreground">{viewer.view === VIEWS.company ? t('view.company') : t('view.employee')}</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {viewer.view === VIEWS.company ? t('view.company') : t('view.employee')}
+                </span>
               </span>
               <HugeiconsIcon icon={UnfoldMoreIcon} strokeWidth={2} className="ms-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="min-w-64 rounded-lg" side={isMobile ? 'bottom' : end} align="end" sideOffset={4} data-account-menu>
+          <DropdownMenuContent
+            className="min-w-64 rounded-lg"
+            side={isMobile ? 'bottom' : end}
+            align="end"
+            sideOffset={4}
+            data-account-menu
+          >
             <DropdownMenuLabel className="font-normal">
               <span className="block truncate text-sm font-medium">{person.name}</span>
               <span className="block text-xs text-muted-foreground">{t('account.signedIn')}</span>
@@ -69,7 +110,14 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
               <DropdownMenuItem
                 onSelect={() => {
                   setOpenMobile(false);
-                  panel.open({ title: t('account.balances'), body: <Suspense fallback={<SectionLoading box={false} rows={1} />}><AccountTokens /></Suspense> });
+                  panel.open({
+                    title: t('account.balances'),
+                    body: (
+                      <Suspense fallback={<SectionLoading box={false} rows={1} />}>
+                        <AccountTokens />
+                      </Suspense>
+                    )
+                  });
                 }}
                 data-action="account-balances"
               >
@@ -78,10 +126,14 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
               </DropdownMenuItem>
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs text-muted-foreground">{t('appearance.mode.title')}</DropdownMenuLabel>
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              {t('appearance.mode.title')}
+            </DropdownMenuLabel>
             <DropdownMenuRadioGroup value={preferences.mode} onValueChange={(m) => choose({ mode: m as Mode })}>
               {MODES.map((m) => (
-                <DropdownMenuRadioItem key={m} value={m} data-mode={m}>{MODE_NAMES[m](t)}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem key={m} value={m} data-mode={m}>
+                  {MODE_NAMES[m](t)}
+                </DropdownMenuRadioItem>
               ))}
             </DropdownMenuRadioGroup>
             <DropdownMenuSub>
@@ -90,10 +142,15 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
                 {t('language.title')}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                <DropdownMenuRadioGroup value={preferences.language ?? FOLLOW_BROWSER} onValueChange={(v) => choose({ language: v === FOLLOW_BROWSER ? null : v })}>
+                <DropdownMenuRadioGroup
+                  value={preferences.language ?? FOLLOW_BROWSER}
+                  onValueChange={(v) => choose({ language: v === FOLLOW_BROWSER ? null : v })}
+                >
                   <DropdownMenuRadioItem value={FOLLOW_BROWSER}>{t('language.followBrowser')}</DropdownMenuRadioItem>
                   {LANGUAGES.map((l) => (
-                    <DropdownMenuRadioItem key={l.tag} value={l.tag} lang={l.tag} data-language={l.tag}>{languageName(l.tag)}</DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem key={l.tag} value={l.tag} lang={l.tag} data-language={l.tag}>
+                      {languageName(l.tag)}
+                    </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
@@ -113,7 +170,9 @@ export function AccountMenu({ showShortcuts }: { showShortcuts: () => void }) {
               <DropdownMenuItem onSelect={showShortcuts}>
                 <HugeiconsIcon icon={KeyboardIcon} strokeWidth={2} />
                 {t('shortcuts.title')}
-                <DropdownMenuShortcut><ShortcutKeys id={SHORTCUT.everyShortcut} bare /></DropdownMenuShortcut>
+                <DropdownMenuShortcut>
+                  <ShortcutKeys id={SHORTCUT.everyShortcut} bare />
+                </DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

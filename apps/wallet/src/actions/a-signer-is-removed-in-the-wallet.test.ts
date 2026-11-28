@@ -41,36 +41,55 @@ const t = vi.hoisted(() => ({
   /* The doors the shared code was last handed. */
   doors: null as any,
   /* The removals of the seat asked that the chain closed without carrying out, as the company's records read. */
-  withdrawn: [] as string[],
+  withdrawn: [] as string[]
 }));
 vi.mock('../../../../packages/web-shared/src/spending-policy-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/spending-policy-here.js')>()),
-  bandsInForceHere: async () => t.bands,
+  bandsInForceHere: async () => t.bands
 }));
 vi.mock('../../../../packages/web-shared/src/seats-leaving-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/seats-leaving-here.js')>()),
   /* The company's removals as its records list them: those withdrawn of the seat asked, one still open of it, and one withdrawn of another seat. */
   removalsOpenHere: async () => [
     ...t.withdrawn.map((id) => ({ id, leaf: LEAVER, status: 'cancelled' })),
-    { id: 'prp_open', leaf: LEAVER, status: 'open' }, { id: 'prp_other', leaf: SEATS[2]!, status: 'cancelled' },
-  ],
+    { id: 'prp_open', leaf: LEAVER, status: 'open' },
+    { id: 'prp_other', leaf: SEATS[2]!, status: 'cancelled' }
+  ]
 }));
 vi.mock('../../../../packages/web-shared/src/signer-removed-on-device.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/signer-removed-on-device.js')>()),
-  removeSignerOnDevice: async (doors: unknown, input: any) => { t.onDevice.push({ input }); t.doors = doors; return t.outcome!(input); },
+  removeSignerOnDevice: async (doors: unknown, input: any) => {
+    t.onDevice.push({ input });
+    t.doors = doors;
+    return t.outcome!(input);
+  }
 }));
 vi.mock('../../../../packages/web-shared/src/round-opened-here.js', async (real) => ({
   ...(await real<typeof import('../../../../packages/web-shared/src/round-opened-here.js')>()),
-  openTheRoundHere: async () => { if (t.opened instanceof Error) throw t.opened; return t.opened; },
+  openTheRoundHere: async () => {
+    if (t.opened instanceof Error) throw t.opened;
+    return t.opened;
+  }
 }));
 vi.mock('./upkeep.js', async (real) => {
   const actual = await real<typeof import('./upkeep.js')>();
   return {
     ...actual,
     upkeepSteps: (company: { reach: (c: unknown) => Promise<unknown>; renew: () => void }) => ({
-      first: { title: { key: 'act.upkeep.step.first' }, run: async (c: unknown) => { await company.reach(c); company.renew(); } },
-      last: { title: { key: 'act.upkeep.step.last' }, run: async (c: unknown) => { await company.reach(c); } },
-    }),
+      first: {
+        title: { key: 'act.upkeep.step.first' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+          company.renew();
+        }
+      },
+      last: {
+        title: { key: 'act.upkeep.step.last' },
+        run: async (c: unknown) => {
+          await company.reach(c);
+        }
+      }
+    })
   };
 });
 
@@ -94,83 +113,188 @@ const PAYROLL = 'ab'.repeat(32);
 const CHAIN_ID = 'dd'.repeat(32);
 const SEATS = ['a1', 'a2', 'a3', 'a4'].map((x) => x.repeat(32));
 const LEAVER = SEATS[3]!;
-const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
-const KEYS = { epoch: 0, key: '11'.repeat(32), newest: 0, keyAt: () => '11'.repeat(32), sealing: () => ({ key: '11'.repeat(32), epoch: 0 }) };
+const WORDS = JSON.parse(readFileSync(new URL('../locales/en.json', import.meta.url), 'utf8')) as Record<
+  string,
+  string
+>;
+const KEYS = {
+  epoch: 0,
+  key: '11'.repeat(32),
+  newest: 0,
+  keyAt: () => '11'.repeat(32),
+  sealing: () => ({ key: '11'.repeat(32), epoch: 0 })
+};
 const BASE = { record: 'acc_1', company: LABEL, account: ACCOUNT };
 const raiserOnly = { mayApprove: false, everyVault: true, onVaults: [] };
 const intent = (name: string, fields: Record<string, string>): ActIntent => ({ name, fields }) as ActIntent;
 
 /* The company as this wallet reads it: four seats on the chain, the roster's rights and names for each, and the bars. */
-let company: { approvals: number; policyBar: number | null; seatBar: number; rights: (unknown | null | undefined)[]; seats: string[] };
+let company: {
+  approvals: number;
+  policyBar: number | null;
+  seatBar: number;
+  rights: (unknown | null | undefined)[];
+  seats: string[];
+};
 const reachOf = () => ({
-  accountId: 'acc_1', label: LABEL, account: ACCOUNT, seat: { signerId: 's1', signingSecret: '01'.repeat(32), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: WIDE },
-  leaf: SEATS[0], companyKey: '11'.repeat(32), stepView: NO_VIEW_OPENED,
-  api: async (path: string, init?: RequestInit) => { t.called.push(`${init?.method ?? 'GET'} ${path}`); return []; },
+  accountId: 'acc_1',
+  label: LABEL,
+  account: ACCOUNT,
+  seat: {
+    signerId: 's1',
+    signingSecret: '01'.repeat(32),
+    wrappingSecret: '02'.repeat(32),
+    blinding: '03'.repeat(32),
+    scope: WIDE
+  },
+  leaf: SEATS[0],
+  companyKey: '11'.repeat(32),
+  stepView: NO_VIEW_OPENED,
+  api: async (path: string, init?: RequestInit) => {
+    t.called.push(`${init?.method ?? 'GET'} ${path}`);
+    return [];
+  },
   send: async () => ({ status: 404, body: {} }),
   holders: async () => ({
-    seats: company.seats, committee: [], approvals: company.approvals, seatBar: company.seatBar, policyBar: company.policyBar,
-    vaultThresholds: [], adoptedVaults: [PAYROLL], account: ACCOUNT,
+    seats: company.seats,
+    committee: [],
+    approvals: company.approvals,
+    seatBar: company.seatBar,
+    policyBar: company.policyBar,
+    vaultThresholds: [],
+    adoptedVaults: [PAYROLL],
+    account: ACCOUNT
   }),
   judges: {
     /* Each seat believed with the rights the company gave it: every right unless a case gives it fewer, and no entry where a case says null. */
     directoryHereFor: () => async () => ({
-      dir: { seats: SEATS.flatMap((seat, i) => (company.rights[i] === null ? [] : [{ seat, retired: null, rights: company.rights[i] ?? { every: true } }])) },
-      records: { history: new Map() },
+      dir: {
+        seats: SEATS.flatMap((seat, i) =>
+          company.rights[i] === null ? [] : [{ seat, retired: null, rights: company.rights[i] ?? { every: true } }]
+        )
+      },
+      records: { history: new Map() }
     }),
     leavesFor: () => async () => [],
-    rosterReadsFor: () => ({}),
+    rosterReadsFor: () => ({})
   },
-  sealed: {}, companyKeys: KEYS,
-  roster: async () => { if (t.rosterStop !== null) throw t.rosterStop; return { id: 'acc_1', name: 'Acme', notBelieved: [], signers: SEATS.map((leaf, i) => ({
-    id: `s${i + 1}`, name: ['Ada', 'Bo', 'Cy', 'Dee'][i], status: 'active', leafCommitment: leaf, ...(company.rights[i] === undefined ? {} : { rights: company.rights[i] }),
-  })) }; },
+  sealed: {},
+  companyKeys: KEYS,
+  roster: async () => {
+    if (t.rosterStop !== null) throw t.rosterStop;
+    return {
+      id: 'acc_1',
+      name: 'Acme',
+      notBelieved: [],
+      signers: SEATS.map((leaf, i) => ({
+        id: `s${i + 1}`,
+        name: ['Ada', 'Bo', 'Cy', 'Dee'][i],
+        status: 'active',
+        leafCommitment: leaf,
+        ...(company.rights[i] === undefined ? {} : { rights: company.rights[i] })
+      }))
+    };
+  },
   builder: {
-    roundsOnChain: async ({ chainIds }: { chainIds: string[] }) => Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }])),
+    roundsOnChain: async ({ chainIds }: { chainIds: string[] }) =>
+      Object.fromEntries(chainIds.map((id) => [id, t.chain[id] ?? { held: 'never', approvals: 0 }])),
     companyWide: async () => WIDE,
-    runsOutrun: async () => { t.outrunReads += 1; return t.outrun; },
+    runsOutrun: async () => {
+      t.outrunReads += 1;
+      return t.outrun;
+    }
   },
-  chain: { indexer: {}, callState: async () => null },
+  chain: { indexer: {}, callState: async () => null }
 });
 const ctxOf = (i: ActIntent) => {
   const told: Array<Record<string, unknown>> = [];
   const showed: Array<{ key: string; values?: Record<string, unknown> }> = [];
   /* What the window asked the person to confirm, with how much had reached the shared code by then. */
-  const confirmed: Array<{ lines: readonly { key: string; values?: Record<string, unknown> }[]; handedBefore: number }> = [];
+  const confirmed: Array<{
+    lines: readonly { key: string; values?: Record<string, unknown> }[];
+    handedBefore: number;
+  }> = [];
   /* Each send the step said moves who holds the company: whether it names the removal's carry, and the seats and threshold it leaves. */
   const moves: Array<{ carry: boolean; chain: unknown[]; seats: readonly string[]; approvals: number }> = [];
   const ctx = stepOverItsCall({
-    movesWhoHolds: (sends: readonly object[], move: (h: { seats: readonly string[]; approvals: number }) => { seats: readonly string[]; approvals: number }) => {
+    movesWhoHolds: (
+      sends: readonly object[],
+      move: (h: { seats: readonly string[]; approvals: number }) => { seats: readonly string[]; approvals: number }
+    ) => {
       const left = move({ seats: [...SEATS], approvals: 9 });
-      moves.push({ carry: sends.some((s) => (s as { proposal?: string }).proposal === 'prp_1'), chain: sends.map((s) => (s as { circuit?: string }).circuit).filter(Boolean), seats: left.seats, approvals: left.approvals });
+      moves.push({
+        carry: sends.some((s) => (s as { proposal?: string }).proposal === 'prp_1'),
+        chain: sends.map((s) => (s as { circuit?: string }).circuit).filter(Boolean),
+        seats: left.seats,
+        approvals: left.approvals
+      });
     },
-    intent: i, asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
-    held: { identity, account: 0 }, at: { step: 3, steps: 5 }, signal: new AbortController().signal,
-    relay: async () => { throw new Error('a removal is sent through its calls, never a bare relay'); },
-    call: async (method: string, path: string) => { t.called.push(`${method} ${path}`); return { status: 404, body: {} }; },
-    tell: (x: Record<string, unknown>) => { told.push(x); },
-    show: (w: { key: string; values?: Record<string, unknown> }) => { showed.push(w); },
+    intent: i,
+    asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+    person: 'usr_a',
+    held: { identity, account: 0 },
+    at: { step: 3, steps: 5 },
+    signal: new AbortController().signal,
+    relay: async () => {
+      throw new Error('a removal is sent through its calls, never a bare relay');
+    },
+    call: async (method: string, path: string) => {
+      t.called.push(`${method} ${path}`);
+      return { status: 404, body: {} };
+    },
+    tell: (x: Record<string, unknown>) => {
+      told.push(x);
+    },
+    show: (w: { key: string; values?: Record<string, unknown> }) => {
+      showed.push(w);
+    },
     confirm: async (lines: readonly { key: string; values?: Record<string, unknown> }[]) => {
       confirmed.push({ lines, handedBefore: t.onDevice.length });
       if (t.stops) throw new ActionStopped('stopped');
     },
-    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} },
+    keyring: { open: () => ({ read: () => ({ accounts: {} }) }), keep: async () => {} }
   }) as unknown as StepContext;
   return { ctx, told, showed, confirmed, moves };
 };
 const after: Array<{ leaf: string; round: unknown }> = [];
-const NONE_CHANGED: VaultsChangedTold = { vaultsRotated: 0, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 };
+const NONE_CHANGED: VaultsChangedTold = {
+  vaultsRotated: 0,
+  vaultsAwaiting: 0,
+  vaultsOwed: 0,
+  vaultsWaiting: 0,
+  vaultsNotChanged: 0
+};
 const reach = () => ({
-  chain: () => ({}) as never, builder: () => ({}) as never, pause: async () => {}, now: () => 0, secrets: () => ({}) as never,
-  commitments: async () => ({}) as never, reachFor: async () => reachOf() as never,
-  afterCarried: async (_c: unknown, _r: unknown, removed: { leaf: string; round: unknown }): Promise<VaultsChangedTold> => { after.push(removed); return NONE_CHANGED; },
+  chain: () => ({}) as never,
+  builder: () => ({}) as never,
+  pause: async () => {},
+  now: () => 0,
+  secrets: () => ({}) as never,
+  commitments: async () => ({}) as never,
+  reachFor: async () => reachOf() as never,
+  afterCarried: async (
+    _c: unknown,
+    _r: unknown,
+    removed: { leaf: string; round: unknown }
+  ): Promise<VaultsChangedTold> => {
+    after.push(removed);
+    return NONE_CHANGED;
+  },
   /* The judgement before a removal is carried out is tried on its own (vaults-a-removal-reaches.test.ts): here it passes. */
-  beforeCarried: async (): Promise<void> => undefined,
+  beforeCarried: async (): Promise<void> => undefined
 });
-const run = async (def: { steps(i: ActIntent): readonly { run(c: StepContext): Promise<void> }[] }, i: ActIntent, ctx: StepContext): Promise<void> => {
+const run = async (
+  def: { steps(i: ActIntent): readonly { run(c: StepContext): Promise<void> }[] },
+  i: ActIntent,
+  ctx: StepContext
+): Promise<void> => {
   for (const step of def.steps(i)) await step.run(ctx);
 };
 const refusalOf = async (p: Promise<unknown>): Promise<{ key: string; says: string }> => {
-  const e = await p.then(() => null, (x: unknown) => x);
+  const e = await p.then(
+    () => null,
+    (x: unknown) => x
+  );
   expect(e).toBeInstanceOf(StepRefused);
   return { key: (e as StepRefused).words.key, says: String((e as StepRefused).words.values?.['says'] ?? '') };
 };
@@ -178,10 +302,20 @@ const refusalOf = async (p: Promise<unknown>): Promise<{ key: string; says: stri
 let carriedAs: string = 'done';
 const sharedCode = (input: any) => {
   const round = { id: 'prp_1', chainId: CHAIN_ID, status: 'open' };
-  if (input.carryOnly) return carriedAs === 'done' ? { state: 'done', round } : { state: carriedAs, round, signed: 1, needed: 2 };
+  if (input.carryOnly)
+    return carriedAs === 'done' ? { state: 'done', round } : { state: carriedAs, round, signed: 1, needed: 2 };
   const standing = t.chain[CHAIN_ID] as { approvals: number; needed?: number };
-  t.chain[CHAIN_ID] = input.approveOnly === undefined ? { held: 'open', approvals: 1, needed: company.approvals, raisedAt: 1 } : { ...standing, approvals: standing.approvals + 1 };
-  return { state: (t.chain[CHAIN_ID] as { approvals: number }).approvals >= company.seatBar ? 'ready-to-carry' : 'waiting-for-approvals', round };
+  t.chain[CHAIN_ID] =
+    input.approveOnly === undefined
+      ? { held: 'open', approvals: 1, needed: company.approvals, raisedAt: 1 }
+      : { ...standing, approvals: standing.approvals + 1 };
+  return {
+    state:
+      (t.chain[CHAIN_ID] as { approvals: number }).approvals >= company.seatBar
+        ? 'ready-to-carry'
+        : 'waiting-for-approvals',
+    round
+  };
 };
 
 beforeEach(() => {
@@ -199,7 +333,13 @@ beforeEach(() => {
   t.rosterStop = null;
   t.doors = null;
   t.withdrawn = [];
-  company = { approvals: 1, policyBar: null, seatBar: 1, rights: [undefined, undefined, undefined, undefined], seats: [...SEATS] };
+  company = {
+    approvals: 1,
+    policyBar: null,
+    seatBar: 1,
+    rights: [undefined, undefined, undefined, undefined],
+    seats: [...SEATS]
+  };
 });
 
 describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS BAR', () => {
@@ -210,13 +350,28 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     /* RED WHEN: carrying the removal out does not say it takes the leaving seat, and only that seat, off the account at the threshold asked, or says it of another send. */
     expect(moves).toEqual([{ carry: true, chain: [], seats: SEATS.filter((s) => s !== LEAVER), approvals: 2 }]);
     /* RED WHEN: the person raising is not shown whose seat it is, from the company's list of signers, before anything is handed over. */
-    expect(confirmed).toEqual([{
-      lines: [{ key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } }, { key: 'act.remove-signer.shown.threshold', values: { threshold: 2 } }],
-      handedBefore: 0,
-    }]);
+    expect(confirmed).toEqual([
+      {
+        lines: [
+          { key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } },
+          { key: 'act.remove-signer.shown.threshold', values: { threshold: 2 } }
+        ],
+        handedBefore: 0
+      }
+    ]);
     /* RED WHEN: the raise carries the removal out itself, or the carrying out is not asked for at all, at a bar of one. */
-    expect(t.onDevice.map((c) => [c.input.leaf, c.input.newThreshold, c.input.stopBeforeCarry, c.input.carryOnly, c.input.approveOnly]))
-      .toEqual([[LEAVER, 2, true, undefined, undefined], [LEAVER, 2, undefined, true, CHAIN_ID]]);
+    expect(
+      t.onDevice.map((c) => [
+        c.input.leaf,
+        c.input.newThreshold,
+        c.input.stopBeforeCarry,
+        c.input.carryOnly,
+        c.input.approveOnly
+      ])
+    ).toEqual([
+      [LEAVER, 2, true, undefined, undefined],
+      [LEAVER, 2, undefined, true, CHAIN_ID]
+    ]);
     /* RED WHEN: the name sealed in the proposal is the page's, not the one the company's roster this wallet opened holds. */
     expect(t.onDevice[0]!.input.name).toBe('Dee');
     /* RED WHEN: the page is told the removal was carried out without the approvals and the bar the chain showed. */
@@ -231,7 +386,9 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     /* RED WHEN: a seat with no believed entry stops every count, so the company cannot remove the very seat that stops it. */
     await run(removeSignerAction(reach()), i, ctx);
     expect(told).toContainEqual({ state: 'carried-out', approvals: 1, needed: 1 });
-    const counted = await (t.doors as { approvers: () => Promise<{ seats: ReadonlyMap<string, unknown> }> }).approvers();
+    const counted = await (
+      t.doors as { approvers: () => Promise<{ seats: ReadonlyMap<string, unknown> }> }
+    ).approvers();
     expect(counted.seats.get(LEAVER)).toEqual({ every: false, mayApprove: false, everyVault: false, onVaults: [] });
     expect(counted.seats.get(SEATS[0]!)).toEqual({ every: true });
   });
@@ -250,19 +407,33 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     const second = ctxOf(approve);
     await run(approveProposalAction(reach() as never), approve, second.ctx);
     /* RED WHEN: the approval carries the removal out in the same call, or no step carries it out once the chain counts two. */
-    expect(t.onDevice.map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly]))
-      .toEqual([[CHAIN_ID, true, undefined], [CHAIN_ID, undefined, true]]);
+    expect(t.onDevice.map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly])).toEqual([
+      [CHAIN_ID, true, undefined],
+      [CHAIN_ID, undefined, true]
+    ]);
     expect(second.told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
   });
 
   it('a proposal under the name the page gave that removes another seat, or at another threshold, is not approved', async () => {
     t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 2, raisedAt: 1 };
     company.seatBar = 2;
-    for (const governance of [{ kind: 'remove-signer', leaf: SEATS[2] }, { kind: 'remove-signer', leaf: LEAVER, threshold: '3' }, { kind: 'threshold', threshold: '2' }]) {
+    for (const governance of [
+      { kind: 'remove-signer', leaf: SEATS[2] },
+      { kind: 'remove-signer', leaf: LEAVER, threshold: '3' },
+      { kind: 'threshold', threshold: '2' }
+    ]) {
       t.opened = { chainId: CHAIN_ID, governance };
-      const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER, threshold: '2' });
+      const approve = intent('approve-proposal', {
+        ...BASE,
+        proposal: 'prp_1',
+        kind: 'removal',
+        leaf: LEAVER,
+        threshold: '2'
+      });
       /* RED WHEN: a removal is approved on the page's word of what it removes, not on the record this wallet opened. */
-      expect((await refusalOf(run(approveProposalAction(reach() as never), approve, ctxOf(approve).ctx))).key).toBe('act.remove-signer.why.not-as-shown');
+      expect((await refusalOf(run(approveProposalAction(reach() as never), approve, ctxOf(approve).ctx))).key).toBe(
+        'act.remove-signer.why.not-as-shown'
+      );
     }
     expect(t.onDevice).toEqual([]);
   });
@@ -272,23 +443,33 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
    * list of signers, as this wallet opened it, holds at that leaf; or a removal of a leaf that list does not hold is
    * approved, named, or anything of it handed to the shared code.
    */
-  it('an approval names the seat removed from the wallet\'s own list of signers, and refuses a seat that list does not hold', async () => {
+  it("an approval names the seat removed from the wallet's own list of signers, and refuses a seat that list does not hold", async () => {
     t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 2, raisedAt: 1 };
     company.seatBar = 2;
-    t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER }, summary: 'Remove Dee as a signer' };
+    t.opened = {
+      chainId: CHAIN_ID,
+      governance: { kind: 'remove-signer', leaf: LEAVER },
+      summary: 'Remove Dee as a signer'
+    };
     const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
-    expect(await approveProposalAction(reach() as never).shown(approve)).toContainEqual({ key: 'act.remove-signer.shown.named-here', from: 'action' });
+    expect(await approveProposalAction(reach() as never).shown(approve)).toContainEqual({
+      key: 'act.remove-signer.shown.named-here',
+      from: 'action'
+    });
     const named = ctxOf(approve);
     await run(approveProposalAction(reach() as never), approve, named.ctx);
     /* RED WHEN: the approver is told whose seat it is only after their approval is on its way, or not asked to confirm it. */
-    expect(named.confirmed).toEqual([{
-      lines: [
-        { key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } }, { key: 'act.remove-signer.shown.keeps-the-threshold' },
-        /* RED WHEN: the approver is not shown the name the raising seat filed the removal under, so a role change reads as a plain removal. */
-        { key: 'act.remove-signer.confirm.named', values: { summary: 'Remove Dee as a signer' } },
-      ],
-      handedBefore: 0,
-    }]);
+    expect(named.confirmed).toEqual([
+      {
+        lines: [
+          { key: 'act.remove-signer.confirm.removing', values: { name: 'Dee', leaf: LEAVER } },
+          { key: 'act.remove-signer.shown.keeps-the-threshold' },
+          /* RED WHEN: the approver is not shown the name the raising seat filed the removal under, so a role change reads as a plain removal. */
+          { key: 'act.remove-signer.confirm.named', values: { summary: 'Remove Dee as a signer' } }
+        ],
+        handedBefore: 0
+      }
+    ]);
     /* RED WHEN: the name sealed in the approval is read again after it was shown, or is not the one confirmed. */
     expect(t.onDevice.map((c) => c.input.name)).toEqual(['Dee', 'Dee']);
     expect(named.showed).toEqual([{ key: 'act.remove-signer.over.removing', values: { name: 'Dee', leaf: LEAVER } }]);
@@ -297,11 +478,15 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: NOBODY } };
     const other = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: NOBODY });
     const refused = ctxOf(other);
-    expect((await refusalOf(run(approveProposalAction(reach() as never), other, refused.ctx))).key).toBe('act.remove-signer.why.no-such-seat');
+    expect((await refusalOf(run(approveProposalAction(reach() as never), other, refused.ctx))).key).toBe(
+      'act.remove-signer.why.no-such-seat'
+    );
     expect(t.onDevice).toEqual([]);
     expect(refused.showed).toEqual([]);
     expect(refused.confirmed).toEqual([]);
-    expect(WORDS['act.remove-signer.why.no-such-seat']).toMatch(/Nothing was approved and nothing was sent\. Do not approve it/u);
+    expect(WORDS['act.remove-signer.why.no-such-seat']).toMatch(
+      /Nothing was approved and nothing was sent\. Do not approve it/u
+    );
   });
 
   /* RED WHEN: Stop at the window's Confirm of whose seat it is still hands the raise or the approval to the shared code. */
@@ -309,14 +494,24 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
     t.stops = true;
     const raise = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const raising = ctxOf(raise);
-    expect(await run(removeSignerAction(reach()), raise, raising.ctx).then(() => null, (e: unknown) => e)).toBeInstanceOf(ActionStopped);
+    expect(
+      await run(removeSignerAction(reach()), raise, raising.ctx).then(
+        () => null,
+        (e: unknown) => e
+      )
+    ).toBeInstanceOf(ActionStopped);
     expect(raising.confirmed).toHaveLength(1);
     t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 2, raisedAt: 1 };
     company.seatBar = 2;
     t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER } };
     const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
     const approver = ctxOf(approve);
-    expect(await run(approveProposalAction(reach() as never), approve, approver.ctx).then(() => null, (e: unknown) => e)).toBeInstanceOf(ActionStopped);
+    expect(
+      await run(approveProposalAction(reach() as never), approve, approver.ctx).then(
+        () => null,
+        (e: unknown) => e
+      )
+    ).toBeInstanceOf(ActionStopped);
     expect(approver.confirmed).toHaveLength(1);
     expect(t.onDevice).toEqual([]);
     expect(after).toEqual([]);
@@ -326,10 +521,12 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
    * RED WHEN: the removal's first step is titled as if it only read the company; the words of its Confirm say only
    * "approved" where the person may be raising it; or a refusal's words are written in the code.
    */
-  it('the first step and the Confirm say what they do on both the raise and the approval, in the wallet\'s own words', () => {
+  it("the first step and the Confirm say what they do on both the raise and the approval, in the wallet's own words", () => {
     const raise = intent('remove-signer', { ...BASE, leaf: LEAVER });
     expect(removeSignerAction(reach()).steps(raise)[0]!.title.key).toBe('act.remove-signer.step.seat');
-    expect(WORDS['act.remove-signer.step.seat']).toMatch(/whose seat this removal takes, and show it to you to confirm/u);
+    expect(WORDS['act.remove-signer.step.seat']).toMatch(
+      /whose seat this removal takes, and show it to you to confirm/u
+    );
     expect(WORDS['act.remove-signer.confirm.removing']).toMatch(/nothing is approved, raised or sent/u);
     expect(WORDS['act.remove-signer.why.not-read-to-raise']).toMatch(/nothing was raised/u);
     expect(WORDS['act.remove-signer.why.not-read']).toMatch(/nothing was approved/u);
@@ -341,7 +538,9 @@ describe('A SIGNER IS REMOVED IN THE WALLET, AND THE REMOVAL CARRIED OUT AT ITS 
   it('a raise the chain would refuse is refused before the Confirm', async () => {
     const i = intent('remove-signer', { ...BASE, leaf: 'f9'.repeat(32) });
     const refused = ctxOf(i);
-    expect((await refusalOf(run(removeSignerAction(reach()), i, refused.ctx))).key).toBe('act.remove-signer.why.refused');
+    expect((await refusalOf(run(removeSignerAction(reach()), i, refused.ctx))).key).toBe(
+      'act.remove-signer.why.refused'
+    );
     expect(refused.confirmed).toEqual([]);
     expect(t.onDevice).toEqual([]);
   });
@@ -353,7 +552,7 @@ describe('A REMOVAL THAT BREAKS A RULE IS REFUSED BEFORE ANYTHING IS BUILT', () 
     for (const [fields, says] of [
       [{ leaf: LEAVER }, /unable to pay/u],
       [{ leaf: SEATS[2]!, threshold: '4' }, /3 signers left, and the account needs 4 approvals/u],
-      [{ leaf: 'ef'.repeat(32) }, /does not hold a seat on the company's account/u],
+      [{ leaf: 'ef'.repeat(32) }, /does not hold a seat on the company's account/u]
     ] as const) {
       const i = intent('remove-signer', { ...BASE, ...fields });
       const refused = await refusalOf(run(removeSignerAction(reach()), i, ctxOf(i).ctx));
@@ -397,16 +596,25 @@ describe('A REMOVAL THAT BREAKS A RULE IS REFUSED BEFORE ANYTHING IS BUILT', () 
   });
 
   it('a seat or a threshold the page did not write as one is refused before the window opens', async () => {
-    for (const fields of [{ leaf: 'AB'.repeat(32) }, { leaf: LEAVER, threshold: '1.5' }, { leaf: LEAVER, threshold: '-1' }] as Record<string, string>[]) {
+    for (const fields of [
+      { leaf: 'AB'.repeat(32) },
+      { leaf: LEAVER, threshold: '1.5' },
+      { leaf: LEAVER, threshold: '-1' }
+    ] as Record<string, string>[]) {
       /* RED WHEN: a seat in another case, or a threshold that is not a whole number, reaches the shared code. */
-      expect((await removeSignerAction(reach()).check(intent('remove-signer', { ...BASE, ...fields }), {} as never))?.key).toBe('act.remove-signer.why.not-a-removal');
+      expect(
+        (await removeSignerAction(reach()).check(intent('remove-signer', { ...BASE, ...fields }), {} as never))?.key
+      ).toBe('act.remove-signer.why.not-a-removal');
     }
   });
 
   /* RED WHEN: the wallet hands the shared code a check of its own, so the removal's approvers are counted twice before every send and the two counts can differ. */
-  it('the wallet hands the shared code no check of its own, and counts the removal\'s approvers once per press, at the first step of a raise and not at all for an approval', async () => {
+  it("the wallet hands the shared code no check of its own, and counts the removal's approvers once per press, at the first step of a raise and not at all for an approval", async () => {
     /* The shared code, as it runs its check before each send: the caller's own check is run when it is given one. */
-    t.outcome = async (input: any) => { await input.before?.(); return sharedCode(input); };
+    t.outcome = async (input: any) => {
+      await input.before?.();
+      return sharedCode(input);
+    };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     await run(removeSignerAction(reach()), i, ctxOf(i).ctx);
     expect(t.onDevice).toHaveLength(2);
@@ -425,7 +633,7 @@ describe('A REMOVAL THAT BREAKS A RULE IS REFUSED BEFORE ANYTHING IS BUILT', () 
   });
 });
 
-describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL IS CARRIED OUT', () => {
+describe("THE VAULT SECRET'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL IS CARRIED OUT", () => {
   it('the hook is given the leaf and the proposal once the chain carried the removal out, from the removal and from the one approval alike', async () => {
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     await run(removeSignerAction(reach()), i, ctxOf(i).ctx);
@@ -444,7 +652,10 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     const strands = { now: false };
     const before = async (_c: unknown, _r: unknown, leaving: { leaf: string }) => {
       judged.push(leaving.leaf);
-      if (strands.now) throw new RemovalRefused('removing this signer would leave the private money in the vault ab openable by no signer who stays.');
+      if (strands.now)
+        throw new RemovalRefused(
+          'removing this signer would leave the private money in the vault ab openable by no signer who stays.'
+        );
     };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     await run(removeSignerAction({ ...reach(), beforeCarried: before }), i, ctxOf(i).ctx);
@@ -456,9 +667,14 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     t.chain[CHAIN_ID] = { held: 'open', approvals: 1, needed: 1, raisedAt: 1 };
     t.opened = { chainId: CHAIN_ID, governance: { kind: 'remove-signer', leaf: LEAVER } };
     const approve = intent('approve-proposal', { ...BASE, proposal: 'prp_1', kind: 'removal', leaf: LEAVER });
-    const refused = await refusalOf(run(approveProposalAction({ ...reach(), beforeCarried: before } as never), approve, ctxOf(approve).ctx));
+    const refused = await refusalOf(
+      run(approveProposalAction({ ...reach(), beforeCarried: before } as never), approve, ctxOf(approve).ctx)
+    );
     /* RED WHEN: a removal that would strand a vault's private money is carried out, or refused without naming the vault. */
-    expect(refused).toMatchObject({ key: 'act.remove-signer.why.refused', says: expect.stringMatching(/the vault ab openable by no signer who stays/u) });
+    expect(refused).toMatchObject({
+      key: 'act.remove-signer.why.refused',
+      says: expect.stringMatching(/the vault ab openable by no signer who stays/u)
+    });
     expect([t.onDevice.filter((c) => c.input.carryOnly === true), after]).toEqual([[], []]);
   });
 
@@ -466,9 +682,14 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     const asRole = intent('remove-signer', { ...BASE, leaf: LEAVER, becomes: 'approver' });
     await run(removeSignerAction(reach()), asRole, ctxOf(asRole).ctx);
     /* RED WHEN: a removal raised by a change of role reaches its approvers named only as a removal. */
-    expect(t.onDevice[0]!.input.summary).toBe('Change Dee\'s role to approver: remove them as a signer, then invite them again');
+    expect(t.onDevice[0]!.input.summary).toBe(
+      "Change Dee's role to approver: remove them as a signer, then invite them again"
+    );
     t.onDevice.length = 0;
-    for (const fields of [{ ...BASE, leaf: LEAVER }, { ...BASE, leaf: LEAVER, becomes: 'limited' }]) {
+    for (const fields of [
+      { ...BASE, leaf: LEAVER },
+      { ...BASE, leaf: LEAVER, becomes: 'limited' }
+    ]) {
       const plain = intent('remove-signer', fields);
       await run(removeSignerAction(reach()), plain, ctxOf(plain).ctx);
       /* RED WHEN: a removal not raised as a change to a signer's role is named as one. */
@@ -499,10 +720,13 @@ describe('THE VAULT SECRET\'S ROTATION HAS ONE PLACE, RUN ONLY ONCE THE REMOVAL 
     expect(told).toContainEqual({ state: 'waiting-for-the-retirement', retirementSigned: 2, retirementNeeded: 3 });
   });
 
-  it('every act that can run a removal may tell the page the retirement\'s signatures', () => {
+  it("every act that can run a removal may tell the page the retirement's signatures", () => {
     /* RED WHEN: an act that tells the retirement's counts has an outcome that does not list them, so the page reads no outcome at all. */
     for (const name of ['remove-signer', 'change-role', 'approve-proposal']) {
-      expect(readOutcome({ state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 2 }, name), name).not.toBeNull();
+      expect(
+        readOutcome({ state: 'waiting-for-the-retirement', retirementSigned: 1, retirementNeeded: 2 }, name),
+        name
+      ).not.toBeNull();
     }
   });
 });
@@ -527,9 +751,16 @@ describe('A REMOVAL CARRIED OUT CHANGES THE VAULT SECRETS ON THE COMPANY READ AG
       return { ...sharedCode(input), rotation: { state: 'rotated', epoch: 1, version: 2 } };
     };
     const handedTo: unknown[] = [];
-    const counted = { ...reach(),
-      reachFor: async () => { reads += 1; return { ...reachOf(), read: reads } as never; },
-      afterCarried: async (_c: unknown, r: unknown) => { handedTo.push(r); return { vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 }; },
+    const counted = {
+      ...reach(),
+      reachFor: async () => {
+        reads += 1;
+        return { ...reachOf(), read: reads } as never;
+      },
+      afterCarried: async (_c: unknown, r: unknown) => {
+        handedTo.push(r);
+        return { vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 };
+      }
     };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const { ctx, told } = ctxOf(i);
@@ -538,11 +769,22 @@ describe('A REMOVAL CARRIED OUT CHANGES THE VAULT SECRETS ON THE COMPANY READ AG
     expect((handedTo[0] as { read: number }).read).toBeGreaterThan(readsAtTheCarry);
     /* RED WHEN: the page is not told the company key's change or how many vaults ended in each state. */
     expect(told).toContainEqual({ rotation: 'rotated' });
-    expect(told).toContainEqual({ vaultsRotated: 1, vaultsAwaiting: 0, vaultsOwed: 0, vaultsWaiting: 0, vaultsNotChanged: 0 });
+    expect(told).toContainEqual({
+      vaultsRotated: 1,
+      vaultsAwaiting: 0,
+      vaultsOwed: 0,
+      vaultsWaiting: 0,
+      vaultsNotChanged: 0
+    });
   });
 
   it('a hook that cannot start leaves the removal carried out and says the vault secrets were not started', async () => {
-    const failing = { ...reach(), afterCarried: async () => { throw new Error('the company could not be read'); } };
+    const failing = {
+      ...reach(),
+      afterCarried: async () => {
+        throw new Error('the company could not be read');
+      }
+    };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const { ctx, told } = ctxOf(i);
     await run(removeSignerAction(failing), i, ctx);
@@ -553,7 +795,14 @@ describe('A REMOVAL CARRIED OUT CHANGES THE VAULT SECRETS ON THE COMPANY READ AG
 
   /* RED WHEN: a removal carried out whose vault secrets could not be changed drops what stopped the change, so the signer is never told why. */
   it('a hook that stops tells the page what kind of stop it was, as a code and never its message', async () => {
-    const failing = { ...reach(), afterCarried: async () => { throw Object.assign(new Error('the records at https://x.example could not be read'), { name: 'VaultRecordsNotRead' }); } };
+    const failing = {
+      ...reach(),
+      afterCarried: async () => {
+        throw Object.assign(new Error('the records at https://x.example could not be read'), {
+          name: 'VaultRecordsNotRead'
+        });
+      }
+    };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const { ctx, told } = ctxOf(i);
     await run(removeSignerAction(failing), i, ctx);
@@ -563,7 +812,13 @@ describe('A REMOVAL CARRIED OUT CHANGES THE VAULT SECRETS ON THE COMPANY READ AG
 
   it('a Stop inside the change after the chain carried the removal still tells the removal carried out and the change not started', async () => {
     let hooks = 0;
-    const stopping = { ...reach(), afterCarried: async () => { hooks += 1; throw new ActionStopped('stopped'); } };
+    const stopping = {
+      ...reach(),
+      afterCarried: async () => {
+        hooks += 1;
+        throw new ActionStopped('stopped');
+      }
+    };
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const { ctx, told } = ctxOf(i);
     await run(removeSignerAction(stopping), i, ctx);
@@ -599,11 +854,12 @@ describe('THE ACTIONS THE WALLET REGISTERS RUN A REMOVAL AND CHANGE THE VAULT SE
   });
 });
 
-describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT HOLDS, AND ONLY THE SIGNERS PAGE\'S WALLET FILES ASK FOR THE REMOVAL', () => {
+describe("THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT HOLDS, AND ONLY THE SIGNERS PAGE'S WALLET FILES ASK FOR THE REMOVAL", () => {
   it('every call is one its act lists; the retirement route is listed for both acts and does not send; every word is written', async () => {
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     await run(removeSignerAction(reach()), i, ctxOf(i).ctx);
-    for (const c of t.called) expect(routeOf(intentShapeOf('remove-signer')!, c.split(' ')[0]!, c.split(' ')[1]!), c).not.toBeNull();
+    for (const c of t.called)
+      expect(routeOf(intentShapeOf('remove-signer')!, c.split(' ')[0]!, c.split(' ')[1]!), c).not.toBeNull();
     for (const name of ['remove-signer', 'approve-proposal'] as const) {
       const route = routeOf(intentShapeOf(name)!, 'POST', '/api/proposals/prp_1/retirement');
       /* RED WHEN: a seat's retirement signature cannot be handed on its own, or the route is counted as a send though it relays nothing. */
@@ -614,25 +870,45 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
     const source = readFileSync(new URL('./remove-signer.ts', import.meta.url), 'utf8');
     const keys = [...source.matchAll(/'(act\.remove-signer\.[a-z.-]+)'/gu)].map((m) => m[1]!);
     const whys = [...source.matchAll(/[wW]hy\('([a-z-]+)'/gu)].map((m) => m[1]!);
-    const stops = ['not-approved', 'may-be-sent', 'withdrawn', 'carried-out', 'already-counted', 'not-raised', 'outrun', 'not-carried', 'refused',
-      'not-a-company', 'no-saved-keys', 'no-seat', 'seat-not-held', 'not-on-chain', 'roster-not-opened'];
+    const stops = [
+      'not-approved',
+      'may-be-sent',
+      'withdrawn',
+      'carried-out',
+      'already-counted',
+      'not-raised',
+      'outrun',
+      'not-carried',
+      'refused',
+      'not-a-company',
+      'no-saved-keys',
+      'no-seat',
+      'seat-not-held',
+      'not-on-chain',
+      'roster-not-opened'
+    ];
     /* RED WHEN: the wallet says a word its language file does not hold. */
-    for (const k of [...keys, ...[...whys, ...stops].map((w) => `act.remove-signer.why.${w}`)]) expect(WORDS[k], k).toBeTypeOf('string');
+    for (const k of [...keys, ...[...whys, ...stops].map((w) => `act.remove-signer.why.${w}`)])
+      expect(WORDS[k], k).toBeTypeOf('string');
   });
 
   it('the window says what the removal does on the chain to the changes and runs already raised, on raising it and on approving it', async () => {
     for (const shown of [
       await removeSignerAction(reach()).shown(intent('remove-signer', { ...BASE, leaf: LEAVER })),
-      await removalKind(reach()).shown(intent('approve-proposal', { ...BASE, leaf: LEAVER, proposal: 'prp_1' })),
+      await removalKind(reach()).shown(intent('approve-proposal', { ...BASE, leaf: LEAVER, proposal: 'prp_1' }))
     ]) {
       /* RED WHEN: a removal is raised or approved without saying that every other change raised before it must be raised again, and every run raised before it needs one more approval. */
       expect(shown).toContainEqual({ key: 'act.remove-signer.shown.other-changes', from: 'action' });
       expect(shown).toContainEqual({ key: 'act.remove-signer.shown.open-runs', from: 'action' });
     }
     /* RED WHEN: the words leave out a change raised after the removal but before the network carries it out, which is outrun too. */
-    expect(WORDS['act.remove-signer.shown.other-changes']).toMatch(/raised before then .*including one raised after this removal: .* raised again/u);
+    expect(WORDS['act.remove-signer.shown.other-changes']).toMatch(
+      /raised before then .*including one raised after this removal: .* raised again/u
+    );
     /* RED WHEN: the words leave out a run partly paid, or a signer replaced, which also add an approval. */
-    expect(WORDS['act.remove-signer.shown.open-runs']).toMatch(/whether or not any of it is paid yet, needs one more approval for each signer removed or replaced/u);
+    expect(WORDS['act.remove-signer.shown.open-runs']).toMatch(
+      /whether or not any of it is paid yet, needs one more approval for each signer removed or replaced/u
+    );
   });
 
   it('the window promises of the vault secrets only what the change does: started at once, in force once approved and set', async () => {
@@ -642,14 +918,16 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
     /* RED WHEN: the window promises the signer who left cannot open what comes next, though the change may wait for approvals or the company's key. */
     expect(line).not.toMatch(/cannot open/u);
     expect(line).toMatch(/set only once its change has the approvals it needs/u);
-    expect(line).toMatch(/until the new secret is set, payments out of a vault, and the remainder each one returns to it, are made as before, and the signer who left can still read them/u);
+    expect(line).toMatch(
+      /until the new secret is set, payments out of a vault, and the remainder each one returns to it, are made as before, and the signer who left can still read them/u
+    );
     /* RED WHEN: the window leaves out that deposits into a vault wait for its new secret, the thing the signer meets next. */
     expect(line).toMatch(/Deposits made from this product into a vault wait until its new secret is set and filed/u);
     /* RED WHEN: the proofs listed leave out the approval a seat makes when its raise does not count as one. */
     expect(line).toMatch(/one that approves it where your seat's raise does not already count as an approval/u);
   });
 
-  it('the approve window does not say the press raises nothing, since a press that brings the removal to its approvals carries it out and may start each vault\'s secret change', () => {
+  it("the approve window does not say the press raises nothing, since a press that brings the removal to its approvals carries it out and may start each vault's secret change", () => {
     const line = WORDS['act.remove-signer.shown.approve']!;
     /* RED WHEN: the approve window tells the person their press raises nothing, though it may carry the removal out and start the vaults' secret change. */
     expect(line).not.toMatch(/raises nothing/u);
@@ -659,26 +937,40 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
 
   it('only the two files that ask the wallet for acts of the signers page, and the list of every place a company is read from, name the removal or the vault secret change: no screen does', () => {
     const root = fileURLToPath(new URL('../../../../', import.meta.url));
-    const shipping = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
-      const p = join(dir, n);
-      if (statSync(p).isDirectory()) return n === 'node_modules' ? [] : shipping(p);
-      return /\.(ts|tsx)$/u.test(n) && !/\.test(-support)?\.tsx?$/u.test(n) ? [p] : [];
-    });
+    const shipping = (dir: string): string[] =>
+      readdirSync(dir).flatMap((n) => {
+        const p = join(dir, n);
+        if (statSync(p).isDirectory()) return n === 'node_modules' ? [] : shipping(p);
+        return /\.(ts|tsx)$/u.test(n) && !/\.test(-support)?\.tsx?$/u.test(n) ? [p] : [];
+      });
     const acts = '(remove-signer|rotate-vault-secrets)';
-    const onAPage = new RegExp(`(name|act|intent)\\s*:\\s*['"]${acts}['"]|kind\\s*:\\s*['"]removal['"]|:\\s*['"]${acts}['"]\\s*[,}]`, 'u');
+    const onAPage = new RegExp(
+      `(name|act|intent)\\s*:\\s*['"]${acts}['"]|kind\\s*:\\s*['"]removal['"]|:\\s*['"]${acts}['"]\\s*[,}]`,
+      'u'
+    );
     const inShared = new RegExp(`name\\s*:\\s*['"]${acts}['"]|kind\\s*:\\s*['"]removal['"]`, 'u');
     /* The list of every place a company is read from names every wallet intent, these two among them, and asks the wallet for none. */
     const listed = join(root, 'packages/web-shared/src/company-view-inventory.ts');
-    const allowed = [join(root, 'apps/web/src/adapters/signer-acts.ts'), join(root, 'packages/web-shared/src/proposal-in-the-wallet.ts'), listed];
+    const allowed = [
+      join(root, 'apps/web/src/adapters/signer-acts.ts'),
+      join(root, 'packages/web-shared/src/proposal-in-the-wallet.ts'),
+      listed
+    ];
     const asks = [
-      ...shipping(join(root, 'apps/web/src')).filter((p) => !allowed.includes(p) && onAPage.test(readFileSync(p, 'utf8'))),
-      ...shipping(join(root, 'packages/web-shared/src')).filter((p) => !allowed.includes(p) && inShared.test(readFileSync(p, 'utf8'))),
+      ...shipping(join(root, 'apps/web/src')).filter(
+        (p) => !allowed.includes(p) && onAPage.test(readFileSync(p, 'utf8'))
+      ),
+      ...shipping(join(root, 'packages/web-shared/src')).filter(
+        (p) => !allowed.includes(p) && inShared.test(readFileSync(p, 'utf8'))
+      )
     ];
     /* RED WHEN: a screen or another shared file names the removal action, the vault secret change, or the removal kind of the one approval as something to ask the wallet for. */
     expect(asks).toEqual([]);
     /* RED WHEN: the page's own wallet files stop naming the two acts, so this test no longer looks at the files that ask. */
     const named = allowed.map((p) => readFileSync(p, 'utf8'));
-    expect(named.some((t) => /remove-signer/u.test(t)) && named.some((t) => /rotate-vault-secrets/u.test(t))).toBe(true);
+    expect(named.some((t) => /remove-signer/u.test(t)) && named.some((t) => /rotate-vault-secrets/u.test(t))).toBe(
+      true
+    );
   });
 });
 
@@ -687,18 +979,45 @@ describe('THE WALLET ASKS THE PAGE ONLY FOR THE CALLS THE ACT LISTS, IN WORDS IT
  * invitation: Ada, Bo and Cy are believed on their own directory entries, `unread` are the seats it could not tell, and
  * `waited` the seats someone invited waits for, each on the chain beside the company's four.
  */
-const seatingStop = (unread: readonly string[], waited: readonly string[] = []) => seatingRefusedHolding(new RosterNotBelieved('The network shows a seat taken on an invitation this device cannot tie to it.', null, null, { check: 'seating-refused' }), {
-  opened: { id: 'acc_1', name: 'Acme', signers: SEATS.slice(0, 3).map((leaf, i) => ({
-    id: `s${i + 1}`, name: ['Ada', 'Bo', 'Cy'][i], status: 'active', leafCommitment: leaf, signingPublicKey: `0${i}`.repeat(32), userId: `usr_${i}`,
-  })) } as never,
-  witnesses: {
-    accountId: 'acc_1', label: LABEL, account: ACCOUNT as never, seatsOnTheChain: [...new Set([...SEATS, ...unread, ...waited].map((x) => x.toLowerCase()))], own: null,
-    directory: SEATS.slice(0, 3).map((seat, i) => ({ seat, signingKey: `0${i}`.repeat(32), committeeKey: { tag: 't', value: 'v' }, retired: false, role: null, person: `usr_${i}` })),
-  },
-  waited: new Set<string>(waited),
-}, unread);
+const seatingStop = (unread: readonly string[], waited: readonly string[] = []) =>
+  seatingRefusedHolding(
+    new RosterNotBelieved('The network shows a seat taken on an invitation this device cannot tie to it.', null, null, {
+      check: 'seating-refused'
+    }),
+    {
+      opened: {
+        id: 'acc_1',
+        name: 'Acme',
+        signers: SEATS.slice(0, 3).map((leaf, i) => ({
+          id: `s${i + 1}`,
+          name: ['Ada', 'Bo', 'Cy'][i],
+          status: 'active',
+          leafCommitment: leaf,
+          signingPublicKey: `0${i}`.repeat(32),
+          userId: `usr_${i}`
+        }))
+      } as never,
+      witnesses: {
+        accountId: 'acc_1',
+        label: LABEL,
+        account: ACCOUNT as never,
+        seatsOnTheChain: [...new Set([...SEATS, ...unread, ...waited].map((x) => x.toLowerCase()))],
+        own: null,
+        directory: SEATS.slice(0, 3).map((seat, i) => ({
+          seat,
+          signingKey: `0${i}`.repeat(32),
+          committeeKey: { tag: 't', value: 'v' },
+          retired: false,
+          role: null,
+          person: `usr_${i}`
+        }))
+      },
+      waited: new Set<string>(waited)
+    },
+    unread
+  );
 
-describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'S REMOVAL GOES AHEAD', () => {
+describe("WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT'S REMOVAL GOES AHEAD", () => {
   it('the removal of that seat is raised, named by fixed words and its leaf, with its approvers counted from the signers believed', async () => {
     t.rosterStop = seatingStop([LEAVER.toUpperCase()]);
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
@@ -707,14 +1026,16 @@ describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'
     /* RED WHEN: the removal that clears the stop cannot be raised, because it reads the roster every other read stops on. */
     expect(t.onDevice.map((c) => [c.input.leaf, c.input.stopBeforeCarry])[0]).toEqual([LEAVER, true]);
     /* RED WHEN: the person is shown a name the network does not give, or the seat's leaf is not shown, before anything is handed over. */
-    expect(confirmed.map((c) => [c.lines[0], c.handedBefore])).toEqual([[{ key: 'act.remove-signer.confirm.removing-unread', values: { leaf: LEAVER } }, 0]]);
+    expect(confirmed.map((c) => [c.lines[0], c.handedBefore])).toEqual([
+      [{ key: 'act.remove-signer.confirm.removing-unread', values: { leaf: LEAVER } }, 0]
+    ]);
     /* RED WHEN: the name sealed for the seat is taken from the page, or from anything but the fixed words. */
     expect(t.onDevice.every((c) => c.input.name === UNREAD_SEAT_NAME)).toBe(true);
     /* RED WHEN: the device's own check before each send counts approvers from a roster that stops, or counts the unread seat as one. */
     expect([...(await t.doors.approvers()).seats.keys()]).toEqual(SEATS.slice(0, 3));
   });
 
-  it('with two seats it cannot tell and one waiting for Finish adding, either unread seat\'s removal is raised, its approvers the signers believed', async () => {
+  it("with two seats it cannot tell and one waiting for Finish adding, either unread seat's removal is raised, its approvers the signers believed", async () => {
     const [second, waiting] = ['e5', 'f6'].map((x) => x.repeat(32)) as [string, string];
     company.seats = [...SEATS, second, waiting];
     for (const leaf of [LEAVER, second]) {
@@ -734,11 +1055,19 @@ describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'
     t.rosterStop = seatingStop([LEAVER]);
     const i = intent('remove-signer', { ...BASE, leaf: SEATS[2]! });
     const refused = ctxOf(i);
-    const e = await run(removeSignerAction(reach()), i, refused.ctx).then(() => null, (x: unknown) => x);
+    const e = await run(removeSignerAction(reach()), i, refused.ctx).then(
+      () => null,
+      (x: unknown) => x
+    );
     /* RED WHEN: another seat's removal goes ahead while the roster read stops, or is refused in words that do not say what clears it. */
     expect(e).toBeInstanceOf(StepRefused);
-    expect((e as StepRefused).words).toEqual({ key: 'act.remove-signer.why.unread-seat-first', values: { seats: LEAVER } });
-    expect(WORDS['act.remove-signer.why.unread-seat-first']).toMatch(/\{seats\}.*Remove that seat first, then this one/u);
+    expect((e as StepRefused).words).toEqual({
+      key: 'act.remove-signer.why.unread-seat-first',
+      values: { seats: LEAVER }
+    });
+    expect(WORDS['act.remove-signer.why.unread-seat-first']).toMatch(
+      /\{seats\}.*Remove that seat first, then this one/u
+    );
     expect([refused.confirmed, t.onDevice]).toEqual([[], []]);
   });
 
@@ -753,8 +1082,12 @@ describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'
     const second = ctxOf(approve);
     await run(approveProposalAction(reach() as never), approve, second.ctx);
     /* RED WHEN: the approval that would clear the stop is refused because it reads the roster every other read stops on. */
-    expect(t.onDevice.map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly, c.input.name]))
-      .toEqual([[CHAIN_ID, true, undefined, UNREAD_SEAT_NAME], [CHAIN_ID, undefined, true, UNREAD_SEAT_NAME]]);
+    expect(
+      t.onDevice.map((c) => [c.input.approveOnly, c.input.stopBeforeCarry, c.input.carryOnly, c.input.name])
+    ).toEqual([
+      [CHAIN_ID, true, undefined, UNREAD_SEAT_NAME],
+      [CHAIN_ID, undefined, true, UNREAD_SEAT_NAME]
+    ]);
     /* RED WHEN: the approver is told a name for the seat, or not told its leaf. */
     expect(second.showed).toContainEqual({ key: 'act.remove-signer.over.removing-unread', values: { leaf: LEAVER } });
     expect(second.told).toContainEqual({ state: 'carried-out', approvals: 2, needed: 2 });
@@ -763,12 +1096,17 @@ describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'
   });
 
   it('a roster read that stops for any other reason still stops the removal, with nothing handed on', async () => {
-    t.rosterStop = new RosterNotBelieved('This page could not check the network for a signer.', null, null, { check: 'chain-unread' });
+    t.rosterStop = new RosterNotBelieved('This page could not check the network for a signer.', null, null, {
+      check: 'chain-unread'
+    });
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const refused = ctxOf(i);
     const said = await refusalOf(run(removeSignerAction(reach()), i, refused.ctx));
     /* RED WHEN: a roster that stops for a reason a removal does not clear is read past for a removal. */
-    expect([said.key, said.says]).toEqual(['act.remove-signer.why.not-raised', 'This page could not check the network for a signer.']);
+    expect([said.key, said.says]).toEqual([
+      'act.remove-signer.why.not-raised',
+      'This page could not check the network for a signer.'
+    ]);
     expect([refused.confirmed, t.onDevice]).toEqual([[], []]);
   });
 
@@ -783,13 +1121,16 @@ describe('WHILE THE ROSTER READ STOPS ON A SEAT IT CANNOT TELL, ONLY THAT SEAT\'
 });
 
 describe('A REMOVAL OF A SEAT WITHDRAWN BEFORE IS RAISED AGAIN ONLY AFTER THE PERSON IS TOLD', () => {
-  it('the raise\'s Confirm says a removal of this seat was withdrawn before and that this raises a new one; nothing is refused', async () => {
+  it("the raise's Confirm says a removal of this seat was withdrawn before and that this raises a new one; nothing is refused", async () => {
     t.withdrawn = ['prp_0', 'prp_1'];
     const i = intent('remove-signer', { ...BASE, leaf: LEAVER });
     const { ctx, confirmed } = ctxOf(i);
     await run(removeSignerAction(reach()), i, ctx);
     /* RED WHEN: a removal of a seat withdrawn before is raised again with nothing said at the Confirm. */
-    expect(confirmed[0]!.lines.at(-1)).toEqual({ key: 'act.remove-signer.confirm.withdrawn-before', values: { proposals: 'prp_0, prp_1' } });
+    expect(confirmed[0]!.lines.at(-1)).toEqual({
+      key: 'act.remove-signer.confirm.withdrawn-before',
+      values: { proposals: 'prp_0, prp_1' }
+    });
     expect(confirmed[0]!.handedBefore).toBe(0);
     expect(t.onDevice.length).toBeGreaterThan(0);
     expect(WORDS['act.remove-signer.confirm.withdrawn-before']).toMatch(/\{proposals\}.*Confirming raises a new one/u);

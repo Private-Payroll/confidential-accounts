@@ -73,8 +73,9 @@ const labelOf = (company: CompanyLabel): string => {
   const label = readCompanyLabel(company);
   if (label === null) {
     throw new CommitteeKeyError(
-      'a committee key belongs to one company, named by its label, and what was given is not '
-      + 'one. An account\'s address is not a label. No key was derived.');
+      'a committee key belongs to one company, named by its label, and what was given is not ' +
+        "one. An account's address is not a label. No key was derived."
+    );
   }
   return label;
 };
@@ -94,8 +95,7 @@ export function committeeSigningKeyFor(identity: Identity, company: CompanyLabel
     }
     /* outside the curve order; the next expansion is independent of this one */
   }
-  throw new CommitteeKeyError(
-    'this wallet could not derive a committee key for that company. Nothing was given.');
+  throw new CommitteeKeyError('this wallet could not derive a committee key for that company. Nothing was given.');
 }
 
 /** THE PUBLIC HALF, which is what a vault's committee lists. */

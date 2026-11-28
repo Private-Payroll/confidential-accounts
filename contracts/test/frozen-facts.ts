@@ -13,7 +13,8 @@ import { RELEASED_VERSIONS, type ReleasedVersion } from '../../packages/identity
 import type { JsonValue } from './values-in-json.js';
 
 /** A compiled description as `contract-info.json` gives it, its largest numbers kept as digits. */
-export type CompiledJson = string | number | boolean | null | readonly CompiledJson[] | { readonly [k: string]: CompiledJson };
+export type CompiledJson =
+  string | number | boolean | null | readonly CompiledJson[] | { readonly [k: string]: CompiledJson };
 
 /** One ledger field: its place, its name, how it is stored, and the shape of what it holds. */
 export interface LedgerFieldFact {
@@ -71,11 +72,26 @@ export interface AddressFacts {
 export interface RegistryWalletFacts {
   readonly secret: string;
   /** Per network: the registry key, the entry-sealing key and the tags at three places. */
-  readonly networks: Readonly<Record<string, { readonly registryKey: string; readonly entrySealingKey: string; readonly tags: Readonly<Record<string, string>> }>>;
+  readonly networks: Readonly<
+    Record<
+      string,
+      {
+        readonly registryKey: string;
+        readonly entrySealingKey: string;
+        readonly tags: Readonly<Record<string, string>>;
+      }
+    >
+  >;
   /** A sealed entry's parts in bytes: its nonce, its sealed body and the seal's check. */
   readonly layout: { readonly nonce: number; readonly body: number; readonly check: number };
   /** One fixed entry, sealed on one network at one place: what the seal is bound to, and the body it opens to. */
-  readonly entry: { readonly network: string; readonly at: number; readonly words: CompiledJson; readonly boundTo: string; readonly body: string };
+  readonly entry: {
+    readonly network: string;
+    readonly at: number;
+    readonly words: CompiledJson;
+    readonly boundTo: string;
+    readonly body: string;
+  };
 }
 
 /** Every frozen fact of one released version. */
@@ -97,7 +113,8 @@ export const FROZEN_FACTS_FILE = join(import.meta.dirname, '..', 'frozen-facts.j
 export const readFrozenFacts = (): FrozenFacts => JSON.parse(readFileSync(FROZEN_FACTS_FILE, 'utf8'));
 
 /** The digest a version's entry is pinned by: SHA-256 over its JSON, in the record's own order. */
-export const entryDigestOf = (facts: VersionFacts): string => createHash('sha256').update(JSON.stringify(facts)).digest('hex');
+export const entryDigestOf = (facts: VersionFacts): string =>
+  createHash('sha256').update(JSON.stringify(facts)).digest('hex');
 
 /** The highest version id the record holds; refuses an empty record. */
 export function newestVersionIn(record: FrozenFacts): number {
@@ -107,13 +124,17 @@ export function newestVersionIn(record: FrozenFacts): number {
 }
 
 /** The newest version's facts. */
-export const newestFacts = (record: FrozenFacts = readFrozenFacts()): VersionFacts => record[String(newestVersionIn(record))]!;
+export const newestFacts = (record: FrozenFacts = readFrozenFacts()): VersionFacts =>
+  record[String(newestVersionIn(record))]!;
 
 /**
  * Every recorded version a deployed contract may still be on: released and not withdrawn. Wallets read companies on
  * any of them, so each one's facts are held, not only the newest's.
  */
-export function versionsInForce(record: FrozenFacts = readFrozenFacts(), released: readonly ReleasedVersion[] = RELEASED_VERSIONS): [number, VersionFacts][] {
+export function versionsInForce(
+  record: FrozenFacts = readFrozenFacts(),
+  released: readonly ReleasedVersion[] = RELEASED_VERSIONS
+): [number, VersionFacts][] {
   return Object.entries(record)
     .filter(([v]) => released.some((r) => r.version === Number(v) && !r.withdrawn))
     .map(([v, facts]) => [Number(v), facts]);
@@ -129,13 +150,21 @@ export function fieldIndexOf(facts: ContractFacts, name: string): number {
 /** A recorded derivation's 32 bytes as hex, from its first input set; refuses one that refused or returned something else. */
 export function recordedHexOf(facts: ContractFacts, derivation: string): string {
   const output = facts.derivations[derivation]?.[0]?.output;
-  if (typeof output !== 'string' || !/^0x[0-9a-f]{64}$/u.test(output)) throw new Error(`the record holds no 32 bytes for ${derivation}`);
+  if (typeof output !== 'string' || !/^0x[0-9a-f]{64}$/u.test(output))
+    throw new Error(`the record holds no 32 bytes for ${derivation}`);
   return output.slice(2);
 }
 
 /** The account's fields the wallet reads a company by. */
 export const ACCOUNT_FIELDS_THE_WALLET_READS = [
-  'signerRoles', 'signerLeaves', 'threshold', 'thresholds', 'vaults', 'retiredAt', 'movements', 'openProposals',
+  'signerRoles',
+  'signerLeaves',
+  'threshold',
+  'thresholds',
+  'vaults',
+  'retiredAt',
+  'movements',
+  'openProposals'
 ] as const;
 
 /** The entries the wallet looks up in the account's shared map, by the derivation that keys each. */
@@ -144,10 +173,12 @@ export const ENTRIES_THE_WALLET_READS = ['companyLabelKey', 'payKeyCommitmentKey
 /** What the wallet reads a version's contracts by: field places, the vault's field count, and entry keys. */
 export function walletReadFactsOf(facts: VersionFacts): Record<string, string | number> {
   return {
-    ...Object.fromEntries(ACCOUNT_FIELDS_THE_WALLET_READS.map((n) => [`account field ${n}`, fieldIndexOf(facts.account, n)])),
+    ...Object.fromEntries(
+      ACCOUNT_FIELDS_THE_WALLET_READS.map((n) => [`account field ${n}`, fieldIndexOf(facts.account, n)])
+    ),
     'vault field account': fieldIndexOf(facts.vault, 'account'),
     'vault field count': facts.vault.fields.length,
-    ...Object.fromEntries(ENTRIES_THE_WALLET_READS.map((n) => [`entry key ${n}`, recordedHexOf(facts.account, n)])),
+    ...Object.fromEntries(ENTRIES_THE_WALLET_READS.map((n) => [`entry key ${n}`, recordedHexOf(facts.account, n)]))
   };
 }
 
@@ -155,5 +186,7 @@ export function walletReadFactsOf(facts: VersionFacts): Record<string, string | 
 export function walletReadDifferences(earlier: VersionFacts, later: VersionFacts): string[] {
   const a = walletReadFactsOf(earlier);
   const b = walletReadFactsOf(later);
-  return Object.keys(a).filter((k) => a[k] !== b[k]).map((k) => `${k}: ${a[k]} then ${b[k]}`);
+  return Object.keys(a)
+    .filter((k) => a[k] !== b[k])
+    .map((k) => `${k}: ${a[k]} then ${b[k]}`);
 }

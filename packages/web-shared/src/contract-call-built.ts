@@ -28,7 +28,9 @@ interface CallRead {
 const treeFor = (m: CallMakers, zswap: unknown): Uint8Array => {
   if (zswap === SPENDS_NO_COIN) return new m.ledger.ZswapChainState().serialize();
   if (zswap instanceof Uint8Array) return zswap;
-  throw new Error('this call names neither the chain\'s commitment tree nor that it spends no coin, so it is not built.');
+  throw new Error(
+    "this call names neither the chain's commitment tree nor that it spends no coin, so it is not built."
+  );
 };
 
 /** The company account a vault circuit asks, with its state at the block the vault's states were read at. */
@@ -78,18 +80,30 @@ interface DeployAsked {
  */
 interface DeployBuilt {
   readonly public: { readonly contractAddress: string; readonly initialContractState: unknown };
-  readonly private: { readonly unprovenTx: UnprovenTx; readonly transaction: unknown; readonly newCoins: readonly unknown[] };
+  readonly private: {
+    readonly unprovenTx: UnprovenTx;
+    readonly transaction: unknown;
+    readonly newCoins: readonly unknown[];
+  };
 }
 
 /** The calls and deploys a device builds. */
 export interface ContractCalls {
   buildCall(zkConfig: unknown, asked: CallAsked, encryptionPublicKey: unknown): Promise<CallBuilt>;
-  buildDeploy(zkConfig: unknown, coinPublicKey: unknown, asked: DeployAsked, encryptionPublicKey: unknown, network: string): Promise<DeployBuilt>;
+  buildDeploy(
+    zkConfig: unknown,
+    coinPublicKey: unknown,
+    asked: DeployAsked,
+    encryptionPublicKey: unknown,
+    network: string
+  ): Promise<DeployBuilt>;
 }
 
 type MidnightContracts = typeof import('@midnight-ntwrk/midnight-js-contracts');
-type MidnightTypes = Pick<typeof import('@midnight-ntwrk/midnight-js-types'),
-  'SerializedContractState' | 'SerializedLedgerParameters' | 'SerializedZswapChainState'>;
+type MidnightTypes = Pick<
+  typeof import('@midnight-ntwrk/midnight-js-types'),
+  'SerializedContractState' | 'SerializedLedgerParameters' | 'SerializedZswapChainState'
+>;
 type CallOptions = Parameters<MidnightContracts['createLedger9UnprovenCallTxFromInitialStates']>[1];
 type CrossContract = Parameters<MidnightContracts['createLedger9UnprovenCallTxFromInitialStates']>[3];
 type DeployOptions = Parameters<MidnightContracts['createLedger9UnprovenDeployTxFromVerifierKeys']>[2];
@@ -118,14 +132,20 @@ const callingTheAccount = (m: CallMakers, account: AccountAtTheBlock, parameters
     protocolVersion: 0,
     contractState: m.types.SerializedContractState.fromBytes('v9', account.state),
     zswapChainState: m.types.SerializedZswapChainState.fromBytes('v9', new m.ledger.ZswapChainState().serialize()),
-    ledgerParameters: m.types.SerializedLedgerParameters.fromBytes('v9', parameters),
+    ledgerParameters: m.types.SerializedLedgerParameters.fromBytes('v9', parameters)
   };
   const publicDataProvider = {
     queryZSwapAndContractState: async (asked: string, at?: { readonly type: string; readonly blockHash?: string }) =>
-      (String(asked).toLowerCase() === address && at?.type === 'blockHash' && at.blockHash === account.blockHash ? served : null),
+      String(asked).toLowerCase() === address && at?.type === 'blockHash' && at.blockHash === account.blockHash
+        ? served
+        : null
   };
   /* Midnight.js reads only `queryZSwapAndContractState` of the reader it is handed for a callee; nothing else is offered. */
-  return { blockHash: account.blockHash, moduleProvider: m.accountModuleFor(address), publicDataProvider } as CrossContract;
+  return {
+    blockHash: account.blockHash,
+    moduleProvider: m.accountModuleFor(address),
+    publicDataProvider
+  } as CrossContract;
 };
 
 /**
@@ -144,27 +164,32 @@ export const contractCallsOf = (m: CallMakers): ContractCalls => ({
         initialContractState: m.types.SerializedContractState.fromBytes('v9', read.contract),
         initialZswapChainState: m.types.SerializedZswapChainState.fromBytes('v9', zswap),
         ledgerParameters: m.types.SerializedLedgerParameters.fromBytes('v9', read.parameters),
-        config: m.settingsFor(network),
+        config: m.settingsFor(network)
       } as CallOptions,
       encryptionPublicKey as string,
-      account === undefined ? undefined : callingTheAccount(m, account, read.parameters));
+      account === undefined ? undefined : callingTheAccount(m, account, read.parameters)
+    );
     const transaction = built.private.unprovenTx.deserialize({ v9: m.ledger.Transaction });
     return { private: { ...built.private, transaction } };
   },
   buildDeploy: async (zkConfig, coinPublicKey, asked, encryptionPublicKey, network) => {
     const built = await m.contracts.createUnprovenDeployTxFromVerifierKeys(
       zkConfig as Parameters<MidnightContracts['createLedger9UnprovenDeployTxFromVerifierKeys']>[0],
-      coinPublicKey as string, asked as DeployOptions, encryptionPublicKey as string, m.settingsFor(network));
+      coinPublicKey as string,
+      asked as DeployOptions,
+      encryptionPublicKey as string,
+      m.settingsFor(network)
+    );
     return {
       public: {
         contractAddress: built.public.contractAddress,
-        initialContractState: built.public.initialContractState.deserialize({ v9: m.ContractState }),
+        initialContractState: built.public.initialContractState.deserialize({ v9: m.ContractState })
       },
       private: {
         unprovenTx: built.private.unprovenTx,
         transaction: built.private.unprovenTx.deserialize({ v9: m.ledger.Transaction }),
-        newCoins: built.private.newCoins,
-      },
+        newCoins: built.private.newCoins
+      }
     };
-  },
+  }
 });

@@ -3,17 +3,21 @@
  * the one reader (`vaults-web-shared/company-service-here`) the page reads it with too.
  */
 import { OUR_SERVICE, serviceInForce, type ServiceOpener } from '../../../../src/midnight/company-service-record.js';
-import {
-  companyServiceFiledHere, type ServiceRead,
-} from '../../../../packages/web-shared/src/company-service-here.js';
+import { companyServiceFiledHere, type ServiceRead } from '../../../../packages/web-shared/src/company-service-here.js';
 import { intentShapeOf } from 'midnight-identity/profile/act-shape';
 import { listsRoute, SERVICE_CHOICE_READS } from 'midnight-identity/profile/act-intents';
 import type { CompanyReach } from './company-reach.js';
 import type { StepContext } from './definition.js';
 
 export {
-  companyServiceFiledHere, serviceFromVersions, serviceOpenerFor, serviceVersionsFrom, versionsNamedIn,
-  type ServiceFiled, type ServiceRead, type ServiceUnread,
+  companyServiceFiledHere,
+  serviceFromVersions,
+  serviceOpenerFor,
+  serviceVersionsFrom,
+  versionsNamedIn,
+  type ServiceFiled,
+  type ServiceRead,
+  type ServiceUnread
 } from '../../../../packages/web-shared/src/company-service-here.js';
 
 /**
@@ -25,12 +29,17 @@ export {
  * no answer of the service can change.
  */
 export async function companyServiceHere(
-  r: Pick<CompanyReach, 'accountId' | 'records' | 'judges' | 'label' | 'account' | 'companyKeys' | 'roster'> & { readonly opener: ServiceOpener },
-  ctx: Pick<StepContext, 'intent'>,
+  r: Pick<CompanyReach, 'accountId' | 'records' | 'judges' | 'label' | 'account' | 'companyKeys' | 'roster'> & {
+    readonly opener: ServiceOpener;
+  },
+  ctx: Pick<StepContext, 'intent'>
 ): Promise<ServiceRead> {
   const shape = intentShapeOf(ctx.intent.name);
   if (shape === undefined || SERVICE_CHOICE_READS.some((route) => !listsRoute(shape, route))) {
-    return { choice: OUR_SERVICE, unchosen: 'this act does not read the company\'s choice of service, so its calls go through ours' };
+    return {
+      choice: OUR_SERVICE,
+      unchosen: "this act does not read the company's choice of service, so its calls go through ours"
+    };
   }
   const filed = await companyServiceFiledHere(r);
   return 'unread' in filed ? { unread: filed.unread } : serviceInForce(filed.versions, filed.needed);

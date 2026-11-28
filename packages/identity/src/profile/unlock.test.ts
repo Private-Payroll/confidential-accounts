@@ -3,15 +3,11 @@ import { TEST_MNEMONIC } from '@midnight-ntwrk/testkit-js';
 import { HDKey } from '@scure/bip32';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import {
-  dummyContractAddress, encodeContractAddress, sampleContractAddress,
-} from '@midnightntwrk/ledger-v9';
+import { dummyContractAddress, encodeContractAddress, sampleContractAddress } from '@midnightntwrk/ledger-v9';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import {
-  Purposes, identityFromSecret, identityFromWords, secretFromWords, seedFromWords,
-} from '../keys/derivation.js';
+import { Purposes, identityFromSecret, identityFromWords, secretFromWords, seedFromWords } from '../keys/derivation.js';
 import type { Purpose } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
 import { ASK_KINDS, parseAsk, parseRequest } from './request.js';
@@ -19,9 +15,18 @@ import type { UnlockRequest } from './request.js';
 import { listen } from './channel.js';
 import type { ChannelState, ChannelWindow } from './channel.js';
 import {
-  KEYRING_RELEASE_SCHEMA, RELEASE_SCHEMA, UnlockError, keyringKeyFor, keyringReleaseFor,
-  readKeyringRelease, readRelease, releaseFor, unlockKeyFor,
-  withTheFounding, withTheKeysRead, keyringHolderFor,
+  KEYRING_RELEASE_SCHEMA,
+  RELEASE_SCHEMA,
+  UnlockError,
+  keyringKeyFor,
+  keyringReleaseFor,
+  readKeyringRelease,
+  readRelease,
+  releaseFor,
+  unlockKeyFor,
+  withTheFounding,
+  withTheKeysRead,
+  keyringHolderFor
 } from './unlock.js';
 import { committeeKeyFor, committeeSigningKeyFor } from './committee-key.js';
 import { seatKeysFor } from './seat-keys.js';
@@ -88,7 +93,7 @@ const unlock = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   company: CO_A,
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 /** A disclosure on the wire, in the shape first shipped — no `kind` at all. */
@@ -99,13 +104,12 @@ const disclosure = (over: Record<string, unknown> = {}): Record<string, unknown>
   wants: [{ attribute: 'given-name', required: true }],
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 /** The parsed ask, which is the only thing `unlock.ts` will take. */
-const askAt = (
-  origin: string, company: string = CO_A, over: Record<string, unknown> = {},
-): UnlockRequest => parseAsk(unlock({ company, ...over }), origin, NOW) as UnlockRequest;
+const askAt = (origin: string, company: string = CO_A, over: Record<string, unknown> = {}): UnlockRequest =>
+  parseAsk(unlock({ company, ...over }), origin, NOW) as UnlockRequest;
 
 /** The key for a company, asked for from the ordinary host. */
 const keyFor = (company: string): string => hex(unlockKeyFor(identity, askAt(A, company)));
@@ -124,14 +128,11 @@ const codeOf = (run: () => unknown): string => {
 const AUTHORITY_PATH = "m/44'/2400'/1'/0/0";
 const AUTHORITY_SALT = new TextEncoder().encode('midnight-identity/authority/v1');
 const UNLOCK_SALT = new TextEncoder().encode('midnight-identity/unlock/v3');
-const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC))
-  .derive(AUTHORITY_PATH).privateKey!;
+const independentRoot = HDKey.fromMasterSeed(seedFromWords(TEST_MNEMONIC)).derive(AUTHORITY_PATH).privateKey!;
 const independentAuthority = (purpose: string, index: number): Uint8Array =>
-  hkdf(sha256, independentRoot, AUTHORITY_SALT,
-    new TextEncoder().encode(`${purpose}/${index}`), 32);
-const independentUnlockKey = (company: string): Uint8Array => hkdf(
-  sha256, independentAuthority('unlock', 0), UNLOCK_SALT,
-  new TextEncoder().encode(company), 32);
+  hkdf(sha256, independentRoot, AUTHORITY_SALT, new TextEncoder().encode(`${purpose}/${index}`), 32);
+const independentUnlockKey = (company: string): Uint8Array =>
+  hkdf(sha256, independentAuthority('unlock', 0), UNLOCK_SALT, new TextEncoder().encode(company), 32);
 
 describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
   it('parses, carries the company it named and the origin the parser observed', () => {
@@ -147,25 +148,23 @@ describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
      * be read, so the whole request goes rather than half of it being
      * honoured — and the code names THIS kind, because a refusal naming the
      * wrong one tells a requester something untrue about its own message. */
-    expect(codeOf(() => parseAsk(
-      unlock({ wants: [{ attribute: 'given-name', required: true }] }), A, NOW)))
-      .toBe('attributes-on-an-unlock');
+    expect(codeOf(() => parseAsk(unlock({ wants: [{ attribute: 'given-name', required: true }] }), A, NOW))).toBe(
+      'attributes-on-an-unlock'
+    );
   });
 
   it('and an EMPTY list on an unlock is refused too — by presence, not by content', () => {
-    expect(codeOf(() => parseAsk(unlock({ wants: [] }), A, NOW)))
-      .toBe('attributes-on-an-unlock');
+    expect(codeOf(() => parseAsk(unlock({ wants: [] }), A, NOW))).toBe('attributes-on-an-unlock');
   });
 
   it('AN UNLOCK THAT NAMES ITS OWN ORIGIN IS REFUSED, in either place it could put one', () => {
     /* **THIS ONE LINE IS NOT LOOSENED.** The origin no longer selects the
      * key, but it still decides who is answered and what a person is shown, and
      * anything that could name its own address could name somebody else's. */
-    expect(codeOf(() => parseAsk(unlock({ origin: B }), A, NOW)))
-      .toBe('claims-its-own-origin');
-    expect(codeOf(() => parseAsk(
-      unlock({ requester: { name: 'Payroll A', rdns: 'example.payroll-a', origin: B } }),
-      A, NOW))).toBe('claims-its-own-origin');
+    expect(codeOf(() => parseAsk(unlock({ origin: B }), A, NOW))).toBe('claims-its-own-origin');
+    expect(
+      codeOf(() => parseAsk(unlock({ requester: { name: 'Payroll A', rdns: 'example.payroll-a', origin: B } }), A, NOW))
+    ).toBe('claims-its-own-origin');
   });
 
   it('STRIPPING `kind` OFF AN UNLOCK IN FLIGHT REFUSES IT — it does not become one', () => {
@@ -183,11 +182,10 @@ describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
 
   it('THE OTHER TWO KINDS ARE UNTOUCHED: every refusal they had, they still have', () => {
     expect(codeOf(() => parseAsk(disclosure({ wants: [] }), A, NOW))).toBe('nothing-asked-for');
-    expect(codeOf(() => parseAsk(
-      { ...unlock(), kind: 'sign-in', wants: [] }, A, NOW))).toBe('company-on-a-sign-in');
-    expect(codeOf(() => parseAsk(
-      { ...disclosure(), kind: 'sign-in', wants: [] }, A, NOW)))
-      .toBe('attributes-on-a-sign-in');
+    expect(codeOf(() => parseAsk({ ...unlock(), kind: 'sign-in', wants: [] }, A, NOW))).toBe('company-on-a-sign-in');
+    expect(codeOf(() => parseAsk({ ...disclosure(), kind: 'sign-in', wants: [] }, A, NOW))).toBe(
+      'attributes-on-a-sign-in'
+    );
     expect(parseAsk(disclosure(), A, NOW).kind).toBe('disclosure');
   });
 
@@ -196,15 +194,15 @@ describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
      * requester that named one and was answered would be entitled to believe
      * the wallet had read it. `origin` and `wants` are refused in the same
      * sentence for the same reason. */
-    expect(codeOf(() => parseAsk(disclosure({ company: CO_A }), A, NOW)))
-      .toBe('company-on-a-disclosure');
-    expect(codeOf(() => parseAsk(
-      { ...disclosure(), kind: 'sign-in', wants: undefined, company: CO_A }, A, NOW)))
-      .toBe('company-on-a-sign-in');
+    expect(codeOf(() => parseAsk(disclosure({ company: CO_A }), A, NOW))).toBe('company-on-a-disclosure');
+    expect(codeOf(() => parseAsk({ ...disclosure(), kind: 'sign-in', wants: undefined, company: CO_A }, A, NOW))).toBe(
+      'company-on-a-sign-in'
+    );
     /* And the company's account, on its own, the same way. RED WHEN: `account` is ignored on these kinds. */
     expect(codeOf(() => parseAsk(disclosure({ account: ACCOUNT_A }), A, NOW))).toBe('company-on-a-disclosure');
-    expect(codeOf(() => parseAsk(
-      { ...disclosure(), kind: 'sign-in', wants: undefined, account: ACCOUNT_A }, A, NOW))).toBe('company-on-a-sign-in');
+    expect(
+      codeOf(() => parseAsk({ ...disclosure(), kind: 'sign-in', wants: undefined, account: ACCOUNT_A }, A, NOW))
+    ).toBe('company-on-a-sign-in');
   });
 
   it('THE THIRD KIND WAS ADDED, NOT SUBSTITUTED: the first two are where they were', () => {
@@ -217,7 +215,7 @@ describe('AN UNLOCK IS ITS OWN KIND, AND NAMES EXACTLY ONE THING', () => {
 });
 
 describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
-  it('A COMPANY IS NAMED BY ITS LABEL, AND AN ACCOUNT\'S ADDRESS IS REFUSED WHERE A LABEL IS ASKED', () => {
+  it("A COMPANY IS NAMED BY ITS LABEL, AND AN ACCOUNT'S ADDRESS IS REFUSED WHERE A LABEL IS ASKED", () => {
     /*
      * **THE ONE MISTAKE THE SPELLING EXISTS TO CATCH.** Until the label, a
      * company was named by its account's address, and every caller that still
@@ -227,7 +225,10 @@ describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
      */
     for (let i = 0; i < 20; i += 1) {
       const address = sampleContractAddress();
-      expect(codeOf(() => parseAsk(unlock({ company: address }), A, NOW)), address).toBe('not-a-company-label');
+      expect(
+        codeOf(() => parseAsk(unlock({ company: address }), A, NOW)),
+        address
+      ).toBe('not-a-company-label');
     }
     expect(codeOf(() => parseAsk(unlock({ company: ACCOUNT_A }), A, NOW))).toBe('not-a-company-label');
     expect(codeOf(() => parseAsk(unlock({ company: dummyContractAddress() }), A, NOW))).toBe('not-a-company-label');
@@ -244,7 +245,10 @@ describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
      * the second spelling nothing at all.
      * RED WHEN: the reader folds case. */
     for (const spelling of [CO_A.toUpperCase(), `CO_${CO_A.slice(3)}`, `co_${CO_A.slice(3).toUpperCase()}`]) {
-      expect(codeOf(() => parseAsk(unlock({ company: spelling }), A, NOW)), spelling).toBe('not-a-company-label');
+      expect(
+        codeOf(() => parseAsk(unlock({ company: spelling }), A, NOW)),
+        spelling
+      ).toBe('not-a-company-label');
       const forged = { ...askAt(A), company: spelling } as UnlockRequest;
       expect(() => unlockKeyFor(identity, forged), `${spelling} hand-built`).toThrow(UnlockError);
     }
@@ -253,11 +257,24 @@ describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
 
   it('A MALFORMED IDENTIFIER IS A REQUEST THAT DOES NOT KNOW WHAT IT IS ASKING FOR', () => {
     for (const bad of [
-      undefined, null, 42, '', 'payroll-a', CO_A.slice(0, 66), `${CO_A}0`, `0x${ACCOUNT_A}`,
-      CO_A.replace('a', 'g'), ` ${CO_A}`, `${CO_A} `, `co_${'0'.repeat(64)}`, `co-${CO_A.slice(3)}`,
+      undefined,
+      null,
+      42,
+      '',
+      'payroll-a',
+      CO_A.slice(0, 66),
+      `${CO_A}0`,
+      `0x${ACCOUNT_A}`,
+      CO_A.replace('a', 'g'),
+      ` ${CO_A}`,
+      `${CO_A} `,
+      `co_${'0'.repeat(64)}`,
+      `co-${CO_A.slice(3)}`
     ]) {
-      expect(codeOf(() => parseAsk(unlock({ company: bad }), A, NOW)), String(bad))
-        .toBe('not-a-company-label');
+      expect(
+        codeOf(() => parseAsk(unlock({ company: bad }), A, NOW)),
+        String(bad)
+      ).toBe('not-a-company-label');
     }
     /* And an unlock that names no company at all is the same refusal. */
     const { company, ...withoutCompany } = unlock();
@@ -283,12 +300,23 @@ describe('THE COMPANY IS CLAIMED, SO ITS SHAPE IS WHAT CAN BE CHECKED', () => {
     expect(none).toBe(hex(independentUnlockKey(CO_A)));
   });
 
-  it('NO KEY IS DERIVED FROM AN ADDRESS ANY MORE: the label\'s key is not what the old derivation gave its account', () => {
+  it("NO KEY IS DERIVED FROM AN ADDRESS ANY MORE: the label's key is not what the old derivation gave its account", () => {
     /* RED WHEN: the label's `co_` is stripped before the key is derived, so a label written over an
      * account's address gives that address's key. The salt itself is held by the fixed vectors above. */
-    const oldFromAddress = hkdf(sha256, independentAuthority('unlock', 0),
-      new TextEncoder().encode('midnight-identity/unlock/v2'), new TextEncoder().encode(ACCOUNT_A), 32);
-    const newSaltAddress = hkdf(sha256, independentAuthority('unlock', 0), UNLOCK_SALT, new TextEncoder().encode(ACCOUNT_A), 32);
+    const oldFromAddress = hkdf(
+      sha256,
+      independentAuthority('unlock', 0),
+      new TextEncoder().encode('midnight-identity/unlock/v2'),
+      new TextEncoder().encode(ACCOUNT_A),
+      32
+    );
+    const newSaltAddress = hkdf(
+      sha256,
+      independentAuthority('unlock', 0),
+      UNLOCK_SALT,
+      new TextEncoder().encode(ACCOUNT_A),
+      32
+    );
     const labelOnThatAccount = labelOf(ACCOUNT_A);
     expect(keyFor(labelOnThatAccount)).not.toBe(hex(oldFromAddress));
     expect(keyFor(labelOnThatAccount)).not.toBe(hex(newSaltAddress));
@@ -302,7 +330,7 @@ describe('THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', () => {
       requester: { name: 'Payroll B', rdns: 'example.payroll-b' },
       purpose: 'We are definitely payroll B.',
       nonce: 'something-else',
-      expiresAt: NOW + 120_000,
+      expiresAt: NOW + 120_000
     });
     expect(hex(unlockKeyFor(identity, lying))).toBe(hex(unlockKeyFor(identity, plain)));
     expect(hex(unlockKeyFor(identity, lying))).toBe(hex(independentUnlockKey(CO_A)));
@@ -318,14 +346,21 @@ describe('THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', () => {
     const opener = { postMessage: (): void => {} };
     const view: ChannelWindow = {
       opener,
-      addEventListener: (_t, h) => { handler = h; },
-      removeEventListener: () => {},
+      addEventListener: (_t, h) => {
+        handler = h;
+      },
+      removeEventListener: () => {}
     };
-    listen(view, () => NOW, (s) => states.push(s), A);
+    listen(
+      view,
+      () => NOW,
+      (s) => states.push(s),
+      A
+    );
     handler!({
       source: opener as unknown as MessageEventSource,
       origin: A,
-      data: unlock({ requester: { name: 'Payroll B', rdns: 'example.payroll-b' } }),
+      data: unlock({ requester: { name: 'Payroll B', rdns: 'example.payroll-b' } })
     } as unknown as MessageEvent);
 
     const settled = states[states.length - 1]!;
@@ -368,8 +403,7 @@ describe('THE ORIGIN IS OBSERVED, AND IT GATES RATHER THAN DERIVES', () => {
     expect(() => parseAsk(unlock(), 'https://a b.example', NOW)).toThrow();
     for (const origin of ['https://a b.example', 'null', 'http://payroll-a.example', '']) {
       const forged = { ...askAt(A), requester: { ...askAt(A).requester, origin } };
-      expect(() => unlockKeyFor(identity, forged as UnlockRequest), origin)
-        .toThrow(UnlockError);
+      expect(() => unlockKeyFor(identity, forged as UnlockRequest), origin).toThrow(UnlockError);
     }
   });
 });
@@ -386,8 +420,11 @@ describe('THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
      * one that no longer resolves anywhere.
      */
     const hosts = [
-      A, B, 'https://payroll-a.example:8443', 'https://books.some-accountant.example',
-      'https://a-client-somebody-else-wrote.example',
+      A,
+      B,
+      'https://payroll-a.example:8443',
+      'https://books.some-accountant.example',
+      'https://a-client-somebody-else-wrote.example'
     ];
     const keys = new Set(hosts.map((host) => hex(unlockKeyFor(identity, askAt(host, CO_A)))));
     expect(keys.size, 'the same company gave different keys at different hosts').toBe(1);
@@ -402,8 +439,7 @@ describe('THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
      * so a reader does not have to run the suite to see it. **`originOf` is
      * called and its result is discarded** — that is the gate.
      */
-    const source = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
+    const source = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
     const body = source.slice(source.indexOf('export function unlockKeyFor'));
     const code = body.slice(0, body.indexOf('\n}')).replace(/\/\*[\s\S]*?\*\//gu, '');
     expect(code).toContain('originOf(ask);');
@@ -431,7 +467,7 @@ describe('THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
       [CO_B]: 'd53f45bb2d57f00cbd8d6e0e4da208d97fe3dcfb7d65dabedf7acab6b6a6b4ad',
       /* The smallest label there is: thirty-one zero bytes and a one. The
        * all-zero one is refused (the account refuses it), below. */
-      [`co_${'0'.repeat(63)}1`]: '599cbb8fd6a9bc1b576c4c25f6556ef91d6542104df03a72e8bf7efd19cb1f0e',
+      [`co_${'0'.repeat(63)}1`]: '599cbb8fd6a9bc1b576c4c25f6556ef91d6542104df03a72e8bf7efd19cb1f0e'
     };
     let checked = 0;
     for (const [company, expected] of Object.entries(VECTORS)) {
@@ -448,9 +484,12 @@ describe('THE SAME COMPANY FROM TWO DIFFERENT HOSTS GETS THE SAME KEY', () => {
      * RED WHEN: the salt is left at `v2` or `v1`. */
     for (const old of ['midnight-identity/unlock/v1', 'midnight-identity/unlock/v2']) {
       const before = hkdf(
-        sha256, independentAuthority('unlock', 0),
+        sha256,
+        independentAuthority('unlock', 0),
         new TextEncoder().encode(old),
-        new TextEncoder().encode(CO_A), 32);
+        new TextEncoder().encode(CO_A),
+        32
+      );
       expect(hex(before), old).not.toBe(keyFor(CO_A));
     }
   });
@@ -465,8 +504,13 @@ describe('TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
   it('five hundred companies give five hundred different keys', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 500; i += 1) {
-      seen.add(keyFor(labelOf(sha256(new TextEncoder().encode(`company-${i}`))
-        .reduce((s, b) => s + b.toString(16).padStart(2, '0'), ''))));
+      seen.add(
+        keyFor(
+          labelOf(
+            sha256(new TextEncoder().encode(`company-${i}`)).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '')
+          )
+        )
+      );
     }
     expect(seen.size).toBe(500);
   });
@@ -517,8 +561,7 @@ describe('TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
      */
     const index31 = (company: string): number => {
       const digest = sha256(new TextEncoder().encode(company));
-      return ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!)
-        >>> 1;
+      return ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!) >>> 1;
     };
     const addressOf = (i: number): string => labelOf(hex(sha256(new TextEncoder().encode(`co-${i}`))));
     const at = new Map<number, string>();
@@ -535,8 +578,9 @@ describe('TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
     expect(one).not.toBe(two);
     expect(index31(one)).toBe(index31(two));
     /* Under the rejected design those two COMPANIES ARE ONE COMPANY. */
-    expect(hex(identity.authority(Purposes.Seat, index31(one))))
-      .toBe(hex(identity.authority(Purposes.Seat, index31(two))));
+    expect(hex(identity.authority(Purposes.Seat, index31(one)))).toBe(
+      hex(identity.authority(Purposes.Seat, index31(two)))
+    );
     /* Under the shipped one they are not. */
     expect(keyFor(one)).not.toBe(keyFor(two));
   });
@@ -553,8 +597,9 @@ describe('TWO COMPANIES NEVER GET THE SAME KEY, AT FULL WIDTH', () => {
   });
 
   it('and the same wallet asked twice, an hour apart, gives the same bytes', () => {
-    expect(hex(unlockKeyFor(identity, askAt(A, CO_A, { nonce: 'first' }))))
-      .toBe(hex(unlockKeyFor(identity, askAt(B, CO_A, { nonce: 'later' }))));
+    expect(hex(unlockKeyFor(identity, askAt(A, CO_A, { nonce: 'first' })))).toBe(
+      hex(unlockKeyFor(identity, askAt(B, CO_A, { nonce: 'later' })))
+    );
   });
 });
 
@@ -590,7 +635,11 @@ describe('IT IS NEVER A MONEY KEY', () => {
     }
 
     for (const company of [
-      CO_A, CO_B, labelOf(sampleContractAddress()), labelOf(sampleContractAddress()), labelOf(sampleContractAddress()),
+      CO_A,
+      CO_B,
+      labelOf(sampleContractAddress()),
+      labelOf(sampleContractAddress()),
+      labelOf(sampleContractAddress())
     ]) {
       const released = unlockKeyFor(identity, askAt(A, company));
       expect(released).toHaveLength(32);
@@ -628,30 +677,39 @@ describe('THE REMEMBERED LIST IS NEVER AN INPUT', () => {
      * said at the signature, where it is cheapest to read.
      */
     expect(unlockKeyFor).toHaveLength(2);
-    const withHistory = recordRelease(emptyProfile(NOW), {
-      at: NOW,
-      nonce: 'n1',
-      recipient: { origin: B, name: 'Payroll B', rdns: 'example.payroll-b' },
-      company: CO_A,
-    }, NOW);
+    const withHistory = recordRelease(
+      emptyProfile(NOW),
+      {
+        at: NOW,
+        nonce: 'n1',
+        recipient: { origin: B, name: 'Payroll B', rdns: 'example.payroll-b' },
+        company: CO_A
+      },
+      NOW
+    );
     expect(originsFor(withHistory, CO_A, null)).toEqual([B]);
     /* The list exists, says something, and cannot reach the key: there is no
      * argument for it and `unlock.ts` imports nothing from `model.ts`. */
-    const code = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//gu, '');
+    const code = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8').replace(
+      /\/\*[\s\S]*?\*\//gu,
+      ''
+    );
     expect(code).not.toContain('model.js');
     expect(code).not.toContain('originsFor');
     expect(code).not.toContain('releasesOf');
   });
 
   it('NOTHING IN THE MODULE READS A CLOCK, A STORE OR A RANDOM NUMBER', () => {
-    const source = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
+    const source = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//gu, '');
     for (const forbidden of [
-      'getRandomValues', 'Date.now', 'localStorage', 'sessionStorage', 'indexedDB',
-      'performance.now', 'fetch(',
+      'getRandomValues',
+      'Date.now',
+      'localStorage',
+      'sessionStorage',
+      'indexedDB',
+      'performance.now',
+      'fetch('
     ]) {
       expect(code.includes(forbidden), `\`${forbidden}\` appears in unlock.ts`).toBe(false);
     }
@@ -660,9 +718,20 @@ describe('THE REMEMBERED LIST IS NEVER AN INPUT', () => {
   it('A LOST LIST COSTS A WARNING AND NEVER ACCESS', () => {
     /* An empty profile knows nothing about anybody and derives every key
      * identically to one that has been used for a year. */
-    const used = [CO_A, CO_B].reduce((profile, company) => recordRelease(profile, {
-      at: NOW, nonce: 'n', recipient: { origin: A, name: 'A', rdns: 'a' }, company,
-    }, NOW), emptyProfile(NOW));
+    const used = [CO_A, CO_B].reduce(
+      (profile, company) =>
+        recordRelease(
+          profile,
+          {
+            at: NOW,
+            nonce: 'n',
+            recipient: { origin: A, name: 'A', rdns: 'a' },
+            company
+          },
+          NOW
+        ),
+      emptyProfile(NOW)
+    );
     expect(originsFor(used, CO_A, null)).toEqual([A]);
     expect(originsFor(emptyProfile(NOW), CO_A, null)).toEqual([]);
     for (const company of [CO_A, CO_B]) {
@@ -673,11 +742,16 @@ describe('THE REMEMBERED LIST IS NEVER AN INPUT', () => {
   it('and it answers the question the screen asks it: which OTHER hosts, in order', () => {
     let profile = emptyProfile(NOW);
     for (const [origin, company] of [
-      [A, CO_A], [A, CO_A], [B, CO_A], [B, CO_B],
+      [A, CO_A],
+      [A, CO_A],
+      [B, CO_A],
+      [B, CO_B]
     ] as const) {
       profile = recordRelease(
-        profile, { at: NOW, nonce: 'n', recipient: { origin, name: 'n', rdns: 'r' }, company },
-        NOW);
+        profile,
+        { at: NOW, nonce: 'n', recipient: { origin, name: 'n', rdns: 'r' }, company },
+        NOW
+      );
     }
     expect(originsFor(profile, CO_A, null)).toEqual([A, B]);
     expect(originsFor(profile, CO_B, null)).toEqual([B]);
@@ -687,9 +761,17 @@ describe('THE REMEMBERED LIST IS NEVER AN INPUT', () => {
   it('IT COMPARES THE LABEL AND THE ACCOUNT TOGETHER: the same label on another account is a company it has never seen', () => {
     /* RED WHEN: `originsFor` compares the label alone. */
     const OTHER = sampleContractAddress() as AccountAddress;
-    const profile = recordRelease(emptyProfile(NOW), {
-      at: NOW, nonce: 'n', recipient: { origin: A, name: 'n', rdns: 'r' }, company: CO_A, account: ACCOUNT_A,
-    }, NOW);
+    const profile = recordRelease(
+      emptyProfile(NOW),
+      {
+        at: NOW,
+        nonce: 'n',
+        recipient: { origin: A, name: 'n', rdns: 'r' },
+        company: CO_A,
+        account: ACCOUNT_A
+      },
+      NOW
+    );
     expect(originsFor(profile, CO_A, ACCOUNT_A)).toEqual([A]);
     expect(originsFor(profile, CO_A, OTHER)).toEqual([]);
     expect(originsFor(profile, CO_A, null)).toEqual([]);
@@ -702,8 +784,7 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
 
   it('carries the key, the company, the nonce and the observed origin, and nothing else', () => {
     const released = releaseFor(identity, ask, NOW);
-    expect(Object.keys(released).sort())
-      .toEqual(['account', 'at', 'company', 'key', 'nonce', 'origin', 'schema']);
+    expect(Object.keys(released).sort()).toEqual(['account', 'at', 'company', 'key', 'nonce', 'origin', 'schema']);
     expect(released.account).toBeNull();
     expect(released.schema).toBe(RELEASE_SCHEMA);
     expect(released.origin).toBe(A);
@@ -758,8 +839,16 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
     const indexer = { indexerUri: 'https://indexer.example/graphql', indexerWsUri: 'wss://indexer.example/graphql/ws' };
     const released = releaseFor(identity, ask, NOW, indexer);
     /* Public addresses, beside the key. RED WHEN they are dropped or renamed. */
-    expect(Object.keys(released).sort())
-      .toEqual(['account', 'at', 'company', 'indexer', 'key', 'nonce', 'origin', 'schema']);
+    expect(Object.keys(released).sort()).toEqual([
+      'account',
+      'at',
+      'company',
+      'indexer',
+      'key',
+      'nonce',
+      'origin',
+      'schema'
+    ]);
     const read = readRelease(released, expecting);
     expect(read.ok && read.indexer).toEqual(indexer);
     /* The key is the same key whether or not an indexer went with it. */
@@ -767,8 +856,13 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
     /* A wallet that names none, or names something that is not two addresses, reads as none - and still releases. */
     const none = readRelease(releaseFor(identity, ask, NOW), expecting);
     expect(none.ok && none.indexer).toBeNull();
-    for (const said of [42, 'https://x', { indexerUri: 'https://x' }, { indexerUri: '', indexerWsUri: 'wss://x' },
-      { indexerUri: 'https://x', indexerWsUri: 'w'.repeat(513) }]) {
+    for (const said of [
+      42,
+      'https://x',
+      { indexerUri: 'https://x' },
+      { indexerUri: '', indexerWsUri: 'wss://x' },
+      { indexerUri: 'https://x', indexerWsUri: 'w'.repeat(513) }
+    ]) {
       const odd = readRelease({ ...releaseFor(identity, ask, NOW), indexer: said }, expecting);
       /* RED WHEN something that is not two addresses is handed on as an indexer. */
       expect(odd.ok && odd.indexer, JSON.stringify(said)).toBeNull();
@@ -781,7 +875,8 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
       expect(!read.ok && read.code).toBe('not-a-release');
     }
     const short = {
-      ...releaseFor(identity, ask, NOW), key: toBase64Url(new Uint8Array(31)),
+      ...releaseFor(identity, ask, NOW),
+      key: toBase64Url(new Uint8Array(31))
     };
     expect(readRelease(short, expecting).ok).toBe(false);
     const notBytes = { ...releaseFor(identity, ask, NOW), key: 'not base64url!!' };
@@ -795,11 +890,11 @@ describe('THE MESSAGE THAT CROSSES, AND THE READER ON THE OTHER SIDE', () => {
      * it. **Replay is impossible by construction rather than by a check.**
      * This moves that binding from a HOST to a COMPANY, which is what it should
      * always have been about. */
-    expect(hex(fromBase64Url(releaseFor(identity, askAt(A, CO_A), NOW).key)))
-      .not.toBe(hex(fromBase64Url(releaseFor(identity, askAt(A, CO_B), NOW).key)));
+    expect(hex(fromBase64Url(releaseFor(identity, askAt(A, CO_A), NOW).key))).not.toBe(
+      hex(fromBase64Url(releaseFor(identity, askAt(A, CO_B), NOW).key))
+    );
     /* And the same company from the other host is the same key on the wire. */
-    expect(releaseFor(identity, askAt(B, CO_A), NOW).key)
-      .toBe(releaseFor(identity, askAt(A, CO_A), NOW).key);
+    expect(releaseFor(identity, askAt(B, CO_A), NOW).key).toBe(releaseFor(identity, askAt(A, CO_A), NOW).key);
   });
 });
 
@@ -807,8 +902,7 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
   const recipient = { origin: A, name: 'Payroll A', rdns: 'example.payroll-a' };
 
   it('records that a key went, to whom, for which company, and when', () => {
-    const profile = recordRelease(
-      emptyProfile(NOW), { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
+    const profile = recordRelease(emptyProfile(NOW), { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
     expect(releasesOf(profile)).toHaveLength(1);
     const entry = releasesOf(profile)[0]!;
     expect(Object.keys(entry).sort()).toEqual(['at', 'company', 'nonce', 'recipient']);
@@ -822,8 +916,7 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
      * sealed value is one JSON string, so this asks the only question that
      * covers every field at once, including ones added later. */
     const released = releaseFor(identity, askAt(A), NOW);
-    const profile = recordRelease(
-      emptyProfile(NOW), { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
+    const profile = recordRelease(emptyProfile(NOW), { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
     const stored = JSON.stringify(profile);
     expect(stored).not.toContain(released.key);
     expect(stored).not.toContain(hex(fromBase64Url(released.key)));
@@ -836,10 +929,8 @@ describe('WHAT IS WRITTEN DOWN, AND WHAT MUST NOT BE', () => {
   });
 
   it('A RELEASE TOUCHES NO GRANT — the erased-grant trap, one kind further along', () => {
-    const withValues = grantTo(
-      { ...emptyProfile(NOW), held: [] }, recipient, 3, [], NOW);
-    const after = recordRelease(
-      withValues, { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
+    const withValues = grantTo({ ...emptyProfile(NOW), held: [] }, recipient, 3, [], NOW);
+    const after = recordRelease(withValues, { at: NOW, nonce: 'n1', recipient, company: CO_A }, NOW);
     expect(after.grants).toEqual(withValues.grants);
     expect(releasesOf(after)).toHaveLength(1);
   });
@@ -859,8 +950,8 @@ const OTHER_PERSON = 'usr_ZyXwVu654321';
 const SIGNED_IN = 'mn_addr_stagenet1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
 const SOMEBODY_ELSES = 'mn_addr_stagenet1ppppppppppppppppppppppppppppppppppppppppppppppppppppppp';
 const KEYRING_SALT = new TextEncoder().encode('midnight-identity/keyring/v1');
-const independentKeyringKey = (person: string): Uint8Array => hkdf(
-  sha256, independentAuthority('keyring', 0), KEYRING_SALT, new TextEncoder().encode(person), 32);
+const independentKeyringKey = (person: string): Uint8Array =>
+  hkdf(sha256, independentAuthority('keyring', 0), KEYRING_SALT, new TextEncoder().encode(person), 32);
 
 /** A keyring ask on the wire. No `origin`, no `wants`; a person, and the address signed in as. */
 const keyringWire = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -872,7 +963,7 @@ const keyringWire = (over: Record<string, unknown> = {}): Record<string, unknown
   signedInAs: SIGNED_IN,
   nonce: 'k1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 const keyringAt = (origin: string, over: Record<string, unknown> = {}): KeyringRequest =>
   parseAsk(keyringWire(over), origin, NOW) as KeyringRequest;
@@ -913,29 +1004,31 @@ describe('THE KEYRING ASK IS ITS OWN KIND, AND ITS FIELDS BELONG TO IT ALONE', (
 
   it('a person the wallet cannot use, or an address that is not one, is refused by name', () => {
     for (const person of [undefined, '', 'usr with space', 'x'.repeat(65), 12, 'usr_ab\ncd']) {
-      expect(codeOf(() => keyringAt(A, { person })), String(person)).toBe('not-a-person');
+      expect(
+        codeOf(() => keyringAt(A, { person })),
+        String(person)
+      ).toBe('not-a-person');
     }
     for (const signedInAs of ['', 'MN_ADDR_STAGENET1QQQQQQQQ', 'not an address', 7, 'mn_addr1b']) {
-      expect(codeOf(() => keyringAt(A, { signedInAs })), String(signedInAs))
-        .toBe('not-a-signed-in-address');
+      expect(
+        codeOf(() => keyringAt(A, { signedInAs })),
+        String(signedInAs)
+      ).toBe('not-a-signed-in-address');
     }
   });
 
   it('ATTRIBUTES OR AN INBOX KEY ON A KEYRING ASK ARE REFUSED, NOT IGNORED', () => {
     expect(codeOf(() => keyringAt(A, { wants: [] }))).toBe('attributes-on-a-keyring');
-    expect(codeOf(() => keyringAt(A, { inboxPublicKey: 'ab'.repeat(32) })))
-      .toBe('inbox-key-on-a-keyring');
+    expect(codeOf(() => keyringAt(A, { inboxPublicKey: 'ab'.repeat(32) }))).toBe('inbox-key-on-a-keyring');
   });
 
   it('EVERY OTHER KIND REFUSES A PERSON OR A SIGNED-IN ADDRESS BY PRESENCE', () => {
-    expect(codeOf(() => parseAsk(unlock({ person: PERSON }), A, NOW)))
-      .toBe('keyring-fields-on-another-kind');
-    expect(codeOf(() => parseAsk(unlock({ signedInAs: SIGNED_IN }), A, NOW)))
-      .toBe('keyring-fields-on-another-kind');
-    expect(codeOf(() => parseAsk(disclosure({ person: PERSON }), A, NOW)))
-      .toBe('keyring-fields-on-another-kind');
-    expect(codeOf(() => parseAsk({ ...unlock(), kind: 'sign-in', company: undefined, person: PERSON }, A, NOW)))
-      .toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk(unlock({ person: PERSON }), A, NOW))).toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk(unlock({ signedInAs: SIGNED_IN }), A, NOW))).toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk(disclosure({ person: PERSON }), A, NOW))).toBe('keyring-fields-on-another-kind');
+    expect(codeOf(() => parseAsk({ ...unlock(), kind: 'sign-in', company: undefined, person: PERSON }, A, NOW))).toBe(
+      'keyring-fields-on-another-kind'
+    );
   });
 
   it('STRIPPING `kind` OFF A KEYRING ASK IN FLIGHT REFUSES IT', () => {
@@ -944,15 +1037,17 @@ describe('THE KEYRING ASK IS ITS OWN KIND, AND ITS FIELDS BELONG TO IT ALONE', (
   });
 });
 
-describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S', () => {
+describe("THE KEYRING KEY IS THE PERSON'S AT THE SITE, AND NEVER A COMPANY'S", () => {
   it('matches the independent walk and the recorded bytes for two people', () => {
     expect(hex(keyringKeyFor(identity, keyringAt(A)))).toBe(hex(independentKeyringKey(PERSON)));
     /* Recorded from a walk outside this repository's derivation, so a changed salt,
      * parent or encoding cannot pass by moving both sides of this file together. */
-    expect(hex(keyringKeyFor(identity, keyringAt(A))))
-      .toBe('e6a594f1c3837597fbf9d8417c924d0aefd10083efc13ca2e9aa9a480beb37cc');
-    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON }))))
-      .toBe('8a0e2fc66cb70ec34eeb707135976e4ef1051751c3f5673fb3c8b572bb81f38b');
+    expect(hex(keyringKeyFor(identity, keyringAt(A)))).toBe(
+      'e6a594f1c3837597fbf9d8417c924d0aefd10083efc13ca2e9aa9a480beb37cc'
+    );
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON })))).toBe(
+      '8a0e2fc66cb70ec34eeb707135976e4ef1051751c3f5673fb3c8b572bb81f38b'
+    );
   });
 
   it('THE SAME PERSON FROM TWO HOSTS, AND WITH OR WITHOUT A SIGNED-IN ADDRESS, GETS THE SAME KEY', () => {
@@ -964,8 +1059,9 @@ describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S',
   });
 
   it('two people, and two wallets, never get the same key; a rebuilt wallet does', () => {
-    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON }))))
-      .not.toBe(hex(keyringKeyFor(identity, keyringAt(A))));
+    expect(hex(keyringKeyFor(identity, keyringAt(A, { person: OTHER_PERSON })))).not.toBe(
+      hex(keyringKeyFor(identity, keyringAt(A)))
+    );
     const another = identityFromSecret(new Uint8Array(32).fill(7));
     expect(hex(keyringKeyFor(another, keyringAt(A)))).not.toBe(hex(keyringKeyFor(identity, keyringAt(A))));
     const rebuilt = identityFromSecret(secretFromWords(TEST_MNEMONIC));
@@ -993,8 +1089,7 @@ describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S',
   });
 
   it('THE ORIGIN AND THE SIGNED-IN ADDRESS ARE IN NO PART OF THE DERIVATION - the source says so too', () => {
-    const source = readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
+    const source = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'unlock.ts'), 'utf8');
     const body = source.slice(source.indexOf('export function keyringKeyFor'));
     const code = body.slice(0, body.indexOf('\n}')).replace(/\/\*[\s\S]*?\*\//gu, '');
     expect(code).toContain('originOf(ask);');
@@ -1009,23 +1104,40 @@ describe('THE KEYRING KEY IS THE PERSON\'S AT THE SITE, AND NEVER A COMPANY\'S',
 const FOUNDED = {
   founded: { account: { id: 'acc_aaaaaaaaaaaa' } },
   sealed: { iv: '0'.repeat(24), tag: '1'.repeat(32), body: '2'.repeat(64) },
-  ifVersion: 3,
+  ifVersion: 3
 };
 /** What a wallet read from saved keys for the page: a seat's public halves, its company's viewing key, no secret. */
 const READ = {
-  seats: { acc_aaaaaaaaaaaa: { signerId: 'sgn_aaaaaaaaaa', signingPublicKey: 'a1'.repeat(32), wrappingPublicKey: 'a2'.repeat(32), scope: 'a3'.repeat(32) } },
+  seats: {
+    acc_aaaaaaaaaaaa: {
+      signerId: 'sgn_aaaaaaaaaa',
+      signingPublicKey: 'a1'.repeat(32),
+      wrappingPublicKey: 'a2'.repeat(32),
+      scope: 'a3'.repeat(32)
+    }
+  },
   viewing: { acc_aaaaaaaaaaaa: 'a4'.repeat(32) },
   metadata: { counter: 1 },
   holder: 'a5'.repeat(32),
-  resealed: null,
+  resealed: null
 };
 
 describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS OWN VALUES', () => {
   it('a wallet holding the signed-in address answers, and gives no key the saved keys open with', () => {
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     /* RED WHEN: the answer carries the keyring key, or anything a page could open the saved keys with. */
-    expect(Object.keys(released).sort()).toEqual(
-      ['account', 'at', 'committeeKey', 'company', 'companyKey', 'nonce', 'origin', 'person', 'schema', 'signedInAs']);
+    expect(Object.keys(released).sort()).toEqual([
+      'account',
+      'at',
+      'committeeKey',
+      'company',
+      'companyKey',
+      'nonce',
+      'origin',
+      'person',
+      'schema',
+      'signedInAs'
+    ]);
     expect(JSON.stringify(released)).not.toContain(toBase64Url(independentKeyringKey(PERSON)));
     expect(released.committeeKey).toBeNull();
     expect(released.schema).toBe(KEYRING_RELEASE_SCHEMA);
@@ -1036,24 +1148,25 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
 
   it('A WALLET THAT DOES NOT HOLD THE SIGNED-IN ADDRESS BUILDS NOTHING', () => {
     const asked: string[] = [];
-    const holdsNothing = (address: string): boolean => { asked.push(address); return false; };
-    expect(codeOf(() => keyringReleaseFor(identity, keyringAt(A), NOW, holdsNothing)))
-      .toBe('address-not-held');
+    const holdsNothing = (address: string): boolean => {
+      asked.push(address);
+      return false;
+    };
+    expect(codeOf(() => keyringReleaseFor(identity, keyringAt(A), NOW, holdsNothing))).toBe('address-not-held');
     /* It was asked about the address the page named, and about nothing else. */
     expect(asked).toEqual([SIGNED_IN]);
-    expect(codeOf(() => keyringReleaseFor(
-      identity, keyringAt(A, { signedInAs: SOMEBODY_ELSES }), NOW, holdsSignedIn)))
-      .toBe('address-not-held');
+    expect(
+      codeOf(() => keyringReleaseFor(identity, keyringAt(A, { signedInAs: SOMEBODY_ELSES }), NOW, holdsSignedIn))
+    ).toBe('address-not-held');
   });
 
   it('with no signed-in address named there is nothing to gate on, and the answer is given', () => {
-    const released = keyringReleaseFor(
-      identity, keyringAt(A, { signedInAs: undefined }), NOW, () => false);
+    const released = keyringReleaseFor(identity, keyringAt(A, { signedInAs: undefined }), NOW, () => false);
     expect(released.signedInAs).toBeNull();
     expect('key' in released).toBe(false);
   });
 
-  it('WITH A COMPANY, THE ANSWER CARRIES THAT COMPANY\'S KEY, DERIVED EXACTLY AS AN UNLOCK DERIVES IT', () => {
+  it("WITH A COMPANY, THE ANSWER CARRIES THAT COMPANY'S KEY, DERIVED EXACTLY AS AN UNLOCK DERIVES IT", () => {
     const released = keyringReleaseFor(identity, keyringAt(A, { company: CO_B }), NOW, holdsSignedIn);
     expect(released.company).toBe(CO_B);
     expect(hex(fromBase64Url(released.companyKey!))).toBe(hex(independentUnlockKey(CO_B)));
@@ -1074,8 +1187,10 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
      * keys in the answer are not that label's. */
     const drawn = labelOf(sampleContractAddress());
     let draws = 0;
-    const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn,
-      () => { draws += 1; return drawn; });
+    const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn, () => {
+      draws += 1;
+      return drawn;
+    });
     expect(draws).toBe(1);
     expect(released.company).toBe(drawn);
     expect(released.account).toBeNull();
@@ -1088,26 +1203,53 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(one).not.toBe(two);
     /* And a hand-built ask that asks for both is refused before anything is drawn. */
     const both = { ...keyringAt(A, { drawLabel: true }), company: CO_A } as KeyringRequest;
-    expect(codeOf(() => keyringReleaseFor(identity, both, NOW, holdsSignedIn, () => { draws += 1; return drawn; })))
-      .toBe('company-not-usable');
+    expect(
+      codeOf(() =>
+        keyringReleaseFor(identity, both, NOW, holdsSignedIn, () => {
+          draws += 1;
+          return drawn;
+        })
+      )
+    ).toBe('company-not-usable');
     expect(draws).toBe(1);
     /* The page reads which label was drawn, and only a label, from an answer carrying what the wallet founded it with. */
     const founded = withTheKeysRead(withTheFounding(released, FOUNDED), READ);
     const read = readKeyringRelease(founded, {
-      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
+      atOrigin: A,
+      expectingNonce: 'k1',
+      person: PERSON,
+      signedInAs: SIGNED_IN,
+      forCompany: 'drawn',
+      forAccount: null
     });
     expect(read.ok && read.company).toBe(drawn);
-    const notALabel = readKeyringRelease({ ...founded, company: ACCOUNT_A }, {
-      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
-    });
+    const notALabel = readKeyringRelease(
+      { ...founded, company: ACCOUNT_A },
+      {
+        atOrigin: A,
+        expectingNonce: 'k1',
+        person: PERSON,
+        signedInAs: SIGNED_IN,
+        forCompany: 'drawn',
+        forAccount: null
+      }
+    );
     expect(notALabel.ok ? 'accepted' : notALabel.code).toBe('company-mismatch');
-    const none = readKeyringRelease({ ...founded, company: null, companyKey: null, committeeKey: null }, {
-      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn', forAccount: null,
-    });
+    const none = readKeyringRelease(
+      { ...founded, company: null, companyKey: null, committeeKey: null },
+      {
+        atOrigin: A,
+        expectingNonce: 'k1',
+        person: PERSON,
+        signedInAs: SIGNED_IN,
+        forCompany: 'drawn',
+        forAccount: null
+      }
+    );
     expect(none.ok ? 'accepted' : none.code).toBe('company-mismatch');
   });
 
-  it('NO ANSWER CARRIES A SEAT\'S KEYS: A STARTED COMPANY\'S ANSWER CARRIES WHAT THE WALLET FOUNDED IT WITH, AND ONLY THEN', () => {
+  it("NO ANSWER CARRIES A SEAT'S KEYS: A STARTED COMPANY'S ANSWER CARRIES WHAT THE WALLET FOUNDED IT WITH, AND ONLY THEN", () => {
     const drawn = labelOf(sampleContractAddress());
     const released = keyringReleaseFor(identity, keyringAt(A, { drawLabel: true }), NOW, holdsSignedIn, () => drawn);
     const founding = seatKeysFor(identity, drawn, 0);
@@ -1119,14 +1261,27 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     }
     expect('seat' in released).toBe(false);
 
-    const drawnAt = { atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: 'drawn' as const, forAccount: null };
+    const drawnAt = {
+      atOrigin: A,
+      expectingNonce: 'k1',
+      person: PERSON,
+      signedInAs: SIGNED_IN,
+      forCompany: 'drawn' as const,
+      forAccount: null
+    };
     /* RED WHEN: the page does not take what the wallet founded the company with, and the saved keys it sealed, as given. */
     const read = readKeyringRelease(withTheKeysRead(withTheFounding(released, FOUNDED), READ), drawnAt);
     expect(read.ok ? read.founding : 'refused').toEqual(FOUNDED);
     /* RED WHEN: an answer that starts a company without its founding, or without the saved keys sealed again, is used. */
-    for (const broken of [{ ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), founded: undefined }, { ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), sealed: { iv: 'x' } }, released]) {
+    for (const broken of [
+      { ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), founded: undefined },
+      { ...withTheKeysRead(withTheFounding(released, FOUNDED), READ), sealed: { iv: 'x' } },
+      released
+    ]) {
       const r = readKeyringRelease(broken, drawnAt);
-      expect(r.ok ? 'accepted' : `${r.code}: ${r.says}`).toMatch(/^unusable-key: .*nothing was created\. close the wallet's window, reload this page and start the company again\.$/iu);
+      expect(r.ok ? 'accepted' : `${r.code}: ${r.says}`).toMatch(
+        /^unusable-key: .*nothing was created\. close the wallet's window, reload this page and start the company again\.$/iu
+      );
     }
     /* RED WHEN: a founding, or a seat, nobody asked for is taken from an answer about a company that exists. */
     const forA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
@@ -1138,15 +1293,29 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
 
   it('WHAT THE WALLET READ FROM THE SAVED KEYS CROSSES ONLY IN ITS CLOSED SHAPE, AND ONLY WHEN THE PAGE HANDED THEM IN', () => {
     const released = keyringReleaseFor(identity, keyringAt(A, { company: CO_A }), NOW, holdsSignedIn);
-    const handedIn = { atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: CO_A, forAccount: null, handedIn: true };
+    const handedIn = {
+      atOrigin: A,
+      expectingNonce: 'k1',
+      person: PERSON,
+      signedInAs: SIGNED_IN,
+      forCompany: CO_A,
+      forAccount: null,
+      handedIn: true
+    };
     const read = readKeyringRelease(withTheKeysRead(released, READ), handedIn);
     expect(read.ok ? read.read : 'refused').toEqual(READ);
     /* RED WHEN: a seat's secret, given a field the shape does not name, reaches the page. */
-    const withASecret = { ...READ, seats: { acc_aaaaaaaaaaaa: { ...READ.seats.acc_aaaaaaaaaaaa, signingSecret: 'b1'.repeat(32) } } };
+    const withASecret = {
+      ...READ,
+      seats: { acc_aaaaaaaaaaaa: { ...READ.seats.acc_aaaaaaaaaaaa, signingSecret: 'b1'.repeat(32) } }
+    };
     const r1 = readKeyringRelease(withTheKeysRead(released, withASecret), handedIn);
     expect(r1.ok ? 'accepted' : r1.code).toBe('unusable-key');
     /* RED WHEN: a viewing key for a company the read holds no seat on is taken. */
-    const r2 = readKeyringRelease(withTheKeysRead(released, { ...READ, viewing: { acc_bbbbbbbbbbbb: 'b2'.repeat(32) } }), handedIn);
+    const r2 = readKeyringRelease(
+      withTheKeysRead(released, { ...READ, viewing: { acc_bbbbbbbbbbbb: 'b2'.repeat(32) } }),
+      handedIn
+    );
     expect(r2.ok ? 'accepted' : r2.code).toBe('unusable-key');
     /* RED WHEN: an answer to an ask that handed the saved keys in is used without saying what the wallet read. */
     const r3 = readKeyringRelease(released, handedIn);
@@ -1156,7 +1325,7 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
     expect(r4.ok ? 'accepted' : r4.code).toBe('company-mismatch');
   });
 
-  it('THE WALLET\'S PUBLIC NAME FOR A PERSON IS ITS OWN, IS NOT THE KEYRING KEY, AND IS THE SAME EACH TIME', () => {
+  it("THE WALLET'S PUBLIC NAME FOR A PERSON IS ITS OWN, IS NOT THE KEYRING KEY, AND IS THE SAME EACH TIME", () => {
     const ask = keyringAt(A);
     const holder = keyringHolderFor(identity, ask);
     expect(holder).toMatch(/^[0-9a-f]{64}$/u);
@@ -1168,10 +1337,19 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
 
   it('THE READER REFUSES AN ANSWER TO ANY OTHER QUESTION', () => {
     const expecting: {
-      atOrigin: string; expectingNonce: string; person: string;
-      signedInAs: string | null; forCompany: CompanyLabel | null; forAccount: AccountAddress | null;
+      atOrigin: string;
+      expectingNonce: string;
+      person: string;
+      signedInAs: string | null;
+      forCompany: CompanyLabel | null;
+      forAccount: AccountAddress | null;
     } = {
-      atOrigin: A, expectingNonce: 'k1', person: PERSON, signedInAs: SIGNED_IN, forCompany: null, forAccount: null,
+      atOrigin: A,
+      expectingNonce: 'k1',
+      person: PERSON,
+      signedInAs: SIGNED_IN,
+      forCompany: null,
+      forAccount: null
     };
     const released = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);
     const read = readKeyringRelease(released, expecting);
@@ -1212,13 +1390,17 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
       expect(good.committeeKey).toEqual(committeeKeyFor(identity, CO_A));
     }
     const committee = { company: CO_A, committeeKey: committeeKeyFor(identity, CO_A) };
-    expect(refused({ ...committee, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany))
-      .toBe('unusable-key');
+    expect(refused({ ...committee, companyKey: toBase64Url(new Uint8Array(8)) }, withCompany)).toBe('unusable-key');
     /* A company key with no committee key beside it, or with something else there. */
-    expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: null }, withCompany))
-      .toBe('unusable-key');
-    expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: { tag: 'schnorr', value: 'ab' } }, withCompany))
-      .toBe('unusable-key');
+    expect(refused({ company: CO_A, companyKey: forA.companyKey, committeeKey: null }, withCompany)).toBe(
+      'unusable-key'
+    );
+    expect(
+      refused(
+        { company: CO_A, companyKey: forA.companyKey, committeeKey: { tag: 'schnorr', value: 'ab' } },
+        withCompany
+      )
+    ).toBe('unusable-key');
     /* The account, too: asked about a label on one account, answered for another. */
     const onA = keyringReleaseFor(identity, keyringAt(A, { company: CO_A, account: ACCOUNT_A }), NOW, holdsSignedIn);
     expect(readKeyringRelease(onA, { ...withCompany, forAccount: ACCOUNT_A }).ok).toBe(true);
@@ -1229,7 +1411,12 @@ describe('THE KEYRING RELEASE: THE GATE IS INSIDE IT, AND THE READER TAKES ITS O
   it('A COMPANY-KEY RELEASE IS NOT A KEYRING RELEASE, AND THE REVERSE', () => {
     const company = releaseFor(identity, askAt(A), NOW);
     const r = readKeyringRelease(company, {
-      atOrigin: A, expectingNonce: 'n1', person: PERSON, signedInAs: null, forCompany: null, forAccount: null,
+      atOrigin: A,
+      expectingNonce: 'n1',
+      person: PERSON,
+      signedInAs: null,
+      forCompany: null,
+      forAccount: null
     });
     expect(r.ok ? 'accepted' : r.code).toBe('not-a-release');
     const keyring = keyringReleaseFor(identity, keyringAt(A), NOW, holdsSignedIn);

@@ -23,24 +23,28 @@ import { ENGLISH } from './english.test-support.js';
 const records = vi.hoisted(() => ({ company: { of: 'locked' } as unknown }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('./adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('./adapters/filing-judge.js')>()),
+  ...(await real<typeof import('./adapters/filing-judge.js')>())
 }));
 vi.mock('./adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('./adapters/company-records.js')>()),
-  readCompany: async () => records.company,
+  readCompany: async () => records.company
 }));
 vi.mock('./adapters/handover-state.js', async (real) => ({
   ...(await real<typeof import('./adapters/handover-state.js')>()),
-  readHandover: async () => ({ of: 'held' }),
+  readHandover: async () => ({ of: 'held' })
 }));
 /* The waits between asks after a service could not check the sign-in are not waited for here; their lengths are pinned in the keyring's own tests. */
 vi.mock('vaults-web-shared/keyring.js', async (real) => {
   const actual = await real<typeof import('vaults-web-shared/keyring.js')>();
-  return { ...actual, resumeSession: (carried?: Parameters<typeof actual.resumeSession>[0]) => actual.resumeSession(carried ?? null, async () => {}) };
+  return {
+    ...actual,
+    resumeSession: (carried?: Parameters<typeof actual.resumeSession>[0]) =>
+      actual.resumeSession(carried ?? null, async () => {})
+  };
 });
 vi.mock('./adapters/session.js', async (real) => ({
   ...(await real<typeof import('./adapters/session.js')>()),
-  companyNamesFor: async () => new Map<string, string>(),
+  companyNamesFor: async () => new Map<string, string>()
 }));
 
 const { InFrame, PageView } = await import('./app.js');
@@ -51,9 +55,15 @@ const { EVERY_PAGE, mayOpen, VIEWS } = await import('./pages.js');
 type PageId = import('./pages.js').PageId;
 type Viewer = import('./pages.js').Viewer;
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const SRC = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(SRC, '../../..');
 const EN = ENGLISH;
@@ -67,22 +77,106 @@ const READER: Viewer = { signedIn: true, view: VIEWS.employee, signs: false, rea
 
 /** A company whose records opened, with one of each record, so what a page draws from them is drawn too. */
 const OPEN: Company = {
-  of: 'open', id: 'c-1', name: 'Northwind', signers: [{ id: 's1', name: 'Priya' }], approvalsNeeded: { of: 'read', value: 1 },
-  proposals: { of: 'read', value: [{ id: 'p1', kind: 'payroll', status: 'open', raisedBy: 'Sam', approvals: 0, needed: 1, raisedAt: '2026-09-21T00:00:00.000Z', pays: { run: 'x1', period: '2026-10', asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately' } }] },
-  runs: { of: 'read', value: [{
-    id: 'x1', period: '2026-10',
-    payees: [{ id: 'e1', name: 'Ana', amount: privateAmount(5n, 6, 'NIGHT'), paid: 'privately' }, { id: 'e2', name: 'Bo', amount: publicAmount(2n, 6, 'NIGHT'), paid: 'publicly' }],
-    currencies: [{ code: '00'.repeat(32), symbol: 'NIGHT', privately: privateAmount(5n, 6, 'NIGHT'), publicly: publicAmount(2n, 6, 'NIGHT') }],
-    legs: [{ code: `${'00'.repeat(32)}:shielded`, asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately', vault: 'x1', payees: 2, proposal: null, form: 'shielded', list: 'employees', people: 2, total: 0n, pays: [] }], unrecognised: 0,
-  }] },
-  people: { of: 'read', value: [{ id: 'e1', name: 'Ana', title: 'Engineer', standing: 'active', pay: privateAmount(5n, 6, 'NIGHT'), paid: 'privately', startedAt: '2026-01-01', asset: '00'.repeat(32), classification: 'full-time', endDate: null, leavingDate: null, pays: [], classifications: [], admittedAt: null, admitBy: 'fingerprint', notPayable: null }] },
-  vaults: { of: 'read', value: [{ vault: 'x1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }] },
-  invitations: { of: 'read', value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }] },
+  of: 'open',
+  id: 'c-1',
+  name: 'Northwind',
+  signers: [{ id: 's1', name: 'Priya' }],
+  approvalsNeeded: { of: 'read', value: 1 },
+  proposals: {
+    of: 'read',
+    value: [
+      {
+        id: 'p1',
+        kind: 'payroll',
+        status: 'open',
+        raisedBy: 'Sam',
+        approvals: 0,
+        needed: 1,
+        raisedAt: '2026-09-21T00:00:00.000Z',
+        pays: { run: 'x1', period: '2026-10', asset: '00'.repeat(32), symbol: 'NIGHT', paid: 'privately' }
+      }
+    ]
+  },
+  runs: {
+    of: 'read',
+    value: [
+      {
+        id: 'x1',
+        period: '2026-10',
+        payees: [
+          { id: 'e1', name: 'Ana', amount: privateAmount(5n, 6, 'NIGHT'), paid: 'privately' },
+          { id: 'e2', name: 'Bo', amount: publicAmount(2n, 6, 'NIGHT'), paid: 'publicly' }
+        ],
+        currencies: [
+          {
+            code: '00'.repeat(32),
+            symbol: 'NIGHT',
+            privately: privateAmount(5n, 6, 'NIGHT'),
+            publicly: publicAmount(2n, 6, 'NIGHT')
+          }
+        ],
+        legs: [
+          {
+            code: `${'00'.repeat(32)}:shielded`,
+            asset: '00'.repeat(32),
+            symbol: 'NIGHT',
+            paid: 'privately',
+            vault: 'x1',
+            payees: 2,
+            proposal: null,
+            form: 'shielded',
+            list: 'employees',
+            people: 2,
+            total: 0n,
+            pays: []
+          }
+        ],
+        unrecognised: 0
+      }
+    ]
+  },
+  people: {
+    of: 'read',
+    value: [
+      {
+        id: 'e1',
+        name: 'Ana',
+        title: 'Engineer',
+        standing: 'active',
+        pay: privateAmount(5n, 6, 'NIGHT'),
+        paid: 'privately',
+        startedAt: '2026-01-01',
+        asset: '00'.repeat(32),
+        classification: 'full-time',
+        endDate: null,
+        leavingDate: null,
+        pays: [],
+        classifications: [],
+        admittedAt: null,
+        admitBy: 'fingerprint',
+        notPayable: null
+      }
+    ]
+  },
+  vaults: {
+    of: 'read',
+    value: [{ vault: 'x1', createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee' }]
+  },
+  invitations: {
+    of: 'read',
+    value: [{ kind: 'signer', name: 'Tom', sentAt: '2026-09-10T00:00:00.000Z', expiresAt: null }]
+  }
 };
 
 /** Every file under `dir`, relative to the repository, read. */
-const walk = (dir: string): { path: string; text: string }[] => readdirSync(`${ROOT}/${dir}`, { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.tsx?$/.test(e.name) ? [{ path: `${dir}/${e.name}`, text: readFileSync(`${ROOT}/${dir}/${e.name}`, 'utf8') }] : []);
+const walk = (dir: string): { path: string; text: string }[] =>
+  readdirSync(`${ROOT}/${dir}`, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? walk(`${dir}/${e.name}`)
+      : /\.tsx?$/.test(e.name)
+        ? [{ path: `${dir}/${e.name}`, text: readFileSync(`${ROOT}/${dir}/${e.name}`, 'utf8') }]
+        : []
+  );
 const APP = walk('apps/web/src');
 const APP_CODE = APP.filter((f) => !/\.test(-support)?\.tsx?$/.test(f.path));
 const KIT_CODE = walk('packages/ui/src').filter((f) => !/\.test(-support)?\.tsx?$/.test(f.path));
@@ -94,16 +188,30 @@ function drawNow(id: PageId) {
   const params = Object.fromEntries([...page.path.matchAll(/:(\w+)/g)].map((m) => [m[1]!, 'x1']));
   window.history.replaceState(null, '', addressOf(id, params));
   const session = {
-    person: { id: 'u1', name: 'Priya' }, companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }] : [],
-    company: viewer.signs ? 'c-1' : null, chooseCompany: vi.fn(), viewer, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-    choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+    person: { id: 'u1', name: 'Priya' },
+    companies: viewer.signs ? [{ id: 'c-1', createdAt: '2026-09-01T00:00:00.000Z', signers: 1 }] : [],
+    company: viewer.signs ? 'c-1' : null,
+    chooseCompany: vi.fn(),
+    viewer,
+    chooseView: vi.fn(),
+    preferences: DEFAULT_PREFERENCES,
+    choose: vi.fn(),
+    signOut: vi.fn(),
+    mac: true,
+    companiesChanged: vi.fn(async () => {})
   };
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
       <SessionProvider session={session}>
-        {viewer.signedIn ? <InFrame current={id}><PageView id={id} params={params} /></InFrame> : <PageView id={id} params={params} />}
+        {viewer.signedIn ? (
+          <InFrame current={id}>
+            <PageView id={id} params={params} />
+          </InFrame>
+        ) : (
+          <PageView id={id} params={params} />
+        )}
       </SessionProvider>
-    </KitProvider>,
+    </KitProvider>
   );
   return view.container;
 }
@@ -127,11 +235,16 @@ const ALLOWED = '[data-menu], [data-slot=tabs-list]';
 function secondMenusIn(container: HTMLElement): string[] {
   const found: string[] = [];
   const outside = (e: Element) => e.closest(ALLOWED) === null;
-  for (const e of container.querySelectorAll('nav, [role=navigation]')) if (outside(e)) found.push(`a ${e.tagName.toLowerCase()} beside the menu`);
-  for (const e of container.querySelectorAll('[role=tablist]')) if (e.getAttribute('data-slot') !== 'tabs-list') found.push('a tab list not the kit\'s');
-  for (const e of container.querySelectorAll('[role=tab]')) if (e.getAttribute('data-slot') !== 'tabs-trigger') found.push('a tab not the kit\'s');
-  for (const e of container.querySelectorAll('[data-slot=tabs-list]')) if (e.getAttribute('aria-orientation') !== 'horizontal') found.push('the kit\'s tabs set down the side');
-  for (const e of container.querySelectorAll('[role=menu], [role=menubar]')) if (outside(e)) found.push('a menu beside the menu');
+  for (const e of container.querySelectorAll('nav, [role=navigation]'))
+    if (outside(e)) found.push(`a ${e.tagName.toLowerCase()} beside the menu`);
+  for (const e of container.querySelectorAll('[role=tablist]'))
+    if (e.getAttribute('data-slot') !== 'tabs-list') found.push("a tab list not the kit's");
+  for (const e of container.querySelectorAll('[role=tab]'))
+    if (e.getAttribute('data-slot') !== 'tabs-trigger') found.push("a tab not the kit's");
+  for (const e of container.querySelectorAll('[data-slot=tabs-list]'))
+    if (e.getAttribute('aria-orientation') !== 'horizontal') found.push("the kit's tabs set down the side");
+  for (const e of container.querySelectorAll('[role=menu], [role=menubar]'))
+    if (outside(e)) found.push('a menu beside the menu');
   /* A page link is a link whose address opens a page with no value in it: a row that opens one record is not a menu. */
   const pageOf = (a: Element): string | null => {
     const r = resolveAddress(a.getAttribute('href') ?? '', SIGNER);
@@ -140,14 +253,25 @@ function secondMenusIn(container: HTMLElement): string[] {
   };
   for (const list of container.querySelectorAll('*')) {
     if (!outside(list)) continue;
-    const entries = [...list.children].map((c) => [...(c.matches('a[href]') ? [c] : c.querySelectorAll('a[href]'))]).filter((links) => links.length === 1).map((links) => pageOf(links[0]!)).filter((p) => p !== null);
+    const entries = [...list.children]
+      .map((c) => [...(c.matches('a[href]') ? [c] : c.querySelectorAll('a[href]'))])
+      .filter((links) => links.length === 1)
+      .map((links) => pageOf(links[0]!))
+      .filter((p) => p !== null);
     if (new Set(entries).size >= 3) found.push(`a list of links to ${[...new Set(entries)].join(', ')}`);
   }
   return found;
 }
 
-beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); window.sessionStorage.clear(); records.company = { of: 'locked' }; });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  window.sessionStorage.clear();
+  records.company = { of: 'locked' };
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('one menu', () => {
   /*
@@ -164,7 +288,7 @@ describe('one menu', () => {
   });
 
   /* RED WHEN: the wizard's steps or Settings' sections are not the kit's tabs across the top, one to a step or section. */
-  it('puts the wizard\'s steps and Settings\' sections in the kit\'s tabs, across the top', async () => {
+  it("puts the wizard's steps and Settings' sections in the kit's tabs, across the top", async () => {
     const wizard = await draw('setup');
     const steps = wizard.querySelector('[data-setup-steps]')!;
     expect(steps.getAttribute('data-slot')).toBe('tabs-list');
@@ -175,21 +299,42 @@ describe('one menu', () => {
     const sections = settings.querySelector('[data-settings-sections]')!;
     expect(sections.getAttribute('data-slot')).toBe('tabs-list');
     expect(sections.getAttribute('aria-orientation')).toBe('horizontal');
-    expect([...sections.querySelectorAll('[data-slot=tabs-trigger]')].map((e) => e.getAttribute('href'))).toContain('/settings/appearance');
-    expect(sections.querySelector('[data-slot=tabs-trigger][aria-selected=true]')!.getAttribute('href')).toBe('/settings/appearance');
+    expect([...sections.querySelectorAll('[data-slot=tabs-trigger]')].map((e) => e.getAttribute('href'))).toContain(
+      '/settings/appearance'
+    );
+    expect(sections.querySelector('[data-slot=tabs-trigger][aria-selected=true]')!.getAttribute('href')).toBe(
+      '/settings/appearance'
+    );
   });
 
   /* RED WHEN: the page rule stops seeing what it is for: each kind of second menu, drawn, is found. */
   it('finds each kind of second menu when one is drawn', () => {
-    const drawn = (html: string) => { const c = document.createElement('div'); c.innerHTML = html; return secondMenusIn(c); };
+    const drawn = (html: string) => {
+      const c = document.createElement('div');
+      c.innerHTML = html;
+      return secondMenusIn(c);
+    };
     expect(drawn('<nav></nav>')).toEqual(['a nav beside the menu']);
     expect(drawn('<div role="navigation"></div>')).toEqual(['a div beside the menu']);
-    expect(drawn('<div role="tablist"><button role="tab"></button></div>')).toEqual(['a tab list not the kit\'s', 'a tab not the kit\'s']);
-    expect(drawn('<div role="tablist" data-slot="tabs-list" aria-orientation="vertical"></div>')).toEqual(['the kit\'s tabs set down the side']);
+    expect(drawn('<div role="tablist"><button role="tab"></button></div>')).toEqual([
+      "a tab list not the kit's",
+      "a tab not the kit's"
+    ]);
+    expect(drawn('<div role="tablist" data-slot="tabs-list" aria-orientation="vertical"></div>')).toEqual([
+      "the kit's tabs set down the side"
+    ]);
     expect(drawn('<ul role="menu"></ul>')).toEqual(['a menu beside the menu']);
-    expect(drawn('<ul><li><a href="/settings/appearance">a</a></li><li><a href="/settings/language">b</a></li><li><a href="/settings/account">c</a></li></ul>')).toEqual(['a list of links to settingsAppearance, settingsLanguage, settingsAccount']);
-    expect(drawn('<div><a href="/payroll/r1">a</a><a href="/payroll/r2">b</a><a href="/payroll/r3">c</a></div>')).toEqual([]);
-    expect(drawn('<div data-menu><nav><a href="/home">a</a><a href="/payroll">b</a><a href="/people">c</a></nav></div>')).toEqual([]);
+    expect(
+      drawn(
+        '<ul><li><a href="/settings/appearance">a</a></li><li><a href="/settings/language">b</a></li><li><a href="/settings/account">c</a></li></ul>'
+      )
+    ).toEqual(['a list of links to settingsAppearance, settingsLanguage, settingsAccount']);
+    expect(
+      drawn('<div><a href="/payroll/r1">a</a><a href="/payroll/r2">b</a><a href="/payroll/r3">c</a></div>')
+    ).toEqual([]);
+    expect(
+      drawn('<div data-menu><nav><a href="/home">a</a><a href="/payroll">b</a><a href="/people">c</a></nav></div>')
+    ).toEqual([]);
   });
 });
 
@@ -203,7 +348,12 @@ describe('one menu, in every file', () => {
   /* Going to a page from code, rather than by a link: a row of buttons that do it is a menu. */
   const GOES = /\bgo\(/;
   /* The main menu is the kit's sidebar, and the frame that holds it is the one place the sidebar's parts are used. */
-  const FRAME = ['apps/web/src/shell/shell.tsx', 'apps/web/src/shell/menu.tsx', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/company-switcher.tsx'];
+  const FRAME = [
+    'apps/web/src/shell/shell.tsx',
+    'apps/web/src/shell/menu.tsx',
+    'apps/web/src/shell/account-menu.tsx',
+    'apps/web/src/shell/company-switcher.tsx'
+  ];
 
   /*
    * RED WHEN: a file of the application writes a menu of its own (a nav, a
@@ -216,9 +366,15 @@ describe('one menu, in every file', () => {
     expect(APP_CODE.length).toBeGreaterThan(40);
     expect(APP_CODE.filter((f) => NAV.test(f.text)).map((f) => f.path)).toEqual([]);
     expect(APP_CODE.filter((f) => TABS_BY_HAND.test(f.text)).map((f) => f.path)).toEqual([]);
-    const tabsFrom = APP_CODE.flatMap((f) => [...f.text.matchAll(TABS_IMPORTED)].filter((m) => /\bTabs\w*\b/.test(m[1]!)).map((m) => `${f.path} ${m[2]}`));
+    const tabsFrom = APP_CODE.flatMap((f) =>
+      [...f.text.matchAll(TABS_IMPORTED)].filter((m) => /\bTabs\w*\b/.test(m[1]!)).map((m) => `${f.path} ${m[2]}`)
+    );
     expect(tabsFrom.filter((x) => !x.endsWith(' vaults-ui'))).toEqual([]);
-    expect(tabsFrom.map((x) => x.split(' ')[0]).sort()).toEqual(['apps/web/src/screens/invitations.tsx', 'apps/web/src/screens/settings.tsx', 'apps/web/src/screens/setup.tsx']);
+    expect(tabsFrom.map((x) => x.split(' ')[0]).sort()).toEqual([
+      'apps/web/src/screens/invitations.tsx',
+      'apps/web/src/screens/settings.tsx',
+      'apps/web/src/screens/setup.tsx'
+    ]);
     expect(APP_CODE.filter((f) => !FRAME.includes(f.path) && SIDEBAR.test(f.text)).map((f) => f.path)).toEqual([]);
     expect(APP_CODE.filter((f) => TABS_LAID_OUT.test(f.text)).map((f) => f.path)).toEqual([]);
   });
@@ -237,10 +393,24 @@ describe('one menu, in every file', () => {
    * read keys, and back to the sign-up page when a check of the access gives none.
    */
   it('goes to a page from code only where it is named', () => {
-    expect(APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx').map((f) => f.path).sort()).toEqual([
-      'apps/web/src/app.tsx', 'apps/web/src/records/vault-pending.tsx', 'apps/web/src/screens/home.tsx', 'apps/web/src/screens/join.tsx', 'apps/web/src/screens/landing.tsx',
-      'apps/web/src/screens/reader.tsx', 'apps/web/src/screens/settings.tsx', 'apps/web/src/setup/asked.ts', 'apps/web/src/shell/account-menu.tsx', 'apps/web/src/shell/command-bar.tsx', 'apps/web/src/shell/company-switcher.tsx', 'apps/web/src/shell/focused-frame.tsx',
-      'apps/web/src/shell/shell.tsx',
+    expect(
+      APP_CODE.filter((f) => GOES.test(f.text) && f.path !== 'apps/web/src/router.tsx')
+        .map((f) => f.path)
+        .sort()
+    ).toEqual([
+      'apps/web/src/app.tsx',
+      'apps/web/src/records/vault-pending.tsx',
+      'apps/web/src/screens/home.tsx',
+      'apps/web/src/screens/join.tsx',
+      'apps/web/src/screens/landing.tsx',
+      'apps/web/src/screens/reader.tsx',
+      'apps/web/src/screens/settings.tsx',
+      'apps/web/src/setup/asked.ts',
+      'apps/web/src/shell/account-menu.tsx',
+      'apps/web/src/shell/command-bar.tsx',
+      'apps/web/src/shell/company-switcher.tsx',
+      'apps/web/src/shell/focused-frame.tsx',
+      'apps/web/src/shell/shell.tsx'
     ]);
   });
 
@@ -252,18 +422,44 @@ describe('one menu, in every file', () => {
    */
   it('has one tabs component in the kit', () => {
     const TABS = /\bTabs\w*\b|\brole=\{?\s*["'`](?:tablist|tab)["'`]/;
-    const USES_THE_KIT_TABS = (text: string): boolean => /from\s+['"]vaults-ui\/components\/tabs['"]/.test(text) && !/\brole=\{?\s*["'`](?:tablist|tab)["'`]/.test(text)
-      && ![...text.matchAll(TABS_IMPORTED)].some((m) => /\bTabs\w*\b/.test(m[1]!) && m[2] !== 'vaults-ui/components/tabs');
-    expect(KIT_CODE.filter((f) => TABS.test(f.text) && !USES_THE_KIT_TABS(f.text)).map((f) => f.path).sort()).toEqual(['packages/ui/src/components/tabs.tsx', 'packages/ui/src/index.ts']);
-    expect(KIT_CODE.filter((f) => TABS.test(f.text) && USES_THE_KIT_TABS(f.text)).map((f) => f.path)).toEqual(['packages/ui/src/components/data-table.tsx']);
+    const USES_THE_KIT_TABS = (text: string): boolean =>
+      /from\s+['"]vaults-ui\/components\/tabs['"]/.test(text) &&
+      !/\brole=\{?\s*["'`](?:tablist|tab)["'`]/.test(text) &&
+      ![...text.matchAll(TABS_IMPORTED)].some((m) => /\bTabs\w*\b/.test(m[1]!) && m[2] !== 'vaults-ui/components/tabs');
+    expect(
+      KIT_CODE.filter((f) => TABS.test(f.text) && !USES_THE_KIT_TABS(f.text))
+        .map((f) => f.path)
+        .sort()
+    ).toEqual(['packages/ui/src/components/tabs.tsx', 'packages/ui/src/index.ts']);
+    expect(KIT_CODE.filter((f) => TABS.test(f.text) && USES_THE_KIT_TABS(f.text)).map((f) => f.path)).toEqual([
+      'packages/ui/src/components/data-table.tsx'
+    ]);
   });
 
   /* RED WHEN: a rule above stops matching what it is written to refuse. */
   it('reads each way a second menu is written', () => {
-    for (const probe of ['<nav />', '<nav className="x">', '<div role="tablist" />', '<div role={"tab"} />', "<ul role={'menu'} />", '<div role=`navigation` />', '<li role="menuitem" />']) expect(NAV.test(probe), probe).toBe(true);
-    for (const probe of ["import { Tabs } from 'radix-ui';", 'import * as T from "@radix-ui/react-tabs";']) expect(TABS_BY_HAND.test(probe), probe).toBe(true);
-    for (const probe of ['<TabsList className="flex-col">', '<Tabs value={v} className="flex-row">', '<Tabs orientation="vertical" value={v}>', '<TabsList\n  className="w-48"\n>']) expect(TABS_LAID_OUT.test(probe), probe).toBe(true);
-    expect(TABS_LAID_OUT.test('<TabsTrigger value="a" className="x">') || TABS_LAID_OUT.test('<Tabs value={v} data-tabs>')).toBe(false);
+    for (const probe of [
+      '<nav />',
+      '<nav className="x">',
+      '<div role="tablist" />',
+      '<div role={"tab"} />',
+      "<ul role={'menu'} />",
+      '<div role=`navigation` />',
+      '<li role="menuitem" />'
+    ])
+      expect(NAV.test(probe), probe).toBe(true);
+    for (const probe of ["import { Tabs } from 'radix-ui';", 'import * as T from "@radix-ui/react-tabs";'])
+      expect(TABS_BY_HAND.test(probe), probe).toBe(true);
+    for (const probe of [
+      '<TabsList className="flex-col">',
+      '<Tabs value={v} className="flex-row">',
+      '<Tabs orientation="vertical" value={v}>',
+      '<TabsList\n  className="w-48"\n>'
+    ])
+      expect(TABS_LAID_OUT.test(probe), probe).toBe(true);
+    expect(
+      TABS_LAID_OUT.test('<TabsTrigger value="a" className="x">') || TABS_LAID_OUT.test('<Tabs value={v} data-tabs>')
+    ).toBe(false);
     expect(GOES.test('onClick={() => go(PAGE.home)}') && !GOES.test('const going = 1;')).toBe(true);
     expect(NAV.test('<navigation-bar />') || NAV.test('const role = "tab";')).toBe(false);
   });

@@ -28,9 +28,19 @@ const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 const NOTE_INDEX = 'src/midnight/note-index.ts';
 const LEDGER_PACKAGES = /^@midnight-ntwrk\/midnight-js-protocol\/ledger$|^@midnightntwrk\/ledger-v\d+/u;
 /** The files that create a vault and move money in and out of it from the page. */
-const VAULT_OPERATIONS = ['vault-step-reads', 'vault-fundable-here', 'vault-created-and-started', 'vault-private-deposit',
-  'vault-public-deposit', 'vault-payment-in-flight', 'vault-payment-settled', 'vault-notes-here', 'vault-pay-privately-and-merge',
-  'vault-public-payout', 'check-what-this-browser-sent'].map((f) => `packages/web-shared/src/${f}.ts`);
+const VAULT_OPERATIONS = [
+  'vault-step-reads',
+  'vault-fundable-here',
+  'vault-created-and-started',
+  'vault-private-deposit',
+  'vault-public-deposit',
+  'vault-payment-in-flight',
+  'vault-payment-settled',
+  'vault-notes-here',
+  'vault-pay-privately-and-merge',
+  'vault-public-payout',
+  'check-what-this-browser-sent'
+].map((f) => `packages/web-shared/src/${f}.ts`);
 
 /** Every specifier a file loads at run time: static imports, re-exports, side-effect imports and dynamic imports. */
 const loadedSpecifiers = (text: string, name = 'source.ts'): string[] => {
@@ -55,14 +65,22 @@ interface Sources {
   read(path: string): string;
 }
 const onDisk: Sources = {
-  isFile: (path) => { try { return statSync(path).isFile(); } catch { return false; } },
-  read: (path) => readFileSync(path, 'utf8'),
+  isFile: (path) => {
+    try {
+      return statSync(path).isFile();
+    } catch {
+      return false;
+    }
+  },
+  read: (path) => readFileSync(path, 'utf8')
 };
 
 const resolveRelative = (sources: Sources, from: string, specifier: string): string | null => {
   const base = resolve(dirname(from), specifier);
   const stem = base.replace(/\.(?:js|mjs|jsx)$/u, '');
-  return [`${stem}.ts`, `${stem}.tsx`, base, `${base}.ts`, join(base, 'index.ts')].find((p) => sources.isFile(p)) ?? null;
+  return (
+    [`${stem}.ts`, `${stem}.tsx`, base, `${base}.ts`, join(base, 'index.ts')].find((p) => sources.isFile(p)) ?? null
+  );
 };
 
 /** Every file and every package reached from `entry`, following only what loads at run time. */
@@ -77,7 +95,10 @@ const reachedFrom = (entry: string, root = REPO, sources = onDisk): { files: Set
     files.add(name);
     if (!/\.(?:ts|tsx|js|mjs)$/u.test(file) || file.includes('/node_modules/')) continue;
     for (const specifier of loadedSpecifiers(sources.read(file), file)) {
-      if (!specifier.startsWith('.')) { packages.add(specifier); continue; }
+      if (!specifier.startsWith('.')) {
+        packages.add(specifier);
+        continue;
+      }
       const next = resolveRelative(sources, file, specifier);
       if (next !== null) queue.push(next);
     }
@@ -85,21 +106,30 @@ const reachedFrom = (entry: string, root = REPO, sources = onDisk): { files: Set
   return { files, packages };
 };
 
-describe('the page\'s vault operations and the ledger', () => {
-  it.each(VAULT_OPERATIONS)('NOTHING %s LOADS, DIRECTLY OR THROUGH ANOTHER FILE, IS THE NOTE INDEX OR A LEDGER PACKAGE', (entry) => {
-    const { files, packages } = reachedFrom(entry);
-    expect(files.has(entry)).toBe(true);
-    expect([...files].filter((f) => f === NOTE_INDEX),
-      'the note index loads the ledger, which the page does not carry: ask the vault worker instead').toEqual([]);
-    expect([...packages].filter((p) => LEDGER_PACKAGES.test(p))).toEqual([]);
-  });
+describe("the page's vault operations and the ledger", () => {
+  it.each(VAULT_OPERATIONS)(
+    'NOTHING %s LOADS, DIRECTLY OR THROUGH ANOTHER FILE, IS THE NOTE INDEX OR A LEDGER PACKAGE',
+    (entry) => {
+      const { files, packages } = reachedFrom(entry);
+      expect(files.has(entry)).toBe(true);
+      expect(
+        [...files].filter((f) => f === NOTE_INDEX),
+        'the note index loads the ledger, which the page does not carry: ask the vault worker instead'
+      ).toEqual([]);
+      expect([...packages].filter((p) => LEDGER_PACKAGES.test(p))).toEqual([]);
+    }
+  );
 
   it('THE SAME WALK FROM THE VAULT WORKER DOES REACH THE NOTE INDEX AND A LEDGER PACKAGE, so the walk is not blind', () => {
     const { files, packages } = reachedFrom('packages/web-shared/src/vault-worker-entry.ts');
     expect(files.has(NOTE_INDEX)).toBe(true);
     expect([...packages].some((p) => LEDGER_PACKAGES.test(p))).toBe(true);
-    expect(['@midnight-ntwrk/midnight-js-protocol/ledger', '@midnightntwrk/ledger-v9'].filter((p) => LEDGER_PACKAGES.test(p)),
-      'both names the ledger is loaded under').toHaveLength(2);
+    expect(
+      ['@midnight-ntwrk/midnight-js-protocol/ledger', '@midnightntwrk/ledger-v9'].filter((p) =>
+        LEDGER_PACKAGES.test(p)
+      ),
+      'both names the ledger is loaded under'
+    ).toHaveLength(2);
   });
 
   /*
@@ -116,7 +146,7 @@ describe('the page\'s vault operations and the ledger', () => {
       '/t/c/index.ts': `export async function later() { return ${DYN}('../target.js'); }`,
       '/t/target.ts': '',
       '/t/erased.ts': "import './only-through-a-type.js';",
-      '/t/only-through-a-type.ts': '',
+      '/t/only-through-a-type.ts': ''
     };
     const inMemory: Sources = { isFile: (p) => p in tree, read: (p) => tree[p]! };
     const { files } = reachedFrom('a.ts', '/t', inMemory);
@@ -124,27 +154,38 @@ describe('the page\'s vault operations and the ledger', () => {
   });
 
   it('reads each kind of import, and passes over an erased one, a comment and a string', () => {
-    expect(loadedSpecifiers([
-      "import { a } from './static.js';",
-      "import x, { y } from './default-and-named.js';",
-      'import {',
-      '  z,',
-      "} from './multi-line.js';",
-      "import type { B } from './erased.js';",
-      "import { type Only } from './erased-inline.js';",
-      "import { type T, v } from './mixed.js';",
-      "export type { C } from './erased-too.js';",
-      "export { c } from './re-exported.js';",
-      "export * from './every-export.js';",
-      "import './side-effect.js';",
-      `const d = await ${DYN}('./dynamic.js');`,
-      'const e = await import(`./template.js`);',
-      `// served under /artefacts/vault/* and then ${DYN}('./in-a-line-comment.js')`,
-      "const s = '/artefacts/vault/*'; const t = \"import('./in-a-string.js')\";",
-      `/* ${DYN}('./in-a-block-comment.js') */`,
-    ].join('\n')).sort()).toEqual([
-      './default-and-named.js', './dynamic.js', './every-export.js', './mixed.js', './multi-line.js', './re-exported.js',
-      './side-effect.js', './static.js', './template.js',
+    expect(
+      loadedSpecifiers(
+        [
+          "import { a } from './static.js';",
+          "import x, { y } from './default-and-named.js';",
+          'import {',
+          '  z,',
+          "} from './multi-line.js';",
+          "import type { B } from './erased.js';",
+          "import { type Only } from './erased-inline.js';",
+          "import { type T, v } from './mixed.js';",
+          "export type { C } from './erased-too.js';",
+          "export { c } from './re-exported.js';",
+          "export * from './every-export.js';",
+          "import './side-effect.js';",
+          `const d = await ${DYN}('./dynamic.js');`,
+          'const e = await import(`./template.js`);',
+          `// served under /artefacts/vault/* and then ${DYN}('./in-a-line-comment.js')`,
+          "const s = '/artefacts/vault/*'; const t = \"import('./in-a-string.js')\";",
+          `/* ${DYN}('./in-a-block-comment.js') */`
+        ].join('\n')
+      ).sort()
+    ).toEqual([
+      './default-and-named.js',
+      './dynamic.js',
+      './every-export.js',
+      './mixed.js',
+      './multi-line.js',
+      './re-exported.js',
+      './side-effect.js',
+      './static.js',
+      './template.js'
     ]);
   });
 });

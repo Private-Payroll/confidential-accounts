@@ -22,26 +22,61 @@ const walletAnswering = (answer: (ask: unknown) => unknown): { view: Openable; a
     closed: false,
     postMessage: (message: unknown) => {
       asked.push(message);
-      queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)));
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: answer(message) } as unknown as MessageEvent)
+        )
+      );
     },
     close: () => {},
-    focus: () => {},
+    focus: () => {}
   } as unknown as WalletWindow;
   const view = {
-    open: () => { queueMicrotask(() => listeners.forEach((l) => l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent))); return wallet; },
-    addEventListener: (_t: string, l: (e: MessageEvent) => void) => { listeners.push(l); },
+    open: () => {
+      queueMicrotask(() =>
+        listeners.forEach((l) =>
+          l({ origin: WALLET, source: wallet, data: { schema: READY_PING } } as unknown as MessageEvent)
+        )
+      );
+      return wallet;
+    },
+    addEventListener: (_t: string, l: (e: MessageEvent) => void) => {
+      listeners.push(l);
+    },
     removeEventListener: () => {},
     setTimeout: (f: () => void, ms: number) => setTimeout(f, ms),
-    clearTimeout: (t: unknown) => clearTimeout(t as never),
+    clearTimeout: (t: unknown) => clearTimeout(t as never)
   } as unknown as Openable;
   return { view, asked };
 };
-const input = { company: CO, account: ACCOUNT, vault: VAULT, transaction: 'AAECAw==', atOrigin: US, name: 'Us', rdns: 'example.us', nonce: 'n1', now: () => 1_000 };
+const input = {
+  company: CO,
+  account: ACCOUNT,
+  vault: VAULT,
+  transaction: 'AAECAw==',
+  atOrigin: US,
+  name: 'Us',
+  rdns: 'example.us',
+  nonce: 'n1',
+  now: () => 1_000
+};
 
-describe('ASKING THE PERSON\'S WALLET TO PAY', () => {
-  it('sends a balance ask with no amount in it, which the wallet\'s own parser accepts', () => {
+describe("ASKING THE PERSON'S WALLET TO PAY", () => {
+  it("sends a balance ask with no amount in it, which the wallet's own parser accepts", () => {
     const wire = balanceAsk({ ...input, purpose: 'p', expiresAt: 2_000 });
-    expect(Object.keys(wire).sort()).toEqual(['account', 'company', 'expiresAt', 'kind', 'nonce', 'progress', 'purpose', 'requester', 'schema', 'transaction', 'vault']);
+    expect(Object.keys(wire).sort()).toEqual([
+      'account',
+      'company',
+      'expiresAt',
+      'kind',
+      'nonce',
+      'progress',
+      'purpose',
+      'requester',
+      'schema',
+      'transaction',
+      'vault'
+    ]);
     const parsed = parseAsk(wire, US, 1_000) as BalanceRequest;
     expect(parsed.kind).toBe('balance');
     expect(parsed.transaction).toBe('AAECAw==');
@@ -50,11 +85,22 @@ describe('ASKING THE PERSON\'S WALLET TO PAY', () => {
   });
 
   it('believes an answer to its own question, and nothing else', async () => {
-    const good = walletAnswering((ask) => balancedAnswerFor(parseAsk(ask, US, 1_000) as BalanceRequest, 'Zg==', [{ token: 'ab'.repeat(32), amount: '5', kind: 'shielded' }], 1_000));
+    const good = walletAnswering((ask) =>
+      balancedAnswerFor(
+        parseAsk(ask, US, 1_000) as BalanceRequest,
+        'Zg==',
+        [{ token: 'ab'.repeat(32), amount: '5', kind: 'shielded' }],
+        1_000
+      )
+    );
     await expect(askWalletToPay(good.view, WALLET, input)).resolves.toEqual({
-      transaction: 'Zg==', leaves: [{ token: 'ab'.repeat(32), amount: '5', kind: 'shielded' }],
+      transaction: 'Zg==',
+      leaves: [{ token: 'ab'.repeat(32), amount: '5', kind: 'shielded' }]
     });
-    const other = walletAnswering((ask) => ({ ...balancedAnswerFor(parseAsk(ask, US, 1_000) as BalanceRequest, 'Zg==', [], 1_000), vault: CO }));
+    const other = walletAnswering((ask) => ({
+      ...balancedAnswerFor(parseAsk(ask, US, 1_000) as BalanceRequest, 'Zg==', [], 1_000),
+      vault: CO
+    }));
     await expect(askWalletToPay(other.view, WALLET, input)).rejects.toBeInstanceOf(WalletDidNotPay);
   });
 });

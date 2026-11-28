@@ -27,8 +27,9 @@ import { THEMES } from './themes.js';
 
 const strip = (css: string): string => css.replace(/\/\*[\s\S]*?\*\//g, '');
 const WALLET = strip(readFileSync(fileURLToPath(new URL('../app.css', import.meta.url)), 'utf8'));
-const KIT = strip(readFileSync(
-  fileURLToPath(new URL('../../../../packages/ui/src/theme/themes.css', import.meta.url)), 'utf8'));
+const KIT = strip(
+  readFileSync(fileURLToPath(new URL('../../../../packages/ui/src/theme/themes.css', import.meta.url)), 'utf8')
+);
 
 /** Every `--name: value;` inside the first block whose selector list is exactly `selector`. */
 function blockFor(css: string, selector: string): Record<string, string> {
@@ -41,7 +42,10 @@ function blockFor(css: string, selector: string): Record<string, string> {
     if (css[i] === '{') depth += 1;
     if (css[i] === '}') {
       depth -= 1;
-      if (depth === 0) { end = i; break; }
+      if (depth === 0) {
+        end = i;
+        break;
+      }
     }
   }
   const found: Record<string, string> = {};
@@ -81,7 +85,7 @@ function channels(value: string): readonly [number, number, number] {
     const lin = [
       4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
       -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s
     ];
     const gamma = (x: number): number => {
       const c = Math.min(1, Math.max(0, x));
@@ -114,15 +118,27 @@ const DISTINGUISHABLE = 120;
  */
 const PLACES: Record<string, { readonly kit: string; readonly wallet: string }> = {
   light: { kit: ":root,\n:root[data-base='zinc']", wallet: ':root' },
-  dark: { kit: ":root[data-theme='dark'],\n:root[data-base='zinc'][data-theme='dark']", wallet: ":root[data-theme='dark']" },
+  dark: {
+    kit: ":root[data-theme='dark'],\n:root[data-base='zinc'][data-theme='dark']",
+    wallet: ":root[data-theme='dark']"
+  }
 };
 
 const LISTED = THEMES.map((theme) => ({ id: theme.id }));
 
 /** The roles every block of the kit's theme gives a value, read off the light block. */
 const KIT_ROLES = Object.keys(blockFor(KIT, PLACES['light']!.kit));
-const WALLET_ROLES = ['--good', '--good-dim', '--warn', '--warn-text', '--warn-dim', '--warn-border',
-  '--pending', '--pending-dim', '--pending-border'] as const;
+const WALLET_ROLES = [
+  '--good',
+  '--good-dim',
+  '--warn',
+  '--warn-text',
+  '--warn-dim',
+  '--warn-border',
+  '--pending',
+  '--pending-dim',
+  '--pending-border'
+] as const;
 
 /** Both halves of a theme, as one palette: the kit's roles and the wallet's statuses. */
 const paletteOf = (id: string): Record<string, string> => {
@@ -133,7 +149,7 @@ const paletteOf = (id: string): Record<string, string> => {
 
 describe('every theme in the list has a palette behind it', () => {
   /* RED WHEN: a theme is added to the list with no block in either sheet. */
-  it.each(LISTED)('$id has a block in the kit\'s theme and in the wallet\'s', ({ id }) => {
+  it.each(LISTED)("$id has a block in the kit's theme and in the wallet's", ({ id }) => {
     const palette = paletteOf(id);
     expect(KIT_ROLES.length).toBeGreaterThan(20);
     expect(KIT_ROLES.filter((role) => palette[role] === undefined)).toEqual([]);
@@ -153,8 +169,10 @@ describe('the four status colours stay apart in every theme', () => {
         if (one >= other) continue;
         expect(palette[one], one).toBeDefined();
         expect(palette[other], other).toBeDefined();
-        expect(apart(palette[one]!, palette[other]!), `${one} and ${other} are too close to tell apart`)
-          .toBeGreaterThan(DISTINGUISHABLE);
+        expect(
+          apart(palette[one]!, palette[other]!),
+          `${one} and ${other} are too close to tell apart`
+        ).toBeGreaterThan(DISTINGUISHABLE);
       }
     }
   });
@@ -164,8 +182,10 @@ describe('the four status colours stay apart in every theme', () => {
   it.each(LISTED)('$id keeps the primary colour clear of good, warn and danger', ({ id }) => {
     const palette = paletteOf(id);
     for (const status of ['--good', '--warn', '--destructive'] as const) {
-      expect(apart(palette['--primary']!, palette[status]!), `the primary colour collides with ${status}`)
-        .toBeGreaterThan(DISTINGUISHABLE);
+      expect(
+        apart(palette['--primary']!, palette[status]!),
+        `the primary colour collides with ${status}`
+      ).toBeGreaterThan(DISTINGUISHABLE);
     }
   });
 });

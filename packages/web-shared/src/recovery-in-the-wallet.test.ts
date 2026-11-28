@@ -8,43 +8,87 @@ vi.mock('./keyring.js', () => ({
   actOnACompanyInTheWallet: async (intent: Record<string, string>) => {
     keyring.intents.push(intent);
     return { of: 'done', steps: 1, relayed: 0, outcome: { state: 'waiting-for-approvals', approvals: 1, needed: 2 } };
-  },
+  }
 }));
 
 const m = await import('./recovery-in-the-wallet.js');
 
-const ask = { record: 'acc_Company00001', company: 'label' as CompanyLabel, account: 'c0'.repeat(32) as AccountAddress };
+const ask = {
+  record: 'acc_Company00001',
+  company: 'label' as CompanyLabel,
+  account: 'c0'.repeat(32) as AccountAddress
+};
 const parts: import('./recovery-in-the-wallet.js').RecoveryParts = {
-  company: 'acc_Company00001', account: 'c0'.repeat(32), chainId: 'aa'.repeat(32), salt: 'bb'.repeat(32), latest: '1793793600',
-  lastRecovery: 'cc'.repeat(32), resumesFrom: { seq: 4, head: 'dd'.repeat(32), root: 'ee'.repeat(32) },
+  company: 'acc_Company00001',
+  account: 'c0'.repeat(32),
+  chainId: 'aa'.repeat(32),
+  salt: 'bb'.repeat(32),
+  latest: '1793793600',
+  lastRecovery: 'cc'.repeat(32),
+  resumesFrom: { seq: 4, head: 'dd'.repeat(32), root: 'ee'.repeat(32) }
 };
 const VIEW = {} as never;
 
-beforeEach(() => { keyring.intents.length = 0; });
+beforeEach(() => {
+  keyring.intents.length = 0;
+});
 
 describe('what the wallet is asked for a recovery', () => {
   /* RED WHEN: a raise names anything but the company, the raise step and the last time as whole seconds in digits. */
   it('asks the raise with the company, the step and the last time in digits', async () => {
     await m.raiseRecoveryInTheWallet({ ...ask, latest: 1793793600 }, 'https://wallet.example', {}, VIEW);
-    expect(keyring.intents).toEqual([{ name: 'recovery', record: ask.record, company: 'label', account: ask.account, step: 'raise', latest: '1793793600' }]);
+    expect(keyring.intents).toEqual([
+      {
+        name: 'recovery',
+        record: ask.record,
+        company: 'label',
+        account: ask.account,
+        step: 'raise',
+        latest: '1793793600'
+      }
+    ]);
   });
 
   /* RED WHEN: a carrying out leaves out a part of the file the wallet checks against the chain, or the batch is not in digits. */
   it('asks the carry with every part of the file', async () => {
     await m.carryOutRecoveryInTheWallet({ ...ask, parts }, 'https://wallet.example', {}, VIEW);
-    expect(keyring.intents).toEqual([{
-      name: 'recovery', record: ask.record, company: 'label', account: ask.account, step: 'carry', proposal: parts.chainId, salt: parts.salt,
-      latest: parts.latest, lastRecovery: parts.lastRecovery, resumesFrom: parts.resumesFrom.head, root: parts.resumesFrom.root, seq: '4',
-    }]);
+    expect(keyring.intents).toEqual([
+      {
+        name: 'recovery',
+        record: ask.record,
+        company: 'label',
+        account: ask.account,
+        step: 'carry',
+        proposal: parts.chainId,
+        salt: parts.salt,
+        latest: parts.latest,
+        lastRecovery: parts.lastRecovery,
+        resumesFrom: parts.resumesFrom.head,
+        root: parts.resumesFrom.root,
+        seq: '4'
+      }
+    ]);
   });
 
   /* RED WHEN: an approval is not the one approval action under the recovery kind with the file's parts. */
   it('asks the approval as the approve action under the recovery kind', async () => {
     await m.approveRecoveryInTheWallet({ ...ask, parts }, 'https://wallet.example', {}, VIEW);
-    expect(keyring.intents).toEqual([{
-      name: 'approve-proposal', record: ask.record, company: 'label', account: ask.account, proposal: parts.chainId, kind: 'recovery', salt: parts.salt,
-      latest: parts.latest, lastRecovery: parts.lastRecovery, resumesFrom: parts.resumesFrom.head, root: parts.resumesFrom.root, seq: '4',
-    }]);
+    expect(keyring.intents).toEqual([
+      {
+        name: 'approve-proposal',
+        record: ask.record,
+        company: 'label',
+        account: ask.account,
+        proposal: parts.chainId,
+        kind: 'recovery',
+        salt: parts.salt,
+        latest: parts.latest,
+        lastRecovery: parts.lastRecovery,
+        resumesFrom: parts.resumesFrom.head,
+        root: parts.resumesFrom.root,
+        seq: '4'
+      }
+    ]);
   });
 });
 
@@ -61,8 +105,16 @@ describe('the parts of a file', () => {
   });
 
   /* RED WHEN: the parts the wallet told are read as another company's, or parts told without a batch number, as strings, or with a non-recovery value, are kept. */
-  it('reads the parts the wallet told as this company\'s, and nothing short of all of them', () => {
-    const told = { proposal: parts.chainId, salt: parts.salt, latest: parts.latest, lastRecovery: parts.lastRecovery, resumesFrom: parts.resumesFrom.head, root: parts.resumesFrom.root, seq: 4 };
+  it("reads the parts the wallet told as this company's, and nothing short of all of them", () => {
+    const told = {
+      proposal: parts.chainId,
+      salt: parts.salt,
+      latest: parts.latest,
+      lastRecovery: parts.lastRecovery,
+      resumesFrom: parts.resumesFrom.head,
+      root: parts.resumesFrom.root,
+      seq: 4
+    };
     expect(m.recoveryPartsToldBy(parts.company, parts.account, told)).toEqual(parts);
     expect(m.recoveryPartsToldBy(parts.company, parts.account, undefined)).toBeNull();
     expect(m.recoveryPartsToldBy(parts.company, parts.account, { ...told, seq: '4' })).toBeNull();
@@ -100,14 +152,23 @@ describe('why the wallet stopped', () => {
 
   /* RED WHEN: a count the wallet did not tell as a whole number is read as one, or a state it does not name is taken as one of the two. */
   it('reads the state and counts the wallet told, and none it did not', () => {
-    const ended = (outcome: Record<string, string | number> | undefined) => ({ of: 'done', steps: 1, relayed: 0, ...(outcome === undefined ? {} : { outcome }) }) as never;
-    expect(m.recoveryOutcomeOf(ended({ state: 'carried-out', approvals: 2, needed: 2 }))).toEqual({ state: 'carried-out', approvals: 2, needed: 2 });
-    expect(m.recoveryOutcomeOf(ended({ state: 'whatever', approvals: '2', needed: -1 }))).toEqual({ state: null, approvals: null, needed: null });
+    const ended = (outcome: Record<string, string | number> | undefined) =>
+      ({ of: 'done', steps: 1, relayed: 0, ...(outcome === undefined ? {} : { outcome }) }) as never;
+    expect(m.recoveryOutcomeOf(ended({ state: 'carried-out', approvals: 2, needed: 2 }))).toEqual({
+      state: 'carried-out',
+      approvals: 2,
+      needed: 2
+    });
+    expect(m.recoveryOutcomeOf(ended({ state: 'whatever', approvals: '2', needed: -1 }))).toEqual({
+      state: null,
+      approvals: null,
+      needed: null
+    });
     expect(m.recoveryOutcomeOf(ended(undefined))).toEqual({ state: null, approvals: null, needed: null });
   });
 
   /* RED WHEN: a choice of time passes the longest the recovery window's range allows, or is not after now, or one past the window in force is offered. */
-  it('offers only times after now, within the window\'s range, and within the window in force', () => {
+  it("offers only times after now, within the window's range, and within the window in force", () => {
     for (const w of m.RECOVERY_WITHIN) {
       expect(w.seconds).toBeGreaterThan(0);
       expect(w.seconds).toBeLessThanOrEqual(RECOVERY_WINDOW_RANGE.longest);
@@ -117,26 +178,26 @@ describe('why the wallet stopped', () => {
   });
 
   /* RED WHEN: the wallet's refusal for a window not read is shown as another stop, so the person is not told what clears it. */
-  it('reads the wallet\'s refusal for a window not read as its own', () => {
+  it("reads the wallet's refusal for a window not read as its own", () => {
     expect(m.recoveryWhyOf('act.recovery.why.window-unread')).toBe(m.RECOVERY_WHY.windowUnread);
   });
 });
 
 describe('the file', () => {
   /* RED WHEN: the file this page writes is not one the company's own file reader takes as the same recovery, or its format name drifts from the reader's, so a file saved here cannot be approved anywhere else. */
-  it('writes a file the company\'s own file reader reads as the same recovery', async () => {
+  it("writes a file the company's own file reader reads as the same recovery", async () => {
     const { proposalFileRead, PROPOSAL_FILE_FORMAT } = await import('./governance-from-the-chain.js');
     const { recoveryPartsOf, recoveryFileOf } = await import('./records-recovered-here.js');
-    const text = m.recoveryFileTextOf(parts, 'In the person\'s words');
+    const text = m.recoveryFileTextOf(parts, "In the person's words");
     const file = proposalFileRead(text);
     expect(file.format).toBe(PROPOSAL_FILE_FORMAT);
     expect(recoveryPartsOf(file)).toEqual(parts);
-    expect(file).toEqual({ ...recoveryFileOf(parts), summary: 'In the person\'s words' });
+    expect(file).toEqual({ ...recoveryFileOf(parts), summary: "In the person's words" });
     expect(text.endsWith('\n')).toBe(true);
   });
 
   /* RED WHEN: a file written by the company's own tools is not read here as the same parts, or a part is believed that the file does not carry. */
-  it('reads the parts out of a file the company\'s own tools wrote, and out of the one it writes', async () => {
+  it("reads the parts out of a file the company's own tools wrote, and out of the one it writes", async () => {
     const { proposalFileText } = await import('./governance-from-the-chain.js');
     const { recoveryFileOf } = await import('./records-recovered-here.js');
     expect(m.recoveryPartsInFile(proposalFileText(recoveryFileOf(parts)))).toEqual({ parts });
@@ -144,7 +205,7 @@ describe('the file', () => {
   });
 
   /* RED WHEN: a file that is not a recovery's, or one with a part missing or mistaken, or one carrying signatures a recovery never has, is read as a recovery, or refused as the wrong kind of fault. */
-  it('refuses a file that is not a recovery\'s, and says whether it could not be read or is another kind of change', () => {
+  it("refuses a file that is not a recovery's, and says whether it could not be read or is another kind of change", () => {
     const good = JSON.parse(m.recoveryFileTextOf(parts, 'x')) as Record<string, unknown>;
     const unreadable = { why: 'unreadable' };
     const read = (over: Record<string, unknown>) => m.recoveryPartsInFile(JSON.stringify({ ...good, ...over }));
@@ -158,7 +219,9 @@ describe('the file', () => {
     expect(read({ summary: 5 })).toEqual(unreadable);
     expect(read({ salt: 'zz' })).toEqual(unreadable);
     expect(read({ resumesFrom: undefined })).toEqual(unreadable);
-    expect(read({ resumesFrom: { seq: '4', head: parts.resumesFrom.head, root: parts.resumesFrom.root } })).toEqual(unreadable);
+    expect(read({ resumesFrom: { seq: '4', head: parts.resumesFrom.head, root: parts.resumesFrom.root } })).toEqual(
+      unreadable
+    );
     expect(read({ resumesFrom: { seq: 4, head: 'ff'.repeat(32), root: parts.resumesFrom.root } })).toEqual(unreadable);
     expect(read({ change: { ...(good['change'] as object), latest: '0' } })).toEqual(unreadable);
     expect(read({ change: { ...(good['change'] as object), latest: 1793793600 } })).toEqual(unreadable);

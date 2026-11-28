@@ -43,7 +43,10 @@ import { parseSync, transformWithOxc } from 'vite';
 import { SERVED_TO_THE_WALLET } from '../apps/wallet/this-builds-account-keys.js';
 
 /** One alias, with vite's own matching rule: a string matches exactly or as a prefix followed by `/`. */
-export interface Alias { find: string | RegExp; replacement: string }
+export interface Alias {
+  find: string | RegExp;
+  replacement: string;
+}
 
 /**
  * A module a build serves that no file on disk holds, as the build itself
@@ -184,12 +187,15 @@ const resolveWorkspacePackage = (specifier: string, from: string, repo: string):
   let target: string | null = null;
   const exp = pkg.exports as unknown;
   if (exp !== undefined && exp !== null) {
-    const map = typeof exp === 'string' || !Object.keys(exp as object).some((k) => k.startsWith('.'))
-      ? { '.': exp } as Record<string, unknown> : exp as Record<string, unknown>;
+    const map =
+      typeof exp === 'string' || !Object.keys(exp as object).some((k) => k.startsWith('.'))
+        ? ({ '.': exp } as Record<string, unknown>)
+        : (exp as Record<string, unknown>);
     if (sub in map) target = exportTarget(map[sub]);
     else {
       // The pattern with the longest part before `*` wins, whatever order the map lists them in.
-      const patterns = Object.entries(map).filter(([key]) => key.includes('*'))
+      const patterns = Object.entries(map)
+        .filter(([key]) => key.includes('*'))
         .sort(([a], [b]) => b.indexOf('*') - a.indexOf('*'));
       for (const [key, value] of patterns) {
         const star = key.indexOf('*');
@@ -251,7 +257,11 @@ const resolveSpecifier = (raw: string, from: string, build: BrowserBuild, repo: 
 
 const WORKER = /new\s+(?:Shared)?Worker\s*\(\s*new\s+URL\s*\(\s*(['"`])([^'"`]+)\1\s*,\s*import\.meta\.url\s*\)/g;
 
-interface Edge { specifier: string; dynamic: boolean; worker: boolean }
+interface Edge {
+  specifier: string;
+  dynamic: boolean;
+  worker: boolean;
+}
 
 /** The imports a browser would actually be served for one file, after the bundler's own TypeScript transform. */
 export const importsOf = async (file: string, source: string): Promise<Edge[]> => {
@@ -261,10 +271,12 @@ export const importsOf = async (file: string, source: string): Promise<Edge[]> =
   const parsed = parseSync(file.replace(/\.(m?ts|tsx|jsx)$/, '.js'), code);
   if (parsed.errors.length > 0) throw new Error(`${file} did not parse after transform: ${parsed.errors[0].message}`);
   const edges: Edge[] = [];
-  for (const i of parsed.module.staticImports) edges.push({ specifier: i.moduleRequest.value, dynamic: false, worker: false });
+  for (const i of parsed.module.staticImports)
+    edges.push({ specifier: i.moduleRequest.value, dynamic: false, worker: false });
   for (const e of parsed.module.staticExports) {
     for (const entry of e.entries) {
-      if (entry.moduleRequest !== null) edges.push({ specifier: entry.moduleRequest.value, dynamic: false, worker: false });
+      if (entry.moduleRequest !== null)
+        edges.push({ specifier: entry.moduleRequest.value, dynamic: false, worker: false });
     }
   }
   for (const d of parsed.module.dynamicImports) {
@@ -318,7 +330,10 @@ export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise
     const html = join(repo, page);
     for (const src of scriptsOf(readFileSync(html, 'utf8'))) {
       const r = resolveSpecifier(src, html, build, repo);
-      if (r.kind !== 'file') { unresolved.push({ file: page, specifier: src }); continue; }
+      if (r.kind !== 'file') {
+        unresolved.push({ file: page, specifier: src });
+        continue;
+      }
       enqueue(r.path, null, true);
     }
   }
@@ -329,7 +344,11 @@ export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise
     for (const edge of await importsOf(file, own?.source ?? readFileSync(file, 'utf8'))) {
       const r = resolveSpecifier(edge.specifier, own?.from ?? file, build, repo);
       if (r.kind === 'node') {
-        (edge.dynamic ? dynamicNode : staticNode).push({ file: rel(file), specifier: edge.specifier, chain: chainOf(file) });
+        (edge.dynamic ? dynamicNode : staticNode).push({
+          file: rel(file),
+          specifier: edge.specifier,
+          chain: chainOf(file)
+        });
       } else if (r.kind === 'unresolved') {
         unresolved.push({ file: rel(file), specifier: edge.specifier });
       } else if (r.kind === 'file') {
@@ -337,8 +356,14 @@ export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise
       } else if (r.kind === 'virtual') {
         if (!served.has(r.module.id)) {
           const source = servedSource(r.module, repo);
-          if (source === null) { unresolved.push({ file: rel(file), specifier: edge.specifier }); continue; }
-          served.set(r.module.id, { source, from: isAbsolute(r.module.servedBy) ? r.module.servedBy : join(repo, r.module.servedBy) });
+          if (source === null) {
+            unresolved.push({ file: rel(file), specifier: edge.specifier });
+            continue;
+          }
+          served.set(r.module.id, {
+            source,
+            from: isAbsolute(r.module.servedBy) ? r.module.servedBy : join(repo, r.module.servedBy)
+          });
         }
         enqueue(r.module.id, file, edge.worker);
       }
@@ -350,7 +375,10 @@ export const walkBuild = async (build: BrowserBuild, repoGiven: string): Promise
 
 /** Every HTML page directly inside a build's root, so the page list cannot fall behind the files. */
 export const pagesIn = (root: string, repo: string): string[] =>
-  readdirSync(join(repo, root)).filter((n) => n.endsWith('.html')).map((n) => `${root}/${n}`).sort();
+  readdirSync(join(repo, root))
+    .filter((n) => n.endsWith('.html'))
+    .map((n) => `${root}/${n}`)
+    .sort();
 
 /**
  * EVERY BUILD IN THIS REPOSITORY THAT SERVES A BROWSER.
@@ -366,7 +394,9 @@ export const pagesIn = (root: string, repo: string): string[] =>
 export const BROWSER_BUILDS: BrowserBuild[] = [
   { name: 'web', config: 'apps/web/vite.config.ts', root: 'apps/web', pages: ['apps/web/index.html'], alias: [] },
   {
-    name: 'wallet', config: 'apps/wallet/vite.config.ts', root: 'apps/wallet',
+    name: 'wallet',
+    config: 'apps/wallet/vite.config.ts',
+    root: 'apps/wallet',
     pages: ['apps/wallet/creation-screen.html', 'apps/wallet/index.html'],
     alias: [
       { find: 'assert', replacement: 'packages/identity/src/browser/assert-shim.ts' },
@@ -374,8 +404,8 @@ export const BROWSER_BUILDS: BrowserBuild[] = [
       { find: /^midnight-identity$/, replacement: 'packages/identity/src/index.ts' },
       { find: /^midnight-identity\/browser$/, replacement: 'packages/identity/src/browser/index.ts' },
       { find: /^midnight-identity\/network$/, replacement: 'packages/identity/src/wallet/network.ts' },
-      { find: 'midnight-identity', replacement: 'packages/identity/src' },
+      { find: 'midnight-identity', replacement: 'packages/identity/src' }
     ],
-    virtual: [SERVED_TO_THE_WALLET],
-  },
+    virtual: [SERVED_TO_THE_WALLET]
+  }
 ];

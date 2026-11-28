@@ -6,20 +6,47 @@ import { payableVendors, READ, type VendorRow, type VendorsRead } from '../adapt
 import { InvitePeople } from '../actions/invite.js';
 import { OneOffPayment } from '../actions/one-off.js';
 import { VendorPanel } from '../actions/vendor-panel.js';
-import { BELIEF, BeliefLeftOut, CalendarDate, PaidWords, ReadOf, StandingBadge, TermsOf, WithRecords } from '../records/parts.js';
+import {
+  BELIEF,
+  BeliefLeftOut,
+  CalendarDate,
+  PaidWords,
+  ReadOf,
+  StandingBadge,
+  TermsOf,
+  WithRecords
+} from '../records/parts.js';
 import { usePanel } from '../shell/right-panel.js';
 
 /** The ids of the vendors table's columns. */
-const COLUMN = { name: 'name', standing: 'standing', terms: 'terms', paid: 'paid', started: 'started', pay: 'pay' } as const;
+const COLUMN = {
+  name: 'name',
+  standing: 'standing',
+  terms: 'terms',
+  paid: 'paid',
+  started: 'started',
+  pay: 'pay'
+} as const;
 
 /** What the vendors' belief check left out, said above the list: the records it does not believe, and the active vendors it will not pay, each with why. */
 function VendorsLeftOut({ belief }: { belief: VendorsRead }) {
   const t = useText();
   return (
     <BeliefLeftOut
-      mark={BELIEF.vendors} title={t('vendors.belief.title')}
-      notBelieved={belief.notBelieved.length === 0 ? null : { count: belief.notBelieved.length, words: t('vendors.belief.notBelieved', { count: belief.notBelieved.length }) }}
-      notPayable={belief.notPayable.map((n) => ({ id: n.vendor.id, words: t('vendors.belief.notPayable', { name: n.vendor.name, why: n.why }) }))}
+      mark={BELIEF.vendors}
+      title={t('vendors.belief.title')}
+      notBelieved={
+        belief.notBelieved.length === 0
+          ? null
+          : {
+              count: belief.notBelieved.length,
+              words: t('vendors.belief.notBelieved', { count: belief.notBelieved.length })
+            }
+      }
+      notPayable={belief.notPayable.map((n) => ({
+        id: n.vendor.id,
+        words: t('vendors.belief.notPayable', { name: n.vendor.name, why: n.why })
+      }))}
     />
   );
 }
@@ -31,21 +58,49 @@ export function Vendors() {
   const columns: DataTableColumn<VendorRow>[] = [
     { id: COLUMN.name, header: t('people.column.name'), cell: (v) => <span className="font-medium">{v.name}</span> },
     {
-      id: COLUMN.standing, header: t('people.column.standing'),
-      cell: (v) => <span className="flex flex-wrap items-center gap-1.5"><StandingBadge standing={v.standing} />{v.notPayable === null ? null : <Badge variant="destructive" data-not-payable={v.id}>{t('people.notPayable.badge')}</Badge>}</span>,
+      id: COLUMN.standing,
+      header: t('people.column.standing'),
+      cell: (v) => (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <StandingBadge standing={v.standing} />
+          {v.notPayable === null ? null : (
+            <Badge variant="destructive" data-not-payable={v.id}>
+              {t('people.notPayable.badge')}
+            </Badge>
+          )}
+        </span>
+      )
     },
     { id: COLUMN.terms, header: t('vendors.column.terms'), cell: (v) => <TermsOf vendor={v} /> },
-    { id: COLUMN.paid, header: t('people.column.paid'), cell: (v) => <span className="text-muted-foreground"><PaidWords paid={v.paid} /></span> },
+    {
+      id: COLUMN.paid,
+      header: t('people.column.paid'),
+      cell: (v) => (
+        <span className="text-muted-foreground">
+          <PaidWords paid={v.paid} />
+        </span>
+      )
+    },
     { id: COLUMN.started, header: t('vendors.column.started'), cell: (v) => <CalendarDate date={v.startedAt} /> },
     {
-      id: COLUMN.pay, header: t('vendors.column.pay'),
-      cell: (v) => (payableVendors([v]).length === 0 ? null : (
-        <Button size="sm" variant="outline" data-action="pay-vendor" data-vendor={v.id}
-          onClick={(e) => { e.stopPropagation(); panel.open({ title: t('oneOff.title'), body: <OneOffPayment vendor={v.id} /> }); }}>
-          {t('vendors.pay')}
-        </Button>
-      )),
-    },
+      id: COLUMN.pay,
+      header: t('vendors.column.pay'),
+      cell: (v) =>
+        payableVendors([v]).length === 0 ? null : (
+          <Button
+            size="sm"
+            variant="outline"
+            data-action="pay-vendor"
+            data-vendor={v.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              panel.open({ title: t('oneOff.title'), body: <OneOffPayment vendor={v.id} /> });
+            }}
+          >
+            {t('vendors.pay')}
+          </Button>
+        )
+    }
   ];
   return (
     <div className="flex flex-col gap-6" data-screen="vendors">

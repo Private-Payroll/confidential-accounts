@@ -42,8 +42,10 @@ import { describeFailure } from '../lib/failure-text.js';
 
 const guardAccount = (account: number): void => {
   if (!isWalletAccount(account)) {
-    throw new Error(`account ${account} is not a wallet this interface offers`
-      + (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.'));
+    throw new Error(
+      `account ${account} is not a wallet this interface offers` +
+        (account === 1 ? ' — account 1 is the authority compartment, never a wallet.' : '.')
+    );
   }
 };
 
@@ -80,12 +82,12 @@ export const DUST_CONFIG = {
   costParameters: { feeBlocksMargin: 5 },
   indexerClientConnection: {
     indexerHttpUrl: INDEXER_HTTP_URL,
-    indexerWsUrl: INDEXER_WS_URL,
+    indexerWsUrl: INDEXER_WS_URL
   },
   /* Same reasoning as the other two wallets: history is later, audited work;
    * a no-op keeps every fact about payments out of every store until then. */
   txHistoryStorage: new NoOpTransactionHistoryStorage(),
-  forks: DefaultForkSchedule,
+  forks: DefaultForkSchedule
 } as const;
 
 /**
@@ -109,7 +111,9 @@ export async function dustWalletFor(identity: Identity, account: number): Promis
  */
 const startDustRaw: BalanceEngine = (identity, account, onState) => {
   let stopped = false;
-  const tell = (state: BalanceState): void => { if (!stopped) onState(state); };
+  const tell = (state: BalanceState): void => {
+    if (!stopped) onState(state);
+  };
 
   tell({ name: 'connecting' });
 
@@ -119,7 +123,9 @@ const startDustRaw: BalanceEngine = (identity, account, onState) => {
   void (async (): Promise<void> => {
     wallet = await dustWalletFor(identity, account);
     if (stopped) {
-      void wallet.stop().catch(() => { /* already stopping is fine */ });
+      void wallet.stop().catch(() => {
+        /* already stopping is fine */
+      });
       return;
     }
     subscription = wallet.state.subscribe({
@@ -140,7 +146,7 @@ const startDustRaw: BalanceEngine = (identity, account, onState) => {
       },
       error: (e: unknown) => {
         if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
-      },
+      }
     });
     wallet.start(dustKeysFor(identity, account)).catch((e: unknown) => {
       if (!numberShown) tell({ name: 'failed', message: describeFailure(e) });
@@ -150,7 +156,9 @@ const startDustRaw: BalanceEngine = (identity, account, onState) => {
   return () => {
     stopped = true;
     subscription?.unsubscribe();
-    void wallet?.stop().catch(() => { /* already stopping is fine */ });
+    void wallet?.stop().catch(() => {
+      /* already stopping is fine */
+    });
   };
 };
 

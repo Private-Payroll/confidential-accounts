@@ -49,8 +49,5 @@
    * them, and the alternative was to leave a config claiming to typecheck a
    * file it cannot resolve.
    */
-  "exclude": [
-    "src/profile/registry-open.test.tsx",
-    "src/profile/unlock.test.ts"
-  ]
+  "exclude": ["src/profile/registry-open.test.tsx", "src/profile/unlock.test.ts"]
 }

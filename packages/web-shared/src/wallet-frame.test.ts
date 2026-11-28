@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  WALLET_FRAME_ALLOW, closeWalletFrame, mountWalletFrame, onWalletFrame, walletFrameShown,
-  walletInThisPage, walletQuietlyInThisPage,
+  WALLET_FRAME_ALLOW,
+  closeWalletFrame,
+  mountWalletFrame,
+  onWalletFrame,
+  walletFrameShown,
+  walletInThisPage,
+  walletQuietlyInThisPage
 } from './wallet-frame.js';
 import type { FrameElement } from './wallet-frame.js';
 import { READY_PING } from 'midnight-identity/profile/channel';
@@ -16,16 +21,33 @@ import { askWallet } from './wallet-sign-in.js';
 
 const aFrame = () => {
   const posted: Array<{ message: unknown; target: string }> = [];
-  const contentWindow = { postMessage: (message: unknown, target: string) => { posted.push({ message, target }); } };
-  const element: FrameElement & { focused: number } = { src: '', contentWindow, focused: 0, focus() { this.focused += 1; } };
+  const contentWindow = {
+    postMessage: (message: unknown, target: string) => {
+      posted.push({ message, target });
+    }
+  };
+  const element: FrameElement & { focused: number } = {
+    src: '',
+    contentWindow,
+    focused: 0,
+    focus() {
+      this.focused += 1;
+    }
+  };
   return { element, contentWindow, posted };
 };
 
 const aPage = () => ({
-  addEventListener: () => {}, removeEventListener: () => {}, setTimeout: () => 0, clearTimeout: () => {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  setTimeout: () => 0,
+  clearTimeout: () => {}
 });
 
-afterEach(() => { closeWalletFrame(); mountWalletFrame(null); });
+afterEach(() => {
+  closeWalletFrame();
+  mountWalletFrame(null);
+});
 
 describe('the wallet in this page', () => {
   it('delegates a passkey to the frame and nothing else', () => {
@@ -91,7 +113,8 @@ describe('the wallet in this page', () => {
 describe('the application itself', () => {
   it('is FRAMED BY NOBODY: the page that holds a wallet must be the top of the tab', async () => {
     const config = (await import('../../../apps/web/vite.config.ts')).default as {
-      server?: { headers?: Record<string, string> }; preview?: { headers?: Record<string, string> };
+      server?: { headers?: Record<string, string> };
+      preview?: { headers?: Record<string, string> };
     };
     for (const headers of [config.server?.headers, config.preview?.headers]) {
       expect(headers?.['Content-Security-Policy']).toBe("frame-ancestors 'none'");
@@ -101,12 +124,17 @@ describe('the application itself', () => {
 });
 
 describe('an ask, spoken through the frame', () => {
-  it('HEARS the frame\'s own window, posts the ask to it, and takes its answer - and nothing else', async () => {
+  it("HEARS the frame's own window, posts the ask to it, and takes its answer - and nothing else", async () => {
     const WALLET = 'https://identity.payroll.example';
     const { element, contentWindow, posted } = aFrame();
     mountWalletFrame(element);
     const handlers: Array<(e: MessageEvent) => void> = [];
-    const page = { ...aPage(), addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handlers.push(h); } };
+    const page = {
+      ...aPage(),
+      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      }
+    };
     const say = (source: unknown, data: unknown, origin = WALLET) =>
       handlers.forEach((h) => h({ source, origin, data } as unknown as MessageEvent));
 
@@ -124,14 +152,22 @@ describe('an ask, spoken through the frame', () => {
   });
 });
 
-describe('the product\'s journeys default to the wallet in this page', () => {
-  it('SIGNING IN with no window handed in points THIS PAGE\'S frame at the wallet, and opens no window', async () => {
+describe("the product's journeys default to the wallet in this page", () => {
+  it("SIGNING IN with no window handed in points THIS PAGE'S frame at the wallet, and opens no window", async () => {
     const { element } = aFrame();
     mountWalletFrame(element);
     const opened: string[] = [];
     const g = globalThis as { window?: unknown; fetch?: unknown };
-    const realWindow = g.window; const realFetch = g.fetch;
-    g.window = { ...aPage(), location: { origin: 'https://app.payroll.example' }, open: (u: string) => { opened.push(u); return null; } };
+    const realWindow = g.window;
+    const realFetch = g.fetch;
+    g.window = {
+      ...aPage(),
+      location: { origin: 'https://app.payroll.example' },
+      open: (u: string) => {
+        opened.push(u);
+        return null;
+      }
+    };
     g.fetch = () => new Promise(() => {});
     try {
       const keyring = await import('./keyring.js');
@@ -139,7 +175,8 @@ describe('the product\'s journeys default to the wallet in this page', () => {
       expect(element.src).toMatch(/^https:\/\/identity\.payroll\.example\/\?ask=\d+#\/approve$/);
       expect(opened, 'a window was opened instead').toEqual([]);
     } finally {
-      g.window = realWindow; g.fetch = realFetch;
+      g.window = realWindow;
+      g.fetch = realFetch;
     }
   });
 });
@@ -151,18 +188,29 @@ describe('the wallet asked for public facts, in a frame nobody sees', () => {
     const doc = {
       createElement: () => {
         const el = {
-          src: '', hidden: false, attrs: {} as Record<string, string>, style: {} as Record<string, string>,
+          src: '',
+          hidden: false,
+          attrs: {} as Record<string, string>,
+          style: {} as Record<string, string>,
           contentWindow: { postMessage: () => {} },
-          setAttribute(k: string, v: string) { this.attrs[k] = v; },
+          setAttribute(k: string, v: string) {
+            this.attrs[k] = v;
+          }
         };
         made.push(el as never);
         return el as never;
       },
       body: {
-        appendChild: (n: unknown) => { attached.add(n); return n; },
-        removeChild: (n: unknown) => { attached.delete(n); return n; },
-        contains: (n: unknown) => attached.has(n),
-      },
+        appendChild: (n: unknown) => {
+          attached.add(n);
+          return n;
+        },
+        removeChild: (n: unknown) => {
+          attached.delete(n);
+          return n;
+        },
+        contains: (n: unknown) => attached.has(n)
+      }
     };
     return { doc, made, attached };
   };
@@ -182,7 +230,15 @@ describe('the wallet asked for public facts, in a frame nobody sees', () => {
     expect(made[0]!.src).toBe('https://wallet.example/?ask=1#/approve');
     expect(made[1]!.src).toBe('https://wallet.example/?ask=2#/approve');
     /* RED WHEN: the frame can be seen, focused or read out by assistive technology. */
-    expect(made.every((f) => f.hidden === true && f.attrs['aria-hidden'] === 'true' && f.attrs['tabindex'] === '-1' && f.style.display === 'none')).toBe(true);
+    expect(
+      made.every(
+        (f) =>
+          f.hidden === true &&
+          f.attrs['aria-hidden'] === 'true' &&
+          f.attrs['tabindex'] === '-1' &&
+          f.style.display === 'none'
+      )
+    ).toBe(true);
     /* RED WHEN: an ask listens for its answer from another ask's frame. */
     expect(one.messageSource).toBe(made[0]!.contentWindow);
     expect(two.messageSource).toBe(made[1]!.contentWindow);

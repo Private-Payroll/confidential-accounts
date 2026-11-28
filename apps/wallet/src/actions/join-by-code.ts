@@ -26,9 +26,12 @@ import { heldAt } from './claim-by-address.js';
 import { StepRefused, type ActionDefinition, type ShownLine, type StepContext, type Words } from './definition.js';
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.join-by-code.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.join-by-code.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
-const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => { throw new StepRefused(why(key, values)); };
+const refuse = (key: string, values?: Readonly<Record<string, string | number>>): never => {
+  throw new StepRefused(why(key, values));
+};
 
 /** What the wallet needs beyond the offer: the network its addresses are on. */
 export interface JoinReach {
@@ -36,7 +39,8 @@ export interface JoinReach {
 }
 
 const fieldsRefusal = (fields: Readonly<Record<string, string>>): Words | null => {
-  if (readCompanyLabel(fields['company']) === null || readAccountAddress(fields['account']) === null) return why('not-a-company');
+  if (readCompanyLabel(fields['company']) === null || readAccountAddress(fields['account']) === null)
+    return why('not-a-company');
   if (!/^[0-9a-f]{64}$/u.test(fields['token'] ?? '')) return why('not-an-invitation');
   return null;
 };
@@ -67,14 +71,29 @@ async function openedOffer(ctx: StepContext): Promise<Opened | 'used'> {
   const sealed = (got.body as { offer?: Sealed } | null)?.offer;
   if (got.status !== 200 || sealed === undefined) return refuse('no-offer');
   let signed: ReturnType<typeof openOffer>;
-  try { signed = openOffer(sealed, token); } catch { return refuse('no-offer'); }
+  try {
+    signed = openOffer(sealed, token);
+  } catch {
+    return refuse('no-offer');
+  }
   const o = signed.offer;
   if (offerExpiredRefusal(o, Date.now()) !== null) return refuse('expired');
-  if (o.company !== f['record'] || o.label !== label || String(o.account).toLowerCase() !== String(account).toLowerCase()) return refuse('another-company');
+  if (
+    o.company !== f['record'] ||
+    o.label !== label ||
+    String(o.account).toLowerCase() !== String(account).toLowerCase()
+  )
+    return refuse('another-company');
   if (o.for.kind !== 'employee' && o.for.kind !== 'vendor') return refuse('not-a-payee');
   const typed = (o.for as { address?: unknown }).address;
   if (typed !== undefined && typed !== null && typeof typed !== 'string') return refuse('no-offer');
-  return { person: o.for.person, typed: typeof typed === 'string' ? typed : null, inbox: o.inboxPublicKey as Hex, payee: o.for.kind, token };
+  return {
+    person: o.for.person,
+    typed: typeof typed === 'string' ? typed : null,
+    inbox: o.inboxPublicKey as Hex,
+    payee: o.for.kind,
+    token
+  };
 }
 
 /*
@@ -110,76 +129,95 @@ export function joinByCodeAction(reach: JoinReach): ActionDefinition {
   return Object.freeze({
     headline: 'act.join-by-code.headline',
     shown: async (intent): Promise<readonly ShownLine[]> => [
-      { key: 'act.join-by-code.shown.company', values: { label: String(intent.fields['company'] ?? '') }, from: 'page' },
+      {
+        key: 'act.join-by-code.shown.company',
+        values: { label: String(intent.fields['company'] ?? '') },
+        from: 'page'
+      },
       { key: 'act.join-by-code.shown.address', from: 'action' },
       { key: 'act.join-by-code.shown.code', from: 'action' },
       { key: 'act.join-by-code.shown.fingerprint', from: 'action' },
-      { key: 'act.join-by-code.shown.nothing-else', from: 'action' },
+      { key: 'act.join-by-code.shown.nothing-else', from: 'action' }
     ],
     checks: [
       { key: 'act.join-by-code.check.offer' },
       { key: 'act.join-by-code.check.held' },
-      { key: 'act.join-by-code.check.listed' },
+      { key: 'act.join-by-code.check.listed' }
     ],
     check: async (intent) => fieldsRefusal(intent.fields),
-    steps: () => [{
-      title: { key: 'act.join-by-code.step.join' },
-      run: async (ctx) => {
-        const refused = fieldsRefusal(ctx.intent.fields);
-        if (refused !== null) throw new StepRefused(refused);
-        const saved = ctx.keyring;
-        if (saved === null) return refuse('no-saved-keys');
-        const company = readCompanyLabel(ctx.intent.fields['company'])!;
-        const invitation = invitationIdOf((ctx.intent.fields['token'] ?? '') as Hex);
-        const kept = ((): PayeeJoinKept | undefined => {
-          const one = saved.open().read().payeeJoinsKept?.[invitation];
-          return one !== undefined && one.company === company ? one : undefined;
-        })();
-        const payslipKey = (): string => {
-          try {
-            return payslipKeyOfThisWallet(ctx.held.identity, { company, requester: ctx.asker } as unknown as JoinCodeRequest);
-          } catch {
-            return refuse('no-payslip-key');
+    steps: () => [
+      {
+        title: { key: 'act.join-by-code.step.join' },
+        run: async (ctx) => {
+          const refused = fieldsRefusal(ctx.intent.fields);
+          if (refused !== null) throw new StepRefused(refused);
+          const saved = ctx.keyring;
+          if (saved === null) return refuse('no-saved-keys');
+          const company = readCompanyLabel(ctx.intent.fields['company'])!;
+          const invitation = invitationIdOf((ctx.intent.fields['token'] ?? '') as Hex);
+          const kept = ((): PayeeJoinKept | undefined => {
+            const one = saved.open().read().payeeJoinsKept?.[invitation];
+            return one !== undefined && one.company === company ? one : undefined;
+          })();
+          const payslipKey = (): string => {
+            try {
+              return payslipKeyOfThisWallet(ctx.held.identity, {
+                company,
+                requester: ctx.asker
+              } as unknown as JoinCodeRequest);
+            } catch {
+              return refuse('no-payslip-key');
+            }
+          };
+          const o = await openedOffer(ctx);
+          if (o === 'used') {
+            /* Already accepted: when this wallet kept a join of this invitation, the code it handed over named the kept
+             * address, so its fingerprint is worked out again for the person to read out; otherwise none is shown, since
+             * the code may not be this wallet's. */
+            if (kept === undefined) return refuse('used');
+            let again: string;
+            try {
+              again = payeeCodeFingerprint({
+                committeeKey: committeeKeyFor(ctx.held.identity, company),
+                parts: { address: kept.address, payslipKey: payslipKey() }
+              });
+            } catch {
+              return refuse('used');
+            }
+            return refuse('used-by-this-wallet', { fingerprint: again, address: kept.address });
           }
-        };
-        const o = await openedOffer(ctx);
-        if (o === 'used') {
-          /* Already accepted: when this wallet kept a join of this invitation, the code it handed over named the kept
-           * address, so its fingerprint is worked out again for the person to read out; otherwise none is shown, since
-           * the code may not be this wallet's. */
-          if (kept === undefined) return refuse('used');
-          let again: string;
+          const address = paidAt(o, ctx, reach.network, kept);
+          const key = payslipKey();
+          let code: JoinCode;
+          let fingerprint: string;
           try {
-            again = payeeCodeFingerprint({ committeeKey: committeeKeyFor(ctx.held.identity, company), parts: { address: kept.address, payslipKey: payslipKey() } });
-          } catch {
-            return refuse('used');
+            code = signJoinCode(ctx.held.identity, company, o.person, { kind: 'payee', address, payslipKey: key });
+            fingerprint = payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts });
+          } catch (e) {
+            return refuse('not-signed', { says: String((e as Error)?.message ?? e) });
           }
-          return refuse('used-by-this-wallet', { fingerprint: again, address: kept.address });
+          /* Listed and kept before the hand-over, which an invitation takes once: kept after, a keep that failed would
+           * leave the person joined, their wallet not knowing the company pays them, and no fingerprint to show again. */
+          const now = saved.open().read();
+          if (!(now.paidBy ?? []).includes(company) || now.payeeJoinsKept?.[invitation] === undefined) {
+            await saved.keep((k) => withPaidBy(withPayeeJoinKept(k, invitation, { company, address }), company));
+          }
+          const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token), {
+            acceptance: acceptanceProofOf(o.token),
+            handover: payeeHandoverOf(code, o.inbox),
+            kind: o.payee
+          });
+          if (answer.status !== 201) {
+            const said = (answer.body as { error?: unknown } | null)?.error;
+            refuse('not-taken', {
+              says: typeof said === 'string' ? said : `the service answered ${answer.status}`,
+              fingerprint,
+              address
+            });
+          }
+          ctx.show({ key: 'act.join-by-code.over.fingerprint', values: { fingerprint, address } });
         }
-        const address = paidAt(o, ctx, reach.network, kept);
-        const key = payslipKey();
-        let code: JoinCode;
-        let fingerprint: string;
-        try {
-          code = signJoinCode(ctx.held.identity, company, o.person, { kind: 'payee', address, payslipKey: key });
-          fingerprint = payeeCodeFingerprint(code as JoinCode & { parts: PayeeParts });
-        } catch (e) {
-          return refuse('not-signed', { says: String((e as Error)?.message ?? e) });
-        }
-        /* Listed and kept before the hand-over, which an invitation takes once: kept after, a keep that failed would
-         * leave the person joined, their wallet not knowing the company pays them, and no fingerprint to show again. */
-        const now = saved.open().read();
-        if (!(now.paidBy ?? []).includes(company) || now.payeeJoinsKept?.[invitation] === undefined) {
-          await saved.keep((k) => withPaidBy(withPayeeJoinKept(k, invitation, { company, address }), company));
-        }
-        const answer = await ctx.invitations.acceptPayee(invitationIdOf(o.token),
-          { acceptance: acceptanceProofOf(o.token), handover: payeeHandoverOf(code, o.inbox), kind: o.payee });
-        if (answer.status !== 201) {
-          const said = (answer.body as { error?: unknown } | null)?.error;
-          refuse('not-taken', { says: typeof said === 'string' ? said : `the service answered ${answer.status}`, fingerprint, address });
-        }
-        ctx.show({ key: 'act.join-by-code.over.fingerprint', values: { fingerprint, address } });
-      },
-    }],
+      }
+    ]
   } satisfies ActionDefinition);
 }

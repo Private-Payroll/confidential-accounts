@@ -61,7 +61,8 @@ abstract class HeldAmount {
   }
 
   protected constructor(made: symbol, units: bigint, decimals: number, symbol: string) {
-    if (made !== MADE_HERE) throw new TypeError('a token amount is made by publicAmount or privateAmount, and by nothing else');
+    if (made !== MADE_HERE)
+      throw new TypeError('a token amount is made by publicAmount or privateAmount, and by nothing else');
     this.#units = units;
     this.#decimals = decimals;
     this.#symbol = symbol;
@@ -73,15 +74,21 @@ abstract class HeldAmount {
   }
 
   [Symbol.toPrimitive](): never {
-    throw new TypeError('a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else');
+    throw new TypeError(
+      'a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else'
+    );
   }
 
   toString(): never {
-    throw new TypeError('a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else');
+    throw new TypeError(
+      'a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else'
+    );
   }
 
   toJSON(): never {
-    throw new TypeError('a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else');
+    throw new TypeError(
+      'a token amount is shown only by Amount or Balance, and is never turned into text or a number anywhere else'
+    );
   }
 }
 
@@ -131,9 +138,12 @@ function checked(units: bigint, decimals: number, symbol: string): void {
   if (!Number.isSafeInteger(decimals) || decimals < 0) {
     throw new RangeError(`a token's decimals are a whole number from 0 up, and this is ${String(decimals)}`);
   }
-  if (typeof symbol !== 'string' || symbol === '') throw new TypeError('a token amount carries its token\'s symbol');
+  if (typeof symbol !== 'string' || symbol === '') throw new TypeError("a token amount carries its token's symbol");
   /* A token is 64 hex characters; a person is shown its symbol, so a token passed where the symbol goes is refused rather than printed. */
-  if (/^[0-9a-f]{64}$/i.test(symbol)) throw new TypeError('a token amount carries its token\'s symbol, and this is the token itself, which no screen shows');
+  if (/^[0-9a-f]{64}$/i.test(symbol))
+    throw new TypeError(
+      "a token amount carries its token's symbol, and this is the token itself, which no screen shows"
+    );
 }
 
 /**
@@ -155,7 +165,9 @@ export function privateAmount(units: bigint, decimals: number, symbol: string): 
 /** Whether anyone can look `amount` up, read from how it was made. Refuses anything not made here. */
 export function visibilityOf(amount: TokenAmount): Visibility {
   if (!(amount instanceof HeldAmount)) {
-    throw new TypeError(`a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`);
+    throw new TypeError(
+      `a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`
+    );
   }
   if (isPublic(amount)) return 'public';
   if (isPrivate(amount)) return 'private';
@@ -174,7 +186,9 @@ function partsOf(tag: string): { decimal: string; digits: readonly string[] } {
 /** The figure of an amount, without its symbol, in the language `tag` names. Used by the amount component (`Amount`, the balance through `AmountFigure`, and `AmountFigureOnly` beside `AmountState`), and by nothing else a screen reaches. */
 export function formatTokenAmount(amount: TokenAmount, tag: string): string {
   if (!(amount instanceof HeldAmount)) {
-    throw new TypeError(`a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`);
+    throw new TypeError(
+      `a token amount is made by publicAmount or privateAmount, and this is a value of type ${typeof amount}`
+    );
   }
   const units = unitsOf(amount);
   const decimals = decimalsOf(amount);

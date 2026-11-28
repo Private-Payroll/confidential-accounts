@@ -20,7 +20,12 @@ import { keyringFor } from './keyring-person.js';
  * standing. A vault held by keys that are not the committee now, not yet on
  * the chain, not finished, or of a standing not known, is not one.
  */
-const HANDED_OVER: ReadonlySet<VaultStanding> = new Set([VAULT.held, VAULT.notFundable, VAULT.accountNotHandedOver, VAULT.accountNotFundable]);
+const HANDED_OVER: ReadonlySet<VaultStanding> = new Set([
+  VAULT.held,
+  VAULT.notFundable,
+  VAULT.accountNotHandedOver,
+  VAULT.accountNotFundable
+]);
 
 /** Whether `vault` was handed over when it was created. */
 export const wasHandedOver = (vault: Pick<VaultRow, 'standing'>): boolean => HANDED_OVER.has(vault.standing);

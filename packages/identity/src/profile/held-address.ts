@@ -53,11 +53,9 @@ const DOMAIN = new TextEncoder().encode('midnight-identity/held-address/v2');
 const KEY_BYTES = 32;
 const HEX64 = /^[0-9a-f]{64}$/u;
 
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
-const fromHex = (text: string): Uint8Array =>
-  Uint8Array.from(text.match(/../gu) ?? [], (pair) => parseInt(pair, 16));
+const fromHex = (text: string): Uint8Array => Uint8Array.from(text.match(/../gu) ?? [], (pair) => parseInt(pair, 16));
 
 /**
  * The ask a list answers: what binds every digest in it to one question from
@@ -78,7 +76,7 @@ const addressBytes = (address: string): { network: string; keys: Uint8Array } | 
       const checked = checkShieldedAddress(address, network);
       return {
         network: checked.network,
-        keys: Uint8Array.from([...fromHex(checked.coinPublicKey), ...fromHex(checked.encryptionPublicKey)]),
+        keys: Uint8Array.from([...fromHex(checked.coinPublicKey), ...fromHex(checked.encryptionPublicKey)])
       };
     } catch {
       /* not an address of this network; the next is asked */
@@ -109,11 +107,14 @@ export function heldAddressDigest(scope: HeldScope, address: string): string | n
     text(scope.origin),
     text(scope.company),
     text(decoded.network),
-    decoded.keys,
+    decoded.keys
   ];
   const input = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
-  for (const p of parts) { input.set(p, at); at += p.length; }
+  for (const p of parts) {
+    input.set(p, at);
+    at += p.length;
+  }
   return hex(sha256(input));
 }
 
@@ -124,14 +125,17 @@ export function heldAddressDigest(scope: HeldScope, address: string): string | n
  * everything true it can.
  */
 export function heldAddressList(
-  scope: HeldScope, addresses: readonly string[],
-  random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n)),
+  scope: HeldScope,
+  addresses: readonly string[],
+  random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))
 ): string[] {
-  const digests = [...new Set(addresses
-    .map((a) => heldAddressDigest(scope, a))
-    .filter((d): d is string => d !== null))];
+  const digests = [
+    ...new Set(addresses.map((a) => heldAddressDigest(scope, a)).filter((d): d is string => d !== null))
+  ];
   if (digests.length > HELD_ADDRESS_SLOTS) {
-    throw new Error(`a wallet answers for at most ${HELD_ADDRESS_SLOTS} addresses, and this one holds ${digests.length}.`);
+    throw new Error(
+      `a wallet answers for at most ${HELD_ADDRESS_SLOTS} addresses, and this one holds ${digests.length}.`
+    );
   }
   const filler = Array.from({ length: HELD_ADDRESS_SLOTS - digests.length }, () => hex(random(KEY_BYTES)));
   return [...digests, ...filler].sort();

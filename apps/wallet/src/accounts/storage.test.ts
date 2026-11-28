@@ -1,37 +1,45 @@
-import { beforeEach, describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { newSecret } from 'midnight-identity/keys/derivation';
-import { fingerprintOf, splitSecret } from 'midnight-identity/recovery/pieces';
-import type { PieceSet, Placement } from 'midnight-identity/recovery/pieces';
-import { toBase64Url } from 'midnight-identity/passkey/bytes';
-import {
-  StorageError, allPasskeys, arrivalOf, creationOf, forgetEverything, forgetPasskey,
-  loadSecret, loadSecuredSetup, loadSubwallets, savePasskey, saveArrival, saveCreation,
-  saveSecret, saveSecuredSetup, saveSubwalletName, saveWalletName, securedSetupOnRecord,
-  walletNameOf, walletNameOnRecord, walletOfCredential,
-} from './storage.js';
-import type { SecuredSetup } from './storage.js';
+import { fromBase64Url, toBase64Url } from 'midnight-identity/passkey/bytes';
 import type { Passkey } from 'midnight-identity/passkey/verify';
-import { ORIGINAL_SLOT, forgetOpenWallet, heldWallets, openWallet } from './wallets-held.js';
+import type { PieceSet, Placement } from 'midnight-identity/recovery/pieces';
+import { fingerprintOf, splitSecret } from 'midnight-identity/recovery/pieces';
+import { beforeEach, describe, expect, it } from 'vitest';
+
 import { snapshotForTest } from '../testing/snapshot.js';
+import {
+  allPasskeys,
+  arrivalOf,
+  creationOf,
+  forgetEverything,
+  forgetPasskey,
+  loadSecret,
+  loadSecuredSetup,
+  loadSubwallets,
+  loadWalletCheckpoint,
+  openHere,
+  saveArrival,
+  saveCreation,
+  savePasskey,
+  saveSecret,
+  saveSecuredSetup,
+  saveSubwalletName,
+  saveWalletCheckpoint,
+  saveWalletName,
+  sealHere,
+  securedSetupOnRecord,
+  StorageError,
+  walletNameOf,
+  walletNameOnRecord,
+  walletOfCredential
+} from './storage.js';
+import { forgetOpenWallet, heldWallets, openWallet, ORIGINAL_SLOT } from './wallets-held.js';
 
 const A_STATE = snapshotForTest({ coinPublicKey: 'coin-key-a' });
 const B_STATE = snapshotForTest({ coinPublicKey: 'coin-key-b' });
 
-/*
- * THE RECORD THAT SWITCHES OFF §7.7's NOTICE, UNDER ATTACK — TWO WAYS —
- * AND THE CRYPTO HALF OF THE FILE, EXECUTED.
- *
- * The home screen shows the green tick whenever `loadSecuredSetup` returns a
- * record, so every acceptance here is a claim of "your money is safe". These
- * tests feed it the records an interrupted write, a hand edit, an older
- * version of this app, or a DIFFERENT ACCOUNT's history could leave behind,
- * and the required answer is null — which puts the notice back up.
- *
- * localStorage is a ten-line stand-in (Node has none); IndexedDB is
- * `fake-indexeddb`, which faithfully round-trips a non-extractable CryptoKey,
- * so `sealingKey`, the seal and the unseal all actually run.
- */
+/* The wallet's stored records, read back after the damage a torn write, a hand edit, an older build or another wallet
+ * leaves; the home screen's green tick shows whenever `loadSecuredSetup` returns a record, so each refusal must be null. */
 
 const SECURED_KEY = 'midnight-identity:secured';
 const KEYRING_KEY = 'midnight-identity:keyring';
@@ -41,43 +49,69 @@ const backing = new Map<string, string>();
 
 beforeEach(() => {
   backing.clear();
-  /* `length` and `key` are new here, and they are not decoration:
-   * `wallets-held.ts` finds a wallet by its KEY NAMES when the directory
-   * record is missing or damaged, which is the net under a lost index. A
-   * stand-in without them would leave that net untested. */
+  /* `length` and `key` are needed: `heldWallets` finds a wallet by its key names when the directory record is lost. */
   (globalThis as { localStorage?: unknown }).localStorage = {
     getItem: (key: string) => backing.get(key) ?? null,
-    setItem: (key: string, value: string) => { backing.set(key, String(value)); },
-    removeItem: (key: string) => { backing.delete(key); },
-    get length() { return backing.size; },
-    key: (index: number) => [...backing.keys()][index] ?? null,
+    setItem: (key: string, value: string) => {
+      backing.set(key, String(value));
+    },
+    removeItem: (key: string) => {
+      backing.delete(key);
+    },
+    get length() {
+      return backing.size;
+    },
+    key: (index: number) => [...backing.keys()][index] ?? null
   };
-  /* The open compartment is per WINDOW, so it is module state, so it survives
-   * a test. Every test here starts with nothing open. */
+  /* The open compartment is per window, so it is module state that outlives a test. */
   forgetOpenWallet();
-  /* A fresh, working IndexedDB per test. Tests for a blocked or wiped one
-   * replace or delete this themselves. */
+  /* A fresh, working IndexedDB per test; the tests of a blocked or wiped one replace it themselves. */
   (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
 });
 
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
   { label: 'Printed card', holder: 'paper' },
-  { label: 'Old laptop', holder: 'device:old' },
+  { label: 'Old laptop', holder: 'device:old' }
 ];
 
 /** A record as the securing flow will write it: a real cut, proved, through the only writer. */
 const VERIFICATION: Readonly<Record<string, number | 'never' | null>> = {
-  'google:me': 1_000, paper: null, 'device:old': 'never',
+  'google:me': 1_000,
+  paper: null,
+  'device:old': 'never'
 };
 
 async function writtenRecord(forSecret = newSecret()): Promise<{
-  forSecret: Uint8Array; set: PieceSet; raw: string;
+  forSecret: Uint8Array;
+  set: PieceSet;
+  raw: string;
 }> {
   const set = await splitSecret(forSecret, PLACEMENTS, 2);
   await saveSecuredSetup(forSecret, set, VERIFICATION);
-  return { forSecret, set, raw: backing.get(SECURED_KEY) as string };
+  const raw = backing.get(SECURED_KEY);
+  if (raw === undefined) throw new Error('the writer stored no record');
+  return { forSecret, set, raw };
 }
+
+/** A stored record's fields, to be damaged one at a time. */
+const fieldsOf = (raw: string): Record<string, unknown> => {
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+    throw new Error('the record is not an object');
+  return Object.fromEntries(Object.entries(parsed));
+};
+
+/** The StorageError a call fails with; a call that succeeds, or fails any other way, fails the test. */
+const storageErrorOf = async (call: () => unknown): Promise<StorageError> => {
+  try {
+    await call();
+  } catch (e) {
+    if (e instanceof StorageError) return e;
+    throw e;
+  }
+  throw new Error('the call did not fail');
+};
 
 describe('saveSecuredSetup — rebuiltAt is evidence, not caller data', () => {
   it('writes only after actually rebuilding, and stamps its own clock', async () => {
@@ -88,8 +122,7 @@ describe('saveSecuredSetup — rebuiltAt is evidence, not caller data', () => {
     expect(setup).not.toBeNull();
     expect(setup?.threshold).toBe(2);
     expect(setup?.pieces).toHaveLength(3);
-    /* There is no argument to lie with: the date is this function's clock,
-     * taken after the proof ran. */
+    /* No argument can set the date: it is the writer's own clock, read after the proof ran. */
     expect(setup?.rebuiltAt).toBeGreaterThanOrEqual(before);
     expect(setup?.rebuiltAt).toBeLessThanOrEqual(after);
   });
@@ -103,7 +136,7 @@ describe('saveSecuredSetup — rebuiltAt is evidence, not caller data', () => {
     expect(pieces.find((p) => p.holder === 'device:old')?.lastVerified).toBe('never');
   });
 
-  it("refuses to write a record for a set that does not recover the secret", async () => {
+  it('refuses to write a record for a set that does not recover the secret', async () => {
     const secret = newSecret();
     const foreignSet = await splitSecret(newSecret(), PLACEMENTS, 2);
     await expect(saveSecuredSetup(secret, foreignSet, VERIFICATION)).rejects.toThrow();
@@ -111,8 +144,7 @@ describe('saveSecuredSetup — rebuiltAt is evidence, not caller data', () => {
   });
 
   it('the serialised record contains NO share bytes', async () => {
-    /* The writer receives a real PieceSet, shares and all; what it writes is
-     * metadata only. Check every encoding a leak would plausibly take. */
+    /* The writer is handed real shares and writes metadata only, so every encoding a leak could take is checked. */
     const { set, raw } = await writtenRecord();
     expect(raw).not.toContain('"bytes"');
     for (const piece of set.pieces) {
@@ -131,22 +163,18 @@ describe('loadSecuredSetup — a record nothing checks must not decide the tick'
     expect(loadSecuredSetup(newSecret())).toBeNull();
   });
 
-  /* The exact record the defect was found on: {threshold: 5, pieces: []} rendered
-   * "Any 5 of these 0 pieces put this account back" under a green tick. */
+  /* RED WHEN: a record of five pieces needed and none listed shows the green tick. */
   it('refuses the bad record: a threshold with no pieces', async () => {
     const { forSecret, raw } = await writtenRecord();
-    const record = JSON.parse(raw) as SecuredSetup;
+    const record = fieldsOf(raw);
     backing.set(SECURED_KEY, JSON.stringify({ ...record, threshold: 5, pieces: [] }));
     expect(loadSecuredSetup(forSecret)).toBeNull();
   });
 
-  /*
-   * THE PLAN RULES ARE checkPlan's — the same ones that refuse a set at
-   * cutting time. A looser second copy here accepted all three of these.
-   */
+  /* The reader holds a record to `checkPlan`, the rules that refuse a set when it is cut. */
   it('refuses what checkPlan refuses: threshold one, a single piece, one holder twice', async () => {
     const { forSecret, raw } = await writtenRecord();
-    const record = JSON.parse(raw) as SecuredSetup;
+    const record = fieldsOf(raw);
     const own = (pieces: unknown, threshold: number): void => {
       backing.set(SECURED_KEY, JSON.stringify({ ...record, pieces, threshold }));
       expect(loadSecuredSetup(forSecret)).toBeNull();
@@ -154,55 +182,70 @@ describe('loadSecuredSetup — a record nothing checks must not decide the tick'
     /* "any 1 of these 1 pieces" — copies, not a threshold. */
     own([{ label: 'Only place', holder: 'google:me', lastVerified: null }], 1);
     /* a 2-of-2 where both pieces sit behind the same Google account. */
-    own([
-      { label: 'Drive A', holder: 'google:me', lastVerified: null },
-      { label: 'Drive B', holder: 'google:me', lastVerified: null },
-    ], 2);
+    own(
+      [
+        { label: 'Drive A', holder: 'google:me', lastVerified: null },
+        { label: 'Drive B', holder: 'google:me', lastVerified: null }
+      ],
+      2
+    );
     /* a 2-of-3 with two pieces in one holder — one of them is decoration. */
-    own([
-      { label: 'Drive A', holder: 'google:me', lastVerified: null },
-      { label: 'Drive B', holder: 'google:me', lastVerified: null },
-      { label: 'Paper', holder: 'paper', lastVerified: null },
-    ], 2);
+    own(
+      [
+        { label: 'Drive A', holder: 'google:me', lastVerified: null },
+        { label: 'Drive B', holder: 'google:me', lastVerified: null },
+        { label: 'Paper', holder: 'paper', lastVerified: null }
+      ],
+      2
+    );
   });
 
-  it.each([0, -1, 1.5, '2', null, undefined, Number.NaN, 4])(
-    'refuses threshold %j', async (threshold) => {
-      const { forSecret, raw } = await writtenRecord();
-      const record = JSON.parse(raw) as unknown as Record<string, unknown>;
-      backing.set(SECURED_KEY, JSON.stringify({ ...record, threshold }));
-      expect(loadSecuredSetup(forSecret)).toBeNull();
-    });
+  it.each([0, -1, 1.5, '2', null, undefined, Number.NaN, 4])('refuses threshold %j', async (threshold) => {
+    const { forSecret, raw } = await writtenRecord();
+    const record = fieldsOf(raw);
+    backing.set(SECURED_KEY, JSON.stringify({ ...record, threshold }));
+    expect(loadSecuredSetup(forSecret)).toBeNull();
+  });
 
   it.each(['yesterday', null, undefined, Number.NaN])(
-    'refuses rebuiltAt %j — the tick states a dated fact, §7.12', async (rebuiltAt) => {
+    'refuses rebuiltAt %j — the tick states a dated fact',
+    async (rebuiltAt) => {
       const { forSecret, raw } = await writtenRecord();
-      const record = JSON.parse(raw) as unknown as Record<string, unknown>;
+      const record = fieldsOf(raw);
       backing.set(SECURED_KEY, JSON.stringify({ ...record, rebuiltAt }));
       expect(loadSecuredSetup(forSecret)).toBeNull();
-    });
+    }
+  );
 
-  /* `pieces` itself replaced by things that are not a list of pieces. Without
-   * these guards the home screen throws inside render — a blank page. */
-  it.each([7, null, { length: 3 }, [null], ['garbage'], [{ label: 'x' }], [{ label: '  ', holder: 'paper', lastVerified: null }], [{ label: 'x', holder: 'paper', lastVerified: 'never' }]])(
-    'refuses pieces %j', async (pieces) => {
-      const { forSecret, raw } = await writtenRecord();
-      const record = JSON.parse(raw) as unknown as Record<string, unknown>;
-      backing.set(SECURED_KEY, JSON.stringify({ ...record, pieces, threshold: 2 }));
-      expect(loadSecuredSetup(forSecret)).toBeNull();
-    });
+  /* RED WHEN: `pieces` that are not a list of pieces reach the home screen, which then throws while it draws. */
+  it.each([
+    7,
+    null,
+    { length: 3 },
+    [null],
+    ['garbage'],
+    [{ label: 'x' }],
+    [{ label: '  ', holder: 'paper', lastVerified: null }],
+    [{ label: 'x', holder: 'paper', lastVerified: 'never' }]
+  ])('refuses pieces %j', async (pieces) => {
+    const { forSecret, raw } = await writtenRecord();
+    const record = fieldsOf(raw);
+    backing.set(SECURED_KEY, JSON.stringify({ ...record, pieces, threshold: 2 }));
+    expect(loadSecuredSetup(forSecret)).toBeNull();
+  });
 
   it.each(['not json {{{', '42', '"secured"', 'null', '[]'])(
-    'refuses stored garbage %j rather than throwing', (raw) => {
+    'refuses stored garbage %j rather than throwing',
+    (raw) => {
       backing.set(SECURED_KEY, raw);
       expect(loadSecuredSetup(newSecret())).toBeNull();
-    });
+    }
+  );
 });
 
 describe('loadSecuredSetup — the record names its account', () => {
   it('refuses a record cut from a different secret', async () => {
-    /* The story: secure account A, start over, create account B — the
-     * stale record must not become B's proof of backup. */
+    /* Secure account A, start over, create account B: A's record must not become B's proof of backup. */
     const { raw } = await writtenRecord();
     backing.set(SECURED_KEY, raw);
     expect(loadSecuredSetup(newSecret())).toBeNull();
@@ -210,30 +253,29 @@ describe('loadSecuredSetup — the record names its account', () => {
 
   it('refuses a record whose fingerprint was stripped or forged', async () => {
     const { forSecret, raw } = await writtenRecord();
-    const record = JSON.parse(raw) as unknown as Record<string, unknown>;
+    const record = fieldsOf(raw);
     const stripped = { ...record };
     delete stripped['fingerprint'];
     backing.set(SECURED_KEY, JSON.stringify(stripped));
     expect(loadSecuredSetup(forSecret)).toBeNull();
-    backing.set(SECURED_KEY, JSON.stringify({
-      ...record, fingerprint: toBase64Url(fingerprintOf(newSecret())),
-    }));
+    backing.set(
+      SECURED_KEY,
+      JSON.stringify({
+        ...record,
+        fingerprint: toBase64Url(fingerprintOf(newSecret()))
+      })
+    );
     expect(loadSecuredSetup(forSecret)).toBeNull();
   });
 
   it('reader and writer do not share a blind spot', async () => {
-    /* If `fingerprintOf` collapsed to a constant, writer and reader would
-     * agree and this would be green and wrong. Two secrets must fingerprint
-     * differently. */
-    expect(toBase64Url(fingerprintOf(newSecret())))
-      .not.toBe(toBase64Url(fingerprintOf(newSecret())));
+    /* A `fingerprintOf` that returned a constant would let writer and reader agree on every secret. */
+    expect(toBase64Url(fingerprintOf(newSecret()))).not.toBe(toBase64Url(fingerprintOf(newSecret())));
   });
 
   it('securedSetupOnRecord returns the map without the fingerprint check', async () => {
     await writtenRecord();
-    /* No secret supplied, no claim made: this is the broken-storage screen's
-     * read, where the secret cannot be unlocked to check. Shape and plan are
-     * still validated. */
+    /* The broken-storage screen's read, where the secret cannot be unlocked: shape and plan are still checked. */
     expect(securedSetupOnRecord(ORIGINAL_SLOT)).not.toBeNull();
     backing.set(SECURED_KEY, JSON.stringify({ threshold: 5, pieces: [] }));
     expect(securedSetupOnRecord(ORIGINAL_SLOT)).toBeNull();
@@ -252,40 +294,29 @@ describe('loadSecret — every way storage fails is a named state', () => {
     expect(back && toBase64Url(back)).toBe(toBase64Url(secret));
   });
 
-  it.each([
-    'not json at all',
-    '{"sealed": 7, "iv": "AAAA"}',
-    '{"iv": "AAAA"}',
-    '"just a string"',
-  ])('throws StorageError(record-damaged) for stored %j', async (raw) => {
-    backing.set(KEYRING_KEY, raw);
-    const failure = await loadSecret(ORIGINAL_SLOT).then(() => null, (e: unknown) => e);
-    expect(failure).toBeInstanceOf(StorageError);
-    expect((failure as StorageError).code).toBe('record-damaged');
-    /* The message is what the person reads on the broken screen — it must
-     * exist and say what to do, but NOTHING may branch on its wording. */
-    expect((failure as StorageError).message.length).toBeGreaterThan(20);
-  });
+  it.each(['not json at all', '{"sealed": 7, "iv": "AAAA"}', '{"iv": "AAAA"}', '"just a string"'])(
+    'throws StorageError(record-damaged) for stored %j',
+    async (raw) => {
+      backing.set(KEYRING_KEY, raw);
+      const failure = await storageErrorOf(() => loadSecret(ORIGINAL_SLOT));
+      expect(failure.code).toBe('record-damaged');
+      /* The person reads the message on the broken screen, so it must say what to do; nothing branches on its words. */
+      expect(failure.message.length).toBeGreaterThan(20);
+    }
+  );
 
   it('throws StorageError(sealed-copy-unopenable) when the sealing key is gone', async () => {
     await saveSecret(newSecret());
-    /* The cleared-profile story: the ciphertext survives in localStorage, the
-     * key kept in IndexedDB does not. */
+    /* A cleared profile: the sealed copy survives in localStorage, the key kept in IndexedDB does not. */
     (globalThis as { indexedDB?: unknown }).indexedDB = new IDBFactory();
-    const failure = await loadSecret(ORIGINAL_SLOT).then(() => null, (e: unknown) => e);
-    expect(failure).toBeInstanceOf(StorageError);
-    expect((failure as StorageError).code).toBe('sealed-copy-unopenable');
+    expect((await storageErrorOf(() => loadSecret(ORIGINAL_SLOT))).code).toBe('sealed-copy-unopenable');
   });
 
   it('throws StorageError(sealed-copy-unopenable) when IndexedDB is blocked outright', async () => {
     await saveSecret(newSecret());
-    /* A Firefox private window, some iOS and enterprise profiles: the API
-     * itself refuses. This used to escape as a DOMException and miss the
-     * branch — the third of three failures. */
+    /* A Firefox private window and some iOS and managed profiles refuse IndexedDB outright. */
     delete (globalThis as { indexedDB?: unknown }).indexedDB;
-    const failure = await loadSecret(ORIGINAL_SLOT).then(() => null, (e: unknown) => e);
-    expect(failure).toBeInstanceOf(StorageError);
-    expect((failure as StorageError).code).toBe('sealed-copy-unopenable');
+    expect((await storageErrorOf(() => loadSecret(ORIGINAL_SLOT))).code).toBe('sealed-copy-unopenable');
   });
 });
 
@@ -301,7 +332,7 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 describe('allPasskeys — a damaged record is record-damaged, never an empty list', () => {
@@ -323,30 +354,19 @@ describe('allPasskeys — a damaged record is record-damaged, never an empty lis
     '42',
     JSON.stringify([{ credentialId: 'ok', personHandle: 'p', publicKeySpki: 'AAAA' }, null]),
     JSON.stringify([{ credentialId: 'no-key', personHandle: 'p' }]),
-    JSON.stringify([{ credentialId: 'bad-b64', personHandle: 'p', publicKeySpki: '!!not-base64url!!' }]),
-  ])('throws StorageError(record-damaged) for stored %j', (raw) => {
+    JSON.stringify([{ credentialId: 'bad-b64', personHandle: 'p', publicKeySpki: '!!not-base64url!!' }])
+  ])('throws StorageError(record-damaged) for stored %j', async (raw) => {
     backing.set(PASSKEYS_KEY, raw);
-    const failure = ((): unknown => {
-      try {
-        allPasskeys(ORIGINAL_SLOT);
-        return null;
-      } catch (e) {
-        return e;
-      }
-    })();
-    expect(failure).toBeInstanceOf(StorageError);
-    expect((failure as StorageError).code).toBe('record-damaged');
+    expect((await storageErrorOf(() => allPasskeys(ORIGINAL_SLOT))).code).toBe('record-damaged');
   });
 
   it('no write path rewrites a damaged store — partial damage stays recoverable', () => {
     const damaged = JSON.stringify([
       { credentialId: 'healthy', personHandle: 'p', publicKeySpki: 'AAAA', transports: [] },
-      { credentialId: 'torn' },
+      { credentialId: 'torn' }
     ]);
     backing.set(PASSKEYS_KEY, damaged);
-    /* The old behaviour: read skips 'torn', the next save writes the store
-     * from what it read, and the damaged entry is gone for good. Now the
-     * save throws first and the bytes stay exactly as they were. */
+    /* RED WHEN: a save rewrites the store from a read that skipped the torn entry, losing it for good. */
     expect(() => savePasskey(passkeyFixture('cred-new'), ORIGINAL_SLOT)).toThrow(StorageError);
     expect(backing.get(PASSKEYS_KEY)).toBe(damaged);
     expect(() => forgetPasskey('healthy', ORIGINAL_SLOT)).toThrow(StorageError);
@@ -365,13 +385,13 @@ describe('allPasskeys — a damaged record is record-damaged, never an empty lis
   });
 });
 
-describe('StorageError — the contract the session branches on', () => {
+describe('StorageError — the contract its callers branch on', () => {
   it('is an Error with a code, and the check is instanceof, never text', () => {
     const error: unknown = new StorageError('sealed-copy-unopenable', 'reworded freely');
-    expect(error instanceof StorageError).toBe(true);
     expect(error instanceof Error).toBe(true);
-    expect((error as StorageError).code).toBe('sealed-copy-unopenable');
-    expect((error as StorageError).name).toBe('StorageError');
+    if (!(error instanceof StorageError)) throw new Error('a StorageError is not an instance of StorageError');
+    expect(error.code).toBe('sealed-copy-unopenable');
+    expect(error.name).toBe('StorageError');
   });
 });
 
@@ -383,15 +403,18 @@ describe('saveSecuredSetup — what was on record is kept, never erased', () => 
     expect(first?.superseded).toHaveLength(0);
 
     /* Re-cut the SAME account with a different plan. */
-    const secondSet = await splitSecret(secret, [
-      { label: 'New cloud', holder: 'cloud-two' },
-      { label: 'New paper', holder: 'paper-two' },
-    ], 2);
+    const secondSet = await splitSecret(
+      secret,
+      [
+        { label: 'New cloud', holder: 'cloud-two' },
+        { label: 'New paper', holder: 'paper-two' }
+      ],
+      2
+    );
     await saveSecuredSetup(secret, secondSet, { 'cloud-two': 'never', 'paper-two': null });
     const second = loadSecuredSetup(secret);
     expect(second?.superseded).toHaveLength(1);
-    expect(second?.superseded[0]?.pieces.map((p) => p.holder))
-      .toEqual(['google:me', 'paper', 'device:old']);
+    expect(second?.superseded[0]?.pieces.map((p) => p.holder)).toEqual(['google:me', 'paper', 'device:old']);
     expect(second?.superseded[0]?.supersededAt).toBeGreaterThan(0);
 
     /* And a third cut carries both forward. */
@@ -400,19 +423,8 @@ describe('saveSecuredSetup — what was on record is kept, never erased', () => 
     expect(loadSecuredSetup(secret)?.superseded).toHaveLength(2);
   });
 
-  /*
-   * MANY WALLETS REPLACES THIS TEST'S PREMISE, AND THE REPLACEMENT IS STRONGER.
-   *
-   * It used to read: another account's map must survive being OVERWRITTEN, by
-   * being carried into `superseded`. That was the best available answer while
-   * every wallet shared one record. **Now it is not overwritten at all** — it
-   * is a different record, in a different compartment — so the assertion moves
-   * from "preserved inside the replacement" to "never touched".
-   *
-   * THE RULE IS NOT WEAKENED: the re-cut test above still pins `superseded` for the
-   * case the rule was written about, which is one wallet replacing its OWN
-   * plan while the old pieces are still out there.
-   */
+  /* Another wallet's map is a different record in a different compartment, so it is never touched; a wallet that
+   * replaces its own plan keeps the old one in `superseded`, as the re-cut test above holds. */
   it("ANOTHER WALLET'S map is not touched — it is not the same record", async () => {
     const other = newSecret();
     const otherSlot = await saveSecret(other);
@@ -439,12 +451,16 @@ describe('saveSecuredSetup — what was on record is kept, never erased', () => 
 
   it('refuses a record whose superseded entries are garbage', async () => {
     const { forSecret, raw } = await writtenRecord();
-    const record = JSON.parse(raw) as unknown as Record<string, unknown>;
-    for (const superseded of [7, [{}], [{ fingerprint: 'x', threshold: 9, pieces: [], rebuiltAt: 1, supersededAt: 1 }]]) {
+    const record = fieldsOf(raw);
+    for (const superseded of [
+      7,
+      [{}],
+      [{ fingerprint: 'x', threshold: 9, pieces: [], rebuiltAt: 1, supersededAt: 1 }]
+    ]) {
       backing.set(SECURED_KEY, JSON.stringify({ ...record, superseded }));
       expect(loadSecuredSetup(forSecret)).toBeNull();
     }
-    /* Absent entirely — a record written before that rule — reads as none. */
+    /* A record with no `superseded` field reads as having none. */
     delete record['superseded'];
     backing.set(SECURED_KEY, JSON.stringify(record));
     expect(loadSecuredSetup(forSecret)?.superseded).toEqual([]);
@@ -455,26 +471,29 @@ describe('saveSecuredSetup — the writer refuses to guess verifiability', () =>
   it('throws, and writes nothing, when a holder has no verification state', async () => {
     const secret = newSecret();
     const set = await splitSecret(secret, PLACEMENTS, 2);
-    await expect(saveSecuredSetup(secret, set, { 'google:me': 'never', paper: null }))
-      .rejects.toThrow(/no verification state/);
+    await expect(saveSecuredSetup(secret, set, { 'google:me': 'never', paper: null })).rejects.toThrow(
+      /no verification state/
+    );
     expect(backing.has(SECURED_KEY)).toBe(false);
   });
 
   it("refuses a stored lastVerified that is neither a time, 'never', nor null", async () => {
     const { forSecret, raw } = await writtenRecord();
-    const record = JSON.parse(raw) as SecuredSetup;
-    const pieces = record.pieces.map((p, i) => (i === 0 ? { ...p, lastVerified: 'soon' } : p));
+    const record = fieldsOf(raw);
+    const kept = record['pieces'];
+    if (!Array.isArray(kept)) throw new Error('the record lists no pieces');
+    const pieces = kept.map((p: unknown, i) => (i === 0 && typeof p === 'object' ? { ...p, lastVerified: 'soon' } : p));
     backing.set(SECURED_KEY, JSON.stringify({ ...record, pieces }));
     expect(loadSecuredSetup(forSecret)).toBeNull();
   });
 });
 
-describe('the partial flag — §7.15: a recovery map is honest about its edges', () => {
+describe('the partial flag — a recovery map is honest about its edges', () => {
   it('defaults to complete: the wizard writes false, and records from before parse as false', async () => {
     const { forSecret, raw } = await writtenRecord();
     expect(loadSecuredSetup(forSecret)?.partial).toBe(false);
-    /* A record written before the field existed — strip it. */
-    const record = JSON.parse(raw) as Record<string, unknown>;
+    /* A record with no `partial` field. */
+    const record = fieldsOf(raw);
     delete record['partial'];
     backing.set(SECURED_KEY, JSON.stringify(record));
     expect(loadSecuredSetup(forSecret)?.partial).toBe(false);
@@ -488,24 +507,14 @@ describe('the partial flag — §7.15: a recovery map is honest about its edges'
   });
 });
 
-/*
- * ────────────────────────────────────────────────────────────────────────────
- * ONE TEST PER RECORD KIND: WALLET B NEVER APPEARS OVER WALLET A.
- *
- * THE RULE, generalised: *"no record of wallet B
- * may ever be shown over wallet A."* `loadSubwallets`' fingerprint check is
- * what that rule was modelled on, and it is now true for a second reason as
- * well as the first — the records are not even in the same compartment.
- *
- * **BOTH REASONS ARE ASSERTED SEPARATELY, DELIBERATELY.** Each test lands two
- * real wallets (so the compartments are real), then asks for B's record with
- * A's secret (so the fingerprint check is exercised too). A round that
- * deleted that check would leave the first half of every test green.
- * ────────────────────────────────────────────────────────────────────────────
- */
+/* One test per kind of record: each lands two real wallets, so the compartments are real, and asks for B's record
+ * with A's secret, so the fingerprint check is held too and removing it turns these red. */
 describe('THE RULE — no record of wallet B is ever shown over wallet A', () => {
   async function twoWallets(): Promise<{
-    a: Uint8Array; b: Uint8Array; aSlot: string; bSlot: string;
+    a: Uint8Array;
+    b: Uint8Array;
+    aSlot: string;
+    bSlot: string;
   }> {
     const b = newSecret();
     const bSlot = await saveSecret(b);
@@ -531,10 +540,7 @@ describe('THE RULE — no record of wallet B is ever shown over wallet A', () =>
     openWallet(aSlot);
     saveWalletName(a, 'Rent money');
     expect(walletNameOf(a)).toBe('Rent money');
-    /* The unchecked reader — the locked screen's — names the compartment it
-     * is given, and the screen gives it the open one. Named here rather than
-     * defaulted: a change removed the default, and in a test about TWO wallets
-     * `ORIGINAL_SLOT` would name B, which is the mistake being pinned. */
+    /* The locked screen's unchecked reader names the compartment it is given; with two wallets the first slot is B. */
     expect(walletNameOnRecord(aSlot)).toBe('Rent money');
     expect(walletNameOnRecord(bSlot)).toBe('Company');
     /* And B\u2019s secret cannot read A\u2019s record: the check, still doing its job. */
@@ -592,84 +598,61 @@ describe('THE RULE — no record of wallet B is ever shown over wallet A', () =>
     expect(allPasskeys(aSlot).map((k) => k.credentialId)).toEqual(['cred-for-a']);
     expect(allPasskeys(bSlot).map((k) => k.credentialId)).toEqual(['cred-for-b']);
 
-    /* THE RESOLUTION THE UNLOCK SCREEN NEEDS: the browser offers every
-     * credential for this origin, and the wallet has to say which one this
-     * opens. */
+    /* The browser offers every credential for this origin, and the unlock screen must say which wallet each opens. */
     expect(walletOfCredential('cred-for-b')?.walletId).toBe(bSlot);
     expect(walletOfCredential('cred-for-a')?.walletId).toBe(aSlot);
-    /* AND THE STATE ALREADY SEEN IN THE WILD: a credential a password manager
-     * still offers, with nothing behind it here. A null, for the caller to
-     * turn into a sentence — never a wrong wallet. */
+    /* A credential a password manager still offers with nothing behind it here is null, never a wrong wallet. */
     expect(walletOfCredential('cred-from-a-cleared-browser')).toBeNull();
   });
 
-  it('A RECORD KEPT BESIDE THE SECRET IS SEALED UNDER THAT WALLET\'S OWN KEY, OPENS ONLY THERE, AND LEAVES THE SECRET\'S SEAL AS IT WAS', async () => {
+  it("A RECORD KEPT BESIDE THE SECRET IS SEALED UNDER THAT WALLET'S OWN KEY, OPENS ONLY THERE, AND LEAVES THE SECRET'S SEAL AS IT WAS", async () => {
     const { aSlot, bSlot, a } = await twoWallets();
-    const { openHere, sealHere } = await import('./storage.js');
     const kept = await sealHere('{"vault":"the record"}', aSlot);
     /* RED WHEN: the record is kept in the open. */
     expect(JSON.stringify(kept)).not.toContain('the record');
     /* RED WHEN: it does not open under the wallet that sealed it, or opens under another wallet's key. */
     expect(await openHere(kept, aSlot)).toBe('{"vault":"the record"}');
     expect(await openHere(kept, bSlot)).toBeNull();
-    expect(await openHere({ ...kept, sealed: kept.sealed.slice(0, -2) + 'AA' }, aSlot)).toBeNull();
+    const tampered = fromBase64Url(kept.sealed).map((byte, i) => (i === 0 ? byte ^ 1 : byte));
+    expect(await openHere({ ...kept, sealed: toBase64Url(tampered) }, aSlot)).toBeNull();
     /* RED WHEN: sealing beside it changes the key the secret is sealed and opened with. */
     expect([...(await loadSecret(aSlot))!]).toEqual([...a]);
   });
 
   it('BALANCE CHECKPOINTS — THE STORE KEEPS NO SNAPSHOT HOLDING ANYTHING IN FLIGHT, AND NONE IT CANNOT READ', async () => {
     const { aSlot } = await twoWallets();
-    const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('./storage.js');
     for (const [why, serialized] of [
       ['a coin set aside', snapshotForTest({ inFlight: 'spend' })],
       ['a coin expected', snapshotForTest({ inFlight: 'output' })],
-      ['unreadable', 'not a snapshot'],
+      ['unreadable', 'not a snapshot']
     ] as const) {
       /* RED WHEN: whichever writer asks, the store keeps a snapshot whose set-aside coins every restore would keep set aside for good. */
-      expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized, night: 3n, asOf: 2_000 }, aSlot), why).toBe(false);
+      expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized, night: 3n, asOf: 2_000 }, aSlot), why).toBe(
+        false
+      );
       expect(await loadWalletCheckpoint('coin-key-a', 0, aSlot), why).toBeNull();
     }
-    expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot)).toBe(true);
+    expect(await saveWalletCheckpoint('coin-key-a', 0, { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot)).toBe(
+      true
+    );
   });
 
-  it('BALANCE CHECKPOINTS — the cache is per wallet, so a switch is not a cold sync',
-    async () => {
-      const { aSlot, bSlot } = await twoWallets();
-      const { loadWalletCheckpoint, saveWalletCheckpoint } = await import('./storage.js');
-      /* The compartment is NAMED at every call. It defaulted to
-       * `openWalletId()` when this test was written, which is why the
-       * `openWallet` calls below it looked load-bearing; they are not, and
-       * the test is sharper for saying which compartment it means. */
-      await saveWalletCheckpoint('coin-key-b', 0,
-        { serialized: B_STATE, night: 7n, asOf: 1_000 }, bSlot);
-      await saveWalletCheckpoint('coin-key-a', 0,
-        { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot);
+  it('BALANCE CHECKPOINTS — the cache is per wallet, so a switch is not a cold sync', async () => {
+    const { aSlot, bSlot } = await twoWallets();
+    /* Every call names its compartment, so no call leans on which wallet is open. */
+    await saveWalletCheckpoint('coin-key-b', 0, { serialized: B_STATE, night: 7n, asOf: 1_000 }, bSlot);
+    await saveWalletCheckpoint('coin-key-a', 0, { serialized: A_STATE, night: 3n, asOf: 2_000 }, aSlot);
 
-      expect((await loadWalletCheckpoint('coin-key-a', 0, aSlot))?.serialized).toBe(A_STATE);
-      /* B\u2019s entry for the SAME account number survived A writing one. */
-      expect((await loadWalletCheckpoint('coin-key-b', 0, bSlot))?.serialized).toBe(B_STATE);
-      /* And a checkpoint is still refused for a wallet whose coin key it does
-       * not name — the check that was there before this change. */
-      expect(await loadWalletCheckpoint('coin-key-b', 0, aSlot)).toBeNull();
-    });
+    expect((await loadWalletCheckpoint('coin-key-a', 0, aSlot))?.serialized).toBe(A_STATE);
+    /* B\u2019s entry for the SAME account number survived A writing one. */
+    expect((await loadWalletCheckpoint('coin-key-b', 0, bSlot))?.serialized).toBe(B_STATE);
+    /* A checkpoint is refused for a wallet whose coin key it does not name. */
+    expect(await loadWalletCheckpoint('coin-key-b', 0, aSlot)).toBeNull();
+  });
 });
 
-/*
- * ────────────────────────────────────────────────────────────────────────────
- * THE BROWSER THAT ALREADY HAS A WALLET. NOTHING MOVES.
- *
- * The third `Done means`: *"An existing single-wallet browser opens
- * unchanged, with every record intact."* It is answered by not migrating: the
- * compartment named by the empty string IS the fixed keys, so a browser that
- * predates this change is already in it.
- *
- * These tests seed the FIXED KEY STRINGS, exactly as a machine upgrading into
- * this change would have them, and then use the ordinary readers. If a future
- * round ever moves the original compartment's keys, every one of these goes
- * red — which is the point of writing the literal strings here rather than
- * calling `keyFor`.
- * ────────────────────────────────────────────────────────────────────────────
- */
+/* A browser that held one wallet before many could be held opens unchanged: its compartment is the fixed key names,
+ * written here as literal strings rather than through `keyFor`, so moving them turns these red. */
 describe('a browser that predates many wallets', () => {
   it('opens its wallet, with its passkeys, name, labels and map intact', async () => {
     /* Sealed the old way: same call, same key, because the key has not moved. */
@@ -687,13 +670,11 @@ describe('a browser that predates many wallets', () => {
     expect(backing.get('midnight-identity:wallet-name')).toBeDefined();
     expect(backing.get('midnight-identity:subwallets')).toBeDefined();
 
-    /* Now forget the index entirely — the state of a browser that upgraded
-     * without ever writing one, and also the state of a damaged one. */
+    /* No index at all: a browser that never wrote one, or one whose index was damaged. */
     backing.delete('midnight-identity:wallets');
     forgetOpenWallet();
 
-    /* The wallet is still found, still in the original compartment, and every
-     * reader still answers. */
+    /* The wallet is still found in the original compartment, and every reader still answers. */
     expect(heldWallets().map((w) => w.id)).toEqual([ORIGINAL_SLOT]);
     expect([...(await loadSecret(ORIGINAL_SLOT))!]).toEqual([...secret]);
     expect(walletNameOf(secret)).toBe('My wallet');
@@ -718,8 +699,7 @@ describe('a browser that predates many wallets', () => {
     const secondSlot = await saveSecret(second);
     expect(secondSlot).not.toBe(firstSlot);
 
-    /* THE ASSERTION THE WHOLE ROUND IS FOR: the first wallet\u2019s sealed copy
-     * is byte-for-byte what it was, and it still opens to the first secret. */
+    /* RED WHEN: a second wallet changes a byte of the first wallet's sealed copy, or it no longer opens. */
     expect(backing.get(KEYRING_KEY)).toBe(before);
     expect([...(await loadSecret(firstSlot))!]).toEqual([...first]);
     expect([...(await loadSecret(secondSlot))!]).toEqual([...second]);
@@ -735,40 +715,37 @@ describe('a browser that predates many wallets', () => {
     expect(walletNameOf(secret)).toBe('My wallet');
   });
 
-  it('a landing with no keyring in the compartment replaces the leftovers — startFresh',
-    async () => {
-      /* `passkey-no-account`: credentials and a stale name, nothing behind
-       * them. A compartment with no keyring is a shelf, not a wallet. */
-      const gone = newSecret();
-      saveWalletName(gone, 'The wallet that went');
-      savePasskey(passkeyFixture('stale-credential'), ORIGINAL_SLOT);
+  it('a landing with no keyring in the compartment replaces the leftovers — startFresh', async () => {
+    /* Credentials and a stale name with no keyring behind them: the compartment holds no wallet. */
+    const gone = newSecret();
+    saveWalletName(gone, 'The wallet that went');
+    savePasskey(passkeyFixture('stale-credential'), ORIGINAL_SLOT);
 
-      const fresh = newSecret();
-      expect(await saveSecret(fresh)).toBe(ORIGINAL_SLOT);
-      saveWalletName(fresh, '');
-      expect(heldWallets()).toHaveLength(1);
-      /* The name that would otherwise have sat over the new wallet's money. */
-      expect(walletNameOnRecord(ORIGINAL_SLOT)).toBeNull();
-      expect(walletNameOf(gone)).toBeNull();
-    });
+    const fresh = newSecret();
+    expect(await saveSecret(fresh)).toBe(ORIGINAL_SLOT);
+    saveWalletName(fresh, '');
+    expect(heldWallets()).toHaveLength(1);
+    /* The name that would otherwise have sat over the new wallet's money. */
+    expect(walletNameOnRecord(ORIGINAL_SLOT)).toBeNull();
+    expect(walletNameOf(gone)).toBeNull();
+  });
 
-  it('removing a wallet takes its records and its place in the list, and no other\u2019s',
-    async () => {
-      const keep = newSecret();
-      const keepSlot = await saveSecret(keep);
-      saveWalletName(keep, 'Keep me');
-      const drop = newSecret();
-      const dropSlot = await saveSecret(drop);
-      saveWalletName(drop, 'Drop me');
-      await saveSecuredSetup(drop, await splitSecret(drop, PLACEMENTS, 2), VERIFICATION);
+  it('removing a wallet takes its records and its place in the list, and no other\u2019s', async () => {
+    const keep = newSecret();
+    const keepSlot = await saveSecret(keep);
+    saveWalletName(keep, 'Keep me');
+    const drop = newSecret();
+    const dropSlot = await saveSecret(drop);
+    saveWalletName(drop, 'Drop me');
+    await saveSecuredSetup(drop, await splitSecret(drop, PLACEMENTS, 2), VERIFICATION);
 
-      forgetEverything(dropSlot);
+    forgetEverything(dropSlot);
 
-      expect(heldWallets().map((w) => w.id)).toEqual([keepSlot]);
-      expect(await loadSecret(dropSlot)).toBeNull();
-      expect(securedSetupOnRecord(dropSlot)).toBeNull();
-      openWallet(keepSlot);
-      expect(walletNameOf(keep)).toBe('Keep me');
-      expect([...(await loadSecret(keepSlot))!]).toEqual([...keep]);
-    });
+    expect(heldWallets().map((w) => w.id)).toEqual([keepSlot]);
+    expect(await loadSecret(dropSlot)).toBeNull();
+    expect(securedSetupOnRecord(dropSlot)).toBeNull();
+    openWallet(keepSlot);
+    expect(walletNameOf(keep)).toBe('Keep me');
+    expect([...(await loadSecret(keepSlot))!]).toEqual([...keep]);
+  });
 });

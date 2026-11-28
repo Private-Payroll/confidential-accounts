@@ -15,16 +15,15 @@ export function savePasskey(passkey: Passkey, walletId: string): void {
   const stored: StoredPasskey = {
     ...passkey,
     publicKeySpki: toBase64Url(passkey.publicKeySpki),
-    transports: [...passkey.transports],
+    transports: [...passkey.transports]
   };
-  localStorage.setItem(
-    keyFor(walletId, 'passkeys'), JSON.stringify([...all.map(toStored), stored]));
+  localStorage.setItem(keyFor(walletId, 'passkeys'), JSON.stringify([...all.map(toStored), stored]));
 }
 
 const toStored = (p: Passkey): StoredPasskey => ({
   ...p,
   publicKeySpki: toBase64Url(p.publicKeySpki),
-  transports: [...p.transports],
+  transports: [...p.transports]
 });
 
 /**
@@ -42,11 +41,13 @@ export function allPasskeys(walletId: string): Passkey[] {
   const raw = localStorage.getItem(keyFor(walletId, 'passkeys'));
   if (!raw) return [];
 
-  const damaged = (): StorageError => new StorageError(
-    'record-damaged',
-    'the record of this browser’s passkeys is damaged and cannot be read. The '
-    + 'sealed account here is untouched, but this browser cannot match a passkey to '
-    + 'it. Recover from your pieces, or start again.');
+  const damaged = (): StorageError =>
+    new StorageError(
+      'record-damaged',
+      'the record of this browser’s passkeys is damaged and cannot be read. The ' +
+        'sealed account here is untouched, but this browser cannot match a passkey to ' +
+        'it. Recover from your pieces, or start again.'
+    );
 
   let stored: unknown;
   try {
@@ -58,15 +59,18 @@ export function allPasskeys(walletId: string): Passkey[] {
 
   const passkeys: Passkey[] = [];
   for (const entry of stored as StoredPasskey[]) {
-    if (typeof entry?.credentialId !== 'string' || typeof entry?.publicKeySpki !== 'string'
-      || typeof entry?.personHandle !== 'string') {
+    if (
+      typeof entry?.credentialId !== 'string' ||
+      typeof entry?.publicKeySpki !== 'string' ||
+      typeof entry?.personHandle !== 'string'
+    ) {
       throw damaged();
     }
     try {
       passkeys.push({
         ...entry,
         publicKeySpki: fromBase64Url(entry.publicKeySpki),
-        transports: Object.freeze([...(entry.transports ?? [])]),
+        transports: Object.freeze([...(entry.transports ?? [])])
       });
     } catch {
       throw damaged();
@@ -75,9 +79,7 @@ export function allPasskeys(walletId: string): Passkey[] {
   return passkeys;
 }
 
-export const passkeyById = (
-  credentialId: string, walletId: string,
-): Passkey | null =>
+export const passkeyById = (credentialId: string, walletId: string): Passkey | null =>
   allPasskeys(walletId).find((p) => p.credentialId === credentialId) ?? null;
 
 /**
@@ -104,7 +106,8 @@ export const passkeyById = (
  * sentence and a `StorageError` into the named-state screen, as it always has.
  */
 export function walletOfCredential(credentialId: string): {
-  readonly walletId: string; readonly passkey: Passkey;
+  readonly walletId: string;
+  readonly passkey: Passkey;
 } | null {
   let damaged: StorageError | null = null;
   for (const wallet of heldWallets()) {
@@ -131,9 +134,7 @@ export function walletOfCredential(credentialId: string): {
  * records after the new wallet has landed. The no-rewrite rule
  * is about SILENT repair on a read path; this is neither silent nor a read.
  */
-export function resetPasskeyRecordTo(
-  passkey: Passkey, walletId: string,
-): void {
+export function resetPasskeyRecordTo(passkey: Passkey, walletId: string): void {
   localStorage.setItem(keyFor(walletId, 'passkeys'), JSON.stringify([toStored(passkey)]));
 }
 

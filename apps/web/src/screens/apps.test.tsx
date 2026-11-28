@@ -17,49 +17,135 @@ import { ENGLISH } from '../english.test-support.js';
  * id, name, publisher, category and summary, in the order it listed them.
  */
 const LEGACY: readonly { id: string; name: string; publisher: string; category: string; summary: string }[] = [
-  { id: 'safe-bridge', name: 'Safe Connect', publisher: 'First party', category: 'interop',
-    summary: 'Use an existing Safe on another chain as the source of funds. Assets never move. Deliberation and policy run here, the Safe keeps enforcing its own threshold.' },
-  { id: 'moneygram-payout', name: 'MoneyGram Payout', publisher: 'MoneyGram', category: 'offramp',
-    summary: 'Cash collection in 100+ countries. Employees convert salary without a bank account. Only the aggregate and the recipient reference leave the account.' },
-  { id: 'wise-payout', name: 'Wise Transfers', publisher: 'Wise', category: 'offramp',
-    summary: 'Multi currency payout to local bank accounts at interbank rates. Handles the leg between settlement and an employee bank account.' },
-  { id: 'monument-gbp', name: 'Monument Deposits', publisher: 'Monument Bank', category: 'offramp',
-    summary: 'Fund payroll from a UK bank account in tokenised sterling. No stablecoin conversion and no offramp needed, because the asset is already a regulated deposit.' },
-  { id: 'treasury-yield', name: 'Treasury Yield', publisher: 'Community', category: 'treasury',
-    summary: 'Deploy idle treasury into lending markets without publishing the strategy. Proposes moves inside an allowance you set. It cannot move funds on its own.' },
-  { id: 'xero-sync', name: 'Xero Sync', publisher: 'Community', category: 'accounting',
-    summary: 'Posts settled payroll to your ledger as a single journal entry. Reads totals only, so your accounting integration never holds individual salaries.' },
-  { id: 'hmrc-rti', name: 'HMRC Real Time Information', publisher: 'Community', category: 'compliance',
-    summary: 'Files UK payroll submissions from an attestation rather than a spreadsheet of salaries. Issues the proof, submits the return.' },
-  { id: 'auditor-portal', name: 'Auditor Portal', publisher: 'First party', category: 'compliance',
-    summary: 'Scoped, time boxed access for an external accountant. They verify what they need and see nothing else, and the grant expires on its own.' },
-  { id: 'vesting', name: 'Vesting and Cap Table', publisher: 'Community', category: 'treasury',
-    summary: 'Scheduled disbursement with shielded amounts on the same engine as payroll. Cliffs are provable without being publicly trackable.' },
-  { id: 'contributor-bounties', name: 'Contributor Payouts', publisher: 'Community', category: 'treasury',
-    summary: 'Pay contributors and bounty claimants from the same account, confidentially, without adding them to the payroll roster.' },
+  {
+    id: 'safe-bridge',
+    name: 'Safe Connect',
+    publisher: 'First party',
+    category: 'interop',
+    summary:
+      'Use an existing Safe on another chain as the source of funds. Assets never move. Deliberation and policy run here, the Safe keeps enforcing its own threshold.'
+  },
+  {
+    id: 'moneygram-payout',
+    name: 'MoneyGram Payout',
+    publisher: 'MoneyGram',
+    category: 'offramp',
+    summary:
+      'Cash collection in 100+ countries. Employees convert salary without a bank account. Only the aggregate and the recipient reference leave the account.'
+  },
+  {
+    id: 'wise-payout',
+    name: 'Wise Transfers',
+    publisher: 'Wise',
+    category: 'offramp',
+    summary:
+      'Multi currency payout to local bank accounts at interbank rates. Handles the leg between settlement and an employee bank account.'
+  },
+  {
+    id: 'monument-gbp',
+    name: 'Monument Deposits',
+    publisher: 'Monument Bank',
+    category: 'offramp',
+    summary:
+      'Fund payroll from a UK bank account in tokenised sterling. No stablecoin conversion and no offramp needed, because the asset is already a regulated deposit.'
+  },
+  {
+    id: 'treasury-yield',
+    name: 'Treasury Yield',
+    publisher: 'Community',
+    category: 'treasury',
+    summary:
+      'Deploy idle treasury into lending markets without publishing the strategy. Proposes moves inside an allowance you set. It cannot move funds on its own.'
+  },
+  {
+    id: 'xero-sync',
+    name: 'Xero Sync',
+    publisher: 'Community',
+    category: 'accounting',
+    summary:
+      'Posts settled payroll to your ledger as a single journal entry. Reads totals only, so your accounting integration never holds individual salaries.'
+  },
+  {
+    id: 'hmrc-rti',
+    name: 'HMRC Real Time Information',
+    publisher: 'Community',
+    category: 'compliance',
+    summary:
+      'Files UK payroll submissions from an attestation rather than a spreadsheet of salaries. Issues the proof, submits the return.'
+  },
+  {
+    id: 'auditor-portal',
+    name: 'Auditor Portal',
+    publisher: 'First party',
+    category: 'compliance',
+    summary:
+      'Scoped, time boxed access for an external accountant. They verify what they need and see nothing else, and the grant expires on its own.'
+  },
+  {
+    id: 'vesting',
+    name: 'Vesting and Cap Table',
+    publisher: 'Community',
+    category: 'treasury',
+    summary:
+      'Scheduled disbursement with shielded amounts on the same engine as payroll. Cliffs are provable without being publicly trackable.'
+  },
+  {
+    id: 'contributor-bounties',
+    name: 'Contributor Payouts',
+    publisher: 'Community',
+    category: 'treasury',
+    summary:
+      'Pay contributors and bounty claimants from the same account, confidentially, without adding them to the payroll roster.'
+  }
 ];
 
 const EN = ENGLISH;
 /** The category names, as the earlier application named them. */
 const LABELS: Record<string, string> = {
-  offramp: 'Payouts and offramp', treasury: 'Treasury', interop: 'Interoperability',
-  compliance: 'Compliance', accounting: 'Accounting', identity: 'Identity',
+  offramp: 'Payouts and offramp',
+  treasury: 'Treasury',
+  interop: 'Interoperability',
+  compliance: 'Compliance',
+  accounting: 'Accounting',
+  identity: 'Identity'
 };
 
 const LANGUAGES = languagesFrom({ './locales/en.json': ENGLISH });
-const draw = () => render(<KitProvider languages={LANGUAGES} pick="en"><Apps /></KitProvider>).container;
+const draw = () =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      <Apps />
+    </KitProvider>
+  ).container;
 const text = (e: Element | null) => e?.textContent ?? null;
 afterEach(cleanup);
 
 /** The cards shown, in order: each app's category, name and summary. */
-const cards = (c: Element) => [...c.querySelectorAll('[data-app]')].map((r) => [text(r.querySelector('[data-app-category]')), text(r.querySelector('[data-app-name]')), text(r.querySelector('[data-app-summary]'))]);
+const cards = (c: Element) =>
+  [...c.querySelectorAll('[data-app]')].map((r) => [
+    text(r.querySelector('[data-app-category]')),
+    text(r.querySelector('[data-app-name]')),
+    text(r.querySelector('[data-app-summary]'))
+  ]);
 const XERO = LEGACY.find((a) => a.id === 'xero-sync')!;
 /** The legacy catalogue as the page shows it: grouped by category in the legacy order, QuickBooks straight after Xero, in its shape. */
 const GROUPS = [...new Set(LEGACY.map((a) => a.category))];
-const EXPECTED = GROUPS.flatMap((g) => LEGACY.filter((a) => a.category === g)
-  .flatMap((a) => (a.id === XERO.id ? [[LABELS[g], a.name, a.summary], [LABELS[g], 'QuickBooks Sync', XERO.summary]] : [[LABELS[g], a.name, a.summary]])));
+const EXPECTED = GROUPS.flatMap((g) =>
+  LEGACY.filter((a) => a.category === g).flatMap((a) =>
+    a.id === XERO.id
+      ? [
+          [LABELS[g], a.name, a.summary],
+          [LABELS[g], 'QuickBooks Sync', XERO.summary]
+        ]
+      : [[LABELS[g], a.name, a.summary]]
+  )
+);
 const filters = (c: Element) => [...c.querySelectorAll('[data-app-filters] button')] as HTMLButtonElement[];
-const press = async (b: HTMLElement) => { await act(async () => { fireEvent.click(b); }); };
+const press = async (b: HTMLElement) => {
+  await act(async () => {
+    fireEvent.click(b);
+  });
+};
 
 describe('apps', () => {
   /*
@@ -75,7 +161,8 @@ describe('apps', () => {
     expect(LEGACY.length).toBe(10);
     expect(GROUPS).toEqual(['interop', 'offramp', 'treasury', 'accounting', 'compliance']);
     /* A publisher that is not also part of an app's name is nowhere on the page. */
-    for (const p of new Set(LEGACY.map((a) => a.publisher).filter((p) => !LEGACY.some((a) => a.name.includes(p))))) expect(c.textContent, p).not.toContain(p);
+    for (const p of new Set(LEGACY.map((a) => a.publisher).filter((p) => !LEGACY.some((a) => a.name.includes(p)))))
+      expect(c.textContent, p).not.toContain(p);
     expect(Object.keys(EN).filter((k) => k.endsWith('.publisher'))).toEqual([]);
   });
 
@@ -90,7 +177,9 @@ describe('apps', () => {
     for (const r of rows) {
       const pills = [...r.querySelectorAll('[data-slot=coming-soon]')];
       expect(pills.length, text(r.querySelector('[data-app-name]'))!).toBe(1);
-      expect(pills[0]!.closest('[data-slot=card-action]')?.parentElement?.getAttribute('data-slot')).toBe('card-header');
+      expect(pills[0]!.closest('[data-slot=card-action]')?.parentElement?.getAttribute('data-slot')).toBe(
+        'card-header'
+      );
     }
     expect(c.querySelectorAll('button:not([data-slot=coming-soon]):not([data-app-filter])').length).toBe(0);
     expect(c.textContent).not.toMatch(/install\b/i);
@@ -106,8 +195,13 @@ describe('apps', () => {
    */
   it('filters by one or several category tags, and shows every app with none chosen', async () => {
     const c = draw();
-    expect(filters(c).map((b) => [text(b), b.getAttribute('aria-pressed')])).toEqual(GROUPS.map((g) => [LABELS[g], 'false']));
-    expect(c.querySelector('[data-app-filters]')!.compareDocumentPosition(c.querySelector('[data-app]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(filters(c).map((b) => [text(b), b.getAttribute('aria-pressed')])).toEqual(
+      GROUPS.map((g) => [LABELS[g], 'false'])
+    );
+    expect(
+      c.querySelector('[data-app-filters]')!.compareDocumentPosition(c.querySelector('[data-app]')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     const only = (...labels: string[]) => EXPECTED.filter((e) => labels.includes(e[0]!));
     /* Chosen out of order, the apps still show in the catalogue's order. */
     await press(filters(c)[4]!);

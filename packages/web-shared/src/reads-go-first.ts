@@ -11,7 +11,9 @@ import { SERVICE_READ_BOUND_MS } from './read-bound.js';
  */
 let readsUnderWay = 0;
 let whenNoReads: Array<() => void> = [];
-export const aReadArrived = (): void => { readsUnderWay += 1; };
+export const aReadArrived = (): void => {
+  readsUnderWay += 1;
+};
 export const aReadEnded = (): void => {
   readsUnderWay -= 1;
   if (readsUnderWay > 0) return;
@@ -28,8 +30,14 @@ export const aReadEnded = (): void => {
 export const readsGoFirst = (): Promise<void> => {
   if (readsUnderWay === 0) return Promise.resolve();
   return new Promise((go) => {
-    const timer = setTimeout(() => { whenNoReads = whenNoReads.filter((g) => g !== done); go(); }, SERVICE_READ_BOUND_MS);
-    const done = (): void => { clearTimeout(timer); go(); };
+    const timer = setTimeout(() => {
+      whenNoReads = whenNoReads.filter((g) => g !== done);
+      go();
+    }, SERVICE_READ_BOUND_MS);
+    const done = (): void => {
+      clearTimeout(timer);
+      go();
+    };
     whenNoReads.push(done);
   });
 };

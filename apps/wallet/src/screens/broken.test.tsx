@@ -20,13 +20,17 @@ import { Broken } from './broken.js';
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
   { label: 'Printed card', holder: 'paper' },
-  { label: 'Old laptop', holder: 'device:old' },
+  { label: 'Old laptop', holder: 'device:old' }
 ];
 
 const MESSAGE = 'there is an account stored in this browser and the key that opens it is gone.';
 
 const mount = (): void => {
-  render(<SessionProvider><Broken message={MESSAGE} /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <Broken message={MESSAGE} />
+    </SessionProvider>
+  );
 };
 
 beforeEach(() => {
@@ -38,7 +42,11 @@ beforeEach(() => {
 describe('the broken screen with a piece map on record', () => {
   beforeEach(async () => {
     const secret = newSecret();
-    await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), { 'google:me': 'never', paper: null, 'device:old': 'never' });
+    await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), {
+      'google:me': 'never',
+      paper: null,
+      'device:old': 'never'
+    });
   });
 
   it('shows the map, with copy and download', () => {

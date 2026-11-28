@@ -1,4 +1,16 @@
-import { BASE_COLORS, Card, CardDescription, CardHeader, CardTitle, Label, RadioGroup, RadioGroupItem, Section, useText, type BaseColor } from 'vaults-ui';
+import {
+  BASE_COLORS,
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Label,
+  RadioGroup,
+  RadioGroupItem,
+  Section,
+  useText,
+  type BaseColor
+} from 'vaults-ui';
 import { MODE_NAMES, MODES, type Mode } from '../preferences.js';
 import { useCurrentPage } from '../router.js';
 import { useSession } from '../session.js';
@@ -12,7 +24,7 @@ const COLOUR_NAMES: Record<BaseColor, (t: Text) => string> = {
   mauve: (t) => t('appearance.colour.mauve'),
   olive: (t) => t('appearance.colour.olive'),
   mist: (t) => t('appearance.colour.mist'),
-  taupe: (t) => t('appearance.colour.taupe'),
+  taupe: (t) => t('appearance.colour.taupe')
 };
 
 /**
@@ -28,9 +40,18 @@ export function Appearance() {
     <Section title={page.name(t)} description={t('appearance.description')} list={false} data-screen="appearance">
       <fieldset className="flex flex-col gap-3">
         <legend className="pb-3 text-sm font-medium">{t('appearance.mode.title')}</legend>
-        <RadioGroup value={preferences.mode} onValueChange={(m) => choose({ mode: m as Mode })} className="grid gap-3 sm:grid-cols-3" data-choice="mode">
+        <RadioGroup
+          value={preferences.mode}
+          onValueChange={(m) => choose({ mode: m as Mode })}
+          className="grid gap-3 sm:grid-cols-3"
+          data-choice="mode"
+        >
           {MODES.map((m) => (
-            <Label key={m} className="flex cursor-pointer items-center gap-3 rounded-lg border p-3 has-[[data-state=checked]]:border-primary" data-mode={m}>
+            <Label
+              key={m}
+              className="flex cursor-pointer items-center gap-3 rounded-lg border p-3 has-[[data-state=checked]]:border-primary"
+              data-mode={m}
+            >
               <RadioGroupItem value={m} />
               <span>{MODE_NAMES[m](t)}</span>
             </Label>
@@ -39,7 +60,12 @@ export function Appearance() {
       </fieldset>
       <fieldset className="flex flex-col gap-3">
         <legend className="pb-3 text-sm font-medium">{t('appearance.colour.title')}</legend>
-        <RadioGroup value={preferences.base} onValueChange={(b) => choose({ base: b as BaseColor })} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-choice="colour">
+        <RadioGroup
+          value={preferences.base}
+          onValueChange={(b) => choose({ base: b as BaseColor })}
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          data-choice="colour"
+        >
           {BASE_COLORS.map((b) => (
             <Label key={b} className="block cursor-pointer" data-colour={b}>
               <Card className="has-[[data-state=checked]]:ring-2 has-[[data-state=checked]]:ring-primary">

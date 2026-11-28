@@ -2,7 +2,13 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { KitProvider, languagesFrom } from 'vaults-ui';
-import { anInvitation, offerAnswer, PUBLIC_ADDRESS, refusedAnswer, type Invitation } from '../adapters/join-offers.test-support.js';
+import {
+  anInvitation,
+  offerAnswer,
+  PUBLIC_ADDRESS,
+  refusedAnswer,
+  type Invitation
+} from '../adapters/join-offers.test-support.js';
 import { untilShown } from '../page-shown.test-support.js';
 import { ENGLISH } from '../english.test-support.js';
 
@@ -13,21 +19,24 @@ import { ENGLISH } from '../english.test-support.js';
  * has joined or left.
  */
 const wallet = vi.hoisted(() => ({
-  signedIn: true, act: vi.fn(), joinByCode: vi.fn(), signIn: vi.fn(),
+  signedIn: true,
+  act: vi.fn(),
+  joinByCode: vi.fn(),
+  signIn: vi.fn()
 }));
 /* The page's own judges and view, kept as one module across each load of the code under test, so a view a test opens is the one it reads. */
 vi.mock('../adapters/filing-judge.js', async (real) => ({
-  ...(await real<typeof import('../adapters/filing-judge.js')>()),
+  ...(await real<typeof import('../adapters/filing-judge.js')>())
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
   ACCOUNT_ORIGIN: 'https://wallet.example',
-  signIn: wallet.signIn,
+  signIn: wallet.signIn
 }));
 vi.mock('../adapters/keyring-person.js', () => ({ keyringFor: async () => wallet.signedIn }));
 vi.mock('vaults-web-shared/keyring.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/keyring.js')>()),
-  actOnACompanyInTheWallet: wallet.act,
+  actOnACompanyInTheWallet: wallet.act
 }));
 vi.mock('vaults-web-shared/join-in-the-wallet.js', () => ({ joinByCodeInTheWallet: wallet.joinByCode }));
 
@@ -38,41 +47,71 @@ const { VisitorProvider } = await import('../visitor.js');
 const { DEFAULT_PREFERENCES } = await import('../preferences.js');
 const { VIEWS } = await import('../pages.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 
 const asked: string[] = [];
 const serve = (answer: () => Response): void => {
   asked.length = 0;
-  vi.stubGlobal('fetch', vi.fn(async (path: string) => { asked.push(path); return answer(); }));
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (path: string) => {
+      asked.push(path);
+      return answer();
+    })
+  );
 };
 const signedInNow = vi.fn(async () => {});
 const companiesChanged = vi.fn(async () => {});
 const session = () => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: null, chooseCompany: vi.fn(),
-  viewer: { signedIn: true, view: VIEWS.employee, signs: false }, chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES,
-  choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged,
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: null,
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.employee, signs: false },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged
 });
 
 /** The page for `i`, with its link held as the router holds it, drawn for a signed-in person or a visitor. */
 function draw(i: Invitation, as: 'member' | 'visitor', hold = true) {
   if (hold) holdLink(`/join/${i.id}`, `#${i.token}`);
-  const page = <CurrentPageProvider id="join" params={{ id: i.id }}><Join /></CurrentPageProvider>;
+  const page = (
+    <CurrentPageProvider id="join" params={{ id: i.id }}>
+      <Join />
+    </CurrentPageProvider>
+  );
   return render(
     <KitProvider languages={LANGUAGES} pick="en">
-      {as === 'member' ? <SessionProvider session={session()}>{page}</SessionProvider> : <VisitorProvider signedInNow={signedInNow}>{page}</VisitorProvider>}
-    </KitProvider>,
+      {as === 'member' ? (
+        <SessionProvider session={session()}>{page}</SessionProvider>
+      ) : (
+        <VisitorProvider signedInNow={signedInNow}>{page}</VisitorProvider>
+      )}
+    </KitProvider>
   );
 }
 const on = (c: HTMLElement, sel: string): HTMLElement | null => c.querySelector<HTMLElement>(sel);
 const shown = (c: HTMLElement, sel: string) => untilShown(() => on(c, sel), sel);
 const press = async (c: HTMLElement, action: string): Promise<void> => {
   const b = await shown(c, `[data-action=${action}]:not([disabled])`);
-  await act(async () => { fireEvent.click(b); });
+  await act(async () => {
+    fireEvent.click(b);
+  });
 };
 const heldFor = (id: string): string => {
-  function Probe() { return <p data-held={useHeldLink(id) ?? 'nothing'} />; }
+  function Probe() {
+    return <p data-held={useHeldLink(id) ?? 'nothing'} />;
+  }
   const { container } = render(<Probe />);
   const v = container.querySelector('[data-held]')!.getAttribute('data-held')!;
   return v;
@@ -80,10 +119,19 @@ const heldFor = (id: string): string => {
 const text = (c: HTMLElement): string => c.textContent ?? '';
 
 beforeEach(() => {
-  forgetLink(); window.history.replaceState(null, '', '/');
-  wallet.signedIn = true; wallet.act.mockReset(); wallet.joinByCode.mockReset(); wallet.signIn.mockReset(); signedInNow.mockClear(); companiesChanged.mockClear();
+  forgetLink();
+  window.history.replaceState(null, '', '/');
+  wallet.signedIn = true;
+  wallet.act.mockReset();
+  wallet.joinByCode.mockReset();
+  wallet.signIn.mockReset();
+  signedInNow.mockClear();
+  companiesChanged.mockClear();
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('the join page opens an invitation and says what it is', () => {
   /* RED WHEN: a page opened without the token held asks the service for anything, or does not say to open the whole link. */
@@ -154,17 +202,19 @@ describe('the join page opens an invitation and says what it is', () => {
     const t = text(container);
     expect(t).toContain('This invitation expired at');
     expect(t).toContain(Intl.DateTimeFormat().resolvedOptions().timeZone);
-    expect(t).not.toMatch(/could not be opened|Nothing was sent\. Ask whoever invited you for a new link|\d{4}-\d\d-\d\dT/u);
+    expect(t).not.toMatch(
+      /could not be opened|Nothing was sent\. Ask whoever invited you for a new link|\d{4}-\d\d-\d\dT/u
+    );
     expect(on(container, '[data-action=go-on]')).not.toBeNull();
   });
 
   /* RED WHEN: a super admin's invitation is closed without saying what to do. */
-  it('tells a super admin\'s invitation what to do', async () => {
+  it("tells a super admin's invitation what to do", async () => {
     const a = anInvitation('super-admin');
     serve(() => offerAnswer(a));
     const sa = draw(a, 'member');
     await shown(sa.container, '[data-join-card=closed]');
-    expect(text(sa.container)).toContain('Ask whoever invited you to take this to the company\'s super admins');
+    expect(text(sa.container)).toContain("Ask whoever invited you to take this to the company's super admins");
   });
 
   /* RED WHEN: a closed invitation is shown as offered, or its reason is not in the page's words, or an unreachable service has no way to try again. */
@@ -176,7 +226,9 @@ describe('the join page opens an invitation and says what it is', () => {
     expect(text(used.container)).toContain('already been accepted');
     expect(on(used.container, '[data-action=accept]')).toBeNull();
     cleanup();
-    serve(() => { throw new TypeError('network'); });
+    serve(() => {
+      throw new TypeError('network');
+    });
     const down = draw(i, 'member');
     await shown(down.container, '[data-action=try-again]');
     expect(text(down.container)).toContain('could not be reached');
@@ -199,7 +251,9 @@ describe('each kind and way is joined from the page', () => {
     expect(Object.keys(wallet.act.mock.calls[0]![0]).sort()).toEqual(['account', 'company', 'name', 'record', 'token']);
     expect(text(container)).toContain('Finish adding');
     expect(text(container)).toContain('you are waiting');
-    expect(on(container, '[data-join-card=done] p, [data-join-card=done] div')?.textContent).not.toContain('accepted the invitation');
+    expect(on(container, '[data-join-card=done] p, [data-join-card=done] div')?.textContent).not.toContain(
+      'accepted the invitation'
+    );
     expect(text(container)).toContain('You are not a signer yet');
     expect(text(container)).not.toContain('has taken your seat');
     expect(heldFor(i.id)).toBe('nothing');
@@ -207,7 +261,7 @@ describe('each kind and way is joined from the page', () => {
   });
 
   /* RED WHEN: a re-issued invitation's press takes a seat instead of keeping the invitation, or the page does not say what finishes joining. */
-  it('keeps a re-issued invitation: take-reissue with the offer\'s four fields, then the words to give your keys', async () => {
+  it("keeps a re-issued invitation: take-reissue with the offer's four fields, then the words to give your keys", async () => {
     const r = anInvitation('reissue');
     serve(() => offerAnswer(r));
     wallet.act.mockResolvedValue({ of: 'done', steps: 2, relayed: 0 });
@@ -224,7 +278,7 @@ describe('each kind and way is joined from the page', () => {
   });
 
   /* RED WHEN: an employee's press does not run join-by-code, or the page does not tell the person to read out the fingerprint the wallet showed, or shows a payslips link. */
-  it('joins an employee by code: join-by-code, the fingerprint is the wallet\'s to show, and no link is offered', async () => {
+  it("joins an employee by code: join-by-code, the fingerprint is the wallet's to show, and no link is offered", async () => {
     const i = anInvitation('employee');
     serve(() => offerAnswer(i));
     wallet.joinByCode.mockResolvedValue({ of: 'done', steps: 1, relayed: 1 });
@@ -237,7 +291,9 @@ describe('each kind and way is joined from the page', () => {
     expect(wallet.act).not.toHaveBeenCalled();
     expect(text(container)).toContain('Read it out to whoever invited you');
     expect(text(container)).toContain('in its own window while it joined');
-    expect(text(container)).toContain('The fingerprint is shown once. If you missed it, tell whoever invited you; they invite you again.');
+    expect(text(container)).toContain(
+      'The fingerprint is shown once. If you missed it, tell whoever invited you; they invite you again.'
+    );
     expect(text(container)).not.toContain('open the link you were sent again');
     expect(container.querySelectorAll('a')).toHaveLength(0);
     expect(text(container)).not.toMatch(/payslips|another device|VITE_/iu);
@@ -254,7 +310,11 @@ describe('each kind and way is joined from the page', () => {
     expect(text(container)).toContain(PUBLIC_ADDRESS);
     await press(container, 'accept');
     await shown(container, '[data-join-card=done]');
-    expect(wallet.act.mock.calls[0]![0]).toMatchObject({ name: 'claim-by-address', address: PUBLIC_ADDRESS, token: i.token });
+    expect(wallet.act.mock.calls[0]![0]).toMatchObject({
+      name: 'claim-by-address',
+      address: PUBLIC_ADDRESS,
+      token: i.token
+    });
     expect(text(container)).toContain('There is no fingerprint to read out');
     expect(wallet.joinByCode).not.toHaveBeenCalled();
     expect(heldFor(i.id)).toBe('nothing');
@@ -266,7 +326,15 @@ describe('what the page does when the act does not finish', () => {
   it('shows a stop with its words, keeps the link, and goes on when pressed again', async () => {
     const i = anInvitation('employee');
     serve(() => offerAnswer(i));
-    wallet.joinByCode.mockResolvedValueOnce({ of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.join-by-code.why.not-taken' });
+    wallet.joinByCode.mockResolvedValueOnce({
+      of: 'stopped',
+      step: 1,
+      steps: 2,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.join-by-code.why.not-taken'
+    });
     const { container } = draw(i, 'member');
     await press(container, 'accept');
     await shown(container, '[data-stopped]');
@@ -284,7 +352,15 @@ describe('what the page does when the act does not finish', () => {
   it('tells a claim join and a code join their own words when the company did not take them', async () => {
     const claim = anInvitation('vendor', { address: PUBLIC_ADDRESS });
     serve(() => offerAnswer(claim));
-    wallet.act.mockResolvedValueOnce({ of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.claim-by-address.why.not-taken' });
+    wallet.act.mockResolvedValueOnce({
+      of: 'stopped',
+      step: 1,
+      steps: 2,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.claim-by-address.why.not-taken'
+    });
     const first = draw(claim, 'member');
     await press(first.container, 'accept');
     await shown(first.container, '[data-stopped=not-taken]');
@@ -293,7 +369,15 @@ describe('what the page does when the act does not finish', () => {
     cleanup();
     const code = anInvitation('employee');
     serve(() => offerAnswer(code));
-    wallet.joinByCode.mockResolvedValueOnce({ of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.join-by-code.why.not-taken' });
+    wallet.joinByCode.mockResolvedValueOnce({
+      of: 'stopped',
+      step: 1,
+      steps: 2,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.join-by-code.why.not-taken'
+    });
     const second = draw(code, 'member');
     await press(second.container, 'accept');
     await shown(second.container, '[data-stopped=not-taken]');
@@ -303,10 +387,22 @@ describe('what the page does when the act does not finish', () => {
 
   /* RED WHEN: a stop after the wallet handed over transactions (sent, or not confirmed) says the proof did not reach the network or that nothing was sent; or a stop that handed over none loses its own words. */
   it('says the proof may already have been sent, and to wait and open the link again, when the wallet handed it over before it stopped', async () => {
-    for (const [relayed, unconfirmed, handed] of [[0, 1, true], [1, 0, true], [0, 0, false]] as const) {
+    for (const [relayed, unconfirmed, handed] of [
+      [0, 1, true],
+      [1, 0, true],
+      [0, 0, false]
+    ] as const) {
       const i = anInvitation('signer');
       serve(() => offerAnswer(i));
-      wallet.act.mockResolvedValueOnce({ of: 'stopped', step: 3, steps: 4, relayed, unconfirmed, why: 'relay-refused', refused: 'act.seat-invited.why.not-sent' });
+      wallet.act.mockResolvedValueOnce({
+        of: 'stopped',
+        step: 3,
+        steps: 4,
+        relayed,
+        unconfirmed,
+        why: 'relay-refused',
+        refused: 'act.seat-invited.why.not-sent'
+      });
       const { container } = draw(i, 'member');
       await press(container, 'accept');
       await shown(container, '[data-stopped=not-sent]');
@@ -315,12 +411,16 @@ describe('what the page does when the act does not finish', () => {
       expect(words.includes(EN['join.stopped.notSent']!), `${relayed}/${unconfirmed}`).toBe(!handed);
       cleanup();
     }
-    expect(EN['join.stopped.sent']).toMatch(/may already have been sent.*Wait a few minutes and open the link again before you press the button again/);
+    expect(EN['join.stopped.sent']).toMatch(
+      /may already have been sent.*Wait a few minutes and open the link again before you press the button again/
+    );
   });
 
   /* RED WHEN: the stop for a read the wallet could not make says the company has no place, the stop for the wallet's own seats used up says the company has none, or the stop for a seat closed under other keys says another invitation took it. */
   it('says what the wallet found for no places read, no seat of its own left, and a seat taken by other keys', () => {
-    expect(EN['join.stopped.noSlots']).toMatch(/could not read the company's seats just now. Nothing was sent. Press the button again in a minute/);
+    expect(EN['join.stopped.noSlots']).toMatch(
+      /could not read the company's seats just now. Nothing was sent. Press the button again in a minute/
+    );
     expect(EN['join.stopped.noSlots']).not.toMatch(/no free place/);
     expect(EN['join.stopped.noFreeSeat']).toMatch(/This wallet has no seat of its own left/);
     expect(EN['join.stopped.noFreeSeat']).not.toMatch(/company has no free/);
@@ -332,14 +432,24 @@ describe('what the page does when the act does not finish', () => {
   it('disables the accept button after a stop that pressing again cannot mend, and points it at the reason', async () => {
     const i = anInvitation('signer');
     serve(() => offerAnswer(i));
-    wallet.act.mockResolvedValueOnce({ of: 'stopped', step: 1, steps: 2, relayed: 0, unconfirmed: 0, why: 'check-failed', refused: 'act.seat-invited.why.already-seated' });
+    wallet.act.mockResolvedValueOnce({
+      of: 'stopped',
+      step: 1,
+      steps: 2,
+      relayed: 0,
+      unconfirmed: 0,
+      why: 'check-failed',
+      refused: 'act.seat-invited.why.already-seated'
+    });
     const { container } = draw(i, 'member');
     await press(container, 'accept');
     await shown(container, '[data-stopped=already-seated]');
     expect(text(container)).toContain('already holds a seat');
     const button = on(container, '[data-action=accept]') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
-    expect(container.querySelector(`#${button.getAttribute('aria-describedby')}`)?.getAttribute('data-stopped')).toBe('already-seated');
+    expect(container.querySelector(`#${button.getAttribute('aria-describedby')}`)?.getAttribute('data-stopped')).toBe(
+      'already-seated'
+    );
     expect(heldFor(i.id)).toBe(i.token);
   });
 
@@ -371,7 +481,7 @@ describe('what the page does when the act does not finish', () => {
   });
 
   /* RED WHEN: Go on after joining does not refresh the person's companies before leaving the page. */
-  it('refreshes the person\'s companies when they go on after joining', async () => {
+  it("refreshes the person's companies when they go on after joining", async () => {
     const i = anInvitation('signer');
     serve(() => offerAnswer(i));
     wallet.act.mockResolvedValue({ of: 'done', steps: 2, relayed: 1 });
@@ -382,14 +492,16 @@ describe('what the page does when the act does not finish', () => {
   });
 });
 
-describe('the join page\'s words', () => {
+describe("the join page's words", () => {
   const WORDS = Object.entries(EN).filter(([k]) => k.startsWith('join.'));
 
   /* RED WHEN: a join word carries an em or en dash, points to a payslips page, tells a person to use another device, or names a build setting. */
   it('has no dash, no payslips page, no other device and no build setting', () => {
     expect(WORDS.length).toBeGreaterThan(50);
     expect(WORDS.filter(([, v]) => /[–—]/u.test(v)).map(([k]) => k)).toEqual([]);
-    expect(WORDS.filter(([, v]) => /payslips|another device|other device|VITE_|environment/iu.test(v)).map(([k]) => k)).toEqual([]);
+    expect(
+      WORDS.filter(([, v]) => /payslips|another device|other device|VITE_|environment/iu.test(v)).map(([k]) => k)
+    ).toEqual([]);
   });
 
   /* RED WHEN: the page keeps its Coming soon words, which nothing now shows. */

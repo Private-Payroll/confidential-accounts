@@ -74,12 +74,15 @@ const INBOX_KEY = bytesToHex(inbox.publicKey);
 const MARKUP = '<b data-injected="yes">not the wallet\'s own words</b>';
 const MARKUP_TOO = '<img data-injected-too="yes" src="x" onerror="document.title=\'owned\'">';
 
-const shieldedOf = (account: number): string =>
-  ownedAddressFor(identity, account, {}, NETWORK).address.bech32;
+const shieldedOf = (account: number): string => ownedAddressFor(identity, account, {}, NETWORK).address.bech32;
 
 let port: WatchedPort;
-beforeEach(() => { port = watchedStore(); });
-afterEach(() => { cleanup(); });
+beforeEach(() => {
+  port = watchedStore();
+});
+afterEach(() => {
+  cleanup();
+});
 
 /** An invitation on the wire: `wants` like a disclosure, and one inbox key. */
 const invitation = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -92,13 +95,13 @@ const invitation = (over: Record<string, unknown> = {}): Record<string, unknown>
     {
       attribute: RECEIVING_ADDRESS,
       required: true,
-      reason: 'This is where your salary goes.',
-    },
+      reason: 'This is where your salary goes.'
+    }
   ],
   inboxPublicKey: INBOX_KEY,
   nonce: 'n1',
   expiresAt: NOW + 600_000,
-  ...over,
+  ...over
 });
 
 interface Opened {
@@ -112,11 +115,14 @@ const open = (data: unknown = invitation(), origin = ORIGIN): Opened => {
   const handlers: ((event: MessageEvent) => void)[] = [];
   const view: ChannelWindow = {
     opener: opener as ChannelWindow['opener'],
-    addEventListener: (_t, h) => { handlers.push(h); },
-    removeEventListener: () => { /* torn down by cleanup */ },
+    addEventListener: (_t, h) => {
+      handlers.push(h);
+    },
+    removeEventListener: () => {
+      /* torn down by cleanup */
+    }
   };
-  render(
-    <Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
+  render(<Approve identity={identity} secret={SECRET} port={port} view={view} now={() => NOW} embedder={origin} />);
   for (const h of handlers) {
     h({ source: opener, origin, data } as unknown as MessageEvent);
   }
@@ -129,8 +135,7 @@ const open = (data: unknown = invitation(), origin = ORIGIN): Opened => {
 const settle = (): Promise<void> => settled(20);
 
 const someone = async (): Promise<void> => {
-  await save(port, identity,
-    selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', 'legal', NOW));
+  await save(port, identity, selfAssert(emptyProfile(NOW), REGISTRY, GIVEN_NAME, 'Sarah', 'legal', NOW));
 };
 
 /**
@@ -142,8 +147,7 @@ const someone = async (): Promise<void> => {
 const unsealAsTheOtherSideDoes = (envelope: unknown): string => {
   const e = envelope as { ephemeral: string; iv: string; body: string };
   const shared = x25519.getSharedSecret(inbox.secretKey, hexToBytes(e.ephemeral));
-  return new TextDecoder().decode(
-    gcm(sha256(shared), hexToBytes(e.iv)).decrypt(hexToBytes(e.body)));
+  return new TextDecoder().decode(gcm(sha256(shared), hexToBytes(e.iv)).decrypt(hexToBytes(e.body)));
 };
 
 const press = async (channel: Opened): Promise<Posted> => {
@@ -151,8 +155,8 @@ const press = async (channel: Opened): Promise<Posted> => {
   const button = document.querySelector('[data-approve][data-join]') as HTMLElement | null;
   if (button === null) {
     throw new Error(
-      'the invitation screen has no accept button. That is the defect, not a wait that '
-      + 'needed longer.');
+      'the invitation screen has no accept button. That is the defect, not a wait that ' + 'needed longer.'
+    );
   }
   /* Second cause -- the history entry is written with `void save(...)`,
    * which is correct and is not awaited. */
@@ -179,14 +183,12 @@ describe('AN INVITATION RENDERS ON THE SURFACE THE DISCLOSURE ALREADY HAD', () =
   it('WHAT IT DISCLOSES IS SHOWN ITEM BY ITEM, AND THE ADDRESS IS SHOWN WHOLE', async () => {
     open();
     await settle();
-    const shown = document.querySelector(
-      `[data-row="${RECEIVING_ADDRESS}"] [data-derived-value]`)?.textContent;
+    const shown = document.querySelector(`[data-row="${RECEIVING_ADDRESS}"] [data-derived-value]`)?.textContent;
     /* Whole, not abbreviated: this is where money will arrive and a shortened
      * address is one a person cannot check. */
     expect(shown).toBe(shieldedOf(FIRST_OFFERED));
     /* Each row separately approvable, including the one that matters. */
-    expect(document.querySelector(
-      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"]`)).not.toBeNull();
+    expect(document.querySelector(`[data-row="${RECEIVING_ADDRESS}"] [data-option="none"]`)).not.toBeNull();
   });
 
   it('THE KEY IT WILL BE SEALED TO IS ON THE SCREEN, WHOLE AND UNCHECKED', async () => {
@@ -194,8 +196,7 @@ describe('AN INVITATION RENDERS ON THE SURFACE THE DISCLOSURE ALREADY HAD', () =
     await settle();
     expect(document.querySelector('[data-inbox-key]')?.textContent).toBe(INBOX_KEY);
     /* The unchecked half is SAID, in the way it is said for `company`. */
-    expect(screen.getByText(/cannot check that this key belongs to the company/u))
-      .not.toBeNull();
+    expect(screen.getByText(/cannot check that this key belongs to the company/u)).not.toBeNull();
   });
 
   it('a disclosure on the same component shows no inbox key and no join button', async () => {
@@ -208,7 +209,7 @@ describe('AN INVITATION RENDERS ON THE SURFACE THE DISCLOSURE ALREADY HAD', () =
       purpose: 'To pay you.',
       wants: [{ attribute: GIVEN_NAME, required: true }],
       nonce: 'n1',
-      expiresAt: NOW + 600_000,
+      expiresAt: NOW + 600_000
     });
     await settle();
     expect(document.querySelector('[data-inbox-key]')).toBeNull();
@@ -228,8 +229,7 @@ describe('NOTHING THE ASKING PARTY SUPPLIES REACHES THE SCREEN AS MARKUP', () =>
     expect(document.querySelector('[data-injected]')).toBeNull();
     /* And it is still SHOWN, as the words they chose. A screen that silently
      * dropped a hostile purpose would be a screen lying about what was asked. */
-    expect(document.querySelector('[data-purpose]')?.textContent)
-      .toBe(`Why they say they want it: ${MARKUP}`);
+    expect(document.querySelector('[data-purpose]')?.textContent).toBe(`Why they say they want it: ${MARKUP}`);
   });
 
   it('THE NAME THEY CALL THEMSELVES IS A TEXT NODE TOO', async () => {
@@ -243,17 +243,19 @@ describe('NOTHING THE ASKING PARTY SUPPLIES REACHES THE SCREEN AS MARKUP', () =>
     expect(document.title).not.toBe('owned');
   });
 
-  it('a want\'s reason and a want\'s own name are text too', async () => {
-    open(invitation({
-      wants: [
-        { attribute: GIVEN_NAME, required: false, reason: MARKUP },
-        { attribute: `unknown-${MARKUP_TOO}`, required: false },
-        /* **THE FIXTURE CARRIES THE ADDRESS BECAUSE A JOIN WITHOUT ONE IS NOW
-         * REFUSED AT THE PARSER**, and a fixture that never reaches the screen
-         * would make this file's markup assertions vacuously true. */
-        { attribute: RECEIVING_ADDRESS, required: true },
-      ],
-    }));
+  it("a want's reason and a want's own name are text too", async () => {
+    open(
+      invitation({
+        wants: [
+          { attribute: GIVEN_NAME, required: false, reason: MARKUP },
+          { attribute: `unknown-${MARKUP_TOO}`, required: false },
+          /* **THE FIXTURE CARRIES THE ADDRESS BECAUSE A JOIN WITHOUT ONE IS NOW
+           * REFUSED AT THE PARSER**, and a fixture that never reaches the screen
+           * would make this file's markup assertions vacuously true. */
+          { attribute: RECEIVING_ADDRESS, required: true }
+        ]
+      })
+    );
     await settle();
     expect(document.querySelector('[data-injected]')).toBeNull();
     expect(document.querySelector('[data-injected-too]')).toBeNull();
@@ -296,11 +298,12 @@ describe('THE COMPANY MUST ASK FOR THE ADDRESS; THE PERSON MAY STILL DECLINE IT'
     open();
     await settle();
     const no = document.querySelector(
-      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`) as HTMLElement | null;
+      `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`
+    ) as HTMLElement | null;
     if (no === null) {
       throw new Error(
-        'the address row offers no way to decline. That is the defect — every row on this '
-        + 'surface is refusable.');
+        'the address row offers no way to decline. That is the defect — every row on this ' + 'surface is refusable.'
+      );
     }
     fireEvent.click(no);
     await settle();
@@ -315,23 +318,21 @@ describe('THE COMPANY MUST ASK FOR THE ADDRESS; THE PERSON MAY STILL DECLINE IT'
     expect(document.querySelector('[data-approve][data-join]')).not.toBeNull();
   });
 
-  it('and accepting after declining it sends an acceptance that names no address',
-    async () => {
-      await someone();
-      const channel = open();
-      await settle();
-      fireEvent.click(document.querySelector(
-        `[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`) as HTMLElement);
-      const answer = await press(channel);
-      const inside = JSON.parse(
-        unsealAsTheOtherSideDoes(answer.message)) as DisclosureResponse;
-      /* Honest and useless to the receiver, which is exactly what the screen
-       * warned. The row is DECLINED rather than absent — a person who says no
-       * is told to have said no. */
-      expect(inside.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS))
-        .toBeUndefined();
-      expect(inside.payload.declined).toContain(RECEIVING_ADDRESS);
-    });
+  it('and accepting after declining it sends an acceptance that names no address', async () => {
+    await someone();
+    const channel = open();
+    await settle();
+    fireEvent.click(
+      document.querySelector(`[data-row="${RECEIVING_ADDRESS}"] [data-option="none"] input`) as HTMLElement
+    );
+    const answer = await press(channel);
+    const inside = JSON.parse(unsealAsTheOtherSideDoes(answer.message)) as DisclosureResponse;
+    /* Honest and useless to the receiver, which is exactly what the screen
+     * warned. The row is DECLINED rather than absent — a person who says no
+     * is told to have said no. */
+    expect(inside.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS)).toBeUndefined();
+    expect(inside.payload.declined).toContain(RECEIVING_ADDRESS);
+  });
 });
 
 describe('THE ACCEPTANCE IS SEALED, AND THE ADDRESS NEVER CROSSES IN THE CLEAR', () => {
@@ -353,32 +354,31 @@ describe('THE ACCEPTANCE IS SEALED, AND THE ADDRESS NEVER CROSSES IN THE CLEAR',
     expect(message['tag']).toBe('');
   });
 
-  it('AND THE READER GETS BACK THE SIGNED DISCLOSURE IT ALREADY KNOWS HOW TO VERIFY',
-    async () => {
-      await someone();
-      const channel = open();
-      const answer = await press(channel);
-      const inside = JSON.parse(
-        unsealAsTheOtherSideDoes(answer.message)) as DisclosureResponse;
+  it('AND THE READER GETS BACK THE SIGNED DISCLOSURE IT ALREADY KNOWS HOW TO VERIFY', async () => {
+    await someone();
+    const channel = open();
+    const answer = await press(channel);
+    const inside = JSON.parse(unsealAsTheOtherSideDoes(answer.message)) as DisclosureResponse;
 
-      /* **THE SENTENCE, ONE LAYER OUT.** The plaintext is the same
-       * `DisclosureResponse` a disclosure answers with, so the far side runs
-       * the verifier it already has. This change adds an envelope and nothing
-       * new to verify. */
-      expect(verify(inside, {
+    /* **THE SENTENCE, ONE LAYER OUT.** The plaintext is the same
+     * `DisclosureResponse` a disclosure answers with, so the far side runs
+     * the verifier it already has. This change adds an envelope and nothing
+     * new to verify. */
+    expect(
+      verify(inside, {
         atOrigin: ORIGIN,
         expectingNonce: 'n1',
         payingAddress: inside.payload.address,
         networkId: NETWORK,
-        now: NOW,
-      })).toEqual({ ok: true });
-      expect(inside.payload.address).toBe(
-        ownedAddressFor(identity, FIRST_OFFERED, {}, NETWORK).unshieldedBech32);
-      const sent = inside.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS);
-      expect(sent?.says).toEqual({ of: 'value', value: shieldedOf(FIRST_OFFERED) });
-      /* Nobody typed it. This wallet worked it out. */
-      expect(sent?.asserted).toEqual({ by: 'wallet' });
-    });
+        now: NOW
+      })
+    ).toEqual({ ok: true });
+    expect(inside.payload.address).toBe(ownedAddressFor(identity, FIRST_OFFERED, {}, NETWORK).unshieldedBech32);
+    const sent = inside.payload.disclosed.find((s) => s.about === RECEIVING_ADDRESS);
+    expect(sent?.says).toEqual({ of: 'value', value: shieldedOf(FIRST_OFFERED) });
+    /* Nobody typed it. This wallet worked it out. */
+    expect(sent?.asserted).toEqual({ by: 'wallet' });
+  });
 
   it('THE ENVELOPE OPENS WITH THE INBOX KEY AND WITH NOTHING ELSE', async () => {
     await someone();
@@ -398,8 +398,7 @@ describe('THE ACCEPTANCE IS SEALED, AND THE ADDRESS NEVER CROSSES IN THE CLEAR',
     await press(channel);
     await settle();
     /* What this wallet DID, not what anybody else achieved. */
-    expect(document.querySelector('[data-accepted-heading]')?.textContent)
-      .toContain(ORIGIN);
+    expect(document.querySelector('[data-accepted-heading]')?.textContent).toContain(ORIGIN);
     expect(document.querySelector('[data-sealed-to]')?.textContent).toBe(INBOX_KEY);
   });
 });

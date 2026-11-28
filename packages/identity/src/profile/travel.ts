@@ -72,11 +72,14 @@ const encode = (blob: SealedProfile): string =>
   btoa(JSON.stringify(blob)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
 
 const decode = (text: string): SealedProfile => {
-  const padded = text.replace(/-/gu, '+').replace(/_/gu, '/')
-    + '='.repeat((4 - (text.length % 4)) % 4);
+  const padded = text.replace(/-/gu, '+').replace(/_/gu, '/') + '='.repeat((4 - (text.length % 4)) % 4);
   const parsed = JSON.parse(atob(padded)) as SealedProfile;
-  if (typeof parsed !== 'object' || parsed === null
-    || typeof parsed.iv !== 'string' || typeof parsed.sealed !== 'string') {
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    typeof parsed.iv !== 'string' ||
+    typeof parsed.sealed !== 'string'
+  ) {
     throw new Error('not a sealed profile');
   }
   return parsed;
@@ -99,16 +102,14 @@ export function unpack(text: string): Carried {
   if (!raw.startsWith(`${PREFIX}.`)) {
     /* A bare sealed wallet, exactly as `pairing.ts` produces it. */
     if (!BASE64URL.test(raw)) {
-      throw new TravelError(
-        'not-a-pairing-payload', 'that is not something this wallet sealed.');
+      throw new TravelError('not-a-pairing-payload', 'that is not something this wallet sealed.');
     }
     return { of: 'keys-only', keys: Object.freeze({ sealed: raw }) };
   }
   const parts = raw.slice(PREFIX.length + 1);
   const at = parts.indexOf('.');
   if (at < 0) {
-    throw new TravelError(
-      'not-a-pairing-payload', 'that pairing payload is cut short.');
+    throw new TravelError('not-a-pairing-payload', 'that pairing payload is cut short.');
   }
   const keysText = parts.slice(0, at);
   const profileText = parts.slice(at + 1);
@@ -120,8 +121,8 @@ export function unpack(text: string): Carried {
   if (!BASE64URL.test(profileText)) {
     throw new TravelError(
       'profile-unreadable',
-      'the wallet in this pairing is readable and the details beside it are not. '
-      + 'Nothing has been opened.');
+      'the wallet in this pairing is readable and the details beside it are not. ' + 'Nothing has been opened.'
+    );
   }
   let profile: SealedProfile;
   try {
@@ -129,8 +130,8 @@ export function unpack(text: string): Carried {
   } catch {
     throw new TravelError(
       'profile-unreadable',
-      'the wallet in this pairing is readable and the details beside it are not. '
-      + 'Nothing has been opened.');
+      'the wallet in this pairing is readable and the details beside it are not. ' + 'Nothing has been opened.'
+    );
   }
   return { of: 'keys-and-profile', keys, profile };
 }

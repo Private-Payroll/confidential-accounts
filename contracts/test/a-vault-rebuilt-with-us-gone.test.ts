@@ -17,15 +17,15 @@
  * only made once one of the rebuilt notes has been paid out of.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  createConstructorContext, createCircuitContext, sampleContractAddress,
-} from '@midnight-ntwrk/compact-runtime';
+import { createConstructorContext, createCircuitContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { identityFromWords, newWords } from 'midnight-identity';
 import { parseAsk } from 'midnight-identity/profile/request';
 import { unlockKeyFor } from 'midnight-identity/profile/unlock';
 import { drawCompanyLabel, readAccountAddress } from 'midnight-identity/profile/company-label';
 import {
-  Contract as Vault, ledger as vaultLedger, pureCircuits as vaultCircuits,
+  Contract as Vault,
+  ledger as vaultLedger,
+  pureCircuits as vaultCircuits
 } from '../managed-vault/contract/index.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import { AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, vaultRunOf } from './simulator.js';
@@ -33,21 +33,30 @@ import { carryTheAccount, startTheVault, TEST_VAULT_SECRET } from './start-a-vau
 import { type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
 import { changeCoinOf, type VaultCoin } from '../../src/midnight/vault-coins.js';
 import {
-  reconcileVaultPool, commitmentForNote, changeNoteOf, describeRecovery,
+  reconcileVaultPool,
+  commitmentForNote,
+  changeNoteOf,
+  describeRecovery
 } from '../../src/midnight/vault-recovery.js';
 import { smallestNoteCovering, type Note } from '../../src/midnight/vault-notes.js';
 import {
-  creatingTransactionsAmong, vaultNoteCommitment,
-  type NoteEvents, type ServedEvent, type VaultTransactions,
+  creatingTransactionsAmong,
+  vaultNoteCommitment,
+  type NoteEvents,
+  type ServedEvent,
+  type VaultTransactions
 } from '../../src/midnight/note-index.js';
+import { MemorySealedPoolStore, SealedNotePool, type PoolSigner } from '../../src/midnight/vault-pool.js';
 import {
-  MemorySealedPoolStore, SealedNotePool, type PoolSigner,
-} from '../../src/midnight/vault-pool.js';
-import {
-  DepositJournalInStore, PaymentJournalInStore, attemptsFromJournalVersions,
+  DepositJournalInStore,
+  PaymentJournalInStore,
+  attemptsFromJournalVersions
 } from '../../src/midnight/vault-journal.js';
 import {
-  depositNonceKeyFor, vaultOutputHistoryFrom, claimNewDepositCoin, type DepositNonceKey,
+  depositNonceKeyFor,
+  vaultOutputHistoryFrom,
+  claimNewDepositCoin,
+  type DepositNonceKey
 } from '../../src/midnight/deposit-nonce.js';
 import { walkCompanyRecords, type CompanyRecords } from '../../src/midnight/rebuild-from-records.js';
 import { UNLOCK_PURPOSE, UNLOCK_WINDOW_MS, unlockAsk } from '../../src/core/wallet-unlock.js';
@@ -81,446 +90,625 @@ const NO_INDEX_YET = 0n;
 const LABEL = drawCompanyLabel();
 
 const releasedCompanyKey = (words: string, account: string): Uint8Array => {
-  const ask = parseAsk(unlockAsk({
-    name: 'Confidential Accounts',
-    rdns: 'social.lemonade.confidential-accounts',
-    purpose: UNLOCK_PURPOSE,
-    nonce: 'derivation-has-no-conversation',
-    expiresAt: 0 + UNLOCK_WINDOW_MS,
-    company: LABEL,
-    account: readAccountAddress(account),
-  }), 'https://payroll.example', 0);
+  const ask = parseAsk(
+    unlockAsk({
+      name: 'Confidential Accounts',
+      rdns: 'social.lemonade.confidential-accounts',
+      purpose: UNLOCK_PURPOSE,
+      nonce: 'derivation-has-no-conversation',
+      expiresAt: 0 + UNLOCK_WINDOW_MS,
+      company: LABEL,
+      account: readAccountAddress(account)
+    }),
+    'https://payroll.example',
+    0
+  );
   if (ask.kind !== 'unlock') throw new Error(`built a ${ask.kind}, not an unlock`);
   return unlockKeyFor(identityFromWords(words), ask);
 };
 
-interface VaultPrivate { notes: Note[] }
+interface VaultPrivate {
+  notes: Note[];
+}
 
 const vaultWitnesses = {
   noteToSpend: (ctx: { privateState: VaultPrivate }, token: Uint8Array, amount: bigint) => {
     const n = smallestNoteCovering(ctx.privateState.notes, toHex(token), amount);
     if (n === undefined) throw new Error(`the device's pool has no note covering ${amount}`);
-    return [ctx.privateState, {
-      nonce: fromHex(n.nonce), color: fromHex(n.token), value: n.value, mt_index: n.index ?? NO_INDEX_YET,
-    }];
+    return [
+      ctx.privateState,
+      {
+        nonce: fromHex(n.nonce),
+        color: fromHex(n.token),
+        value: n.value,
+        mt_index: n.index ?? NO_INDEX_YET
+      }
+    ];
   },
-  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [ctx.privateState, ctx.privateState.secret ?? TEST_VAULT_SECRET],
+  nonceSecret: (ctx: { privateState: { secret?: Uint8Array } }) => [
+    ctx.privateState,
+    ctx.privateState.secret ?? TEST_VAULT_SECRET
+  ]
 };
 
-describe.skipIf(!ACCOUNT_KEYS_ON_DISK)('a vault whose every record of ours is gone [needs contracts/managed/keys; `npm run compact` builds them]', () => {
-  let sim: AccountSimulator;
-  let vault: Vault<VaultPrivate>;
-  let vaultAddr: Hex;
-  let vaultState: any;
-  let priv: VaultPrivate;
-  let company: string;
-  let chainLog: Array<{ hash: Hex; made: { nonce: Hex; token: Hex; value: bigint } | undefined; index: bigint }>;
+describe.skipIf(!ACCOUNT_KEYS_ON_DISK)(
+  'a vault whose every record of ours is gone [needs contracts/managed/keys; `npm run compact` builds them]',
+  () => {
+    let sim: AccountSimulator;
+    let vault: Vault<VaultPrivate>;
+    let vaultAddr: Hex;
+    let vaultState: any;
+    let priv: VaultPrivate;
+    let company: string;
+    let chainLog: Array<{ hash: Hex; made: { nonce: Hex; token: Hex; value: bigint } | undefined; index: bigint }>;
 
-  const WORDS = newWords().join(' ');
-  const SOMEBODY_ELSE = newWords().join(' ');
+    const WORDS = newWords().join(' ');
+    const SOMEBODY_ELSE = newWords().join(' ');
 
-  const ctx = (circuit: string) => createCircuitContext<VaultPrivate>({
-      circuitId: circuit,
-      contractAddress: vaultAddr as never,
-      coinPublicKeyOrZswapState: BLOCK,
-      contractState: vaultState,
-      privateState: priv,
-      crossContract: sim.crossContract(),
-      time: VAULT_NOW,
-      parentBlockHash: BLOCK,
-    });
-  /* Before the first call the state is the deployment's ContractState; after it, the call's charged state. */
-  const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
-  const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
-  const held = (coin: { nonce: Hex; token: Hex; value: bigint }) => commitmentForNote(vaultCircuits, vaultAddr, coin);
-  /*
-   * The vault's nonce secret as the company holds it, with the commitment the chain
-   * holds now: every change a payment made takes its nonce from it. This vault was
-   * started under `TEST_VAULT_SECRET` and never rotated.
-   */
-  const nonceSecrets = () => ({ secrets: [toHex(TEST_VAULT_SECRET)], commitment: toHex(vaultLedger(charged() as never).nonceCommitment) });
-  /** The vault's split journal as the chain holds it. */
-  const splitJournal = () => new Map<string, string>(
-    [...vaultLedger(charged() as never).splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [toHex(k), toHex(v)]));
-
-  const logCall = (r: { context: { callContext: { currentZswapLocalState: unknown } } }) => {
-    const hash = (chainLog.length + 1).toString(16).padStart(64, '0') as Hex;
-    chainLog.push({
-      hash, made: changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr), index: BigInt(100 + chainLog.length),
-    });
-  };
-  /*
-   * **THE CHAIN'S COMMITMENT OF AN OUTPUT, COMPUTED BY THE COMPILED CONTRACT'S
-   * OWN RUNTIME** - the value its `receiveShielded` and `sendShielded` claim, which
-   * the ledger checks against the output it makes. Deliberately not
-   * `vaultNoteCommitment`, which is what the walk looks things up with: if the
-   * two ever disagreed, the walk would name nothing and this test would say so.
-   */
-  const outputCommitment = (coin: { nonce: Hex; token: Hex; value: bigint }): string => toHex((vault as any)._coinCommitment_0(
-    { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value },
-    { is_left: false, left: { bytes: new Uint8Array(32) }, right: { bytes: fromHex(vaultAddr) } }));
-  const theChain = (): { transactions: VaultTransactions; events: NoteEvents } => ({
-    transactions: { of: async () => [...chainLog].reverse().map((t) => t.hash) },
-    events: {
-      eventsOf: async (tx) => {
-        const t = chainLog.find((x) => 'hash' in tx && x.hash === tx.hash);
-        if (!t) throw new Error(`the test chain holds no transaction ${JSON.stringify(tx)}`);
-        const events: ServedEvent[] = [{ transactionHash: t.hash, details: { tag: 'zswapInput' } }];
-        if (t.made) {
-          events.push({
-            transactionHash: t.hash,
-            details: {
-              tag: 'zswapOutput', commitment: outputCommitment(t.made), contract: vaultAddr, mtIndex: t.index,
-            },
-          });
-        }
-        return events;
-      },
-    },
-  });
-
-  const approvedRun = async (payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change) => {
-    const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
-      details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
-      nonce: toHex(bytes(p.nonce)),
-    }));
-    const tree = payoutTreeOf(leaves, payments.map((p) => p.amount), TOKEN_BYTES);
-    const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
-    const vaultBytes = fromHex(vaultAddr);
-    await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees, from: WIN_FROM, until: WIN_UNTIL, vault: vaultBytes,
-    });
-    const id = sim.proposalId(payload, c.salt, vaultBytes);
-    await sim.as(sim.applying(B, c)).approve(id);
-    return { tree, id };
-  };
-
-  const pay = async (to: Uint8Array, amount: bigint, seed: number) => {
-    const c = change(0n, seed);
-    const run = await approvedRun([{ to, amount, nonce: seed }], c);
-    const r = await vault.impureCircuits.payout(
-      ctx('payout'),
-      vaultRunOf({
-        proposal: run.id, vault: fromHex(vaultAddr), tree: run.tree, i: 0,
-        opensAt: WIN_FROM, closesAt: WIN_UNTIL, salt: c.salt, nonce: bytes(seed),
-      }),
-      to, TOKEN_BYTES, amount, bytes(0x40), noFurtherNote());
-    vaultState = r.context.callContext.currentQueryContext.state;
-    logCall(r);
-    return r;
-  };
-
-  beforeEach(async () => {
-    sim = await AccountSimulator.liveAccount([A, B], 2n);
-    sim.at(VAULT_NOW);
-    company = String(sim.address);
-    vault = new Vault<VaultPrivate>(vaultWitnesses as never);
-    vaultAddr = sampleContractAddress() as never as Hex;
-    const init = await vault.initialState(
-      createConstructorContext({} as VaultPrivate, BLOCK),
-      { bytes: fromHex(company) } as never);
-    vaultState = init.currentContractState;
-    /* A vault takes no money until the account has adopted it and approved its first secret. */
-    await startTheVault({
-      sim, vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')), approvers: [A, B], now: VAULT_NOW,
-      call: async (circuit, ...a) => {
-        const r: any = await (vault.impureCircuits as any)[circuit](createCircuitContext({
-            circuitId: circuit as never,
-            contractAddress: vaultAddr as never,
-            coinPublicKeyOrZswapState: BLOCK,
-            contractState: vaultState,
-            privateState: {} as never,
-            crossContract: sim.crossContract(),
-            time: VAULT_NOW,
-            parentBlockHash: BLOCK,
-          }), ...a);
-        vaultState = r.context.callContext.currentQueryContext.state;
-        carryTheAccount(sim, r.context);
-      },
-    });
-    priv = { notes: [] };
-    chainLog = [];
-  });
-
-  /**
-   * **THE PRODUCT'S OWN RECORDS, KEPT AS THE PRODUCT KEEPS THEM**, and a
-   * company that deposits and pays through them. Returns what the company's
-   * own books say, and nothing else survives the test that calls it.
-   */
-  const aCompanyAtWork = async (nonces: DepositNonceKey) => {
-    const me = newWrappingKeypair();
-    const signers = async (): Promise<readonly PoolSigner[]> => [{ id: 'owner', wrappingPublicKey: me.publicKey }];
-    const opener = { id: 'owner', wrappingSecret: me.secret };
-    const stores = {
-      pool: new MemorySealedPoolStore(), deposits: new MemorySealedPoolStore(), payments: new MemorySealedPoolStore(),
-    };
-    const pool = new SealedNotePool(stores.pool, { signerId: 'owner', wrappingSecret: me.secret }, signers);
-    const depositJournal = new DepositJournalInStore(stores.deposits, vaultAddr, opener, signers, nonces);
-    const paymentJournal = new PaymentJournalInStore(stores.payments, vaultAddr, opener, signers);
-    await pool.create(vaultAddr, { notes: [] });
-
-    const record = async (next: (notes: Note[]) => Note[]) => {
-      const now = await pool.load(vaultAddr);
-      await pool.save(vaultAddr, { notes: next(now.notes) }, now.readAt);
-      priv = { notes: (await pool.load(vaultAddr)).notes };
-    };
-
-    /* A deposit, the way the product makes one: claim, check the coin is new, call, record. */
-    const deposit = async (value: bigint, opts: { abandon?: boolean; slot: number }) => {
-      const createdBefore = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-      const { coin, slot } = await claimNewDepositCoin({
-        vault: vaultAddr, money: { token: toHex(TOKEN_BYTES), value }, journal: depositJournal,
-        nonceAt: (m, s) => depositJournal.nonceAt(vaultAddr, m, s), everCreated: createdBefore,
-        outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddr),
-        heldNow: (c) => chainNotes().includes(held(c)),
-        poolHoldsTheNonce: async (n) => (await pool.load(vaultAddr)).notes.some((x) => x.nonce === n),
+    const ctx = (circuit: string) =>
+      createCircuitContext<VaultPrivate>({
+        circuitId: circuit,
+        contractAddress: vaultAddr as never,
+        coinPublicKeyOrZswapState: BLOCK,
+        contractState: vaultState,
+        privateState: priv,
+        crossContract: sim.crossContract(),
+        time: VAULT_NOW,
+        parentBlockHash: BLOCK
       });
-      /* The lowest slot whose coin was never made: only earlier coins of the same money move it up. */
-      expect(slot, 'RED WHEN: a deposit\'s slot is not the lowest one its own money has left free').toBe(opts.slot);
-      if (opts.abandon) return coin;
+    /* Before the first call the state is the deployment's ContractState; after it, the call's charged state. */
+    const charged = () => (vaultState?.constructor?.name === 'ContractState' ? vaultState.data : vaultState);
+    const chainNotes = (): Hex[] => [...vaultLedger(charged() as never).notes].map((c: Uint8Array) => toHex(c));
+    const held = (coin: { nonce: Hex; token: Hex; value: bigint }) => commitmentForNote(vaultCircuits, vaultAddr, coin);
+    /*
+     * The vault's nonce secret as the company holds it, with the commitment the chain
+     * holds now: every change a payment made takes its nonce from it. This vault was
+     * started under `TEST_VAULT_SECRET` and never rotated.
+     */
+    const nonceSecrets = () => ({
+      secrets: [toHex(TEST_VAULT_SECRET)],
+      commitment: toHex(vaultLedger(charged() as never).nonceCommitment)
+    });
+    /** The vault's split journal as the chain holds it. */
+    const splitJournal = () =>
+      new Map<string, string>(
+        [...vaultLedger(charged() as never).splitJournal].map(([k, v]: [Uint8Array, Uint8Array]) => [
+          toHex(k),
+          toHex(v)
+        ])
+      );
+
+    const logCall = (r: { context: { callContext: { currentZswapLocalState: unknown } } }) => {
+      const hash = (chainLog.length + 1).toString(16).padStart(64, '0') as Hex;
+      chainLog.push({
+        hash,
+        made: changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr),
+        index: BigInt(100 + chainLog.length)
+      });
+    };
+    /*
+     * **THE CHAIN'S COMMITMENT OF AN OUTPUT, COMPUTED BY THE COMPILED CONTRACT'S
+     * OWN RUNTIME** - the value its `receiveShielded` and `sendShielded` claim, which
+     * the ledger checks against the output it makes. Deliberately not
+     * `vaultNoteCommitment`, which is what the walk looks things up with: if the
+     * two ever disagreed, the walk would name nothing and this test would say so.
+     */
+    const outputCommitment = (coin: { nonce: Hex; token: Hex; value: bigint }): string =>
+      toHex(
+        (vault as any)._coinCommitment_0(
+          { nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value },
+          { is_left: false, left: { bytes: new Uint8Array(32) }, right: { bytes: fromHex(vaultAddr) } }
+        )
+      );
+    const theChain = (): { transactions: VaultTransactions; events: NoteEvents } => ({
+      transactions: { of: async () => [...chainLog].reverse().map((t) => t.hash) },
+      events: {
+        eventsOf: async (tx) => {
+          const t = chainLog.find((x) => 'hash' in tx && x.hash === tx.hash);
+          if (!t) throw new Error(`the test chain holds no transaction ${JSON.stringify(tx)}`);
+          const events: ServedEvent[] = [{ transactionHash: t.hash, details: { tag: 'zswapInput' } }];
+          if (t.made) {
+            events.push({
+              transactionHash: t.hash,
+              details: {
+                tag: 'zswapOutput',
+                commitment: outputCommitment(t.made),
+                contract: vaultAddr,
+                mtIndex: t.index
+              }
+            });
+          }
+          return events;
+        }
+      }
+    });
+
+    const approvedRun = async (payments: Array<{ to: Uint8Array; amount: bigint; nonce: number }>, c: Change) => {
+      const leaves: PayoutLeafInput[] = payments.map((p, i) => ({
+        details: toHex(vaultCircuits.payoutDetails(p.to, TOKEN_BYTES, p.amount, bytes(0x40 + i))),
+        nonce: toHex(bytes(p.nonce))
+      }));
+      const tree = payoutTreeOf(
+        leaves,
+        payments.map((p) => p.amount),
+        TOKEN_BYTES
+      );
+      const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, WIN_FROM, WIN_UNTIL, 0n);
+      const vaultBytes = fromHex(vaultAddr);
+      await sim.as(sim.applying(A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: WIN_FROM,
+        until: WIN_UNTIL,
+        vault: vaultBytes
+      });
+      const id = sim.proposalId(payload, c.salt, vaultBytes);
+      await sim.as(sim.applying(B, c)).approve(id);
+      return { tree, id };
+    };
+
+    const pay = async (to: Uint8Array, amount: bigint, seed: number) => {
+      const c = change(0n, seed);
+      const run = await approvedRun([{ to, amount, nonce: seed }], c);
+      const r = await vault.impureCircuits.payout(
+        ctx('payout'),
+        vaultRunOf({
+          proposal: run.id,
+          vault: fromHex(vaultAddr),
+          tree: run.tree,
+          i: 0,
+          opensAt: WIN_FROM,
+          closesAt: WIN_UNTIL,
+          salt: c.salt,
+          nonce: bytes(seed)
+        }),
+        to,
+        TOKEN_BYTES,
+        amount,
+        bytes(0x40),
+        noFurtherNote()
+      );
+      vaultState = r.context.callContext.currentQueryContext.state;
+      logCall(r);
+      return r;
+    };
+
+    beforeEach(async () => {
+      sim = await AccountSimulator.liveAccount([A, B], 2n);
+      sim.at(VAULT_NOW);
+      company = String(sim.address);
+      vault = new Vault<VaultPrivate>(vaultWitnesses as never);
+      vaultAddr = sampleContractAddress() as never as Hex;
+      const init = await vault.initialState(createConstructorContext({} as VaultPrivate, BLOCK), {
+        bytes: fromHex(company)
+      } as never);
+      vaultState = init.currentContractState;
+      /* A vault takes no money until the account has adopted it and approved its first secret. */
+      await startTheVault({
+        sim,
+        vault: Uint8Array.from(Buffer.from(String(vaultAddr), 'hex')),
+        approvers: [A, B],
+        now: VAULT_NOW,
+        call: async (circuit, ...a) => {
+          const r: any = await (vault.impureCircuits as any)[circuit](
+            createCircuitContext({
+              circuitId: circuit as never,
+              contractAddress: vaultAddr as never,
+              coinPublicKeyOrZswapState: BLOCK,
+              contractState: vaultState,
+              privateState: {} as never,
+              crossContract: sim.crossContract(),
+              time: VAULT_NOW,
+              parentBlockHash: BLOCK
+            }),
+            ...a
+          );
+          vaultState = r.context.callContext.currentQueryContext.state;
+          carryTheAccount(sim, r.context);
+        }
+      });
+      priv = { notes: [] };
+      chainLog = [];
+    });
+
+    /**
+     * **THE PRODUCT'S OWN RECORDS, KEPT AS THE PRODUCT KEEPS THEM**, and a
+     * company that deposits and pays through them. Returns what the company's
+     * own books say, and nothing else survives the test that calls it.
+     */
+    const aCompanyAtWork = async (nonces: DepositNonceKey) => {
+      const me = newWrappingKeypair();
+      const signers = async (): Promise<readonly PoolSigner[]> => [{ id: 'owner', wrappingPublicKey: me.publicKey }];
+      const opener = { id: 'owner', wrappingSecret: me.secret };
+      const stores = {
+        pool: new MemorySealedPoolStore(),
+        deposits: new MemorySealedPoolStore(),
+        payments: new MemorySealedPoolStore()
+      };
+      const pool = new SealedNotePool(stores.pool, { signerId: 'owner', wrappingSecret: me.secret }, signers);
+      const depositJournal = new DepositJournalInStore(stores.deposits, vaultAddr, opener, signers, nonces);
+      const paymentJournal = new PaymentJournalInStore(stores.payments, vaultAddr, opener, signers);
+      await pool.create(vaultAddr, { notes: [] });
+
+      const record = async (next: (notes: Note[]) => Note[]) => {
+        const now = await pool.load(vaultAddr);
+        await pool.save(vaultAddr, { notes: next(now.notes) }, now.readAt);
+        priv = { notes: (await pool.load(vaultAddr)).notes };
+      };
+
+      /* A deposit, the way the product makes one: claim, check the coin is new, call, record. */
+      const deposit = async (value: bigint, opts: { abandon?: boolean; slot: number }) => {
+        const createdBefore = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+        const { coin, slot } = await claimNewDepositCoin({
+          vault: vaultAddr,
+          money: { token: toHex(TOKEN_BYTES), value },
+          journal: depositJournal,
+          nonceAt: (m, s) => depositJournal.nonceAt(vaultAddr, m, s),
+          everCreated: createdBefore,
+          outputCommitmentOf: (c) => vaultNoteCommitment(c, vaultAddr),
+          heldNow: (c) => chainNotes().includes(held(c)),
+          poolHoldsTheNonce: async (n) => (await pool.load(vaultAddr)).notes.some((x) => x.nonce === n)
+        });
+        /* The lowest slot whose coin was never made: only earlier coins of the same money move it up. */
+        expect(slot, "RED WHEN: a deposit's slot is not the lowest one its own money has left free").toBe(opts.slot);
+        if (opts.abandon) return coin;
+        const r = await vault.impureCircuits.deposit(ctx('deposit'), {
+          nonce: fromHex(coin.nonce),
+          color: fromHex(coin.token),
+          value: coin.value
+        });
+        vaultState = r.context.callContext.currentQueryContext.state;
+        logCall(r);
+        await record((notes) => [...notes, { ...coin, index: NO_INDEX_YET }]);
+        return coin;
+      };
+
+      /* A payment, the way the product makes one: journal the attempt, call, record the change. */
+      const payFromThePool = async (to: Uint8Array, amount: bigint, seed: number) => {
+        const spent = smallestNoteCovering(priv.notes, toHex(TOKEN_BYTES), amount)!;
+        await paymentJournal.record(vaultAddr, {
+          spent: { nonce: spent.nonce, token: spent.token, value: spent.value },
+          amount,
+          attemptedAt: new Date().toISOString()
+        });
+        const r = await pay(to, amount, seed);
+        const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr);
+        await record((notes) => [
+          ...notes.filter((n) => n.nonce !== spent.nonce),
+          ...(kept ? [{ ...kept, index: NO_INDEX_YET }] : [])
+        ]);
+        return { spent, kept };
+      };
+
+      return { stores, opener, deposit, payFromThePool };
+    };
+
+    it("THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT", async () => {
+      const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
+
+      const first = await work.deposit(1_000n, { slot: 1 });
+      const second = await work.deposit(400n, { slot: 1 }); // another amount's first coin
+      await work.deposit(5_000n, { abandon: true, slot: 1 }); // filed, never called, so it uses nothing up
+      const third = await work.deposit(1_000n, { slot: 2 }); // the same amount as the first, whose coin is at 1
+      expect(third.nonce, 'RED WHEN: two deposits of one amount share a nonce').not.toBe(first.nonce);
+
+      const toBob = await work.payFromThePool(BOB, 250n, 0xb1); // 400 -> change 150
+      expect(toBob.spent.nonce).toBe(second.nonce);
+      const toAlice = await work.payFromThePool(ALICE, 700n, 0xa1); // a 1,000 -> change 300
+      const toCarol = await work.payFromThePool(CAROL, 100n, 0xc1); // 150 -> change 50: a change of a change
+      expect(toCarol.spent.nonce, 'the setup meant to spend the 150 here').toBe(toBob.kept!.nonce);
+      const toErin = await work.payFromThePool(ALICE, 1_000n, 0xe1); // the other 1,000, spent exactly: no change
+      expect(toErin.kept, 'the setup meant an exact spend here').toBeUndefined();
+      const before = priv.notes.map((n) => n.value).sort((a, b) => Number(a - b));
+      expect(before).toEqual([50n, 300n]);
+
+      /* What the company's books say. Nothing else below comes from this test's past. */
+      const records: CompanyRecords = {
+        deposited: [
+          { token: toHex(TOKEN_BYTES), value: 1_000n },
+          { token: toHex(TOKEN_BYTES), value: 400n },
+          { token: toHex(TOKEN_BYTES), value: 1_000n }
+        ],
+        paid: [
+          { token: toHex(TOKEN_BYTES), amount: 250n },
+          { token: toHex(TOKEN_BYTES), amount: 700n },
+          { token: toHex(TOKEN_BYTES), amount: 100n },
+          { token: toHex(TOKEN_BYTES), amount: 1_000n }
+        ]
+      };
+
+      /* ---------------- THE POOL AND BOTH JOURNALS DELETED ---------------- */
+      const gone = {
+        pool: new MemorySealedPoolStore(),
+        deposits: new MemorySealedPoolStore(),
+        payments: new MemorySealedPoolStore()
+      };
+      for (const s of Object.values(gone)) expect(await s.versions(vaultAddr)).toEqual([]);
+      priv = { notes: [] };
+      const journals = attemptsFromJournalVersions({
+        deposits: await gone.deposits.versions(vaultAddr),
+        payments: await gone.payments.versions(vaultAddr),
+        opener: work.opener
+      });
+      expect(journals.deposits.length + journals.payments.length, 'nothing of ours is left to read').toBe(0);
+      expect(
+        () => reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: [], circuits: vaultCircuits }),
+        'RED WHEN: a rebuild with nothing to propose answers as though the vault were empty'
+      ).toThrow(/no filed versions/);
+
+      /* ---------------- REBUILT FROM THE WORDS AND THE BOOKS ---------------- */
+      const key = depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr);
+      const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+      const walk = await walkCompanyRecords({
+        vault: vaultAddr,
+        keys: [key],
+        records,
+        everCreated,
+        commitmentOf: vaultNoteCommitment,
+        nonceSecrets: nonceSecrets(),
+        splitJournal: splitJournal()
+      });
+      expect(
+        walk.found,
+        'RED WHEN: a deposit, or a change that a spent note became, is not named from the records -- the 50 is only reachable through a 400 and a 150 the vault no longer holds'
+      ).toEqual({ deposits: 3, changes: 3, pieces: 0 });
+      expect(
+        walk.slots,
+        "RED WHEN: the walk is bounded by anything but the vault's six outputs and the attempts"
+      ).toEqual({ walked: 9, lastFound: 2 });
+
+      const rebuilt = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: [],
+        named: walk.coins,
+        circuits: vaultCircuits
+      });
+      expect(
+        rebuilt.unexplained,
+        `RED WHEN: a note the vault holds is not named: ${describeRecovery(rebuilt)}`
+      ).toEqual([]);
+      expect(
+        rebuilt.held.map((n) => n.value).sort((a, b) => Number(a - b)),
+        'RED WHEN: the rebuild holds anything but what the vault holds'
+      ).toEqual([50n, 300n]);
+      const recoveredChange = rebuilt.held.find((n) => n.value === 50n)!;
+      expect(
+        recoveredChange.nonce,
+        'RED WHEN: the change of a change is rebuilt under any nonce but the one the chain made'
+      ).toBe(toCarol.kept!.nonce);
+      expect(rebuilt.held.find((n) => n.value === 300n)!.nonce).toBe(toAlice.kept!.nonce);
+
+      /* Each rebuilt note is given the transaction that created it, from the chain. */
+      const created = await creatingTransactionsAmong(vaultAddr, rebuilt.held, theChain());
+      expect(
+        created.found.every((f) => 'createdIn' in f),
+        'RED WHEN: a rebuilt note cannot be given its creating transaction'
+      ).toBe(true);
+
+      /* ---------------- AND A NOTE THAT COMES BACK SPENT ---------------- */
+      priv = {
+        notes: rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET }))
+      };
+      const paymentsBefore = vaultLedger(charged() as never).payments;
+      const r = await pay(DAVE, 40n, 0xd1); // the smallest note covering 40 is the rebuilt 50
+      expect(vaultLedger(charged() as never).payments, 'RED WHEN: the rebuilt note does not spend').toBe(
+        paymentsBefore + 1n
+      );
+      const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!;
+      expect(kept.value, 'RED WHEN: a note other than the rebuilt change was spent').toBe(10n);
+      /* RED WHEN the change a payment made is worked out with anything but the vault's secret and the spent note */
+      expect(kept.nonce).toBe(
+        changeNoteOf(recoveredChange, 40n, {
+          circuits: vaultCircuits,
+          vault: vaultAddr,
+          secret: toHex(TEST_VAULT_SECRET)
+        })!.nonce
+      );
+      expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent').not.toContain(
+        held(recoveredChange)
+      );
+    });
+
+    it('THE POOL TEST: A DEPOSIT WHOSE POOL VERSION AND BOOK RECORD WERE IN A BATCH A RECOVERY GAVE UP IS NEVER LOST: UNEXPLAINED UNTIL ITS RECORD IS FILED AGAIN, THEN REBUILT FROM THE CHAIN AND SPENT', async () => {
+      const key = depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr);
+      const work = await aCompanyAtWork(key);
+      const hexOf = (b: Uint8Array | undefined) => toHex(b ?? new Uint8Array(0));
+      /*
+       * **WHAT THE COMPANY'S RECORDS HOLD AS THE ANCHOR STANDS** - a stand-in for a device's read through the record
+       * tree, which `src/server/a-read-is-proven-for-what-it-asks.test.ts` holds for a recovery: each batch's pool
+       * version and book records, keyed by the head that anchored it, believed only on the chain of heads back from the
+       * head the account holds now - a recovery's head resuming from the head it names, so the batches after that one
+       * are given up.
+       */
+      type Batch = {
+        readonly from: string;
+        readonly pool?: { version: number; notes: VaultCoin[] };
+        readonly deposited: CompanyRecords['deposited'];
+      };
+      const batches = new Map<string, Batch>();
+      const anchoredBy = (head: Uint8Array | undefined, from: Uint8Array, batch: Omit<Batch, 'from'>) => {
+        batches.set(hexOf(head), { from: hexOf(from), ...batch });
+      };
+      const asTheAnchorStands = () => {
+        const believed: Batch[] = [];
+        for (let h = hexOf(sim.anchorHead()); batches.has(h); h = batches.get(h)!.from)
+          believed.unshift(batches.get(h)!);
+        return {
+          versions: believed.flatMap((b) => (b.pool === undefined ? [] : [b.pool])),
+          records: { deposited: believed.flatMap((b) => b.deposited), paid: [] } as CompanyRecords
+        };
+      };
+      /* Batch 0 anchors the pool as it was created, holding nothing. */
+      await sim.as(A).anchor(new Uint8Array(32), bytes(0xb0));
+      const head0 = sim.anchorHead()!;
+      anchoredBy(head0, new Uint8Array(32), { pool: { version: 1, notes: [] }, deposited: [] });
+      /* The deposit is made, and batch 1 anchors the pool's version holding it and the deposit's book record: a batch no device can check, so the quorum gives it up. */
+      const deposited = await work.deposit(1_000n, { slot: 1 });
+      const book = { token: toHex(TOKEN_BYTES), value: 1_000n };
+      await sim.as(B).anchor(head0, bytes(0xb1));
+      const head1 = sim.anchorHead()!;
+      anchoredBy(head1, head0, {
+        pool: { version: 2, notes: [{ nonce: deposited.nonce, token: deposited.token, value: deposited.value }] },
+        deposited: [book]
+      });
+      const { id, c, latest } = await sim.approvedRecovery(head0, [A, B]);
+      await sim.as(sim.applying(A, c)).recoverAnchor(head1, bytes(0xbf), head0, latest, id);
+      /* The recovery anchors nothing and resumes from batch 0's head. */
+      anchoredBy(sim.anchorHead(), head0, { deposited: [] });
+      /* RED WHEN: the recovery did not move the anchor on past the batch it gave up. */
+      expect(hexOf(sim.anchorHead())).not.toBe(hexOf(head1));
+      expect(sim.isOpen(id)).toBe(false);
+
+      /* What the anchor holds of the pool now is the version batch 0 anchored: the deposit is on the chain and in no version believed. */
+      priv = { notes: [] };
+      const read = asTheAnchorStands();
+      /* RED WHEN: the given-up batch is still read as the company's - the recovery gave up nothing. */
+      expect(read.versions).toEqual([{ version: 1, notes: [] }]);
+      const short = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: read.versions,
+        circuits: vaultCircuits
+      });
+      /* RED WHEN: the coin the given-up version named is counted from that version - it is believed no longer. */
+      expect(short.held).toEqual([]);
+      expect(short.unexplained).toEqual([held(deposited)]);
+
+      /* The deposit's own book record was given up with its batch: the books as the anchor stands cannot name the coin. */
+      const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+      const walkOf = (records: CompanyRecords) =>
+        walkCompanyRecords({
+          vault: vaultAddr,
+          keys: [key],
+          records,
+          everCreated,
+          commitmentOf: vaultNoteCommitment,
+          nonceSecrets: nonceSecrets(),
+          splitJournal: splitJournal()
+        });
+      const unnamed = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: read.versions,
+        named: (await walkOf(read.records)).coins,
+        circuits: vaultCircuits
+      });
+      /* RED WHEN: a coin the given-up books named is believed named, or is lost: it is on the chain, unexplained, waiting for its record. */
+      expect(unnamed.held).toEqual([]);
+      expect(unnamed.unexplained).toEqual([held(deposited)]);
+
+      /* The depositor's device files its book record again, as a filing a recovery gave up is, and the next anchor holds it. */
+      const headR = sim.anchorHead()!;
+      await sim.as(A).anchor(headR, bytes(0xb2));
+      anchoredBy(sim.anchorHead(), headR, { deposited: [book] });
+      /* Rebuilt from the chain: every coin the chain made for the vault, named from the company's own books with the key its deposits came from. */
+      const again = asTheAnchorStands();
+      const rebuilt = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: again.versions,
+        named: (await walkOf(again.records)).coins,
+        circuits: vaultCircuits
+      });
+      /* RED WHEN: the deposit the given-up batch held is not rebuilt from the chain under the nonce it was made with, once its record is filed again. */
+      expect(rebuilt.unexplained).toEqual([]);
+      expect(rebuilt.held.map((n) => [n.nonce, n.value])).toEqual([[deposited.nonce, 1_000n]]);
+
+      /* And spent. */
+      priv = {
+        notes: rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET }))
+      };
+      const paymentsBefore = vaultLedger(charged() as never).payments;
+      const r = await pay(DAVE, 600n, 0xd2);
+      /* RED WHEN: a coin a recovery's given-up batch held cannot be spent. */
+      expect(vaultLedger(charged() as never).payments).toBe(paymentsBefore + 1n);
+      expect(changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!.value).toBe(400n);
+      expect(chainNotes()).not.toContain(held(deposited));
+    });
+
+    it("A NONCE NOBODY ELSE CAN DERIVE: another person's words, or a rounded amount, name nothing, and the rebuild SAYS so rather than guessing", async () => {
+      const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
+      await work.deposit(1_234n, { slot: 1 });
+      const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+      const exact: CompanyRecords = { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_234n }], paid: [] };
+
+      const stranger = await walkCompanyRecords({
+        vault: vaultAddr,
+        keys: [depositNonceKeyFor(releasedCompanyKey(SOMEBODY_ELSE, company), vaultAddr)],
+        records: exact,
+        everCreated,
+        commitmentOf: vaultNoteCommitment
+      });
+      expect(
+        stranger.coins,
+        "RED WHEN: a deposit can be named without the depositor's words, so a guessed amount can be confirmed against the chain"
+      ).toEqual([]);
+
+      const rounded = await walkCompanyRecords({
+        vault: vaultAddr,
+        keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
+        records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_230n }], paid: [] },
+        everCreated,
+        commitmentOf: vaultNoteCommitment
+      });
+      expect(rounded.coins, 'RED WHEN: an amount that is not the one deposited names a coin').toEqual([]);
+      const said = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: [],
+        named: rounded.coins,
+        attempted: { deposits: [{ nonce: toHex(bytes(1)), token: toHex(TOKEN_BYTES), value: 1n }], payments: [] },
+        circuits: vaultCircuits
+      });
+      expect(said.unexplained, 'RED WHEN: a note nothing names is dropped silently instead of reported').toHaveLength(
+        1
+      );
+      expect(said.held).toEqual([]);
+    });
+
+    it('A NOTE MADE WITH A RANDOM NONCE IS NAMED BY ITS JOURNAL AND BY NOTHING ELSE, and is left exactly as it is', async () => {
+      const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
+      const legacy = { nonce: toHex(randomBytes(32)), token: toHex(TOKEN_BYTES), value: 900n };
       const r = await vault.impureCircuits.deposit(ctx('deposit'), {
-        nonce: fromHex(coin.nonce), color: fromHex(coin.token), value: coin.value,
+        nonce: fromHex(legacy.nonce),
+        color: fromHex(legacy.token),
+        value: legacy.value
       });
       vaultState = r.context.callContext.currentQueryContext.state;
       logCall(r);
-      await record((notes) => [...notes, { ...coin, index: NO_INDEX_YET }]);
-      return coin;
-    };
+      await work.deposit(900n, { slot: 1 });
 
-    /* A payment, the way the product makes one: journal the attempt, call, record the change. */
-    const payFromThePool = async (to: Uint8Array, amount: bigint, seed: number) => {
-      const spent = smallestNoteCovering(priv.notes, toHex(TOKEN_BYTES), amount)!;
-      await paymentJournal.record(vaultAddr, {
-        spent: { nonce: spent.nonce, token: spent.token, value: spent.value }, amount, attemptedAt: new Date().toISOString(),
+      const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
+      const walk = await walkCompanyRecords({
+        vault: vaultAddr,
+        keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
+        records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 900n }], paid: [] },
+        everCreated,
+        commitmentOf: vaultNoteCommitment
       });
-      const r = await pay(to, amount, seed);
-      const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr);
-      await record((notes) => [
-        ...notes.filter((n) => n.nonce !== spent.nonce),
-        ...(kept ? [{ ...kept, index: NO_INDEX_YET }] : []),
+      const fromRecords = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: [],
+        named: walk.coins,
+        circuits: vaultCircuits
+      });
+      expect(fromRecords.held, 'the derived deposit is named').toHaveLength(1);
+      expect(fromRecords.unexplained, 'RED WHEN: a random nonce is claimed to be nameable from the records').toEqual([
+        held(legacy)
       ]);
-      return { spent, kept };
-    };
 
-    return { stores, opener, deposit, payFromThePool };
-  };
-
-  it('THE POOL DELETED, THE VAULT REBUILT FROM THE COMPANY\'S SEED AND ITS OWN RECORDS, AND A NOTE THAT COMES BACK SPENT', async () => {
-    const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
-
-    const first = await work.deposit(1_000n, { slot: 1 });
-    const second = await work.deposit(400n, { slot: 1 });                  // another amount's first coin
-    await work.deposit(5_000n, { abandon: true, slot: 1 });                // filed, never called, so it uses nothing up
-    const third = await work.deposit(1_000n, { slot: 2 });                 // the same amount as the first, whose coin is at 1
-    expect(third.nonce, 'RED WHEN: two deposits of one amount share a nonce').not.toBe(first.nonce);
-
-    const toBob = await work.payFromThePool(BOB, 250n, 0xb1);        // 400 -> change 150
-    expect(toBob.spent.nonce).toBe(second.nonce);
-    const toAlice = await work.payFromThePool(ALICE, 700n, 0xa1);    // a 1,000 -> change 300
-    const toCarol = await work.payFromThePool(CAROL, 100n, 0xc1);    // 150 -> change 50: a change of a change
-    expect(toCarol.spent.nonce, 'the setup meant to spend the 150 here').toBe(toBob.kept!.nonce);
-    const toErin = await work.payFromThePool(ALICE, 1_000n, 0xe1);   // the other 1,000, spent exactly: no change
-    expect(toErin.kept, 'the setup meant an exact spend here').toBeUndefined();
-    const before = priv.notes.map((n) => n.value).sort((a, b) => Number(a - b));
-    expect(before).toEqual([50n, 300n]);
-
-    /* What the company's books say. Nothing else below comes from this test's past. */
-    const records: CompanyRecords = {
-      deposited: [{ token: toHex(TOKEN_BYTES), value: 1_000n }, { token: toHex(TOKEN_BYTES), value: 400n }, { token: toHex(TOKEN_BYTES), value: 1_000n }],
-      paid: [
-        { token: toHex(TOKEN_BYTES), amount: 250n }, { token: toHex(TOKEN_BYTES), amount: 700n },
-        { token: toHex(TOKEN_BYTES), amount: 100n }, { token: toHex(TOKEN_BYTES), amount: 1_000n },
-      ],
-    };
-
-    /* ---------------- THE POOL AND BOTH JOURNALS DELETED ---------------- */
-    const gone = {
-      pool: new MemorySealedPoolStore(), deposits: new MemorySealedPoolStore(), payments: new MemorySealedPoolStore(),
-    };
-    for (const s of Object.values(gone)) expect(await s.versions(vaultAddr)).toEqual([]);
-    priv = { notes: [] };
-    const journals = attemptsFromJournalVersions({
-      deposits: await gone.deposits.versions(vaultAddr), payments: await gone.payments.versions(vaultAddr), opener: work.opener,
+      const withTheJournal = reconcileVaultPool({
+        vault: vaultAddr,
+        chain: chainNotes(),
+        versions: [],
+        named: walk.coins,
+        attempted: { deposits: [legacy], payments: [] },
+        circuits: vaultCircuits
+      });
+      expect(withTheJournal.unexplained, 'RED WHEN: the journal stops naming a note only it can name').toEqual([]);
+      expect(withTheJournal.held.find((n) => n.nonce === legacy.nonce)?.value).toBe(900n);
     });
-    expect(journals.deposits.length + journals.payments.length, 'nothing of ours is left to read').toBe(0);
-    expect(
-      () => reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: [], circuits: vaultCircuits }),
-      'RED WHEN: a rebuild with nothing to propose answers as though the vault were empty',
-    ).toThrow(/no filed versions/);
-
-    /* ---------------- REBUILT FROM THE WORDS AND THE BOOKS ---------------- */
-    const key = depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr);
-    const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-    const walk = await walkCompanyRecords({
-      vault: vaultAddr, keys: [key], records, everCreated, commitmentOf: vaultNoteCommitment,
-      nonceSecrets: nonceSecrets(), splitJournal: splitJournal(),
-    });
-    expect(
-      walk.found,
-      'RED WHEN: a deposit, or a change that a spent note became, is not named from the records -- the 50 is only reachable through a 400 and a 150 the vault no longer holds',
-    ).toEqual({ deposits: 3, changes: 3, pieces: 0 });
-    expect(walk.slots, 'RED WHEN: the walk is bounded by anything but the vault\'s six outputs and the attempts')
-      .toEqual({ walked: 9, lastFound: 2 });
-
-    const rebuilt = reconcileVaultPool({
-      vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits,
-    });
-    expect(rebuilt.unexplained, `RED WHEN: a note the vault holds is not named: ${describeRecovery(rebuilt)}`).toEqual([]);
-    expect(rebuilt.held.map((n) => n.value).sort((a, b) => Number(a - b)), 'RED WHEN: the rebuild holds anything but what the vault holds')
-      .toEqual([50n, 300n]);
-    const recoveredChange = rebuilt.held.find((n) => n.value === 50n)!;
-    expect(recoveredChange.nonce, 'RED WHEN: the change of a change is rebuilt under any nonce but the one the chain made')
-      .toBe(toCarol.kept!.nonce);
-    expect(rebuilt.held.find((n) => n.value === 300n)!.nonce).toBe(toAlice.kept!.nonce);
-
-    /* Each rebuilt note is given the transaction that created it, from the chain. */
-    const created = await creatingTransactionsAmong(vaultAddr, rebuilt.held, theChain());
-    expect(created.found.every((f) => 'createdIn' in f), 'RED WHEN: a rebuilt note cannot be given its creating transaction').toBe(true);
-
-    /* ---------------- AND A NOTE THAT COMES BACK SPENT ---------------- */
-    priv = { notes: rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET })) };
-    const paymentsBefore = vaultLedger(charged() as never).payments;
-    const r = await pay(DAVE, 40n, 0xd1);                        // the smallest note covering 40 is the rebuilt 50
-    expect(vaultLedger(charged() as never).payments, 'RED WHEN: the rebuilt note does not spend').toBe(paymentsBefore + 1n);
-    const kept = changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!;
-    expect(kept.value, 'RED WHEN: a note other than the rebuilt change was spent').toBe(10n);
-    /* RED WHEN the change a payment made is worked out with anything but the vault's secret and the spent note */
-    expect(kept.nonce).toBe(changeNoteOf(recoveredChange, 40n, { circuits: vaultCircuits, vault: vaultAddr, secret: toHex(TEST_VAULT_SECRET) })!.nonce);
-    expect(chainNotes(), 'RED WHEN: the rebuilt note is still in the vault after it was spent')
-      .not.toContain(held(recoveredChange));
-  });
-
-  it('THE POOL TEST: A DEPOSIT WHOSE POOL VERSION AND BOOK RECORD WERE IN A BATCH A RECOVERY GAVE UP IS NEVER LOST: UNEXPLAINED UNTIL ITS RECORD IS FILED AGAIN, THEN REBUILT FROM THE CHAIN AND SPENT', async () => {
-    const key = depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr);
-    const work = await aCompanyAtWork(key);
-    const hexOf = (b: Uint8Array | undefined) => toHex(b ?? new Uint8Array(0));
-    /*
-     * **WHAT THE COMPANY'S RECORDS HOLD AS THE ANCHOR STANDS** - a stand-in for a device's read through the record
-     * tree, which `src/server/a-read-is-proven-for-what-it-asks.test.ts` holds for a recovery: each batch's pool
-     * version and book records, keyed by the head that anchored it, believed only on the chain of heads back from the
-     * head the account holds now - a recovery's head resuming from the head it names, so the batches after that one
-     * are given up.
-     */
-    type Batch = { readonly from: string; readonly pool?: { version: number; notes: VaultCoin[] }; readonly deposited: CompanyRecords['deposited'] };
-    const batches = new Map<string, Batch>();
-    const anchoredBy = (head: Uint8Array | undefined, from: Uint8Array, batch: Omit<Batch, 'from'>) => { batches.set(hexOf(head), { from: hexOf(from), ...batch }); };
-    const asTheAnchorStands = () => {
-      const believed: Batch[] = [];
-      for (let h = hexOf(sim.anchorHead()); batches.has(h); h = batches.get(h)!.from) believed.unshift(batches.get(h)!);
-      return {
-        versions: believed.flatMap((b) => (b.pool === undefined ? [] : [b.pool])),
-        records: { deposited: believed.flatMap((b) => b.deposited), paid: [] } as CompanyRecords,
-      };
-    };
-    /* Batch 0 anchors the pool as it was created, holding nothing. */
-    await sim.as(A).anchor(new Uint8Array(32), bytes(0xb0));
-    const head0 = sim.anchorHead()!;
-    anchoredBy(head0, new Uint8Array(32), { pool: { version: 1, notes: [] }, deposited: [] });
-    /* The deposit is made, and batch 1 anchors the pool's version holding it and the deposit's book record: a batch no device can check, so the quorum gives it up. */
-    const deposited = await work.deposit(1_000n, { slot: 1 });
-    const book = { token: toHex(TOKEN_BYTES), value: 1_000n };
-    await sim.as(B).anchor(head0, bytes(0xb1));
-    const head1 = sim.anchorHead()!;
-    anchoredBy(head1, head0, { pool: { version: 2, notes: [{ nonce: deposited.nonce, token: deposited.token, value: deposited.value }] }, deposited: [book] });
-    const { id, c, latest } = await sim.approvedRecovery(head0, [A, B]);
-    await sim.as(sim.applying(A, c)).recoverAnchor(head1, bytes(0xbf), head0, latest, id);
-    /* The recovery anchors nothing and resumes from batch 0's head. */
-    anchoredBy(sim.anchorHead(), head0, { deposited: [] });
-    /* RED WHEN: the recovery did not move the anchor on past the batch it gave up. */
-    expect(hexOf(sim.anchorHead())).not.toBe(hexOf(head1));
-    expect(sim.isOpen(id)).toBe(false);
-
-    /* What the anchor holds of the pool now is the version batch 0 anchored: the deposit is on the chain and in no version believed. */
-    priv = { notes: [] };
-    const read = asTheAnchorStands();
-    /* RED WHEN: the given-up batch is still read as the company's - the recovery gave up nothing. */
-    expect(read.versions).toEqual([{ version: 1, notes: [] }]);
-    const short = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: read.versions, circuits: vaultCircuits });
-    /* RED WHEN: the coin the given-up version named is counted from that version - it is believed no longer. */
-    expect(short.held).toEqual([]);
-    expect(short.unexplained).toEqual([held(deposited)]);
-
-    /* The deposit's own book record was given up with its batch: the books as the anchor stands cannot name the coin. */
-    const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-    const walkOf = (records: CompanyRecords) => walkCompanyRecords({
-      vault: vaultAddr, keys: [key], records, everCreated, commitmentOf: vaultNoteCommitment, nonceSecrets: nonceSecrets(), splitJournal: splitJournal(),
-    });
-    const unnamed = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: read.versions, named: (await walkOf(read.records)).coins, circuits: vaultCircuits });
-    /* RED WHEN: a coin the given-up books named is believed named, or is lost: it is on the chain, unexplained, waiting for its record. */
-    expect(unnamed.held).toEqual([]);
-    expect(unnamed.unexplained).toEqual([held(deposited)]);
-
-    /* The depositor's device files its book record again, as a filing a recovery gave up is, and the next anchor holds it. */
-    const headR = sim.anchorHead()!;
-    await sim.as(A).anchor(headR, bytes(0xb2));
-    anchoredBy(sim.anchorHead(), headR, { deposited: [book] });
-    /* Rebuilt from the chain: every coin the chain made for the vault, named from the company's own books with the key its deposits came from. */
-    const again = asTheAnchorStands();
-    const rebuilt = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: again.versions, named: (await walkOf(again.records)).coins, circuits: vaultCircuits });
-    /* RED WHEN: the deposit the given-up batch held is not rebuilt from the chain under the nonce it was made with, once its record is filed again. */
-    expect(rebuilt.unexplained).toEqual([]);
-    expect(rebuilt.held.map((n) => [n.nonce, n.value])).toEqual([[deposited.nonce, 1_000n]]);
-
-    /* And spent. */
-    priv = { notes: rebuilt.held.map((n) => ({ nonce: n.nonce, token: n.token, value: n.value, index: NO_INDEX_YET })) };
-    const paymentsBefore = vaultLedger(charged() as never).payments;
-    const r = await pay(DAVE, 600n, 0xd2);
-    /* RED WHEN: a coin a recovery's given-up batch held cannot be spent. */
-    expect(vaultLedger(charged() as never).payments).toBe(paymentsBefore + 1n);
-    expect(changeCoinOf(r.context.callContext.currentZswapLocalState, vaultAddr)!.value).toBe(400n);
-    expect(chainNotes()).not.toContain(held(deposited));
-  });
-
-  it('A NONCE NOBODY ELSE CAN DERIVE: another person\'s words, or a rounded amount, name nothing, and the rebuild SAYS so rather than guessing', async () => {
-    const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
-    await work.deposit(1_234n, { slot: 1 });
-    const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-    const exact: CompanyRecords = { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_234n }], paid: [] };
-
-    const stranger = await walkCompanyRecords({
-      vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(SOMEBODY_ELSE, company), vaultAddr)],
-      records: exact, everCreated, commitmentOf: vaultNoteCommitment,
-    });
-    expect(stranger.coins, 'RED WHEN: a deposit can be named without the depositor\'s words, so a guessed amount can be confirmed against the chain').toEqual([]);
-
-    const rounded = await walkCompanyRecords({
-      vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
-      records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 1_230n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
-    });
-    expect(rounded.coins, 'RED WHEN: an amount that is not the one deposited names a coin').toEqual([]);
-    const said = reconcileVaultPool({
-      vault: vaultAddr, chain: chainNotes(), versions: [], named: rounded.coins,
-      attempted: { deposits: [{ nonce: toHex(bytes(1)), token: toHex(TOKEN_BYTES), value: 1n }], payments: [] },
-      circuits: vaultCircuits,
-    });
-    expect(said.unexplained, 'RED WHEN: a note nothing names is dropped silently instead of reported').toHaveLength(1);
-    expect(said.held).toEqual([]);
-  });
-
-  it('A NOTE MADE WITH A RANDOM NONCE IS NAMED BY ITS JOURNAL AND BY NOTHING ELSE, and is left exactly as it is', async () => {
-    const work = await aCompanyAtWork(depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr));
-    const legacy = { nonce: toHex(randomBytes(32)), token: toHex(TOKEN_BYTES), value: 900n };
-    const r = await vault.impureCircuits.deposit(ctx('deposit'), {
-      nonce: fromHex(legacy.nonce), color: fromHex(legacy.token), value: legacy.value,
-    });
-    vaultState = r.context.callContext.currentQueryContext.state;
-    logCall(r);
-    await work.deposit(900n, { slot: 1 });
-
-    const everCreated = await vaultOutputHistoryFrom(theChain()).everCreated(vaultAddr);
-    const walk = await walkCompanyRecords({
-      vault: vaultAddr, keys: [depositNonceKeyFor(releasedCompanyKey(WORDS, company), vaultAddr)],
-      records: { deposited: [{ token: toHex(TOKEN_BYTES), value: 900n }], paid: [] }, everCreated, commitmentOf: vaultNoteCommitment,
-    });
-    const fromRecords = reconcileVaultPool({ vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins, circuits: vaultCircuits });
-    expect(fromRecords.held, 'the derived deposit is named').toHaveLength(1);
-    expect(fromRecords.unexplained, 'RED WHEN: a random nonce is claimed to be nameable from the records').toEqual([held(legacy)]);
-
-    const withTheJournal = reconcileVaultPool({
-      vault: vaultAddr, chain: chainNotes(), versions: [], named: walk.coins,
-      attempted: { deposits: [legacy], payments: [] }, circuits: vaultCircuits,
-    });
-    expect(withTheJournal.unexplained, 'RED WHEN: the journal stops naming a note only it can name').toEqual([]);
-    expect(withTheJournal.held.find((n) => n.nonce === legacy.nonce)?.value).toBe(900n);
-  });
-});
+  }
+);

@@ -10,6 +10,17 @@ import { vaultBuilderDeps } from './vault-builder.js';
  */
 ensureBuffer();
 const scope = self as unknown as Parameters<typeof startVaultWorker>[0];
-startVaultWorker(scope, vaultBuilderDeps({
-  keyMaterial: { onNotKept: (file, why) => { try { scope.postMessage({ kind: 'keys-not-kept', file, why }); } catch { /* the asker has gone */ } } },
-}));
+startVaultWorker(
+  scope,
+  vaultBuilderDeps({
+    keyMaterial: {
+      onNotKept: (file, why) => {
+        try {
+          scope.postMessage({ kind: 'keys-not-kept', file, why });
+        } catch {
+          /* the asker has gone */
+        }
+      }
+    }
+  })
+);

@@ -13,7 +13,12 @@
 import { signingPublicKeyOf, type Hex } from '../../../../src/core/crypto.js';
 import type { SealedAccount } from '../../../../src/core/types.js';
 import { peopleServed } from '../../../../src/core/person-record.js';
-import { rotateTheCompanyKeyHere, type KeyRotated, type RotationDoors, type SealedAnswer } from '../../../../packages/web-shared/src/company-key-here.js';
+import {
+  rotateTheCompanyKeyHere,
+  type KeyRotated,
+  type RotationDoors,
+  type SealedAnswer
+} from '../../../../packages/web-shared/src/company-key-here.js';
 import { grantsReadWith, revokedAtHere } from '../../../../packages/web-shared/src/purpose-wraps.js';
 import { grantsWrappedAgainHere } from '../../../../packages/web-shared/src/grants-filed-here.js';
 import { grantsFilingDoorsIn } from './grant-read.js';
@@ -22,22 +27,42 @@ import { governedCallServiceThrough } from '../../../../packages/web-shared/src/
 import { anchorServiceThrough } from '../../../../packages/web-shared/src/anchored-through-the-view.js';
 import { seatsLeavingHere } from '../../../../packages/web-shared/src/seats-leaving-here.js';
 import { anchorTheRecordsHere, type AnchorDoors } from '../../../../packages/web-shared/src/records-anchored-here.js';
-import { anchoredOnTheWayIn, directoryChangeFiledHere } from '../../../../packages/web-shared/src/anchored-on-the-way-in.js';
+import {
+  anchoredOnTheWayIn,
+  directoryChangeFiledHere
+} from '../../../../packages/web-shared/src/anchored-on-the-way-in.js';
 import { sealPoliciesToNewSignersHere } from '../../../../packages/web-shared/src/policies-resealed-here.js';
 import { treeKeptHere } from '../../../../packages/web-shared/src/tree-kept-here.js';
-import { keepRecoveryWindowHere, recoveryWindowHere } from '../../../../packages/web-shared/src/recovery-window-here.js';
+import {
+  keepRecoveryWindowHere,
+  recoveryWindowHere
+} from '../../../../packages/web-shared/src/recovery-window-here.js';
 import { ownEntryFiled, rosterFollowed } from '../../../../packages/web-shared/src/vault-keys-given.js';
 import { withoutOwedEntry } from '../../../../packages/web-shared/src/keyring-blob.js';
 import { browserInFlightRecords } from '../../../../packages/web-shared/src/in-flight-in-this-browser.js';
-import { deviceRecordsFor, deviceSignerFrom, readersIn, type DirectoryHere, type DirectoryRead } from '../../../../packages/web-shared/src/vault-page-doors.js';
+import {
+  deviceRecordsFor,
+  deviceSignerFrom,
+  readersIn,
+  type DirectoryHere,
+  type DirectoryRead
+} from '../../../../packages/web-shared/src/vault-page-doors.js';
 import { readsJoinedIn } from '../../../../packages/web-shared/src/http-sealed-pool-store.js';
 import { VaultRecordsHeld } from '../../../../packages/web-shared/src/vault-records-filed-together.js';
 import type { CompanyView } from '../../../../packages/web-shared/src/company-view.js';
 import { serviceSource, type RecordWrite } from '../../../../packages/web-shared/src/records-source.js';
 import { stopsFor } from './leaving-read-in-the-wallet.js';
 import { giveEachVaultSecretHere } from '../../../../packages/web-shared/src/vault-secret-given.js';
-import { seatHereIn, unnamedKeptIn, vaultNotesHere, type RebuildDoors } from '../../../../packages/web-shared/src/vault-notes-here.js';
-import { coinsKeptOnThisDevice, type CoinsKeptHere } from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
+import {
+  seatHereIn,
+  unnamedKeptIn,
+  vaultNotesHere,
+  type RebuildDoors
+} from '../../../../packages/web-shared/src/vault-notes-here.js';
+import {
+  coinsKeptOnThisDevice,
+  type CoinsKeptHere
+} from '../../../../packages/web-shared/src/vault-coins-kept-here.js';
 import type { InFlightOpener } from '../../../../packages/web-shared/src/in-flight-on-this-device.js';
 import { intentShapeOf, routeOf, sendsIn } from 'midnight-identity/profile/request';
 import { enteredFor, governanceRecordsFor, rosterOrNone, type CompanyReach } from './company-reach.js';
@@ -72,27 +97,44 @@ export interface UpkeepCompany {
 export const UPKEEP = { done: 'done', partial: 'partial' } as const;
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.upkeep.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.upkeep.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 
 const keptInTheWallet = (opener: InFlightOpener): CoinsKeptHere | undefined =>
-  ((globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined ? undefined : coinsKeptOnThisDevice(browserInFlightRecords(), opener));
+  (globalThis as { indexedDB?: IDBFactory }).indexedDB === undefined
+    ? undefined
+    : coinsKeptOnThisDevice(browserInFlightRecords(), opener);
 
 /** A pause that ends early, as stopped, when the action is stopped. */
-const pauseUntil = (ms: number, signal: AbortSignal): Promise<void> => new Promise<void>((resolve, reject) => {
-  if (signal.aborted) { reject(new ActionStopped('stopped')); return; }
-  const timer = setTimeout(() => { signal.removeEventListener('abort', stopped); resolve(); }, ms);
-  const stopped = (): void => { clearTimeout(timer); reject(new ActionStopped('stopped')); };
-  signal.addEventListener('abort', stopped, { once: true });
-});
+const pauseUntil = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new ActionStopped('stopped'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', stopped);
+      resolve();
+    }, ms);
+    const stopped = (): void => {
+      clearTimeout(timer);
+      reject(new ActionStopped('stopped'));
+    };
+    signal.addEventListener('abort', stopped, { once: true });
+  });
 
 /** The wallet's own store of a vault's new secret, where there is one; the change reads no indexer of its own. */
 const vaultSecretsInTheWallet = (): VaultDoorsReach | undefined =>
-  ((globalThis as { localStorage?: Storage }).localStorage === undefined ? undefined
-    : { secrets: (person) => vaultSecretsKeptFor(person), pause: pauseUntil, indexerHttp: '' });
+  (globalThis as { localStorage?: Storage }).localStorage === undefined
+    ? undefined
+    : { secrets: (person) => vaultSecretsKeptFor(person), pause: pauseUntil, indexerHttp: '' };
 
 /** The method, path and body a write goes out with, as the company's source sends it. */
-const sentAs = async (company: string, w: RecordWrite): Promise<{ readonly method: string; readonly path: string; readonly body: string | undefined }> => {
+const sentAs = async (
+  company: string,
+  w: RecordWrite
+): Promise<{ readonly method: string; readonly path: string; readonly body: string | undefined }> => {
   let out = { method: 'GET', path: '', body: undefined as string | undefined };
   await serviceSource(async (path, init) => {
     out = { method: init?.method ?? 'GET', path, body: typeof init?.body === 'string' ? init.body : undefined };
@@ -123,30 +165,37 @@ function watchedSteps(ctx: StepContext) {
    */
   const unsent = async (company: string, e: unknown): Promise<void> => {
     const failed = e as { status?: unknown; thisSendNotSent?: unknown; failedWrite?: RecordWrite } | null;
-    if (typeof failed?.status !== 'number' || failed.thisSendNotSent === true || failed.failedWrite === undefined) return;
+    if (typeof failed?.status !== 'number' || failed.thisSendNotSent === true || failed.failedWrite === undefined)
+      return;
     const out = await sentAs(company, failed.failedWrite);
     if (sends(out.method, out.path, out.body)) seen.unconfirmed += 1;
   };
-  const caught = (e: unknown): void => { if (e instanceof ActionStopped) seen.stopped ??= e; };
-  const watchedView = <H>(view: CompanyView<H>): CompanyView<H> => new Proxy(view, {
-    get: (v, name) => {
-      const got: unknown = Reflect.get(v, name);
-      if (typeof got !== 'function') return got;
-      return (...args: unknown[]): unknown => {
-        const out: unknown = (got as (...a: unknown[]) => unknown).apply(v, args);
-        if (!(out instanceof Promise)) return out;
-        return out.catch(async (e: unknown) => {
-          caught(e);
-          if (name === 'write') await unsent(v.company, e);
-          throw e;
-        });
-      };
-    },
-  });
+  const caught = (e: unknown): void => {
+    if (e instanceof ActionStopped) seen.stopped ??= e;
+  };
+  const watchedView = <H>(view: CompanyView<H>): CompanyView<H> =>
+    new Proxy(view, {
+      get: (v, name) => {
+        const got: unknown = Reflect.get(v, name);
+        if (typeof got !== 'function') return got;
+        return (...args: unknown[]): unknown => {
+          const out: unknown = (got as (...a: unknown[]) => unknown).apply(v, args);
+          if (!(out instanceof Promise)) return out;
+          return out.catch(async (e: unknown) => {
+            caught(e);
+            if (name === 'write') await unsent(v.company, e);
+            throw e;
+          });
+        };
+      }
+    });
   /* `r` with its view of the company watched: every door the step hands that view to is watched with it. */
   const watching = (r: CompanyReach): CompanyReach => {
     const held = r.stepView;
-    return { ...r, stepView: { current: () => watchedView(held.current()), again: (why) => watchedView(held.again(why)) } };
+    return {
+      ...r,
+      stepView: { current: () => watchedView(held.current()), again: (why) => watchedView(held.again(why)) }
+    };
   };
   return { seen, rethrow, watching };
 }
@@ -170,7 +219,9 @@ export async function anchorDoorsIn(r: CompanyReach, unread?: (why: string) => v
     ...treeKeptHere(),
     directory: () => r.stepView.current().directory(),
     directoryFilings: () => r.stepView.current().filings(),
-    fileDirectory: async (filing) => { await r.stepView.current().write([{ to: 'directory', filing }]); },
+    fileDirectory: async (filing) => {
+      await r.stepView.current().write([{ to: 'directory', filing }]);
+    },
     onChain: () => r.stepView.current().doors.onChain(),
     vouching: r.judges.vouchingFor(r.accountId),
     tagSeats: r.judges.tagSeatsFor(r.account),
@@ -178,7 +229,7 @@ export async function anchorDoorsIn(r: CompanyReach, unread?: (why: string) => v
     service: anchorServiceThrough(r.stepView),
     builder: r.builder,
     ...(r.handOver === undefined ? {} : { handOver: r.handOver }),
-    view: r.stepView,
+    view: r.stepView
   };
 }
 
@@ -200,9 +251,13 @@ export async function rotationDoorsIn(r: CompanyReach): Promise<RotationDoors> {
   const found = await r.judges.keysFoundFor(r.accountId, r.sealed);
   const records = {
     directory: r.judges.directoryHereFor(r.accountId, r.label, r.account, found, rosterOrNone(r.roster)),
-    roundsOnChain: async (chainIds: readonly string[]) => r.builder.roundsOnChain({
-      account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret,
-    }),
+    roundsOnChain: async (chainIds: readonly string[]) =>
+      r.builder.roundsOnChain({
+        account: r.account,
+        indexer: r.chain.indexer,
+        chainIds,
+        seat: r.seat.signingSecret
+      })
   };
   const anchor = await anchorDoorsIn(r);
   return {
@@ -215,20 +270,38 @@ export async function rotationDoorsIn(r: CompanyReach): Promise<RotationDoors> {
     askTheWallet: async () => r.companyKey,
     waiting: async () => {
       const view = r.stepView.current();
-      const now = await view.account() as SealedAccount;
+      const now = (await view.account()) as SealedAccount;
       /* A person whose record does not read as one is passed over alone: what waits for them is not folded, and everybody else's is. */
-      const handedOver = peopleServed(await view.list('people'), r.accountId).people.filter((p) => p.handedOver).map((p) => p.rec.id);
+      const handedOver = peopleServed(await view.list('people'), r.accountId)
+        .people.filter((p) => p.handedOver)
+        .map((p) => p.rec.id);
       const boxes = handedOver.length === 0 ? [] : await view.handovers(handedOver);
-      const handovers = boxes.map((b) => (b as { inbox?: SealedAnswer | null } | null)?.inbox).filter((b): b is SealedAnswer => b !== undefined && b !== null);
+      const handovers = boxes
+        .map((b) => (b as { inbox?: SealedAnswer | null } | null)?.inbox)
+        .filter((b): b is SealedAnswer => b !== undefined && b !== null);
       return [...(now.pendingSigners ?? []).map((p) => p.sealed as SealedAnswer), ...handovers];
     },
-    leaving: () => seatsLeavingHere({ service: governedCallServiceThrough(r.stepView), accountId: r.accountId, records, leaves: r.judges.leavesFor(r.account) }, found, true),
-    admitted: async () => r.judges.seatsAdmittedOn(await r.stepView.current().account() as SealedAccount),
+    leaving: () =>
+      seatsLeavingHere(
+        {
+          service: governedCallServiceThrough(r.stepView),
+          accountId: r.accountId,
+          records,
+          leaves: r.judges.leavesFor(r.account)
+        },
+        found,
+        true
+      ),
+    admitted: async () => r.judges.seatsAdmittedOn((await r.stepView.current().account()) as SealedAccount),
     file: (change, signedFor) => directoryChangeFiledHere(anchor, change, signedFor),
-    revoked: () => revokedAtHere({
-      accountId: r.accountId, versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId), directory: records.directory,
-      signingPublicKey: signingPublicKeyOf(r.seat.signingSecret as Hex), released: async () => r.companyKey,
-    }),
+    revoked: () =>
+      revokedAtHere({
+        accountId: r.accountId,
+        versions: grantsReadWith((asked) => r.stepView.current().records(asked), r.accountId),
+        directory: records.directory,
+        signingPublicKey: signingPublicKeyOf(r.seat.signingSecret as Hex),
+        released: async () => r.companyKey
+      })
   };
 }
 
@@ -237,7 +310,13 @@ export async function rotationDoorsIn(r: CompanyReach): Promise<RotationDoors> {
  * A caller that has already read the directory in this step hands that read in, so it is read once. With `held`, what
  * the records filed waits there to be sent with the step's other vault filings as one checked batch.
  */
-export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepReach, read?: DirectoryRead, held?: VaultRecordsHeld): RebuildDoors {
+export function rebuildDoorsIn(
+  ctx: StepContext,
+  r: CompanyReach,
+  reach: UpkeepReach,
+  read?: DirectoryRead,
+  held?: VaultRecordsHeld
+): RebuildDoors {
   if (ctx.person === null) throw new StepRefused(why('no-person'));
   const me = deviceSignerFrom(r.leaf, r.companyKey);
   const directory = read ?? r.judges.directoryHereFor(r.accountId, r.label, r.account, r.companyKeys, r.roster);
@@ -250,19 +329,27 @@ export function rebuildDoorsIn(ctx: StepContext, r: CompanyReach, reach: UpkeepR
     vaultsHere: r.vaultsHere,
     onChain: async () => ({ holders: await r.holders() }),
     me,
-    records: deviceRecordsFor(r.seat.signingSecret, judge, { ...readsJoinedIn(r.stepView, stopsFor(r)), ...(held === undefined ? {} : { held }) }),
+    records: deviceRecordsFor(r.seat.signingSecret, judge, {
+      ...readsJoinedIn(r.stepView, stopsFor(r)),
+      ...(held === undefined ? {} : { held })
+    }),
     signers: readersIn(directory).signers,
     seatHere: () => seatHereIn(directory, r.seat.signingSecret),
     ...unnamedKeptIn(r.stepView.current()),
-    ...(kept === undefined ? {} : { kept }),
+    ...(kept === undefined ? {} : { kept })
   };
 }
 
 /** Anchors what is waiting, this action's own filings among them, even when the company was anchored within the day. */
-export async function anchoredAtTheEnd(doors: AnchorDoors): Promise<{ readonly anchored: number } | { readonly notAnchored: string }> {
+export async function anchoredAtTheEnd(
+  doors: AnchorDoors
+): Promise<{ readonly anchored: number } | { readonly notAnchored: string }> {
   const first = await anchoredOnTheWayIn(doors);
   if ('waits' in first) {
-    if (first.waits === 'this-seat-does-not-anchor') return { notAnchored: 'this seat\'s role does not anchor the company\'s records; a seat that may anchor them does' };
+    if (first.waits === 'this-seat-does-not-anchor')
+      return {
+        notAnchored: "this seat's role does not anchor the company's records; a seat that may anchor them does"
+      };
     try {
       return { anchored: (await anchorTheRecordsHere(doors)).anchored };
     } catch (e) {
@@ -299,8 +386,14 @@ export async function heldFilingsSent(held: Pick<VaultRecordsHeld, 'sent'>, left
  * caught by the watched calls after each vault.
  */
 async function vaultSecretsGiven(
-  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach,
-  vaults: readonly string[], seats: readonly string[], left: () => void, held?: VaultRecordsHeld,
+  ctx: StepContext,
+  r: CompanyReach,
+  w: ReturnType<typeof watchedSteps>,
+  reach: UpkeepReach,
+  vaults: readonly string[],
+  seats: readonly string[],
+  left: () => void,
+  held?: VaultRecordsHeld
 ): Promise<void> {
   const others = [...new Set(seats.map((x) => x.toLowerCase()))].filter((x) => x !== r.leaf.toLowerCase());
   if (vaults.length === 0 || others.length === 0) return;
@@ -324,7 +417,13 @@ async function vaultSecretsGiven(
   }
   for (const vault of vaults) {
     try {
-      const done = await giveEachVaultSecretHere({ vaultIds: [vault.toLowerCase()], me: doors.me, seats: others, directory, records: doors.records });
+      const done = await giveEachVaultSecretHere({
+        vaultIds: [vault.toLowerCase()],
+        me: doors.me,
+        seats: others,
+        directory,
+        records: doors.records
+      });
       if (done.skipped.length > 0) left();
     } catch (e) {
       if (e instanceof ActionStopped) throw e;
@@ -342,12 +441,19 @@ async function vaultSecretsGiven(
  * retired vaults are the step's own read of them, handed on so the change does not read them again.
  */
 async function vaultSecretsFinished(
-  ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, reach: UpkeepReach,
-  vaults: { readonly adopted: readonly string[]; readonly retired: readonly string[] }, left: () => void,
+  ctx: StepContext,
+  r: CompanyReach,
+  w: ReturnType<typeof watchedSteps>,
+  reach: UpkeepReach,
+  vaults: { readonly adopted: readonly string[]; readonly retired: readonly string[] },
+  left: () => void
 ): Promise<void> {
   if (vaults.adopted.length === 0 && vaults.retired.length === 0) return;
   const kept = reach.vaultSecrets ?? vaultSecretsInTheWallet();
-  if (kept === undefined) { left(); return; }
+  if (kept === undefined) {
+    left();
+    return;
+  }
   try {
     const retired = vaults.retired.map((v) => v.toLowerCase() as Hex);
     if (stillOwed(await vaultSecretsChangedHere(ctx, r, kept, await rotationDoorsIn(r), 'finish', { retired }))) left();
@@ -367,14 +473,26 @@ async function vaultSecretsFinished(
  * could not seal again, or a read that failed, is said. Either leaves the upkeep partial for the next seat action that
  * runs the upkeep. What it left alone because nothing was owed is not said.
  */
-async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnType<typeof watchedSteps>, left: () => void): Promise<void> {
+async function policiesSealedAgain(
+  ctx: StepContext,
+  r: CompanyReach,
+  w: ReturnType<typeof watchedSteps>,
+  left: () => void
+): Promise<void> {
   let notSealed: readonly string[];
   let owed: readonly string[] = [];
   try {
-    const done = await sealPoliciesToNewSignersHere(withCompanyKeys({
-      records: { ...governanceRecordsFor(r), spendingPolicies: policiesInTheWallet(r, { files: true }) },
-      accountId: r.accountId, keyEpoch: r.companyKeys.epoch, filingKey: signingPublicKeyOf(r.seat.signingSecret as Hex),
-    }, r.companyKeys));
+    const done = await sealPoliciesToNewSignersHere(
+      withCompanyKeys(
+        {
+          records: { ...governanceRecordsFor(r), spendingPolicies: policiesInTheWallet(r, { files: true }) },
+          accountId: r.accountId,
+          keyEpoch: r.companyKeys.epoch,
+          filingKey: signingPublicKeyOf(r.seat.signingSecret as Hex)
+        },
+        r.companyKeys
+      )
+    );
     notSealed = done.refused.map((x) => `${x.id}: ${x.why}`);
     owed = done.owed;
   } catch (e) {
@@ -383,7 +501,8 @@ async function policiesSealedAgain(ctx: StepContext, r: CompanyReach, w: ReturnT
   }
   w.rethrow();
   if (notSealed.length > 0 || owed.length > 0) left();
-  if (notSealed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: notSealed.join('; ') } });
+  if (notSealed.length > 0)
+    ctx.show({ key: 'act.upkeep.left.policies-not-sealed', values: { policies: notSealed.join('; ') } });
   if (owed.length > 0) ctx.show({ key: 'act.upkeep.left.policies-owed', values: { policies: owed.join(', ') } });
 }
 
@@ -421,7 +540,10 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
   let partial = false;
   const offersRefused: string[] = [];
   /* Something left for the next seat action; an offer of vault keys the fold refused is named, seat and reason, to the person in this window. */
-  const left = (offerRefused?: string): void => { partial = true; if (offerRefused !== undefined) offersRefused.push(offerRefused); };
+  const left = (offerRefused?: string): void => {
+    partial = true;
+    if (offerRefused !== undefined) offersRefused.push(offerRefused);
+  };
   /* Why who is leaving went unread for the anchor: its own line with its own remedy, said once for each step. */
   const leavingUnread = (ctx: StepContext) => {
     const said = new Set<string>();
@@ -443,10 +565,16 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         try {
           const kept = ctx.keyring.open().read().directoryEntriesOwed?.[r.accountId] ?? null;
           if (kept !== null) {
-            const filed = await ownEntryFiled(r.accountId, {
-              read: () => ctx.keyring!.open().read().directoryEntriesOwed?.[r.accountId] ?? null,
-              settle: () => ctx.keyring!.keep((k) => withoutOwedEntry(k, r.accountId)),
-            }, { signingSecret: r.seat.signingSecret as Hex, companyKeys: r.companyKeys }, async () => (await r.holders()).founding ?? null, r.stepView);
+            const filed = await ownEntryFiled(
+              r.accountId,
+              {
+                read: () => ctx.keyring!.open().read().directoryEntriesOwed?.[r.accountId] ?? null,
+                settle: () => ctx.keyring!.keep((k) => withoutOwedEntry(k, r.accountId))
+              },
+              { signingSecret: r.seat.signingSecret as Hex, companyKeys: r.companyKeys },
+              async () => (await r.holders()).founding ?? null,
+              r.stepView
+            );
             if (typeof filed === 'object') left();
             if (filed === 'filed') changed = true;
           }
@@ -466,7 +594,10 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       };
       let rotated = await rotate();
       w.rethrow();
-      if (rotated !== null && (rotated.state === 'filed-not-anchored' || (rotated.state === 'waits' && NOT_YET_ANCHORED.test(rotated.why)))) {
+      if (
+        rotated !== null &&
+        (rotated.state === 'filed-not-anchored' || (rotated.state === 'waits' && NOT_YET_ANCHORED.test(rotated.why)))
+      ) {
         changed = true;
         const anchored = await anchoredAtTheEnd(await anchorDoorsIn(r, leavingUnread(ctx))).catch((e: unknown) => {
           if (e instanceof ActionStopped) throw e;
@@ -477,7 +608,13 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
         if (rotated.state === 'waits') rotated = await rotate();
         w.rethrow();
       }
-      if (rotated === null || rotated.state === 'not-rotated' || rotated.state === 'filed-not-anchored' || rotated.state === 'waits') left();
+      if (
+        rotated === null ||
+        rotated.state === 'not-rotated' ||
+        rotated.state === 'filed-not-anchored' ||
+        rotated.state === 'waits'
+      )
+        left();
       if (rotated === null || rotated.state === 'filed-not-anchored') changed = true;
       if (rotated !== null && ROTATED.has(rotated.state)) {
         company.renew();
@@ -494,9 +631,14 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       try {
         const companyKeys = await r.judges.companyKeysFor(r.accountId, r.sealed, r.seat);
         const followed = await rosterFollowed({
-          accountId: r.accountId, companyKeys, signingSecret: r.seat.signingSecret as Hex, label: r.label, account: r.account,
+          accountId: r.accountId,
+          companyKeys,
+          signingSecret: r.seat.signingSecret as Hex,
+          label: r.label,
+          account: r.account,
           reads: r.judges.rosterReadsFor(r.accountId, r.label, r.account),
-          entered: enteredFor(r), view: r.stepView,
+          entered: enteredFor(r),
+          view: r.stepView
         });
         if (followed.changed) changed = true;
         for (const offer of followed.refused) left(`seat ${offer.seat}: ${offer.why}`);
@@ -506,14 +648,20 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       }
       w.rethrow();
       /* A seat whose rights this wallet cannot read yet is counted on no vault; the person is told which, and what clears it. */
-      const unread = await seatsWithNoRightsRead(r).catch((e: unknown) => { if (e instanceof ActionStopped) throw e; left(); return []; });
+      const unread = await seatsWithNoRightsRead(r).catch((e: unknown) => {
+        if (e instanceof ActionStopped) throw e;
+        left();
+        return [];
+      });
       w.rethrow();
       if (changed) company.renew();
       ctx.tell({ upkeep: partial ? UPKEEP.partial : UPKEEP.done });
-      if (offersRefused.length > 0) ctx.show({ key: 'act.upkeep.left.vault-keys-refused', values: { offers: offersRefused.join('; ') } });
-      if (unread.length > 0) ctx.show({ key: 'act.upkeep.left.seat-rights-unread', values: { seats: unread.join(', ') } });
+      if (offersRefused.length > 0)
+        ctx.show({ key: 'act.upkeep.left.vault-keys-refused', values: { offers: offersRefused.join('; ') } });
+      if (unread.length > 0)
+        ctx.show({ key: 'act.upkeep.left.seat-rights-unread', values: { seats: unread.join(', ') } });
       if (w.seen.unconfirmed > 0) throw new StepRefused(why('not-confirmed'));
-    },
+    }
   };
 
   const last: ActionStep = {
@@ -534,7 +682,11 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       }
       /* Read once for the whole step; one that cannot be read leaves the upkeep partial and holds back no adopted vault's work. */
       try {
-        retired = await retiredVaultsKeptHere(r, { builder: r.builder, indexer: async () => r.chain.indexer, account: r.account });
+        retired = await retiredVaultsKeptHere(r, {
+          builder: r.builder,
+          indexer: async () => r.chain.indexer,
+          account: r.account
+        });
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
@@ -560,13 +712,18 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       let anchored = 0;
       try {
         const done = await anchoredAtTheEnd(await anchorDoorsIn(r, leavingUnread(ctx)));
-        if ('notAnchored' in done) left(); else anchored = done.anchored;
+        if ('notAnchored' in done) left();
+        else anchored = done.anchored;
       } catch (e) {
         if (e instanceof ActionStopped) throw e;
         left();
       }
       w.rethrow();
-      const window = await keepRecoveryWindowHere(r.accountId, () => recoveryWindowHere(r, { anchoredOnly: true }), treeKeptHere()).catch((e: unknown) => {
+      const window = await keepRecoveryWindowHere(
+        r.accountId,
+        () => recoveryWindowHere(r, { anchoredOnly: true }),
+        treeKeptHere()
+      ).catch((e: unknown) => {
         if (e instanceof ActionStopped) throw e;
         return null;
       });
@@ -574,7 +731,7 @@ export function upkeepSteps(company: UpkeepCompany, reach: UpkeepReach, o: { rea
       w.rethrow();
       ctx.tell({ upkeep: partial ? UPKEEP.partial : UPKEEP.done, anchored });
       if (w.seen.unconfirmed > 0) throw new StepRefused(why('not-confirmed'));
-    },
+    }
   };
 
   return { first, last } as const;
@@ -590,7 +747,7 @@ export const upkeepShown = (o: { readonly ownEntry?: boolean } = {}): ShownLine[
   { key: 'act.upkeep.shown.finish', from: 'action' },
   { key: 'act.upkeep.shown.secrets', from: 'action' },
   { key: 'act.upkeep.shown.policies', from: 'action' },
-  { key: 'act.upkeep.shown.anchor', from: 'action' },
+  { key: 'act.upkeep.shown.anchor', from: 'action' }
 ];
 
 /** What is checked of the upkeep after the passkey. */

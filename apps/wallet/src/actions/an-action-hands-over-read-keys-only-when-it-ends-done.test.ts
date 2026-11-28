@@ -18,35 +18,73 @@ const KEY = 'ab'.repeat(32);
 const RELEASE = { accountId: 'acc_1', byEpoch: { 0: { roster: KEY } } };
 
 const request = (name: 'reader-keys' | 'grant-read' = 'reader-keys'): ActRequest => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'act', requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
-  purpose: 'A test.', nonce: 'n1', expiresAt: Date.now() + 20 * 60_000, hearsProgress: true,
-  intent: { name, fields: { record: 'acc_1', company: `co_${'c3'.repeat(32)}`, account: 'ab'.repeat(32) } },
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'act',
+  requester: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+  purpose: 'A test.',
+  nonce: 'n1',
+  expiresAt: Date.now() + 20 * 60_000,
+  hearsProgress: true,
+  intent: { name, fields: { record: 'acc_1', company: `co_${'c3'.repeat(32)}`, account: 'ab'.repeat(32) } }
 });
-const ran = async (steps: readonly ActionStep[], name: 'reader-keys' | 'grant-read' = 'reader-keys'): Promise<ActEnded> => {
+const ran = async (
+  steps: readonly ActionStep[],
+  name: 'reader-keys' | 'grant-read' = 'reader-keys'
+): Promise<ActEnded> => {
   const ended: ActEnded[] = [];
   const channel: ActingChannel = {
-    step: () => true, relay: async () => 'relayed', keep: async () => ({ of: 'kept', version: 1 }),
-    call: async () => ({ of: 'answered', status: 200, body: null }), answer: (a) => { ended.push(a as ActEnded); return true; },
-    refuse: () => true, progress: () => true, over: () => false, stop: () => {},
+    step: () => true,
+    relay: async () => 'relayed',
+    keep: async () => ({ of: 'kept', version: 1 }),
+    call: async () => ({ of: 'answered', status: 200, body: null }),
+    answer: (a) => {
+      ended.push(a as ActEnded);
+      return true;
+    },
+    refuse: () => true,
+    progress: () => true,
+    over: () => false,
+    stop: () => {}
   };
-  const definition: ActionDefinition = { headline: 'ask.act.headline', shown: async () => [], checks: [], check: async () => null, steps: () => steps };
+  const definition: ActionDefinition = {
+    headline: 'ask.act.headline',
+    shown: async () => [],
+    checks: [],
+    check: async () => null,
+    steps: () => steps
+  };
   await runAction({ definition, request: request(name), channel, held, stop: new AbortController().signal });
   return ended.at(-1)!;
 };
-const releases = (keys: ReadKeysReleased): ActionStep => ({ title: { key: 'a' }, run: async (ctx) => { ctx.releaseReadKeys(keys); } });
+const releases = (keys: ReadKeysReleased): ActionStep => ({
+  title: { key: 'a' },
+  run: async (ctx) => {
+    ctx.releaseReadKeys(keys);
+  }
+});
 
-beforeEach(() => { forgetWatched(); });
+beforeEach(() => {
+  forgetWatched();
+});
 
-describe('READ KEYS IN AN ACTION\'S END ANSWER', () => {
+describe("READ KEYS IN AN ACTION'S END ANSWER", () => {
   it('ARE HANDED OVER WHEN THE ACTION ENDS DONE, AND NOT WHEN IT STOPS AFTER THEM', async () => {
     expect((await ran([releases(RELEASE)])).readKeys).toEqual(RELEASE);
     /* RED WHEN: an action that stopped part way hands a page the read keys an earlier step worked out. */
-    const stopped = await ran([releases(RELEASE), { title: { key: 'b' }, run: async () => { throw new Error('the next step fails'); } }]);
+    const stopped = await ran([
+      releases(RELEASE),
+      {
+        title: { key: 'b' },
+        run: async () => {
+          throw new Error('the next step fails');
+        }
+      }
+    ]);
     expect(stopped.ended).toBe('stopped');
     expect(stopped.readKeys).toBeUndefined();
   });
 
-  it('LEAVE THE WALLET ONLY FROM A READER\'S ACT AND ONLY IN THEIR ONE SHAPE, NAMING ONLY THE COMPANY\'S PURPOSES', async () => {
+  it("LEAVE THE WALLET ONLY FROM A READER'S ACT AND ONLY IN THEIR ONE SHAPE, NAMING ONLY THE COMPANY'S PURPOSES", async () => {
     /* RED WHEN: any other act a step of which hands over read keys sends them to the page. */
     const other = await ran([releases(RELEASE)], 'grant-read');
     expect(other.ended).toBe('done');

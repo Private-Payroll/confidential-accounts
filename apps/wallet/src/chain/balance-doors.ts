@@ -24,7 +24,8 @@ import { openWalletId } from '../accounts/wallets-held.js';
  * fee from their own DUST because the company's fee payer could not.
  */
 export const liveBalanceDoors = (
-  identity: Identity, account: number,
+  identity: Identity,
+  account: number
 ): BalanceDoors & { stop: () => Promise<void>; ownFee: () => Promise<OwnFeeFacade> } => {
   /* Decided now, while this wallet is the one on screen; the balance engine captures it for the same reason. */
   const walletId = openWalletId();
@@ -34,7 +35,9 @@ export const liveBalanceDoors = (
     running ??= (async () => {
       const checkpoint = await loadWalletCheckpoint(coinPublicKeyOf(identity, account), account, walletId);
       const proving = makeBrowserProvingService(undefined, {
-        onProof: (event) => { for (const watch of proofWatchers) watch(event); },
+        onProof: (event) => {
+          for (const watch of proofWatchers) watch(event);
+        }
       });
       const started = await facadeFor(identity, account, proving, {}, { restoreShieldedFrom: checkpoint?.serialized });
       await startForAPage(started, { shielded: shieldedKeysFor(identity, account) });
@@ -45,7 +48,10 @@ export const liveBalanceDoors = (
   /* The DUST part is started once, on the first fee this wallet pays itself, and stops with the rest. */
   let dust: Promise<OwnFeeFacade> | null = null;
   const ownFee = () => {
-    dust ??= facade().then(async (f) => { await f.dust.start(dustKeysFor(identity, account)); return f; });
+    dust ??= facade().then(async (f) => {
+      await f.dust.start(dustKeysFor(identity, account));
+      return f;
+    });
     return dust;
   };
   return {
@@ -55,13 +61,22 @@ export const liveBalanceDoors = (
     dustKeys: () => dustKeysFor(identity, account),
     signSegment: () => unshieldedKeystoreFor(identity, account).signDataAsync,
     ownPublicAddress: () => String(unshieldedKeystoreFor(identity, account).getAddress()),
-    watchProofs: (watch) => { proofWatchers.add(watch); return () => { proofWatchers.delete(watch); }; },
+    watchProofs: (watch) => {
+      proofWatchers.add(watch);
+      return () => {
+        proofWatchers.delete(watch);
+      };
+    },
     stop: async () => {
       dust = null;
       if (running === null) return;
-      const f = await running.catch(() => { /* a wallet that never started has nothing to stop */ return null; });
+      const f = await running.catch(() => {
+        /* a wallet that never started has nothing to stop */ return null;
+      });
       running = null;
-      await f?.stop().catch(() => { /* already stopping */ });
-    },
+      await f?.stop().catch(() => {
+        /* already stopping */
+      });
+    }
   };
 };

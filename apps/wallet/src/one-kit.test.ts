@@ -36,7 +36,7 @@ const PART_MATERIALS = /^(?:radix-ui|@radix-ui\/|class-variance-authority$|tailw
 describe('the wallet keeps no kit of its own', () => {
   const files = sources(SRC);
 
-  it('reads the wallet\'s sources at all', () => {
+  it("reads the wallet's sources at all", () => {
     expect(files.length).toBeGreaterThan(50);
     expect(files.some((f) => /screens[\\/]approve\.tsx$/.test(f))).toBe(true);
   });
@@ -50,18 +50,22 @@ describe('the wallet keeps no kit of its own', () => {
   /* RED WHEN: a wallet file builds a part from what parts are built from - a
    * Radix primitive, a variant table, a class joiner - instead of taking the
    * kit's. */
-  it('builds nothing from what the kit\'s parts are built from', () => {
-    const found = files.flatMap((f) => importsOf(readFileSync(f, 'utf8'))
-      .filter((spec) => PART_MATERIALS.test(spec))
-      .map((spec) => `${relative(SRC, f)}: ${spec}`));
+  it("builds nothing from what the kit's parts are built from", () => {
+    const found = files.flatMap((f) =>
+      importsOf(readFileSync(f, 'utf8'))
+        .filter((spec) => PART_MATERIALS.test(spec))
+        .map((spec) => `${relative(SRC, f)}: ${spec}`)
+    );
     expect(found).toEqual([]);
   });
 
   /* RED WHEN: a wallet file reaches for a kit that is not the shared one. */
   it('takes its parts from the shared kit and from nowhere else', () => {
-    const found = files.flatMap((f) => importsOf(readFileSync(f, 'utf8'))
-      .filter((spec) => /(?:^|\/)kit(?:\/|$)|^@\/(?:kit|components\/ui)\b/.test(spec))
-      .map((spec) => `${relative(SRC, f)}: ${spec}`));
+    const found = files.flatMap((f) =>
+      importsOf(readFileSync(f, 'utf8'))
+        .filter((spec) => /(?:^|\/)kit(?:\/|$)|^@\/(?:kit|components\/ui)\b/.test(spec))
+        .map((spec) => `${relative(SRC, f)}: ${spec}`)
+    );
     expect(found).toEqual([]);
   });
 });

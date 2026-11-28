@@ -7,7 +7,11 @@ export class VaultNotTheCompanys extends Error {
    * `'not-adopted'`: the wallet read the account and the vault is not among the vaults it adopted. `'wallet-silent'`: the
    * wallet could not say who holds the company, so nothing is known. `'other'`: a vault that was not set up as the company's.
    */
-  constructor(readonly vault: Hex, why: string, readonly kind: 'not-adopted' | 'wallet-silent' | 'other' = 'other') {
+  constructor(
+    readonly vault: Hex,
+    why: string,
+    readonly kind: 'not-adopted' | 'wallet-silent' | 'other' = 'other'
+  ) {
     super(`${why} Nothing was sent.`);
     this.name = 'VaultNotTheCompanys';
   }
@@ -15,7 +19,11 @@ export class VaultNotTheCompanys extends Error {
 
 /** The vault could not be read on this device, and the service is not asked in its place. Nothing was sent. */
 export class VaultNotReadHere extends Error {
-  constructor(readonly vault: Hex, why: string, options?: ErrorOptions) {
+  constructor(
+    readonly vault: Hex,
+    why: string,
+    options?: ErrorOptions
+  ) {
     super(`${why} The company's service is not asked in its place. Nothing was sent.`, options);
     this.name = 'VaultNotReadHere';
   }
@@ -34,13 +42,16 @@ export const sentNothing = (e: unknown): boolean => (e as { nothingWasSent?: unk
 export type VaultCreated = (
   | { readonly vault: Hex; readonly state: 'started' }
   | {
-    readonly vault: Hex; readonly state: 'awaiting-approvals';
-    /** Which round waits, its identity, and how many approvals it has and needs. */
-    readonly awaiting: {
-      readonly round: 'adoption' | 'first-secret'; readonly proposal: Hex;
-      readonly approvals: number; readonly needed: number;
-    };
-  }
+      readonly vault: Hex;
+      readonly state: 'awaiting-approvals';
+      /** Which round waits, its identity, and how many approvals it has and needs. */
+      readonly awaiting: {
+        readonly round: 'adoption' | 'first-secret';
+        readonly proposal: Hex;
+        readonly approvals: number;
+        readonly needed: number;
+      };
+    }
 ) & {
   /**
    * What this press could not leave in the company's records, each said in a
@@ -62,7 +73,7 @@ export type VaultCreated = (
 export const SAID = {
   proposalNotWrittenDown: 'proposal-not-written-down',
   nameNotFiled: 'vault-name-not-filed',
-  nameGivenBefore: 'vault-name-given-before',
+  nameGivenBefore: 'vault-name-given-before'
 } as const;
 export type SaidCode = (typeof SAID)[keyof typeof SAID];
 
@@ -73,7 +84,7 @@ export const NOT_BUILT = {
   seatMayNotRaise: 'seat-may-not-raise',
   committeeUnread: 'committee-unread',
   committeeNotInstallable: 'committee-not-installable',
-  pageOutOfDate: 'page-out-of-date',
+  pageOutOfDate: 'page-out-of-date'
 } as const;
 export type NotBuiltCode = (typeof NOT_BUILT)[keyof typeof NOT_BUILT];
 
@@ -83,8 +94,12 @@ export type NotBuiltCode = (typeof NOT_BUILT)[keyof typeof NOT_BUILT];
  * own ask for the first secret failing.
  */
 export const START_STOP = {
-  adoptionStale: 'adoption-stale', tooFewApprovers: 'too-few-approvers', anotherSecret: 'another-secret',
-  readersCannotOpen: 'readers-cannot-open', readBackOnly: 'read-back-only', walletNotAnswered: 'wallet-not-answered',
+  adoptionStale: 'adoption-stale',
+  tooFewApprovers: 'too-few-approvers',
+  anotherSecret: 'another-secret',
+  readersCannotOpen: 'readers-cannot-open',
+  readBackOnly: 'read-back-only',
+  walletNotAnswered: 'wallet-not-answered'
 } as const;
 export type StartStopCode = ReaderRefusalCode | (typeof START_STOP)[keyof typeof START_STOP];
 
@@ -101,8 +116,9 @@ export type StartReadStopCode = (typeof START_READ_STOP)[keyof typeof START_READ
  * (`requireApproved`), and raised again under the same identity it could not count an earlier approver, so this app
  * neither withdraws it nor raises it again.
  */
-export const STALE_ADOPTION = 'a signer was removed or replaced after its adoption was raised, so the chain will never carry that '
-  + 'adoption out, and this app neither withdraws it nor raises it again. The vault holds nothing: create a new vault instead.';
+export const STALE_ADOPTION =
+  'a signer was removed or replaced after its adoption was raised, so the chain will never carry that ' +
+  'adoption out, and this app neither withdraws it nor raises it again. The vault holds nothing: create a new vault instead.';
 
 /**
  * **THE VAULT WAS SENT AND ITS START IS NOT FINISHED.**
@@ -118,9 +134,15 @@ export class VaultStartOwed extends Error {
   readonly stoppedAt?: StartStopCode | StartReadStopCode;
   /** Why it stopped, as a sentence, without the words about finishing the vault's setup around it. */
   readonly why: string;
-  constructor(readonly vault: Hex, why: string, stoppedAt?: StartStopCode | StartReadStopCode) {
-    super(`Setting up this vault did not finish: ${why} `
-      + 'This app puts no money into it until it is set up. Finish setting it up to carry on.');
+  constructor(
+    readonly vault: Hex,
+    why: string,
+    stoppedAt?: StartStopCode | StartReadStopCode
+  ) {
+    super(
+      `Setting up this vault did not finish: ${why} ` +
+        'This app puts no money into it until it is set up. Finish setting it up to carry on.'
+    );
     this.name = 'VaultStartOwed';
     this.why = why;
     if (stoppedAt !== undefined) this.stoppedAt = stoppedAt;

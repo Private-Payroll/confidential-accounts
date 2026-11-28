@@ -39,7 +39,10 @@ export interface ProposalFile {
 type Key = { readonly tag: string; readonly value: string };
 
 /** A joining key's own signature over the change's bytes: proof that somebody holds the key before it is put on any contract. */
-export interface JoiningSignature { readonly key: Key; readonly signature: string }
+export interface JoiningSignature {
+  readonly key: Key;
+  readonly signature: string;
+}
 
 /** One wallet's signature on one contract's maintenance update, at one place on the committee holding that contract. */
 export interface SuperAdminSignature {
@@ -52,7 +55,15 @@ export interface SuperAdminSignature {
 }
 
 const HEX64 = /^[0-9a-f]{64}$/u;
-const KINDS = new Set(['add-signer', 'threshold', 'vault-threshold', 'spending-policy', 'policy-bar', 'recover-anchor', 'super-admins']);
+const KINDS = new Set([
+  'add-signer',
+  'threshold',
+  'vault-threshold',
+  'spending-policy',
+  'policy-bar',
+  'recover-anchor',
+  'super-admins'
+]);
 const HEX = /^[0-9a-f]+$/u;
 const HEX128 = /^[0-9a-f]{128}$/u;
 const DIGITS = /^[0-9]{1,20}$/u;
@@ -67,26 +78,40 @@ export function proposalFileRefusal(f: unknown): string | null {
   if (typeof x !== 'object' || x === null || x.format !== PROPOSAL_FILE_FORMAT) {
     return 'this file is not a proposal handed over by a signer of a company. Ask the signer who raised it to send the file again';
   }
-  if (typeof x.company !== 'string' || x.company.length === 0) return 'the file names no company. Ask the signer who raised it to send it again';
-  for (const [name, v] of [['account', x.account], ['salt', x.salt], ['identity', x.chainId]] as const) {
-    if (typeof v !== 'string' || !HEX64.test(v)) return `the proposal's ${name} in the file is not thirty-two bytes. Ask the signer who raised it to send it again`;
+  if (typeof x.company !== 'string' || x.company.length === 0)
+    return 'the file names no company. Ask the signer who raised it to send it again';
+  for (const [name, v] of [
+    ['account', x.account],
+    ['salt', x.salt],
+    ['identity', x.chainId]
+  ] as const) {
+    if (typeof v !== 'string' || !HEX64.test(v))
+      return `the proposal's ${name} in the file is not thirty-two bytes. Ask the signer who raised it to send it again`;
   }
-  if (typeof x.summary !== 'string') return 'the file says nothing of what the proposal changes. Ask the signer who raised it to send it again';
+  if (typeof x.summary !== 'string')
+    return 'the file says nothing of what the proposal changes. Ask the signer who raised it to send it again';
   const change = x.change as { kind?: unknown } | undefined;
   if (typeof change !== 'object' || change === null || !KINDS.has(String(change.kind))) {
     return 'the file names a change this page does not carry out. Reload the page to use the current version, then open the file again';
   }
   const superAdmins = change.kind === 'super-admins';
   if (!superAdmins && (x.joined !== undefined || x.signatures !== undefined)) {
-    return 'the file carries super admins\' signatures on a signers\' proposal, which never carries or counts them. Do not approve it; ask the signer who raised it';
+    return "the file carries super admins' signatures on a signers' proposal, which never carries or counts them. Do not approve it; ask the signer who raised it";
   }
   if (superAdmins) return superAdminFileRefusal(x);
   if (change.kind === 'recover-anchor') {
     const r = x.resumesFrom as Partial<ResumesFrom> | undefined;
     const head = (change as { resumesFrom?: unknown }).resumesFrom;
-    if (r === undefined || !Number.isSafeInteger(r.seq) || r.seq! < 0 || typeof r.head !== 'string' || !HEX64.test(r.head)
-      || typeof r.root !== 'string' || !HEX64.test(r.root)) {
-      return 'the file does not say which batch of the company\'s records the recovery resumes from. Ask the signer who raised it to send it again';
+    if (
+      r === undefined ||
+      !Number.isSafeInteger(r.seq) ||
+      r.seq! < 0 ||
+      typeof r.head !== 'string' ||
+      !HEX64.test(r.head) ||
+      typeof r.root !== 'string' ||
+      !HEX64.test(r.root)
+    ) {
+      return "the file does not say which batch of the company's records the recovery resumes from. Ask the signer who raised it to send it again";
     }
     if (typeof head !== 'string' || head !== r.head) {
       return 'the batch the file says the recovery resumes from is not the one its change names. Do not approve it; ask the signer who raised it';
@@ -97,8 +122,10 @@ export function proposalFileRefusal(f: unknown): string | null {
     }
     const lastRecovery = (change as { lastRecovery?: unknown }).lastRecovery;
     if (typeof lastRecovery !== 'string' || !HEX64.test(lastRecovery)) {
-      return 'the file does not say which recovery of the company\'s records was the latest carried out when it was raised. '
-        + 'Ask the signer who raised it to send it again';
+      return (
+        "the file does not say which recovery of the company's records was the latest carried out when it was raised. " +
+        'Ask the signer who raised it to send it again'
+      );
     }
   }
   return null;
@@ -110,7 +137,9 @@ export const proposalFileText = (f: ProposalFile): string => `${JSON.stringify(f
 /** A proposal file read from its text, or refused in words that say what to do (`proposalFileRefusal`). */
 export function proposalFileRead(text: string): ProposalFile {
   let parsed: unknown;
-  try { parsed = JSON.parse(text); } catch {
+  try {
+    parsed = JSON.parse(text);
+  } catch {
     throw new Error('this file could not be read as a proposal. Ask the signer who raised it to send the file again');
   }
   const why = proposalFileRefusal(parsed);
@@ -123,8 +152,16 @@ function superAdminFileRefusal(x: Partial<ProposalFile>): string | null {
   const c = x.change as Partial<SuperAdminChangeOnTheWire>;
   const ask = 'Ask the super admin who raised it to send it again';
   if (readCompanyLabel(x.company) === null) return `the file does not name the company by its label. ${ask}`;
-  const keysOk = (keys: unknown): boolean => Array.isArray(keys) && keys.every((k) => typeof k === 'object' && k !== null
-    && typeof (k as Key).tag === 'string' && typeof (k as Key).value === 'string' && HEX.test((k as Key).value));
+  const keysOk = (keys: unknown): boolean =>
+    Array.isArray(keys) &&
+    keys.every(
+      (k) =>
+        typeof k === 'object' &&
+        k !== null &&
+        typeof (k as Key).tag === 'string' &&
+        typeof (k as Key).value === 'string' &&
+        HEX.test((k as Key).value)
+    );
   const from = c.from as Partial<SuperAdminChangeOnTheWire['from']> | undefined;
   if (typeof from !== 'object' || from === null || !keysOk(from.committee) || !Number.isSafeInteger(from.threshold)) {
     return `the file does not say who held the company's account when the change was raised. ${ask}`;
@@ -133,14 +170,37 @@ function superAdminFileRefusal(x: Partial<ProposalFile>): string | null {
   const notInstallable = whyNotInstallable({ committee: c.committee, threshold: c.threshold });
   if (notInstallable !== null) return `the committee the file names cannot be installed: ${notInstallable}`;
   const contracts = c.contracts;
-  if (!Array.isArray(contracts) || contracts.length === 0 || !contracts.every((k, i) => typeof k === 'object' && k !== null
-    && (k.contract === 'account') === (i === 0 && k.address === x.account) && (k.contract === 'account' || k.contract === 'vault')
-    && typeof k.address === 'string' && HEX64.test(k.address) && typeof k.counter === 'string' && DIGITS.test(k.counter))) {
+  if (
+    !Array.isArray(contracts) ||
+    contracts.length === 0 ||
+    !contracts.every(
+      (k, i) =>
+        typeof k === 'object' &&
+        k !== null &&
+        (k.contract === 'account') === (i === 0 && k.address === x.account) &&
+        (k.contract === 'account' || k.contract === 'vault') &&
+        typeof k.address === 'string' &&
+        HEX64.test(k.address) &&
+        typeof k.counter === 'string' &&
+        DIGITS.test(k.counter)
+    )
+  ) {
     return `the file does not name each contract the change moves, the account first, with its counter. ${ask}`;
   }
-  if (new Set(contracts.map((k) => k.address)).size !== contracts.length) return `the file names one contract twice. ${ask}`;
-  if (x.joined !== undefined && (!Array.isArray(x.joined) || !x.joined.every((j) => typeof j === 'object' && j !== null
-    && keysOk([j.key]) && typeof j.signature === 'string' && HEX128.test(j.signature)))) {
+  if (new Set(contracts.map((k) => k.address)).size !== contracts.length)
+    return `the file names one contract twice. ${ask}`;
+  if (
+    x.joined !== undefined &&
+    (!Array.isArray(x.joined) ||
+      !x.joined.every(
+        (j) =>
+          typeof j === 'object' &&
+          j !== null &&
+          keysOk([j.key]) &&
+          typeof j.signature === 'string' &&
+          HEX128.test(j.signature)
+      ))
+  ) {
     return `a joining key's signature in the file cannot be read. ${ask}`;
   }
   if (x.signatures !== undefined && (!Array.isArray(x.signatures) || signatureListRefusal(x.signatures) !== null)) {
@@ -163,11 +223,22 @@ export function signatureListRefusal(list: readonly unknown[]): string | null {
   for (let i = 0; i < list.length; i += 1) {
     if (!(i in list)) return 'the list of signatures has a gap in it';
     const s = list[i] as Partial<SuperAdminSignature> | null;
-    if (typeof s !== 'object' || s === null || typeof s.address !== 'string' || !HEX64.test(s.address.toLowerCase())
-      || typeof s.counter !== 'string' || !DIGITS.test(s.counter) || !Number.isSafeInteger(s.index) || s.index! < 0
-      || typeof s.signature !== 'object' || s.signature === null || typeof s.signature.tag !== 'string'
-      || typeof s.signature.value !== 'string' || !HEX.test(s.signature.value)) {
-      return 'an entry in the list of signatures is not a signature on a contract\'s update';
+    if (
+      typeof s !== 'object' ||
+      s === null ||
+      typeof s.address !== 'string' ||
+      !HEX64.test(s.address.toLowerCase()) ||
+      typeof s.counter !== 'string' ||
+      !DIGITS.test(s.counter) ||
+      !Number.isSafeInteger(s.index) ||
+      s.index! < 0 ||
+      typeof s.signature !== 'object' ||
+      s.signature === null ||
+      typeof s.signature.tag !== 'string' ||
+      typeof s.signature.value !== 'string' ||
+      !HEX.test(s.signature.value)
+    ) {
+      return "an entry in the list of signatures is not a signature on a contract's update";
     }
   }
   return null;

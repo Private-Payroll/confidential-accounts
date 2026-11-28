@@ -15,7 +15,10 @@ afterEach(cleanup);
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EN = ENGLISH;
 /* A second language, so following the language shown is seen and not assumed. */
-const LANGUAGES = languagesFrom({ './locales/en.json': EN, './locales/de.json': { ...EN, 'app.title': 'Private Tresore' } });
+const LANGUAGES = languagesFrom({
+  './locales/en.json': EN,
+  './locales/de.json': { ...EN, 'app.title': 'Private Tresore' }
+});
 const page = (pick: string) => createElement(KitProvider, { languages: LANGUAGES, pick }, createElement(DocumentTitle));
 
 describe('the page title', () => {
@@ -29,7 +32,9 @@ describe('the page title', () => {
     document.title = '';
     const { rerender } = render(page('de'));
     expect(document.title).toBe('Private Tresore');
-    await act(async () => { rerender(page('en')); });
+    await act(async () => {
+      rerender(page('en'));
+    });
     expect(document.title).toBe(EN['app.title']);
   });
 });

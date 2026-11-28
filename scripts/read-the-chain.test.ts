@@ -32,8 +32,14 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
-  sayReading, carriesNumbers, compareField, compareReadbacks, vaultNumbers, verdict,
-  type Reading, type Run,
+  sayReading,
+  carriesNumbers,
+  compareField,
+  compareReadbacks,
+  vaultNumbers,
+  verdict,
+  type Reading,
+  type Run
 } from './read-the-chain-rules.js';
 
 const RULES = fileURLToPath(new URL('./read-the-chain-rules.ts', import.meta.url));
@@ -53,9 +59,10 @@ const SOURCE = readFileSync(RULES, 'utf8');
 async function broken(name: string, from: string, to: string): Promise<any> {
   if (!SOURCE.includes(from)) {
     throw new Error(
-      `the mutation "${name}" no longer matches the rules module, so it changes nothing and `
-      + 'the assertion it is meant to break would pass for the wrong reason. Update the '
-      + 'mutation to the text that is there now.');
+      `the mutation "${name}" no longer matches the rules module, so it changes nothing and ` +
+        'the assertion it is meant to break would pass for the wrong reason. Update the ' +
+        'mutation to the text that is there now.'
+    );
   }
   const dir = mkdtempSync(join(tmpdir(), 'read-the-chain-mutation-'));
   const file = join(dir, `${name}.ts`);
@@ -94,9 +101,11 @@ describe('an unanswered read is never reported as an answer', () => {
     expect(said).toMatch(/no question left this machine/);
     expect(said).not.toMatch(ASSERTS_ABSENCE);
 
-    const m = await broken('never-asked-becomes-no-state',
+    const m = await broken(
+      'never-asked-becomes-no-state',
       "    case 'never-asked':\n      return 'NOT ASKED.",
-      "    case 'never-asked':\n      return 'the account has no state on chain. NOT ASKED.");
+      "    case 'never-asked':\n      return 'the account has no state on chain. NOT ASKED."
+    );
     expect(m.sayReading(NEVER_ASKED)).toMatch(ASSERTS_ABSENCE);
   });
 
@@ -110,9 +119,11 @@ describe('an unanswered read is never reported as an answer', () => {
     expect(said).toMatch(/has not yet caught up/);
     expect(said).not.toMatch(ASSERTS_ABSENCE);
 
-    const m = await broken('no-state-becomes-empty',
+    const m = await broken(
+      'no-state-becomes-empty',
       "'ASKED, AND THE ANSWER CARRIED NO STATE for that contract. That is not the same '",
-      "'ASKED. The account has no state on chain. It is not the same '");
+      "'ASKED. The account has no state on chain. It is not the same '"
+    );
     expect(m.sayReading(NO_STATE)).toMatch(ASSERTS_ABSENCE);
   });
 
@@ -126,9 +137,11 @@ describe('an unanswered read is never reported as an answer', () => {
     expect(carriesNumbers(NO_STATE)).toBe(false);
     expect(carriesNumbers({ kind: 'failed', cause: 'unreachable' })).toBe(false);
 
-    const m = await broken('anything-that-did-not-fail-carries-numbers',
+    const m = await broken(
+      'anything-that-did-not-fail-carries-numbers',
       "  r.kind === 'answered';",
-      "  r.kind !== 'failed';");
+      "  r.kind !== 'failed';"
+    );
     expect(m.carriesNumbers(NEVER_ASKED)).toBe(true);
   });
 });
@@ -145,9 +158,11 @@ describe('two readings of the same numbers', () => {
     expect(compareField(undefined, 1)).toBe('incomparable');
     expect(compareField(undefined, undefined)).toBe('incomparable');
 
-    const m = await broken('missing-side-agrees',
+    const m = await broken(
+      'missing-side-agrees',
       "  if (a === undefined || b === undefined) return 'incomparable';",
-      "  if (a === undefined || b === undefined) return 'agree';");
+      "  if (a === undefined || b === undefined) return 'agree';"
+    );
     expect(m.compareField(1, undefined)).toBe('agree');
   });
 
@@ -167,11 +182,13 @@ describe('two readings of the same numbers', () => {
     expect(compareReadbacks(recorded, { ...NUMBERS }).overall).toBe('agree');
     expect(compareReadbacks(recorded, { threshold: 1 }).overall).toBe('incomparable');
 
-    const m = await broken('difference-loses-to-agreement',
-      "  const overall: FieldComparison = values.includes('differ')\n    ? 'differ'\n"
-      + "    : values.includes('incomparable') ? 'incomparable' : 'agree';",
-      "  const overall: FieldComparison = values.includes('agree')\n    ? 'agree'\n"
-      + "    : values.includes('incomparable') ? 'incomparable' : 'differ';");
+    const m = await broken(
+      'difference-loses-to-agreement',
+      "  const overall: FieldComparison = values.includes('differ')\n    ? 'differ'\n" +
+        "    : values.includes('incomparable') ? 'incomparable' : 'agree';",
+      "  const overall: FieldComparison = values.includes('agree')\n    ? 'agree'\n" +
+        "    : values.includes('incomparable') ? 'incomparable' : 'differ';"
+    );
     expect(m.compareReadbacks(recorded, read).overall).toBe('agree');
   });
 });
@@ -182,17 +199,16 @@ describe('a state that only half decoded', () => {
    * puts a real looking number beside a refusal.
    */
   it('reports both vault numbers or neither', async () => {
-    expect(vaultNumbers({ payments: '3', notes: '5' }))
-      .toEqual({ reportable: true, payments: '3', notes: '5' });
+    expect(vaultNumbers({ payments: '3', notes: '5' })).toEqual({ reportable: true, payments: '3', notes: '5' });
     expect(vaultNumbers({ payments: '3' })).toEqual({ reportable: false });
     expect(vaultNumbers({ notes: '5' })).toEqual({ reportable: false });
     expect(vaultNumbers({})).toEqual({ reportable: false });
 
-    const m = await broken('half-a-decode-is-reportable',
-      '  if (forced.payments === undefined || forced.notes === undefined)'
-      + ' return { reportable: false };',
-      '  if (forced.payments === undefined && forced.notes === undefined)'
-      + ' return { reportable: false };');
+    const m = await broken(
+      'half-a-decode-is-reportable',
+      '  if (forced.payments === undefined || forced.notes === undefined)' + ' return { reportable: false };',
+      '  if (forced.payments === undefined && forced.notes === undefined)' + ' return { reportable: false };'
+    );
     expect(m.vaultNumbers({ payments: '3' }).reportable).toBe(true);
   });
 });
@@ -202,7 +218,7 @@ describe('the verdict', () => {
     deploymentResolved: true,
     asConfigured: NEVER_ASKED,
     withAddressSupplied: NEVER_ASKED,
-    ...over,
+    ...over
   });
 
   /*
@@ -215,9 +231,11 @@ describe('the verdict', () => {
     expect(verdict(nothing).code).toBe(3);
     expect(verdict(nothing).headline).toMatch(/UNMEASURED/);
 
-    const m = await broken('unmeasured-asked-last',
+    const m = await broken(
+      'unmeasured-asked-last',
       '  if (!run.deploymentResolved) {\n    return { code: 3, headline:',
-      '  if (false as boolean) {\n    return { code: 3, headline:');
+      '  if (false as boolean) {\n    return { code: 3, headline:'
+    );
     expect(m.verdict(nothing).code).toBe(0);
   });
 
@@ -233,9 +251,11 @@ describe('the verdict', () => {
 
     expect(verdict(run({ asConfigured: ANSWERED })).code).toBe(0);
 
-    const m = await broken('supplied-address-settles-it',
+    const m = await broken(
+      'supplied-address-settles-it',
       '  if (carriesNumbers(run.asConfigured)) {',
-      '  if (carriesNumbers(run.asConfigured) || carriesNumbers(run.withAddressSupplied)) {');
+      '  if (carriesNumbers(run.asConfigured) || carriesNumbers(run.withAddressSupplied)) {'
+    );
     expect(m.verdict(supplied).code).toBe(0);
   });
 
@@ -247,14 +267,20 @@ describe('the verdict', () => {
   it('is unmeasured when neither route produced a reading', async () => {
     const neither = run({ asConfigured: NO_STATE, withAddressSupplied: NO_STATE });
     expect(verdict(neither).code).toBe(3);
-    expect(verdict(run({
-      asConfigured: { kind: 'failed', cause: 'unreachable' },
-      withAddressSupplied: { kind: 'failed', cause: 'unreachable' },
-    })).code).toBe(3);
+    expect(
+      verdict(
+        run({
+          asConfigured: { kind: 'failed', cause: 'unreachable' },
+          withAddressSupplied: { kind: 'failed', cause: 'unreachable' }
+        })
+      ).code
+    ).toBe(3);
 
-    const m = await broken('nothing-answered-is-a-finding',
+    const m = await broken(
+      'nothing-answered-is-a-finding',
       "  return { code: 3, headline:\n    'UNMEASURED. Neither route produced a reading",
-      "  return { code: 1, headline:\n    'UNMEASURED. Neither route produced a reading");
+      "  return { code: 1, headline:\n    'UNMEASURED. Neither route produced a reading"
+    );
     expect(m.verdict(neither).code).toBe(1);
   });
 });

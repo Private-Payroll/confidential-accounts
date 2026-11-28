@@ -1,0 +1,18 @@
+{
+  "name": "lint",
+  "private": true,
+  "description": "The linter and formatter, installed on their own so the linter reads types with the TypeScript it supports while the build keeps its own.",
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.15.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-simple-import-sort": "12.1.1",
+    "eslint-plugin-unused-imports": "4.4.1",
+    "globals": "17.0.0",
+    "prettier": "3.10.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2"
+  }
+}

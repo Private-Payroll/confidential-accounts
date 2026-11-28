@@ -31,17 +31,20 @@ const HEX32 = /^[0-9a-f]{64}$/u;
  * is not there. A read that failed is never an answer of "not recorded".
  */
 export async function recordedAt(
-  source: ContractStateSource, readLedger: ReadLedger, company: string, movements: readonly Hex[],
+  source: ContractStateSource,
+  readLedger: ReadLedger,
+  company: string,
+  movements: readonly Hex[]
 ): Promise<boolean[] | null> {
   const address = company.toLowerCase();
-  if (!HEX32.test(address) || movements.some(m => !HEX32.test(m.toLowerCase()))) return null;
+  if (!HEX32.test(address) || movements.some((m) => !HEX32.test(m.toLowerCase()))) return null;
   try {
-    const state = await source.queryContractState(address) as { data?: unknown } | null | undefined;
+    const state = (await source.queryContractState(address)) as { data?: unknown } | null | undefined;
     if (state === null || state === undefined || state.data === undefined) return null;
     const set = (readLedger(state.data) as { movements?: { member?: unknown } } | null)?.movements;
     if (set === null || set === undefined || typeof set.member !== 'function') return null;
     const member = set.member.bind(set) as (value: Uint8Array) => unknown;
-    return movements.map(m => member(fromHex(m.toLowerCase())) === true);
+    return movements.map((m) => member(fromHex(m.toLowerCase())) === true);
   } catch {
     return null;
   }

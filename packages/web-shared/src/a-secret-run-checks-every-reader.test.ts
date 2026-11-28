@@ -37,10 +37,15 @@ const CO = `co_${'c1'.repeat(32)}` as CompanyLabel;
  * `src/core/a-vault-keeps-as-many-approvers-as-its-bar.test.ts` and `apps/web/src/adapters/create-vault.test.ts`.
  */
 const nobodyShort = {
-  approvers: async () => approverRosterFrom({
-    threshold: 1, vaultThresholds: [], seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })), adoptedVaults: [], companyWide: 'cc'.repeat(32),
-  }),
-  vaultName: (v: string) => v,
+  approvers: async () =>
+    approverRosterFrom({
+      threshold: 1,
+      vaultThresholds: [],
+      seated: ['e1', 'e2', 'e3'].map((leaf) => ({ leaf, rights: EVERY_RIGHT })),
+      adoptedVaults: [],
+      companyWide: 'cc'.repeat(32)
+    }),
+  vaultName: (v: string) => v
 };
 const pacing = { sleep: async () => {}, waitMs: 3, everyMs: 1, ...nobodyShort };
 
@@ -52,11 +57,16 @@ const signer = (n: number, name: string) => {
   const { seat, opening } = seatOpenedFor(committeeKey, n);
   const statement = signRecordsKey(identity, CO, ACCOUNT, companyKey, seat);
   const entry: RosterVaultKeys = {
-    signerId: name.toLowerCase(), userId: name.toLowerCase(), name, filingKey: '00'.repeat(32) as never,
+    signerId: name.toLowerCase(),
+    userId: name.toLowerCase(),
+    name,
+    filingKey: '00'.repeat(32) as never,
     keys: {
-      committeeKey, recordsKey: statement.recordsKey as never,
-      recordsKeyStatement: statement.signature as never, recordsKeySeat: statement.seat as never,
-    },
+      committeeKey,
+      recordsKey: statement.recordsKey as never,
+      recordsKeyStatement: statement.signature as never,
+      recordsKeySeat: statement.seat as never
+    }
   };
   return { companyKey, committeeKey, recordsKey: statement.recordsKey, entry, seat, opening };
 };
@@ -82,11 +92,15 @@ const press = async (o: {
   const asked: string[] = [];
   const committee = [ada.committeeKey, bo.committeeKey];
   const view: TestView = {
-    vault: VAULT, onChain: true, heldByCommittee: true, notes: [], everCreated: [],
+    vault: VAULT,
+    onChain: true,
+    heldByCommittee: true,
+    notes: [],
+    everCreated: [],
     committee: { committee, threshold: 2 } as never,
     authority: { committee, threshold: 2, counter: '1', shape: 'committee' },
     /* What the service would say of the vault; nothing in a start asks it - the vault is read on the device (`vaultOnChain` below). */
-    deployed: 'D',
+    deployed: 'D'
   };
   const stores = new Map<WireRecord, MemorySealedPoolStore>();
   const records = (r: WireRecord) => stores.get(r) ?? stores.set(r, new MemorySealedPoolStore()).get(r)!;
@@ -94,37 +108,102 @@ const press = async (o: {
   const me = { signerId: 'ada', wrappingSecret: wrapping.secret, companyKey: ada.companyKey };
   const service: VaultService = {
     keys: async () => ({ committee: { committee, threshold: 2 } as never, why: null, readers: o.readers as never }),
-    deploy: async () => { throw new Error('not deployed here'); },
-    handover: async () => { throw new Error('not handed over here'); },
+    deploy: async () => {
+      throw new Error('not deployed here');
+    },
+    handover: async () => {
+      throw new Error('not handed over here');
+    },
     chain: async () => view,
-    deposit: async () => { throw new Error('no deposit'); },
-    payoutState: async () => { throw new Error('a start never asks the service for its block'); },
-    payout: async () => { throw new Error('no payout'); },
-    merge: async () => { throw new Error('no merge'); },
-    payoutPublicly: async () => { throw new Error('no payout'); },
-    startAccountCall: async () => { asked.push('sent a step'); return { txRef: 't' }; },
-    startSecret: async () => { asked.push('sent the secret'); return { txRef: 't' }; },
-    startCopy: async () => { asked.push('sent a copy'); return { txRef: 't' }; },
+    deposit: async () => {
+      throw new Error('no deposit');
+    },
+    payoutState: async () => {
+      throw new Error('a start never asks the service for its block');
+    },
+    payout: async () => {
+      throw new Error('no payout');
+    },
+    merge: async () => {
+      throw new Error('no merge');
+    },
+    payoutPublicly: async () => {
+      throw new Error('no payout');
+    },
+    startAccountCall: async () => {
+      asked.push('sent a step');
+      return { txRef: 't' };
+    },
+    startSecret: async () => {
+      asked.push('sent the secret');
+      return { txRef: 't' };
+    },
+    startCopy: async () => {
+      asked.push('sent a copy');
+      return { txRef: 't' };
+    }
   };
   const filedSecret = async (): Promise<string> => {
-    const opened = openNonceSecrets((await records('nonce-secret').get(VAULT))!, VAULT, recordsKeypairFrom(ada.companyKey));
+    const opened = openNonceSecrets(
+      (await records('nonce-secret').get(VAULT))!,
+      VAULT,
+      recordsKeypairFrom(ada.companyKey)
+    );
     return opened.secrets[opened.secrets.length - 1]!;
   };
   const builder = {
     startStanding: async (i: { secret?: string }) => ({
       standing: {
-        adopted: true, removals: 0,
-        adoption: { proposal: 'a1'.repeat(32), payload: 'a2'.repeat(32), named: 'a3'.repeat(32), salt: 'a4'.repeat(32), open: false, approvals: 1, needed: 1, stale: false },
-        ...(i.secret === undefined ? {} : { secret: {
-          set: false, another: false, rootIsThisRuns: true, written: [], started: false,
-          run: o.approved === true ? {
-            proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: 'b3'.repeat(32), salt: 'b4'.repeat(32),
-            open: true, inWindow: true, approvals: 2, needed: 2, opensAt: '0', closesAt: '9',
-          } : null,
-          raise: { proposal: 'b1'.repeat(32), payload: 'b2'.repeat(32), named: 'b3'.repeat(32), salt: 'b4'.repeat(32), opensAt: '0', closesAt: '9' },
-        } }),
+        adopted: true,
+        removals: 0,
+        adoption: {
+          proposal: 'a1'.repeat(32),
+          payload: 'a2'.repeat(32),
+          named: 'a3'.repeat(32),
+          salt: 'a4'.repeat(32),
+          open: false,
+          approvals: 1,
+          needed: 1,
+          stale: false
+        },
+        ...(i.secret === undefined
+          ? {}
+          : {
+              secret: {
+                set: false,
+                another: false,
+                rootIsThisRuns: true,
+                written: [],
+                started: false,
+                run:
+                  o.approved === true
+                    ? {
+                        proposal: 'b1'.repeat(32),
+                        payload: 'b2'.repeat(32),
+                        named: 'b3'.repeat(32),
+                        salt: 'b4'.repeat(32),
+                        open: true,
+                        inWindow: true,
+                        approvals: 2,
+                        needed: 2,
+                        opensAt: '0',
+                        closesAt: '9'
+                      }
+                    : null,
+                raise: {
+                  proposal: 'b1'.repeat(32),
+                  payload: 'b2'.repeat(32),
+                  named: 'b3'.repeat(32),
+                  salt: 'b4'.repeat(32),
+                  opensAt: '0',
+                  closesAt: '9'
+                }
+              }
+            })
       },
-      ...(i.secret === undefined ? {} : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never }),
+      ...(i.secret === undefined
+        ? {}
+        : { run: { root: 'r', payees: '0', asset: '00'.repeat(32), copies: o.copies(await filedSecret()) } as never })
     }),
     vaultAsDeployed: async () => ({ refusal: null }),
     /*
@@ -132,63 +211,124 @@ const press = async (o: {
      * account, empty, and with the circuits of both this app's.
      */
     vaultOnChain: async () => ({
-      onChain: true, state: 'QUJD', notes: [], notesFromThisBuild: true, retired: false, everCreated: [],
-      authority: { committee, threshold: 2 }, account: ACCOUNT, started: false, circuits: null, accountCircuits: null,
+      onChain: true,
+      state: 'QUJD',
+      notes: [],
+      notesFromThisBuild: true,
+      retired: false,
+      everCreated: [],
+      authority: { committee, threshold: 2 },
+      account: ACCOUNT,
+      started: false,
+      circuits: null,
+      accountCircuits: null
     }),
     /* One block's view of the vault and the account, read here at the wallet's indexer. */
-    chainAtOneBlock: async () => ({ blockHash: 'B', vaultState: 'V', zswapState: 'Z', parameters: 'P', accountState: 'A' }),
-    governedCall: async () => { asked.push('asked to raise or approve'); throw new Error('stop here'); },
-    setNonceSecret: async () => { asked.push('built the set'); throw new Error('stop here'); },
-  } as unknown as VaultBuilderClient;
-  const result = await createCompanyVault({
-    ...pacing, account: ACCOUNT, service, builder,
-    indexer: async () => ({ indexerUri: 'https://indexer.example/api/v3/graphql', indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws' }),
-    onChain: async (v: string) => ({
-      /* The account held by the company's committee, which the vault was born held by. */
-      holders: { committee, threshold: 2, seats: [], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: seatBarOf(1, null), adoptedVaults: [v], founding: '4a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }] },
+    chainAtOneBlock: async () => ({
+      blockHash: 'B',
+      vaultState: 'V',
+      zswapState: 'Z',
+      parameters: 'P',
+      accountState: 'A'
     }),
-    me, myRecordsKey: ada.recordsKey as never, records,
-    signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
-    material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
-    /* Where the run would be written down: Ada's seat may raise it. */
-    proposals: proposalsKeptInATest({ signingSecret: '11'.repeat(32) as never }).doors,
-    secretReaders: {
-      company: CO,
-      /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */
-      read: async () => ({
-        committee, threshold: 2, seats: o.seatsOnRead?.(++reads) ?? o.seats ?? [ada.seat, bo.seat],
-        vault: { vault: VAULT, account: ACCOUNT, committee: o.vaultHeldBy ?? committee, threshold: 2 },
-      }),
-      roster: async () => o.roster ?? [ada.entry, bo.entry],
-      /* The company's directory as Ada's device believes it: each seat's entry with its opening, and the compiled `signerLeaf`. */
-      directory: async () => ({
-        seats: [ada, bo].map((s) => ({ seat: s.seat, opening: s.opening, retired: null })), leafOf: leafOfTheContract,
-        readers: [ada, bo].map((s) => s.recordsKey),
-      }),
+    governedCall: async () => {
+      asked.push('asked to raise or approve');
+      throw new Error('stop here');
     },
-  }, VAULT as never).catch((e: unknown) => e);
+    setNonceSecret: async () => {
+      asked.push('built the set');
+      throw new Error('stop here');
+    }
+  } as unknown as VaultBuilderClient;
+  const result = await createCompanyVault(
+    {
+      ...pacing,
+      account: ACCOUNT,
+      service,
+      builder,
+      indexer: async () => ({
+        indexerUri: 'https://indexer.example/api/v3/graphql',
+        indexerWsUri: 'wss://indexer.example/api/v3/graphql/ws'
+      }),
+      onChain: async (v: string) => ({
+        /* The account held by the company's committee, which the vault was born held by. */
+        holders: {
+          committee,
+          threshold: 2,
+          seats: [],
+          approvals: 1,
+          vaultThresholds: [],
+          policyBar: null,
+          seatBar: seatBarOf(1, null),
+          adoptedVaults: [v],
+          founding: '4a'.repeat(32),
+          foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }]
+        }
+      }),
+      me,
+      myRecordsKey: ada.recordsKey as never,
+      records,
+      signers: async () => [{ id: 'ada', wrappingPublicKey: wrapping.publicKey }],
+      material: { signingSecret: '11'.repeat(32), blinding: '22'.repeat(32), scope: '33'.repeat(32) },
+      /* Where the run would be written down: Ada's seat may raise it. */
+      proposals: proposalsKeptInATest({ signingSecret: '11'.repeat(32) as never }).doors,
+      secretReaders: {
+        company: CO,
+        /* Who holds the account and the vault, as Ada's own wallet read them for this check: the vault read off the vault itself. */
+        read: async () => ({
+          committee,
+          threshold: 2,
+          seats: o.seatsOnRead?.(++reads) ?? o.seats ?? [ada.seat, bo.seat],
+          vault: { vault: VAULT, account: ACCOUNT, committee: o.vaultHeldBy ?? committee, threshold: 2 }
+        }),
+        roster: async () => o.roster ?? [ada.entry, bo.entry],
+        /* The company's directory as Ada's device believes it: each seat's entry with its opening, and the compiled `signerLeaf`. */
+        directory: async () => ({
+          seats: [ada, bo].map((s) => ({ seat: s.seat, opening: s.opening, retired: null })),
+          leafOf: leafOfTheContract,
+          readers: [ada, bo].map((s) => s.recordsKey)
+        })
+      }
+    },
+    VAULT as never
+  ).catch((e: unknown) => e);
   return { result, asked };
 };
 
-const copyFor = (reader: string) => (secret: string) => ({ reader, parts: sealSecretCopy({ vault: VAULT, secret, reader }).map((p) => toHex(p)) });
-const run = (...readers: string[]) => (secret: string) => readers.map((r) => copyFor(r)(secret));
+const copyFor = (reader: string) => (secret: string) => ({
+  reader,
+  parts: sealSecretCopy({ vault: VAULT, secret, reader }).map((p) => toHex(p))
+});
+const run =
+  (...readers: string[]) =>
+  (secret: string) =>
+    readers.map((r) => copyFor(r)(secret));
 
 describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES OR APPROVES IT', () => {
-  it('a run sealed to exactly the company\'s signers goes on to be raised', async () => {
-    const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey) });
+  it("a run sealed to exactly the company's signers goes on to be raised", async () => {
+    const { result, asked } = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey)
+    });
     /* The positive control: everything checked out, so the press asked the worker to raise the run. */
     expect(asked).toEqual(['asked to raise or approve']);
     expect(result).toBeInstanceOf(VaultStartOwed);
   });
 
   it('A KEY THE SERVICE SUBSTITUTES IS REFUSED BEFORE ANYTHING IS RAISED OR APPROVED', async () => {
-    const { result, asked } = await press({ readers: [ada.recordsKey, theServices], copies: run(ada.recordsKey, theServices) });
+    const { result, asked } = await press({
+      readers: [ada.recordsKey, theServices],
+      copies: run(ada.recordsKey, theServices)
+    });
     /* RED WHEN: the press checks only this signer's own key, as it did before. */
     expect(asked).toEqual([]);
     expect(result).toBeInstanceOf(VaultStartOwed);
     expect((result as Error).message).toMatch(/no signer of this company signed for/);
     /* RED WHEN: the readers checked are a list beside the run rather than the copies the run itself would write. */
-    const honestList = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, theServices) });
+    const honestList = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, theServices)
+    });
     expect(honestList.asked).toEqual([]);
     expect((honestList.result as Error).message).toMatch(/no signer of this company signed for/);
   });
@@ -196,7 +336,9 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
   it('A COPY TO A KEY THE WALLET DID NOT SIGN IS REFUSED, even when the service rewrote the roster to name it', async () => {
     const rewritten = { ...bo.entry, keys: { ...bo.entry.keys!, recordsKey: theServices as never } };
     const { result, asked } = await press({
-      readers: [ada.recordsKey, theServices], copies: run(ada.recordsKey, theServices), roster: [ada.entry, rewritten],
+      readers: [ada.recordsKey, theServices],
+      copies: run(ada.recordsKey, theServices),
+      roster: [ada.entry, rewritten]
     });
     /* RED WHEN: the roster's word for a records key is taken without the wallet's signature over it. */
     expect(asked).toEqual([]);
@@ -212,8 +354,11 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
   it('A SIGNER WHOSE OWN COPY DOES NOT OPEN IS TOLD SO, and nothing is raised', async () => {
     /* Every reader checks out; this signer's own copy in the run is sealed for another vault. */
     const wrongVault = (secret: string) => [
-      { reader: ada.recordsKey, parts: sealSecretCopy({ vault: 'cd'.repeat(32), secret, reader: ada.recordsKey }).map((p) => toHex(p)) },
-      copyFor(bo.recordsKey)(secret),
+      {
+        reader: ada.recordsKey,
+        parts: sealSecretCopy({ vault: 'cd'.repeat(32), secret, reader: ada.recordsKey }).map((p) => toHex(p))
+      },
+      copyFor(bo.recordsKey)(secret)
     ];
     const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: wrongVault });
     /* RED WHEN: this device approves a run whose copy for it does not open with its own key. */
@@ -221,12 +366,17 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
     expect((result as Error).message).toMatch(/does not open with the key your own recovery words give/);
   });
 
-  it('WHICH COMMITTEE THE SIGNER\'S OWN WALLET READS HOLDING THE VAULT IS NOT THE READERS\' CHECK: IT IS THE SUPER ADMINS\' OWN SYSTEM', async () => {
+  it("WHICH COMMITTEE THE SIGNER'S OWN WALLET READS HOLDING THE VAULT IS NOT THE READERS' CHECK: IT IS THE SUPER ADMINS' OWN SYSTEM", async () => {
     const temporary = { tag: 'schnorr', value: '77'.repeat(32) };
     const held = await press({
-      readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), vaultHeldBy: [ada.committeeKey, temporary],
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey),
+      vaultHeldBy: [ada.committeeKey, temporary]
     });
-    const asTheAccount = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey) });
+    const asTheAccount = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey)
+    });
     /* RED WHEN: the reader check reads the vault's committee and stops a run its readers check out for. */
     expect((held.result as { stoppedAt?: string } | undefined)?.stoppedAt).toBeUndefined();
     expect(asTheAccount.asked.length).toBeGreaterThan(0);
@@ -236,24 +386,40 @@ describe('A SECRET RUN IS CHECKED, READER BY READER, BEFORE THIS DEVICE RAISES O
   it('A SIGNER REPLACED AT THE SAME COUNT, WHOSE OLD STATEMENT THE SERVICE SERVES, IS REFUSED, AND NOTHING IS RAISED', async () => {
     /* Bo was replaced by Dee; the committee still lists Ada and Bo, and the service serves Bo's old entry. */
     const dee = 'de'.repeat(32);
-    const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), seats: [ada.seat, dee] });
+    const { result, asked } = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey),
+      seats: [ada.seat, dee]
+    });
     /* RED WHEN: the device counts seats and does not hold Bo's signed seat to the seats the account holds now. */
     expect(asked).toEqual([]);
-    expect((result as Error).message).toMatch(/the seat Bo's wallet signed their records key for is not one the company's account holds now/);
+    expect((result as Error).message).toMatch(
+      /the seat Bo's wallet signed their records key for is not one the company's account holds now/
+    );
     expect((result as { stoppedAt?: string }).stoppedAt).toBe('seat-not-held');
   });
 
   it('a signer who has left is refused as a reader, whatever the committee still lists', async () => {
-    const { result, asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), seats: [ada.seat] });
+    const { result, asked } = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey),
+      seats: [ada.seat]
+    });
     /* RED WHEN: a reader is held to the committee rather than to the seats the account holds now. */
     expect(asked).toEqual([]);
-    expect((result as Error).message).toMatch(/the seat Bo's wallet signed their records key for is not one the company's account holds now/);
+    expect((result as Error).message).toMatch(
+      /the seat Bo's wallet signed their records key for is not one the company's account holds now/
+    );
   });
 });
 
 describe('THE READERS ARE READ AGAIN RIGHT BEFORE THE SECRET IS SET, NOT ONLY BEFORE THE RUN WAS RAISED', () => {
   it('an approved run whose readers still check out goes on to set the secret', async () => {
-    const { asked } = await press({ readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), approved: true });
+    const { asked } = await press({
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey),
+      approved: true
+    });
     /* The positive control: every read checked out, so the press built the set. */
     expect(asked).toEqual(['built the set']);
   });
@@ -261,9 +427,11 @@ describe('THE READERS ARE READ AGAIN RIGHT BEFORE THE SECRET IS SET, NOT ONLY BE
   it('A SIGNER WHO LEFT AFTER THE RUN WAS CHECKED IS CAUGHT BY THE READ RIGHT BEFORE THE SET, AND NOTHING IS SET', async () => {
     const dee = 'de'.repeat(32);
     const { result, asked } = await press({
-      readers: [ada.recordsKey, bo.recordsKey], copies: run(ada.recordsKey, bo.recordsKey), approved: true,
+      readers: [ada.recordsKey, bo.recordsKey],
+      copies: run(ada.recordsKey, bo.recordsKey),
+      approved: true,
       /* Bo is seated for the check before the secret is filed and the check of the run's copies; he has left by the next read. */
-      seatsOnRead: (n) => (n <= 2 ? [ada.seat, bo.seat] : [ada.seat, dee]),
+      seatsOnRead: (n) => (n <= 2 ? [ada.seat, bo.seat] : [ada.seat, dee])
     });
     /* RED WHEN: the check before the set is skipped, so a secret is set for a reader who has left. */
     expect(asked).toEqual([]);

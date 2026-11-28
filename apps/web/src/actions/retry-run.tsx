@@ -1,7 +1,27 @@
 import { useId, useState } from 'react';
-import { AlertDescription, Amount, AMOUNT_KIND, Button, FieldError, FieldLegend, FieldSet, Input, Section, SectionRow, useText } from 'vaults-ui';
 import {
-  PROPOSAL_ACTED, RAISE_RUN_WHY, paymentWindow, retryRun, WINDOW_OF, WINDOW_PROBLEM, type RaiseRunActed, type RaiseRunWhy, type WindowProblem,
+  AlertDescription,
+  Amount,
+  AMOUNT_KIND,
+  Button,
+  FieldError,
+  FieldLegend,
+  FieldSet,
+  Input,
+  Section,
+  SectionRow,
+  useText
+} from 'vaults-ui';
+import {
+  PROPOSAL_ACTED,
+  RAISE_RUN_WHY,
+  paymentWindow,
+  retryRun,
+  WINDOW_OF,
+  WINDOW_PROBLEM,
+  type RaiseRunActed,
+  type RaiseRunWhy,
+  type WindowProblem
 } from '../adapters/proposal-acts.js';
 import type { RunLeg, RunRow } from '../adapters/company-rows.js';
 import { useCompanyRecords, useCompanyView } from '../records/company-records.js';
@@ -40,17 +60,41 @@ export function RetryRun({ run, leg }: { run: RunRow; leg: RunLeg }) {
     if (view === null || busy || raised || leg.form === null || given.of !== WINDOW_OF.given) return;
     setResult(null);
     setPhase({ step: 0, steps: 0 });
-    const ended = await retryRun(person.id, view, {
-      run: run.id, period: run.period, list: leg.list, vault: leg.vault, token: leg.asset, form: leg.form, indices: places, total, opensAt: given.opensAt, closesAt: given.closesAt,
-    }, (step, steps) => setPhase({ step, steps }));
+    const ended = await retryRun(
+      person.id,
+      view,
+      {
+        run: run.id,
+        period: run.period,
+        list: leg.list,
+        vault: leg.vault,
+        token: leg.asset,
+        form: leg.form,
+        indices: places,
+        total,
+        opensAt: given.opensAt,
+        closesAt: given.closesAt
+      },
+      (step, steps) => setPhase({ step, steps })
+    );
     setPhase(null);
     setResult(ended);
     if (ended.of === PROPOSAL_ACTED.done || (ended.of === PROPOSAL_ACTED.stopped && ended.handedOver)) reload();
   };
 
   return (
-    <form id={formId} className="flex max-w-xl flex-col gap-4 text-sm" data-action="retry-run-panel" onSubmit={(e) => { e.preventDefault(); void raise(); }}>
-      <p data-retry-run-run>{t('retryRun.run', { month: month(run.period), people: t('retryRun.people', { count: places.length }) })}</p>
+    <form
+      id={formId}
+      className="flex max-w-xl flex-col gap-4 text-sm"
+      data-action="retry-run-panel"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void raise();
+      }}
+    >
+      <p data-retry-run-run>
+        {t('retryRun.run', { month: month(run.period), people: t('retryRun.people', { count: places.length }) })}
+      </p>
       <Section title={t('retryRun.who')} empty={null} data-retry-run-people>
         {places.map((i) => (
           <SectionRow key={i} data-retry-person={i}>
@@ -60,17 +104,49 @@ export function RetryRun({ run, leg }: { run: RunRow; leg: RunLeg }) {
         ))}
       </Section>
       <FieldSet disabled={busy || raised}>
-        <FieldLegend variant="label"><label htmlFor={opensId}>{t('retryRun.opens')}</label></FieldLegend>
-        <Input id={opensId} type="datetime-local" value={opens} onChange={(e) => setOpens(e.target.value)} data-field="opens" />
-        <FieldLegend variant="label"><label htmlFor={closesId}>{t('retryRun.closes')}</label></FieldLegend>
-        <Input id={closesId} type="datetime-local" value={closes} onChange={(e) => setCloses(e.target.value)} data-field="closes" />
-        {span.of === WINDOW_OF.given ? null : <FieldError data-window-problem={span.problem}>{windowSays(t, span.problem)}</FieldError>}
+        <FieldLegend variant="label">
+          <label htmlFor={opensId}>{t('retryRun.opens')}</label>
+        </FieldLegend>
+        <Input
+          id={opensId}
+          type="datetime-local"
+          value={opens}
+          onChange={(e) => setOpens(e.target.value)}
+          data-field="opens"
+        />
+        <FieldLegend variant="label">
+          <label htmlFor={closesId}>{t('retryRun.closes')}</label>
+        </FieldLegend>
+        <Input
+          id={closesId}
+          type="datetime-local"
+          value={closes}
+          onChange={(e) => setCloses(e.target.value)}
+          data-field="closes"
+        />
+        {span.of === WINDOW_OF.given ? null : (
+          <FieldError data-window-problem={span.problem}>{windowSays(t, span.problem)}</FieldError>
+        )}
       </FieldSet>
-      <p className="text-muted-foreground" data-retry-run-note>{t('retryRun.walletNote')}</p>
+      <p className="text-muted-foreground" data-retry-run-note>
+        {t('retryRun.walletNote')}
+      </p>
       <PanelFooter>
         <div className="flex flex-col gap-4">
           <div>
-            <Button type="submit" form={formId} disabled={busy || raised || companyId === null || leg.form === null || places.length === 0 || span.of !== WINDOW_OF.given} data-action="retry-run">
+            <Button
+              type="submit"
+              form={formId}
+              disabled={
+                busy ||
+                raised ||
+                companyId === null ||
+                leg.form === null ||
+                places.length === 0 ||
+                span.of !== WINDOW_OF.given
+              }
+              data-action="retry-run"
+            >
               {t('retryRun.raise')}
             </Button>
           </div>
@@ -82,15 +158,24 @@ export function RetryRun({ run, leg }: { run: RunRow; leg: RunLeg }) {
 }
 
 function windowSays(t: (key: string) => string, problem: WindowProblem): string {
-  return problem === WINDOW_PROBLEM.missing ? t('retryRun.window.missing') : problem === WINDOW_PROBLEM.past ? t('retryRun.window.past') : t('retryRun.window.order');
+  return problem === WINDOW_PROBLEM.missing
+    ? t('retryRun.window.missing')
+    : problem === WINDOW_PROBLEM.past
+      ? t('retryRun.window.past')
+      : t('retryRun.window.order');
 }
 
 function Said({ phase, result }: { phase: ActPhase; result: RaiseRunActed | null }) {
   const t = useText();
   const says: Record<RaiseRunWhy, string> = {
-    [RAISE_RUN_WHY.seat]: t('retryRun.why.seat'), [RAISE_RUN_WHY.notARun]: t('retryRun.why.not-a-run'), [RAISE_RUN_WHY.paymentTime]: t('retryRun.why.window'),
-    [RAISE_RUN_WHY.notAsShown]: t('retryRun.why.not-as-shown'), [RAISE_RUN_WHY.notRaised]: t('retryRun.why.not-raised'),
-    [RAISE_RUN_WHY.mayBeSent]: t('retryRun.why.may-be-sent'), [RAISE_RUN_WHY.stopped]: t('signers.why.stopped'), [RAISE_RUN_WHY.other]: t('retryRun.why.other'),
+    [RAISE_RUN_WHY.seat]: t('retryRun.why.seat'),
+    [RAISE_RUN_WHY.notARun]: t('retryRun.why.not-a-run'),
+    [RAISE_RUN_WHY.paymentTime]: t('retryRun.why.window'),
+    [RAISE_RUN_WHY.notAsShown]: t('retryRun.why.not-as-shown'),
+    [RAISE_RUN_WHY.notRaised]: t('retryRun.why.not-raised'),
+    [RAISE_RUN_WHY.mayBeSent]: t('retryRun.why.may-be-sent'),
+    [RAISE_RUN_WHY.stopped]: t('signers.why.stopped'),
+    [RAISE_RUN_WHY.other]: t('retryRun.why.other')
   };
   const ended = result?.of === PROPOSAL_ACTED.done ? result : null;
   const stopped = result?.of === PROPOSAL_ACTED.stopped ? result : null;
@@ -98,13 +183,20 @@ function Said({ phase, result }: { phase: ActPhase; result: RaiseRunActed | null
     <ActOutcome phase={phase} refused={result?.of === PROPOSAL_ACTED.refused ? result.why : null}>
       {ended === null ? null : (
         <ActDone data-acted data-retry-state={ended.state ?? ''}>
-          {ended.approvals !== null && ended.needed !== null ? t('retryRun.done.counted', { approvals: ended.approvals, needed: ended.needed }) : t('retryRun.done')}
+          {ended.approvals !== null && ended.needed !== null
+            ? t('retryRun.done.counted', { approvals: ended.approvals, needed: ended.needed })
+            : t('retryRun.done')}
         </ActDone>
       )}
       {stopped === null ? null : (
-        <ActStopped calm={stopped.why === RAISE_RUN_WHY.mayBeSent || stopped.handedOver} data-retry-stopped={stopped.why}>
+        <ActStopped
+          calm={stopped.why === RAISE_RUN_WHY.mayBeSent || stopped.handedOver}
+          data-retry-stopped={stopped.why}
+        >
           <AlertDescription>{says[stopped.why]}</AlertDescription>
-          {stopped.handedOver && stopped.why !== RAISE_RUN_WHY.mayBeSent ? <AlertDescription>{t('signers.sent')}</AlertDescription> : null}
+          {stopped.handedOver && stopped.why !== RAISE_RUN_WHY.mayBeSent ? (
+            <AlertDescription>{t('signers.sent')}</AlertDescription>
+          ) : null}
         </ActStopped>
       )}
     </ActOutcome>

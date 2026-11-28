@@ -1,8 +1,39 @@
 import type { ReactNode } from 'react';
-import { Button, Card, CardContent, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, Separator, Skeleton, Tooltip, TooltipContent, TooltipTrigger } from 'vaults-ui';
+import {
+  Button,
+  Card,
+  CardContent,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  Separator,
+  Skeleton,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger
+} from 'vaults-ui';
 import { DialogClose } from 'vaults-ui/components/dialog';
-import { SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider } from 'vaults-ui/components/sidebar';
-import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from 'vaults-ui/components/table';
+import {
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider
+} from 'vaults-ui/components/sidebar';
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from 'vaults-ui/components/table';
 import { GLYPH, Glyph } from '../glyphs.js';
 import { Chapter, Spec } from './kit-parts.js';
 
@@ -63,7 +94,7 @@ export function SkeletonChapter(): ReactNode {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <Spec label="Skeleton — a balance card that has not answered yet">
             <Card>
-              <CardContent  aria-busy="true">
+              <CardContent aria-busy="true">
                 <Skeleton className="h-3 w-24" />
                 <Skeleton className="mt-3 h-8 w-48" />
                 <Skeleton className="mt-3 h-3 w-full" />
@@ -107,11 +138,15 @@ export function TooltipChapter(): ReactNode {
                   <Glyph icon={GLYPH.send} className="size-5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right" sideOffset={8}>Send</TooltipContent>
+              <TooltipContent side="right" sideOffset={8}>
+                Send
+              </TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="sm">Hover me, or Tab to me</Button>
+                <Button type="button" variant="ghost" size="sm">
+                  Hover me, or Tab to me
+                </Button>
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={8}>
                 Radix opens this on focus as well as hover
@@ -120,12 +155,11 @@ export function TooltipChapter(): ReactNode {
           </div>
         </>
         <p className="muted small" style={{ marginTop: '1rem' }}>
-          Restyled onto this repo’s tokens and nothing else: <code>bg-ink</code>/
-          <code>text-bg</code> for shadcn’s <code>bg-foreground</code>/
-          <code>text-background</code>; <code>rounded-tight</code> for{' '}
-          <code>rounded-md</code>; and the shell’s own <code>shell-fade</code> for a set of
-          animation utilities this repo does not install. Every Radix part is as fetched —
-          the original payload was printed in full before it was written.
+          Restyled onto this repo’s tokens and nothing else: <code>bg-ink</code>/<code>text-bg</code> for shadcn’s{' '}
+          <code>bg-foreground</code>/<code>text-background</code>; <code>rounded-tight</code> for{' '}
+          <code>rounded-md</code>; and the shell’s own <code>shell-fade</code> for a set of animation utilities this
+          repo does not install. Every Radix part is as fetched — the original payload was printed in full before it was
+          written.
         </p>
       </Chapter>
     </>
@@ -145,20 +179,21 @@ export function DialogChapter(): ReactNode {
         <div className="flex flex-wrap gap-3">
           <Dialog>
             <DialogTrigger asChild>
-              <Button type="button" variant="outline">Open a dialog</Button>
+              <Button type="button" variant="outline">
+                Open a dialog
+              </Button>
             </DialogTrigger>
             <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>A dialog</DialogTitle>
                 <DialogDescription>
-                  Radix traps focus inside this panel, closes it on Escape, locks the
-                  page behind it, and returns focus to the control that opened it.
-                  Every one of those is a thing a hand-rolled panel gets wrong quietly.
+                  Radix traps focus inside this panel, closes it on Escape, locks the page behind it, and returns focus
+                  to the control that opened it. Every one of those is a thing a hand-rolled panel gets wrong quietly.
                 </DialogDescription>
               </DialogHeader>
               <p className="m-0 text-sm text-muted-foreground">
-                Nothing on this page does anything — this dialog holds text and a way
-                out, and the way out is the specimen.
+                Nothing on this page does anything — this dialog holds text and a way out, and the way out is the
+                specimen.
               </p>
               <DialogFooter showCloseButton />
             </DialogContent>
@@ -166,20 +201,23 @@ export function DialogChapter(): ReactNode {
 
           <Dialog>
             <DialogTrigger asChild>
-              <Button type="button" variant="outline">…with no close button</Button>
+              <Button type="button" variant="outline">
+                …with no close button
+              </Button>
             </DialogTrigger>
             <DialogContent showCloseButton={false} className="max-h-[calc(100svh-2rem)] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>No corner control</DialogTitle>
                 <DialogDescription>
-                  `showCloseButton={'{false}'}` is for a panel whose only way out should
-                  be a deliberate one. Escape and the overlay still close it, so this is
-                  never a trap.
+                  `showCloseButton={'{false}'}` is for a panel whose only way out should be a deliberate one. Escape and
+                  the overlay still close it, so this is never a trap.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button type="button" variant="default">Done</Button>
+                  <Button type="button" variant="default">
+                    Done
+                  </Button>
                 </DialogClose>
               </DialogFooter>
             </DialogContent>
@@ -187,11 +225,9 @@ export function DialogChapter(): ReactNode {
         </div>
         <p className="muted small" style={{ marginTop: '1rem' }}>
           Eleven substitutions, all named in <code>kit/dialog.tsx</code> and measured against the installed Tailwind.{' '}
-          The one that matters:{' '}
-          <code>data-[state=open]:bg-accent</code> EMITS A RULE here and it is the WRONG
-          one — shadcn means a neutral hover surface by <code>accent</code> and this
-          repo means the indigo. Eleven of the payload’s class names emit nothing at
-          all, six of them animation utilities from a package this repo does not
+          The one that matters: <code>data-[state=open]:bg-accent</code> EMITS A RULE here and it is the WRONG one —
+          shadcn means a neutral hover surface by <code>accent</code> and this repo means the indigo. Eleven of the
+          payload’s class names emit nothing at all, six of them animation utilities from a package this repo does not
           install; the shell’s own <code>shell-fade</code> and <code>shell-rise</code>
           replace those.
         </p>
@@ -232,12 +268,14 @@ export function SidebarChapter(): ReactNode {
               </SidebarHeader>
               <SidebarGroup>
                 <SidebarMenu>
-                  {([
-                    ['Home', GLYPH.home, true],
-                    ['Activity', GLYPH.activity, false],
-                    ['Explore', GLYPH.explore, false],
-                    ['Settings', GLYPH.settings, false],
-                  ] as const).map(([label, glyph, active]) => (
+                  {(
+                    [
+                      ['Home', GLYPH.home, true],
+                      ['Activity', GLYPH.activity, false],
+                      ['Explore', GLYPH.explore, false],
+                      ['Settings', GLYPH.settings, false]
+                    ] as const
+                  ).map(([label, glyph, active]) => (
                     <SidebarMenuItem key={label}>
                       <SidebarMenuButton asChild isActive={active}>
                         <span>
@@ -253,12 +291,10 @@ export function SidebarChapter(): ReactNode {
           ))}
         </SidebarProvider>
         <p className="muted small" style={{ marginTop: '1rem' }}>
-          Every specimen here is a <code>&lt;span&gt;</code>, not a link or a button:
-          nothing on this page navigates, and the live sidebar’s rows are anchors.
-          The eight <code>--sidebar-*</code> colour roles the payload declares were
-          never admitted — the fetch’s own guard caught the write and restored{' '}
-          <code>app.css</code> by hash. What is above is this repository’s own tokens,
-          and <code>kit/sidebar.tsx</code> lists all nine substitutions.
+          Every specimen here is a <code>&lt;span&gt;</code>, not a link or a button: nothing on this page navigates,
+          and the live sidebar’s rows are anchors. The eight <code>--sidebar-*</code> colour roles the payload declares
+          were never admitted — the fetch’s own guard caught the write and restored <code>app.css</code> by hash. What
+          is above is this repository’s own tokens, and <code>kit/sidebar.tsx</code> lists all nine substitutions.
         </p>
       </Chapter>
     </>

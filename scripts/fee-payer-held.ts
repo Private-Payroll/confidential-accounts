@@ -44,7 +44,10 @@ export interface FeePayerHolder {
    * Reads the wallet's DUST height against the chain's every `everyMs`; a height that stays below the chain's for
    * `STUCK_MS` starts a rebuild. The wallet's own streams do not report a reading that has died, so this is what does.
    */
-  watchHeight(read: () => Promise<{ readonly applied: bigint | null; readonly tip: bigint }>, everyMs?: number): () => void;
+  watchHeight(
+    read: () => Promise<{ readonly applied: bigint | null; readonly tip: bigint }>,
+    everyMs?: number
+  ): () => void;
 }
 
 export interface HolderDeps {
@@ -78,18 +81,24 @@ export function feePayerHeld(first: HeldParts, deps: HolderDeps): FeePayerHolder
     recover: (why) => {
       if (building !== null || built !== null) return;
       const fromTheChain = lastRebuiltAt !== null && now() - lastRebuiltAt < AGAIN_SOON_MS;
-      deps.note(`building the fee payer's wallet again ${fromTheChain ? 'from the chain' : 'from its saved state'}: ${why}`);
+      deps.note(
+        `building the fee payer's wallet again ${fromTheChain ? 'from the chain' : 'from its saved state'}: ${why}`
+      );
       building = (async () => {
         try {
           const next = await deps.rebuild(fromTheChain);
           lastRebuiltAt = now();
           built = next;
-          deps.note('the fee payer\'s wallet is built again; the next fee is paid with it');
+          deps.note("the fee payer's wallet is built again; the next fee is paid with it");
         } catch (e) {
           lastRebuiltAt = now();
-          deps.note(`building the fee payer's wallet again failed (${say(e)}); the next failure tries again, reading the chain itself`);
+          deps.note(
+            `building the fee payer's wallet again failed (${say(e)}); the next failure tries again, reading the chain itself`
+          );
         }
-      })().finally(() => { building = null; });
+      })().finally(() => {
+        building = null;
+      });
     },
     settle: () => {
       if (built === null) return null;
@@ -97,7 +106,11 @@ export function feePayerHeld(first: HeldParts, deps: HolderDeps): FeePayerHolder
       current = built;
       built = null;
       watch(current);
-      try { old.stop?.(); } catch { /* the old wallet is already being let go; its own stop failing changes nothing here */ }
+      try {
+        old.stop?.();
+      } catch {
+        /* the old wallet is already being let go; its own stop failing changes nothing here */
+      }
       void holder.save();
       return current;
     },
@@ -105,7 +118,11 @@ export function feePayerHeld(first: HeldParts, deps: HolderDeps): FeePayerHolder
       if (building !== null || built !== null) return saving;
       const parts = current;
       saving = saving.then(async () => {
-        try { await deps.save(parts); } catch (e) { deps.note(`the fee payer's state was not saved (${say(e)})`); }
+        try {
+          await deps.save(parts);
+        } catch (e) {
+          deps.note(`the fee payer's state was not saved (${say(e)})`);
+        }
       });
       return saving;
     },
@@ -113,22 +130,41 @@ export function feePayerHeld(first: HeldParts, deps: HolderDeps): FeePayerHolder
       let last: bigint | null = null;
       let since = now();
       const timer = setInterval(() => {
-        void read().then(({ applied, tip }) => {
-          if (dustViewCovers(applied, tip)) { last = applied; since = now(); return; }
-          if (applied !== last) { last = applied; since = now(); return; }
-          if (now() - since >= STUCK_MS) {
-            since = now();
-            holder.recover(`its DUST height stayed at ${String(applied)} below the chain's ${String(tip)}`);
+        void read().then(
+          ({ applied, tip }) => {
+            if (dustViewCovers(applied, tip)) {
+              last = applied;
+              since = now();
+              return;
+            }
+            if (applied !== last) {
+              last = applied;
+              since = now();
+              return;
+            }
+            if (now() - since >= STUCK_MS) {
+              since = now();
+              holder.recover(`its DUST height stayed at ${String(applied)} below the chain's ${String(tip)}`);
+            }
+          },
+          () => {
+            /* an indexer that does not answer says nothing about the wallet; the next reading asks again */
           }
-        }, () => { /* an indexer that does not answer says nothing about the wallet; the next reading asks again */ });
+        );
       }, everyMs);
       (timer as { unref?: () => void }).unref?.();
       return () => clearInterval(timer);
-    },
+    }
   };
 
   function watch(parts: HeldParts): void {
-    for (const w of watches.splice(0)) { try { w.unsubscribe(); } catch { /* already closed */ } }
+    for (const w of watches.splice(0)) {
+      try {
+        w.unsubscribe();
+      } catch {
+        /* already closed */
+      }
+    }
     const failed = (part: string) => (e: unknown) => holder.recover(`its ${part} failed (${say(e)})`);
     const facadeState = parts.facade?.state?.();
     if (facadeState?.subscribe) watches.push(facadeState.subscribe({ next: () => {}, error: failed('wallet') }));
@@ -148,9 +184,14 @@ export interface HeldWalletStore {
 
 /** The parts of a wallet the service brought up, as the holder keeps them; stopping them stops the wallet. */
 const heldPartsOf = (live: LiveWallet): HeldParts => ({
-  provider: live.wallet, facade: live.wallet.wallet,
-  dust: () => live.dust(), night: () => live.night(),
-  stop: () => { live.stop(); void (live.wallet as any).stop?.().catch(() => undefined); },
+  provider: live.wallet,
+  facade: live.wallet.wallet,
+  dust: () => live.dust(),
+  night: () => live.night(),
+  stop: () => {
+    live.stop();
+    void (live.wallet as any).stop?.().catch(() => undefined);
+  }
 });
 
 /**
@@ -162,7 +203,7 @@ export function feePayerHeldFrom(
   first: LiveWallet,
   bringUp: () => Promise<LiveWallet>,
   store: HeldWalletStore,
-  note: (line: string) => void,
+  note: (line: string) => void
 ): FeePayerHolder {
   const holder = feePayerHeld(heldPartsOf(first), {
     rebuild: async (fromTheChain) => {
@@ -170,11 +211,11 @@ export function feePayerHeldFrom(
       return heldPartsOf(await bringUp());
     },
     save: (parts) => saveWalletState(parts.provider, store.seed, store.network, store.root),
-    note,
+    note
   });
   holder.watchHeight(async () => {
     const view = feePayerViewOf(holder.current().facade);
-    if (!view) throw new Error('the fee payer\'s wallet has no DUST view to read');
+    if (!view) throw new Error("the fee payer's wallet has no DUST view to read");
     const tip = await view.tip();
     return { applied: view.applied(), tip };
   });

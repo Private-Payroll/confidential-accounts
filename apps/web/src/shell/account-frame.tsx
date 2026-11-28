@@ -43,12 +43,17 @@ export function AccountFrame() {
   const end = useRef<HTMLSpanElement>(null);
   const title = useId();
   /* Handed to the shared code once and kept, not made again at each draw: a frame handed over again is a frame taken away. */
-  const mountFrame = useCallback((element: HTMLIFrameElement | null) => { frame.current = element; accountFrame.mount(element); }, []);
+  const mountFrame = useCallback((element: HTMLIFrameElement | null) => {
+    frame.current = element;
+    accountFrame.mount(element);
+  }, []);
   /* Seen by assistive tools while shown: an open panel marks every other part of the body hidden, this one too, and is told otherwise each time it does. */
   useEffect(() => {
     const node = card.current;
     if (node === null || !shown) return undefined;
-    const show = (): void => { for (const mark of BROWSER.hiddenMarks) node.removeAttribute(mark); };
+    const show = (): void => {
+      for (const mark of BROWSER.hiddenMarks) node.removeAttribute(mark);
+    };
     show();
     const watch = new MutationObserver(show);
     watch.observe(node, { attributes: true, attributeFilter: [...BROWSER.hiddenMarks] });
@@ -62,7 +67,12 @@ export function AccountFrame() {
     frame.current?.focus();
     return () => {
       const now = node.ownerDocument.activeElement;
-      if (was instanceof HTMLElement && was.isConnected && (now === null || now === node.ownerDocument.body || node.contains(now))) was.focus();
+      if (
+        was instanceof HTMLElement &&
+        was.isConnected &&
+        (now === null || now === node.ownerDocument.body || node.contains(now))
+      )
+        was.focus();
     };
   }, [shown]);
   /*
@@ -71,25 +81,51 @@ export function AccountFrame() {
    * own `focus`, not React's `onFocus`, which the panel does not let through (`useLeaveTheWalletWindowItsOwn`).
    */
   useEffect(() => {
-    const ends: [HTMLElement | null, () => void][] = [[start.current, () => frame.current?.focus()], [end.current, () => stop.current?.focus()]];
+    const ends: [HTMLElement | null, () => void][] = [
+      [start.current, () => frame.current?.focus()],
+      [end.current, () => stop.current?.focus()]
+    ];
     for (const [guard, go] of ends) guard?.addEventListener(BROWSER.focus, go);
-    return () => { for (const [guard, go] of ends) guard?.removeEventListener(BROWSER.focus, go); };
+    return () => {
+      for (const [guard, go] of ends) guard?.removeEventListener(BROWSER.focus, go);
+    };
   }, []);
   return createPortal(
-    <div ref={card} className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-xs" hidden={!shown} data-account-frame>
-      <div className="flex w-full max-w-md flex-col gap-3 rounded-xl bg-background p-4 shadow-lg ring-1 ring-foreground/10" role="dialog" aria-modal={true} aria-labelledby={title}>
+    <div
+      ref={card}
+      className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4 backdrop-blur-xs"
+      hidden={!shown}
+      data-account-frame
+    >
+      <div
+        className="flex w-full max-w-md flex-col gap-3 rounded-xl bg-background p-4 shadow-lg ring-1 ring-foreground/10"
+        role="dialog"
+        aria-modal={true}
+        aria-labelledby={title}
+      >
         <span ref={start} className="sr-only" tabIndex={0} data-focus-guard="start" />
         <div className="flex items-start justify-between gap-3" role="status">
           <div className="flex flex-col gap-1">
-            <strong className="text-sm font-medium" id={title}>{t('accountFrame.waiting')}</strong>
-            <p className="text-xs text-muted-foreground">{waiting ? t('accountFrame.nothingSignedYet') : t('accountFrame.open')}</p>
+            <strong className="text-sm font-medium" id={title}>
+              {t('accountFrame.waiting')}
+            </strong>
+            <p className="text-xs text-muted-foreground">
+              {waiting ? t('accountFrame.nothingSignedYet') : t('accountFrame.open')}
+            </p>
           </div>
-          <Button ref={stop} variant="outline" size="sm" onClick={stopWaiting} data-action="stop-waiting">{t('accountFrame.stop')}</Button>
+          <Button ref={stop} variant="outline" size="sm" onClick={stopWaiting} data-action="stop-waiting">
+            {t('accountFrame.stop')}
+          </Button>
         </div>
-        <iframe ref={mountFrame} title={t('accountFrame.title')} allow={accountFrame.allow} className="h-[36rem] w-full rounded-lg border" />
+        <iframe
+          ref={mountFrame}
+          title={t('accountFrame.title')}
+          allow={accountFrame.allow}
+          className="h-[36rem] w-full rounded-lg border"
+        />
         <span ref={end} className="sr-only" tabIndex={0} data-focus-guard="end" />
       </div>
     </div>,
-    document.body,
+    document.body
   );
 }

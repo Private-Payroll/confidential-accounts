@@ -15,7 +15,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -34,8 +34,15 @@ import { SessionProvider, useSession } from '../session.js';
 import { Recover } from './recover.js';
 import type { RegistryFinder } from '../chain/private-registry-on-chain.js';
 import {
-  allPasskeys, arrivalOf, creationOf, loadSecret, loadSecuredSetup, savePasskey, saveSecret,
-  saveSecuredSetup, securedSetupOnRecord,
+  allPasskeys,
+  arrivalOf,
+  creationOf,
+  loadSecret,
+  loadSecuredSetup,
+  savePasskey,
+  saveSecret,
+  saveSecuredSetup,
+  securedSetupOnRecord
 } from '../accounts/storage.js';
 import { ORIGINAL_SLOT, forgetOpenWallet, heldWallets } from '../accounts/wallets-held.js';
 
@@ -52,13 +59,17 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const registrationFixture = {
-  credentialId: 'cred-recovered', personHandle: 'cGVyc29uLTE', clientDataJSON: new Uint8Array(),
-  authenticatorData: new Uint8Array(), publicKeySpki: new Uint8Array([1, 2, 3]),
-  publicKeyAlgorithm: -7, transports: [],
+  credentialId: 'cred-recovered',
+  personHandle: 'cGVyc29uLTE',
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  publicKeyAlgorithm: -7,
+  transports: []
 };
 
 function Probe(): ReactNode {
@@ -67,12 +78,10 @@ function Probe(): ReactNode {
     <div data-testid="phase-probe">
       <span data-testid="phase">{session.phase.name}</span>
       <span data-testid="secret-fp">
-        {session.phase.name === 'unlocked'
-          ? toBase64Url(fingerprintOf(session.phase.secret))
-          : ''}
+        {session.phase.name === 'unlocked' ? toBase64Url(fingerprintOf(session.phase.secret)) : ''}
       </span>
       {/* What the PROVIDER holds, not what a sentence says — the
-        * pieces-dropped claim is pinned against this, at the call site. */}
+       * pieces-dropped claim is pinned against this, at the call site. */}
       <span data-testid="gathered-count">
         {session.recovery === null ? '-' : String(session.recovery.gathered.length)}
       </span>
@@ -82,7 +91,10 @@ function Probe(): ReactNode {
 
 /* The find a finished recovery runs, here asked of no chain: each identity it was asked for is kept. */
 const findsAsked: unknown[] = [];
-const find: RegistryFinder = async (identity) => { findsAsked.push(identity); return { of: 'no-registries', network: 'preprod' }; };
+const find: RegistryFinder = async (identity) => {
+  findsAsked.push(identity);
+  return { of: 'no-registries', network: 'preprod' };
+};
 
 const mount = (): void => {
   findsAsked.length = 0;
@@ -90,16 +102,16 @@ const mount = (): void => {
     <SessionProvider>
       <Recover find={find} />
       <Probe />
-    </SessionProvider>,
+    </SessionProvider>
   );
 };
 
 const addPiece = (set: PieceSet, index: number, holder?: string): void => {
   fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-    target: { value: (toBase64Url(set.pieces[index]?.bytes ?? new Uint8Array()).match(/.{1,4}/g) ?? []).join(' ') },
+    target: { value: (toBase64Url(set.pieces[index]?.bytes ?? new Uint8Array()).match(/.{1,4}/g) ?? []).join(' ') }
   });
   fireEvent.change(screen.getByLabelText('Where this piece came from'), {
-    target: { value: holder ?? set.pieces[index]?.placement.holder ?? `piece-${index}` },
+    target: { value: holder ?? set.pieces[index]?.placement.holder ?? `piece-${index}` }
   });
   fireEvent.click(screen.getByText('Add this piece'));
 };
@@ -107,7 +119,7 @@ const addPiece = (set: PieceSet, index: number, holder?: string): void => {
 const PLACEMENTS = [
   { label: 'Cloud', holder: 'my cloud' },
   { label: 'Paper', holder: 'the safe' },
-  { label: 'Person', holder: 'my sister' },
+  { label: 'Person', holder: 'my sister' }
 ];
 
 beforeEach(() => {
@@ -138,8 +150,7 @@ describe('recovery on a machine that never had the account', () => {
     await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('unlocked'));
     /* THE account, not an account: the unlocked identity derives from the
      * secret the pieces were cut from. */
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
     /* The gate was re-established with a fresh credential for this machine. */
     expect(allPasskeys(ORIGINAL_SLOT).map((p) => p.credentialId)).toEqual(['cred-recovered']);
     /* And the completed screen claims what happened, pieces dropped — by design —
@@ -157,8 +168,7 @@ describe('recovery on a machine that never had the account', () => {
     expect(record).not.toBeNull();
     expect(record?.partial).toBe(true);
     expect(record?.threshold).toBe(2);
-    expect(record?.pieces.map((p) => p.holder).sort())
-      .toEqual(['my cloud', 'my sister'].sort());
+    expect(record?.pieces.map((p) => p.holder).sort()).toEqual(['my cloud', 'my sister'].sort());
     /* Used a moment ago is the strongest freshness there is — a date, not a
      * guess about whether the home can be asked. */
     for (const piece of record?.pieces ?? []) {
@@ -225,17 +235,16 @@ describe('recovery on a machine that never had the account', () => {
     mount();
     addPiece(setA, 0);
     fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-      target: { value: toBase64Url(setB.pieces[1]?.bytes ?? new Uint8Array()) },
+      target: { value: toBase64Url(setB.pieces[1]?.bytes ?? new Uint8Array()) }
     });
     fireEvent.change(screen.getByLabelText('Where this piece came from'), {
-      target: { value: 'the safe' },
+      target: { value: 'the safe' }
     });
     fireEvent.click(screen.getByText('Add this piece'));
     /* Refused when OFFERED — never counted toward "enough", never a finish
      * button that fails at the last press. The screen repeats the library's
      * sentence, which names the case. */
-    expect(document.querySelector('.error')?.textContent ?? '')
-      .toMatch(/from a DIFFERENT ACCOUNT/);
+    expect(document.querySelector('.error')?.textContent ?? '').toMatch(/from a DIFFERENT ACCOUNT/);
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();
     expect(screen.queryByText('Put the account back on this machine')).toBeNull();
     expect(screen.getByTestId('phase').textContent).not.toBe('unlocked');
@@ -251,21 +260,20 @@ describe('recovery on a machine that never had the account', () => {
     mount();
     addPiece(setNew, 0);
     fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-      target: { value: toBase64Url(setOld.pieces[1]?.bytes ?? new Uint8Array()) },
+      target: { value: toBase64Url(setOld.pieces[1]?.bytes ?? new Uint8Array()) }
     });
     fireEvent.change(screen.getByLabelText('Where this piece came from'), {
-      target: { value: 'the safe' },
+      target: { value: 'the safe' }
     });
     fireEvent.click(screen.getByText('Add this piece'));
-    expect(document.querySelector('.error')?.textContent ?? '')
-      .toMatch(/different cut of the same account/);
+    expect(document.querySelector('.error')?.textContent ?? '').toMatch(/different cut of the same account/);
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();
   });
 
   it('garbage that is not a piece gets a sentence, not a crash', () => {
     mount();
     fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-      target: { value: '!!!not-a-piece!!!' },
+      target: { value: '!!!not-a-piece!!!' }
     });
     fireEvent.click(screen.getByText('Add this piece'));
     expect(document.querySelector('.error')?.textContent ?? '').not.toBe('');
@@ -292,8 +300,7 @@ describe('recovery on a machine that never had the account', () => {
   it('a cancelled ceremony after the rebuild leaves the account LANDED, behind the doorway phase', async () => {
     const secret = newSecret();
     const set = await splitSecret(secret, PLACEMENTS, 2);
-    mockCreatePasskey.mockRejectedValue(
-      new Error('the passkey was not created — it was cancelled, or it timed out.'));
+    mockCreatePasskey.mockRejectedValue(new Error('the passkey was not created — it was cancelled, or it timed out.'));
     mount();
     addPiece(set, 0);
     addPiece(set, 1);
@@ -347,7 +354,9 @@ describe('recovery on a machine that never had the account', () => {
     addPiece(set, 0);
     addPiece(set, 1);
     (globalThis as { indexedDB?: unknown }).indexedDB = {
-      open: () => { throw new Error('refused by this profile'); },
+      open: () => {
+        throw new Error('refused by this profile');
+      }
     };
     fireEvent.click(screen.getByText('Put the account back on this machine'));
     /* The storage sentence, on THIS screen's error line — and the screen is
@@ -362,8 +371,7 @@ describe('recovery on a machine that never had the account', () => {
     mockVerifyRegistration.mockResolvedValue(passkeyFixture('cred-recovered'));
     fireEvent.click(screen.getByText('Put the account back on this machine'));
     await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('unlocked'));
-    expect(screen.getByTestId('secret-fp').textContent)
-      .toBe(toBase64Url(fingerprintOf(secret)));
+    expect(screen.getByTestId('secret-fp').textContent).toBe(toBase64Url(fingerprintOf(secret)));
   });
 
   it('withdrawing a piece steps the count back', async () => {
@@ -390,8 +398,7 @@ describe('the landing over what is already here', () => {
     mount();
     await gatherReady();
     expect(screen.getByText('Put the account back on this machine')).toBeTruthy();
-    expect(screen.getByText(/Nothing is stored in this browser, so nothing is replaced/))
-      .toBeTruthy();
+    expect(screen.getByText(/Nothing is stored in this browser, so nothing is replaced/)).toBeTruthy();
     expect(screen.queryByText(/already holds a wallet/)).toBeNull();
   });
 
@@ -407,34 +414,37 @@ describe('the landing over what is already here', () => {
    * assertion that matters becomes the one the old tests could never make:
    * after the landing, the wallet that was here still opens.
    */
-  it('a browser already holding a wallet: one button, and it says what is here is kept',
-    async () => {
-      const existing = newSecret();
-      await saveSecret(existing);
-      await saveSecuredSetup(existing, await splitSecret(existing, PLACEMENTS, 2), {
-        'my cloud': 'never', 'the safe': null, 'my sister': 'never',
-      });
-      mount();
-      await gatherReady();
-
-      /* The one-click primary button is here, for every landing. */
-      expect(screen.getByText('Put the account back on this machine')).toBeTruthy();
-      /* And the danger apparatus is gone, because the danger is. */
-      expect(screen.queryByText('Replace the wallet stored here…')).toBeNull();
-      expect(screen.queryByText(/destroyed for good/)).toBeNull();
-      expect(screen.queryByText(/This replaces/)).toBeNull();
-
-      /* What is here is NAMED, and the sentence says it stays — before the
-       * ceremony, which is what the change asks for. */
-      expect(screen.getByText(/This browser already holds one wallet/)).toBeTruthy();
-      expect(screen.getByText(/Nothing stored here is replaced/)).toBeTruthy();
+  it('a browser already holding a wallet: one button, and it says what is here is kept', async () => {
+    const existing = newSecret();
+    await saveSecret(existing);
+    await saveSecuredSetup(existing, await splitSecret(existing, PLACEMENTS, 2), {
+      'my cloud': 'never',
+      'the safe': null,
+      'my sister': 'never'
     });
+    mount();
+    await gatherReady();
+
+    /* The one-click primary button is here, for every landing. */
+    expect(screen.getByText('Put the account back on this machine')).toBeTruthy();
+    /* And the danger apparatus is gone, because the danger is. */
+    expect(screen.queryByText('Replace the wallet stored here…')).toBeNull();
+    expect(screen.queryByText(/destroyed for good/)).toBeNull();
+    expect(screen.queryByText(/This replaces/)).toBeNull();
+
+    /* What is here is NAMED, and the sentence says it stays — before the
+     * ceremony, which is what the change asks for. */
+    expect(screen.getByText(/This browser already holds one wallet/)).toBeTruthy();
+    expect(screen.getByText(/Nothing stored here is replaced/)).toBeTruthy();
+  });
 
   it('THE LANDING ADDS A WALLET: the one that was here still opens afterwards', async () => {
     const existing = newSecret();
     const existingSlot = await saveSecret(existing);
     await saveSecuredSetup(existing, await splitSecret(existing, PLACEMENTS, 2), {
-      'my cloud': 'never', 'the safe': null, 'my sister': 'never',
+      'my cloud': 'never',
+      'the safe': null,
+      'my sister': 'never'
     });
     const existingMap = securedSetupOnRecord(existingSlot);
 
@@ -467,10 +477,10 @@ describe('the landing over what is already here', () => {
 describe('what the door refuses to count, at the screen', () => {
   const typePiece = (bytes: Uint8Array, from: string): void => {
     fireEvent.change(screen.getByLabelText("The piece's letters, from its card"), {
-      target: { value: toBase64Url(bytes) },
+      target: { value: toBase64Url(bytes) }
     });
     fireEvent.change(screen.getByLabelText('Where this piece came from'), {
-      target: { value: from },
+      target: { value: from }
     });
     fireEvent.click(screen.getByText('Add this piece'));
   };
@@ -478,8 +488,7 @@ describe('what the door refuses to count, at the screen', () => {
   it('a blob the library cannot read is refused in its words, and moves nothing', () => {
     mount();
     typePiece(new Uint8Array(10), 'the safe');
-    expect(document.querySelector('.error')?.textContent ?? '')
-      .toMatch(/a recovery piece is more than/);
+    expect(document.querySelector('.error')?.textContent ?? '').toMatch(/a recovery piece is more than/);
     /* No progress card appeared — nothing was counted. */
     expect(screen.queryByText(/of \d+ pieces\./)).toBeNull();
   });
@@ -498,8 +507,9 @@ describe('what the door refuses to count, at the screen', () => {
     const altered = Uint8Array.from(set.pieces[1]?.bytes ?? new Uint8Array());
     altered[1] = 9;
     typePiece(altered, 'the safe');
-    expect(document.querySelector('.error')?.textContent ?? '')
-      .toMatch(/says 9 pieces are needed, and the piece already in says 2/);
+    expect(document.querySelector('.error')?.textContent ?? '').toMatch(
+      /says 9 pieces are needed, and the piece already in says 2/
+    );
     /* Never "2 of 9": the agreed number describes the pieces that are in. */
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();
     expect(screen.queryByText(/of 9 pieces/)).toBeNull();
@@ -512,7 +522,6 @@ describe('what the door refuses to count, at the screen', () => {
     addPiece(set, 0, 'same-holder');
     addPiece(set, 1, 'Same-Holder');
     expect(screen.getByText('1 of 2 pieces.')).toBeTruthy();
-    expect(screen.getByText(/That replaced the piece already entered from “same-holder”/))
-      .toBeTruthy();
+    expect(screen.getByText(/That replaced the piece already entered from “same-holder”/)).toBeTruthy();
   });
 });

@@ -6,14 +6,19 @@ import type { Registry } from 'midnight-identity/profile/attributes';
 import { abbreviate, check } from 'midnight-identity/profile/definition';
 import type { AttributeDefinition } from 'midnight-identity/profile/definition';
 import {
-  ProfileError, changed, editValue, emptyProfile, forgetValue, heldAbout, relabel, selfAssert,
+  ProfileError,
+  changed,
+  editValue,
+  emptyProfile,
+  forgetValue,
+  heldAbout,
+  relabel,
+  selfAssert
 } from 'midnight-identity/profile/model';
 import type { Disclosure, Held, Profile, Says, Stale } from 'midnight-identity/profile/model';
 import { browserPort, load, save } from 'midnight-identity/profile/store';
 import type { Loaded, Port } from 'midnight-identity/profile/store';
-import {
-  Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section, Separator,
-} from 'vaults-ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label, Section, Separator } from 'vaults-ui';
 import { StatusAlert, StatusBadge } from '../components/status.js';
 import { hrefOf } from '../routes.js';
 import { OTHER_DETAILS_HERE, sayingForUnopenable } from '../lib/unopenable-details.js';
@@ -52,9 +57,8 @@ const dateOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
  * WHAT ONE `Says` READS AS — one function, so a held row, the changed-value
  * notice and the record cannot drift into three spellings of one value.
  */
-const saysText = (says: Says): string => (says.of === 'value'
-  ? says.value
-  : `${says.predicate}: ${says.result ? 'yes' : 'no'}`);
+const saysText = (says: Says): string =>
+  says.of === 'value' ? says.value : `${says.predicate}: ${says.result ? 'yes' : 'no'}`;
 
 /**
  * WHERE A LABEL EARNS ITS PLACE — READ OFF THE REGISTRY, NOT OFF A NAME.
@@ -79,8 +83,7 @@ const saysText = (says: Says): string => (says.of === 'value'
  * legible and the field goes. The registry is still the only vocabulary, and
  * this change read one flag from it rather than restructuring anything.
  */
-const labelTellsThemApart = (definition: AttributeDefinition): boolean =>
-  definition.render.abbreviate === 'middle';
+const labelTellsThemApart = (definition: AttributeDefinition): boolean => definition.render.abbreviate === 'middle';
 
 /**
  * THE WAY OUT, AT THE TOP AS WELL AS THE FOOT.
@@ -93,9 +96,9 @@ const labelTellsThemApart = (definition: AttributeDefinition): boolean =>
 function BackToWallet(): ReactNode {
   return (
     <p className="m-0">
-      <Button asChild variant="ghost" size="sm"><a href={hrefOf('home')}>
-        ← Back to your wallet
-      </a></Button>
+      <Button asChild variant="ghost" size="sm">
+        <a href={hrefOf('home')}>← Back to your wallet</a>
+      </Button>
     </p>
   );
 }
@@ -104,7 +107,13 @@ function BackToWallet(): ReactNode {
  * THE ONE SWITCH, AND IT IS ON THE KIND RATHER THAN ON THE ATTRIBUTE.
  * Adding an attribute adds no arm here. Adding a KIND does.
  */
-function FieldFor({ definition, value, onChange, id, invalid }: {
+function FieldFor({
+  definition,
+  value,
+  onChange,
+  id,
+  invalid
+}: {
   readonly definition: AttributeDefinition;
   readonly value: string;
   readonly onChange: (next: string) => void;
@@ -116,7 +125,7 @@ function FieldFor({ definition, value, onChange, id, invalid }: {
     id,
     value,
     'aria-invalid': invalid ? true : undefined,
-    onChange: (e: { target: { value: string } }) => onChange(e.target.value),
+    onChange: (e: { target: { value: string } }) => onChange(e.target.value)
   };
   switch (rule.of) {
     case 'enum':
@@ -128,7 +137,9 @@ function FieldFor({ definition, value, onChange, id, invalid }: {
         >
           <option value="">Choose…</option>
           {rule.members.map((member) => (
-            <option key={member.value} value={member.value}>{member.label}</option>
+            <option key={member.value} value={member.value}>
+              {member.label}
+            </option>
           ))}
         </select>
       );
@@ -138,12 +149,20 @@ function FieldFor({ definition, value, onChange, id, invalid }: {
       return <Input {...common} type="number" data-kind="number" inputMode="decimal" />;
     case 'text':
     default:
-      return <Input {...common} type="text" data-kind="text" maxLength={rule.of === 'text' ? rule.maxLength : undefined} />;
+      return (
+        <Input {...common} type="text" data-kind="text" maxLength={rule.of === 'text' ? rule.maxLength : undefined} />
+      );
   }
 }
 
 /** One held record, shown with its provenance. */
-function HeldRow({ definition, held, onEdit, onLabel, onForget }: {
+function HeldRow({
+  definition,
+  held,
+  onEdit,
+  onLabel,
+  onForget
+}: {
   readonly definition: AttributeDefinition;
   readonly held: Held;
   readonly onEdit: (id: string, text: string) => void;
@@ -156,41 +175,41 @@ function HeldRow({ definition, held, onEdit, onLabel, onForget }: {
     <li data-held={held.id} data-about={held.about} className="flex flex-col gap-1 py-2">
       <div className="flex flex-wrap items-baseline gap-2">
         {/*
-          * AN OPAQUE VALUE HAS NO SPACES IN IT, SO IT BREAKS ANYWHERE OR IT
-          * BREAKS THE CARD. A shielded address is sixty-odd characters with
-          * nothing a line-breaker can use, so wrapped on word boundaries it
-          * runs straight out through the card's right edge and onto the page.
-          * `break-all` is what `screens/settings.tsx` and `screens/approve.tsx`
-          * already put on a host, an origin and a hash; `min-w-0` is what lets
-          * a flex child shrink below the width of its own content at all.
-          */}
+         * AN OPAQUE VALUE HAS NO SPACES IN IT, SO IT BREAKS ANYWHERE OR IT
+         * BREAKS THE CARD. A shielded address is sixty-odd characters with
+         * nothing a line-breaker can use, so wrapped on word boundaries it
+         * runs straight out through the card's right edge and onto the page.
+         * `break-all` is what `screens/settings.tsx` and `screens/approve.tsx`
+         * already put on a host, an origin and a hash; `min-w-0` is what lets
+         * a flex child shrink below the width of its own content at all.
+         */}
         <span data-role="says" className="min-w-0 text-base break-all text-foreground">
           {held.says.of === 'value'
             ? abbreviate(definition, held.says.value)
-            /* A CLAIM, not a value. There is no text to abbreviate: what is
-             * held is *this predicate, this answer*, and §3.2c is the whole
-             * reason it can be shown at all without inventing a subject. */
-            : `${held.says.predicate}: ${held.says.result ? 'yes' : 'no'}`}
+            : /* A CLAIM, not a value. There is no text to abbreviate: what is
+               * held is *this predicate, this answer*, and §3.2c is the whole
+               * reason it can be shown at all without inventing a subject. */
+              `${held.says.predicate}: ${held.says.result ? 'yes' : 'no'}`}
         </span>
         {held.label !== '' && <span className="text-sm text-muted-foreground">({held.label})</span>}
         {/*
-          * §3.1 — SELF AND ISSUER ARE NEVER SHOWN THE SAME WAY, ANYWHERE. A
-          * self-typed name that renders like a verified one is a lie the
-          * product tells on somebody else's behalf. And an issued record
-          * NEVER appears without its date.
-          */}
+         * §3.1 — SELF AND ISSUER ARE NEVER SHOWN THE SAME WAY, ANYWHERE. A
+         * self-typed name that renders like a verified one is a lie the
+         * product tells on somebody else's behalf. And an issued record
+         * NEVER appears without its date.
+         */}
         {held.asserted.by === 'issuer' ? (
           <span data-provenance="issuer" className="text-sm text-good">
             {`Checked by ${held.asserted.issuer} on ${dateOf(held.asserted.issuedAt)}`}
-            {held.asserted.expiresAt !== null
-              && ` · good until ${dateOf(held.asserted.expiresAt)}`}
+            {held.asserted.expiresAt !== null && ` · good until ${dateOf(held.asserted.expiresAt)}`}
           </span>
         ) : (
           <span data-provenance="self" className="text-sm text-muted-foreground">
             You typed this. Nobody has checked it.
-            {held.asserted.by === 'self' && held.asserted.formerly !== null
-              && ` It was checked by ${held.asserted.formerly.issuer} on `
-                + `${dateOf(held.asserted.formerly.issuedAt)} until you changed it.`}
+            {held.asserted.by === 'self' &&
+              held.asserted.formerly !== null &&
+              ` It was checked by ${held.asserted.formerly.issuer} on ` +
+                `${dateOf(held.asserted.formerly.issuedAt)} until you changed it.`}
           </span>
         )}
       </div>
@@ -222,40 +241,45 @@ function HeldRow({ definition, held, onEdit, onLabel, onForget }: {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => { onEdit(held.id, editing); setEditing(null); }}
+                onClick={() => {
+                  onEdit(held.id, editing);
+                  setEditing(null);
+                }}
               >
                 Save
               </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
               {issued && (
                 <p className="m-0 basis-full text-sm text-warn" data-warn="drops-to-self">
-                  Changing this removes the check. The signature is over what they said, so
-                  edited text is no longer something they vouched for — it becomes something
-                  you typed. You can ask them again afterwards.
+                  Changing this removes the check. The signature is over what they said, so edited text is no longer
+                  something they vouched for — it becomes something you typed. You can ask them again afterwards.
                 </p>
               )}
             </>
           )
         ) : (
           <span className="text-sm text-muted-foreground">
-            This was proved about you. There is no text in it to change — it can only be
-            proved again.
+            This was proved about you. There is no text in it to change — it can only be proved again.
           </span>
         )}
-        <Button type="button" size="sm" variant="ghost" onClick={() => onForget(held.id)}>Remove</Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => onForget(held.id)}>
+          Remove
+        </Button>
       </div>
       {/*
-        * THE LABEL IS OFFERED WHERE IT IS THE ONLY WAY TO TELL TWO VALUES
-        * APART, AND NOWHERE ELSE. It is still in the model and still in the
-        * store — `relabel` is untouched — and a value that already carries one
-        * still prints it beside itself above. What has gone is the box on
-        * every row of every attribute, which was the loudest control on this
-        * screen and the least useful on almost all of it.
-        */}
+       * THE LABEL IS OFFERED WHERE IT IS THE ONLY WAY TO TELL TWO VALUES
+       * APART, AND NOWHERE ELSE. It is still in the model and still in the
+       * store — `relabel` is untouched — and a value that already carries one
+       * still prints it beside itself above. What has gone is the box on
+       * every row of every attribute, which was the loudest control on this
+       * screen and the least useful on almost all of it.
+       */}
       {/* A CLAIM HAS NOTHING TO TELL APART BY LOOKING. `not-listed: yes` is not
-        * a string two of which could be confused, and `abbreviate` never
-        * touches it — so the field belongs to held VALUES and not to every
-        * record of an opaque attribute. */}
+       * a string two of which could be confused, and `abbreviate` never
+       * touches it — so the field belongs to held VALUES and not to every
+       * record of an opaque attribute. */}
       {labelTellsThemApart(definition) && held.says.of === 'value' && (
         <div className="flex flex-col gap-1">
           <Label htmlFor={`label-${held.id}`} className="mb-2">
@@ -273,7 +297,10 @@ function HeldRow({ definition, held, onEdit, onLabel, onForget }: {
   );
 }
 
-function AddOne({ definition, onAdd }: {
+function AddOne({
+  definition,
+  onAdd
+}: {
   readonly definition: AttributeDefinition;
   readonly onAdd: (text: string, label: string) => string | null;
 }): ReactNode {
@@ -284,30 +311,33 @@ function AddOne({ definition, onAdd }: {
   return (
     <div className="flex flex-col gap-2" data-add={definition.name}>
       {/* NOT the same words as the section heading above it. Two visible
-        * labels reading identically is one label as far as a person is
-        * concerned and two as far as a screen reader is. */}
+       * labels reading identically is one label as far as a person is
+       * concerned and two as far as a screen reader is. */}
       <Label htmlFor={id} className="mb-2">{`New ${definition.render.label.toLowerCase()}`}</Label>
       {/* THE HINT IS NOT PRINTED AGAIN HERE. The `Section` around this card
-        * already carries `render.hint` as its description, and the same
-        * sentence twice on one screen reads as two instructions until you
-        * notice they are identical. One copy, under the heading. */}
+       * already carries `render.hint` as its description, and the same
+       * sentence twice on one screen reads as two instructions until you
+       * notice they are identical. One copy, under the heading. */}
       <FieldFor
         definition={definition}
         id={id}
         value={text}
         invalid={says !== null}
-        onChange={(next) => { setText(next); setSays(null); }}
+        onChange={(next) => {
+          setText(next);
+          setSays(null);
+        }}
       />
       {/*
-        * NOT GATED ON `multiple`, AND THAT WAS THE OLD MISTAKE. `multiple` is
-        * `true` for all three shipped attributes, so gating on it put this box
-        * on a first name, a last name and an email alike — and none of those
-        * three needs one. It is gated on whether the VALUE can be told apart
-        * by looking, which is a different question and the one that matters.
-        * INLINE rather than behind a disclosure: where it is offered at all it
-        * is the thing that makes the value findable later, and a control you
-        * have to go looking for is one nobody sets.
-        */}
+       * NOT GATED ON `multiple`, AND THAT WAS THE OLD MISTAKE. `multiple` is
+       * `true` for all three shipped attributes, so gating on it put this box
+       * on a first name, a last name and an email alike — and none of those
+       * three needs one. It is gated on whether the VALUE can be told apart
+       * by looking, which is a different question and the one that matters.
+       * INLINE rather than behind a disclosure: where it is offered at all it
+       * is the thing that makes the value findable later, and a control you
+       * have to go looking for is one nobody sets.
+       */}
       {labelTellsThemApart(definition) && (
         <div className="flex flex-col gap-1" data-label-field={definition.name}>
           <Label htmlFor={`${id}-label`} className="mb-2">
@@ -321,7 +351,11 @@ function AddOne({ definition, onAdd }: {
           />
         </div>
       )}
-      {says !== null && <p className="m-0 text-sm text-destructive" role="alert">{says}</p>}
+      {says !== null && (
+        <p className="m-0 text-sm text-destructive" role="alert">
+          {says}
+        </p>
+      )}
       <div>
         <Button
           type="button"
@@ -329,7 +363,11 @@ function AddOne({ definition, onAdd }: {
           size="sm"
           onClick={() => {
             const outcome = onAdd(text, label);
-            if (outcome === null) { setText(''); setLabel(''); setSays(null); } else setSays(outcome);
+            if (outcome === null) {
+              setText('');
+              setLabel('');
+              setSays(null);
+            } else setSays(outcome);
           }}
         >
           {`Add ${definition.render.label.toLowerCase()}`}
@@ -345,18 +383,17 @@ function StaleList({ stale }: { readonly stale: readonly Stale[] }): ReactNode {
     <StatusAlert tone="warning" role={null} title="Some of these have changed since you sent them">
       <ul className="m-0 flex list-none flex-col gap-1 p-0" data-stale>
         {stale.map((row, at) => (
-          <li
-            key={`${row.recipient.origin}-${row.about}-${at}`}
-            className="text-sm break-words"
-          >
+          <li key={`${row.recipient.origin}-${row.about}-${at}`} className="text-sm break-words">
             {/* The sentence wraps on its spaces; the ORIGIN and the VALUES are
-              * opaque strings and break anywhere, or they leave the alert. */}
+             * opaque strings and break anywhere, or they leave the alert. */}
             {`${row.recipient.name} (`}
             <span className="break-all">{row.recipient.origin}</span>
             {') holds '}
             <strong className="break-all">{saysText(row.theyHold)}</strong>
             {` from ${dateOf(row.sentAt)}. `}
-            {row.itNowSays === null ? 'You no longer hold that detail.' : (
+            {row.itNowSays === null ? (
+              'You no longer hold that detail.'
+            ) : (
               <>
                 {'It now says '}
                 <span className="break-all">{saysText(row.itNowSays)}</span>
@@ -368,9 +405,8 @@ function StaleList({ stale }: { readonly stale: readonly Stale[] }): ReactNode {
       </ul>
       <p className="m-0 text-sm">
         {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. This wallet can tell you
-          * about the gap. It cannot close it, and it will not pretend to. */}
-        This wallet cannot update them and cannot take anything back. If it matters, tell
-        them yourself.
+         * about the gap. It cannot close it, and it will not pretend to. */}
+        This wallet cannot update them and cannot take anything back. If it matters, tell them yourself.
       </p>
     </StatusAlert>
   );
@@ -395,10 +431,10 @@ function StaleList({ stale }: { readonly stale: readonly Stale[] }): ReactNode {
  * out of the grouping rather than being bolted onto it. They also carry
  * different marks, so the difference survives at arm's length from the screen.
  */
-const keyOf = (row: Disclosure): string => (row.kind === 'sign-in'
-  ? 'sign-in'
-  : `sent:${row.sent.map((one) => saysText(one.says)).join('|')}`
-    + `/declined:${[...row.declined].join('|')}`);
+const keyOf = (row: Disclosure): string =>
+  row.kind === 'sign-in'
+    ? 'sign-in'
+    : `sent:${row.sent.map((one) => saysText(one.says)).join('|')}` + `/declined:${[...row.declined].join('|')}`;
 
 interface Run {
   readonly key: string;
@@ -433,17 +469,11 @@ function sentenceOf(rows: readonly Disclosure[], from: string, to: string): stri
    * subject it exists to be true about.
    */
   if (row.kind === 'sign-in') {
-    return `${when} you signed in${many ? ` ${rows.length} times` : ''}. `
-      + 'Nothing about you was sent.';
+    return `${when} you signed in${many ? ` ${rows.length} times` : ''}. ` + 'Nothing about you was sent.';
   }
-  const sent = row.sent.length === 0
-    ? 'nothing'
-    : row.sent.map((one) => saysText(one.says)).join(', ');
-  const declined = row.declined.length === 0
-    ? ''
-    : `. You said no to: ${row.declined.join(', ')}`;
-  return `${when} you sent${many ? ` the same thing ${rows.length} times` : ''}`
-    + `: ${sent}${declined}`;
+  const sent = row.sent.length === 0 ? 'nothing' : row.sent.map((one) => saysText(one.says)).join(', ');
+  const declined = row.declined.length === 0 ? '' : `. You said no to: ${row.declined.join(', ')}`;
+  return `${when} you sent${many ? ` the same thing ${rows.length} times` : ''}` + `: ${sent}${declined}`;
 }
 
 /**
@@ -453,9 +483,11 @@ function sentenceOf(rows: readonly Disclosure[], from: string, to: string): stri
  */
 function KindMark({ row }: { readonly row: Disclosure }): ReactNode {
   if (row.kind === 'sign-in') return <StatusBadge tone="neutral">Signed in</StatusBadge>;
-  return row.sent.length === 0
-    ? <StatusBadge tone="neutral">Sent nothing</StatusBadge>
-    : <StatusBadge tone="accent">Sent</StatusBadge>;
+  return row.sent.length === 0 ? (
+    <StatusBadge tone="neutral">Sent nothing</StatusBadge>
+  ) : (
+    <StatusBadge tone="accent">Sent</StatusBadge>
+  );
 }
 
 /** One event, on one line, exactly as it has always read. */
@@ -465,9 +497,13 @@ function EventLine({ row }: { readonly row: Disclosure }): ReactNode {
   return (
     <>
       <KindMark row={row} />
-      {row.kind === 'sign-in'
-        ? <span data-sign-in-entry className="min-w-0 text-sm break-all">{line}</span>
-        : <span className="min-w-0 text-sm break-all">{line}</span>}
+      {row.kind === 'sign-in' ? (
+        <span data-sign-in-entry className="min-w-0 text-sm break-all">
+          {line}
+        </span>
+      ) : (
+        <span className="min-w-0 text-sm break-all">{line}</span>
+      )}
     </>
   );
 }
@@ -497,10 +533,7 @@ function RunEntry({ run }: { readonly run: Run }): ReactNode {
           </span>
         </summary>
         {/* EVERY EVENT, STILL HERE, each with its own date. */}
-        <ul
-          className="m-0 mt-2 flex list-none flex-col gap-1 border-l border-border py-0 pr-0 pl-3"
-          data-run-entries
-        >
+        <ul className="m-0 mt-2 flex list-none flex-col gap-1 border-l border-border py-0 pr-0 pl-3" data-run-entries>
           {run.rows.map((row) => (
             <li key={row.nonce} className="flex flex-wrap items-baseline gap-2">
               <EventLine row={row} />
@@ -512,7 +545,11 @@ function RunEntry({ run }: { readonly run: Run }): ReactNode {
   );
 }
 
-export function ProfileScreen({ identity, registry = REGISTRY, port = browserPort() }: {
+export function ProfileScreen({
+  identity,
+  registry = REGISTRY,
+  port = browserPort()
+}: {
   readonly identity: Identity;
   /** A PROP so §3.4's proof can drive this screen with one extra entry. */
   readonly registry?: Registry;
@@ -529,29 +566,42 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
       setState(opened);
       setProfile(opened.of === 'profile' ? opened.profile : emptyProfile(Date.now()));
     });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [identity, port]);
 
-  const commit = useCallback((next: Profile) => {
-    setProfile(next);
-    void save(port, identity, next).catch((e: unknown) => {
-      setProblem(e instanceof Error ? e.message : 'Nothing could be saved.');
-    });
-  }, [identity, port]);
+  const commit = useCallback(
+    (next: Profile) => {
+      setProfile(next);
+      void save(port, identity, next).catch((e: unknown) => {
+        setProblem(e instanceof Error ? e.message : 'Nothing could be saved.');
+      });
+    },
+    [identity, port]
+  );
 
-  const guarded = useCallback((run: () => Profile): string | null => {
-    try {
-      commit(run());
-      return null;
-    } catch (e) {
-      return e instanceof ProfileError ? e.message : 'That could not be done.';
-    }
-  }, [commit]);
+  const guarded = useCallback(
+    (run: () => Profile): string | null => {
+      try {
+        commit(run());
+        return null;
+      } catch (e) {
+        return e instanceof ProfileError ? e.message : 'That could not be done.';
+      }
+    },
+    [commit]
+  );
 
   const stale = useMemo(() => (profile === null ? [] : changed(profile)), [profile]);
 
   if (profile === null || state === null) {
-    return <><h1>My profile</h1><p className="muted">Opening…</p></>;
+    return (
+      <>
+        <h1>My profile</h1>
+        <p className="muted">Opening…</p>
+      </>
+    );
   }
 
   /*
@@ -566,7 +616,9 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
         <BackToWallet />
         <h1>My profile</h1>
         <StatusAlert tone={saying.tone} title={saying.title}>
-          <p className="m-0" data-unopenable-why>{saying.sentence}</p>
+          <p className="m-0" data-unopenable-why>
+            {saying.sentence}
+          </p>
           <p className="m-0">Nothing has been changed or deleted.</p>
         </StatusAlert>
         <p style={{ marginTop: '1.5rem' }}>
@@ -581,15 +633,20 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
       <BackToWallet />
       <h1>My profile</h1>
       <p className="lede">
-        Facts about you, kept in this browser and nowhere else. They are encrypted here,
-        no server of ours ever sees them, and nothing leaves this wallet unless you
-        approve it, one detail at a time.
+        Facts about you, kept in this browser and nowhere else. They are encrypted here, no server of ours ever sees
+        them, and nothing leaves this wallet unless you approve it, one detail at a time.
       </p>
 
-      {problem !== null && <StatusAlert tone="danger" title="Not saved">{problem}</StatusAlert>}
+      {problem !== null && (
+        <StatusAlert tone="danger" title="Not saved">
+          {problem}
+        </StatusAlert>
+      )}
       {state.othersHere === true && (
         <StatusAlert tone="info" role={null} title="Other saved details in this browser">
-          <p className="m-0" data-other-details-here>{OTHER_DETAILS_HERE}</p>
+          <p className="m-0" data-other-details-here>
+            {OTHER_DETAILS_HERE}
+          </p>
         </StatusAlert>
       )}
       <StaleList stale={stale} />
@@ -598,7 +655,8 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
         const rows = heldAbout(profile, definition.name);
         return (
           <Section
-            list={false} box={false}
+            list={false}
+            box={false}
             key={definition.name}
             aria-label={definition.render.label}
             title={definition.render.label}
@@ -606,12 +664,12 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
           >
             <Card>
               {/* `pt-5` IS THE KIT'S TOP PADDING FOR A CARD WITH NO HEADER, and
-                * it is what `screens/settings.tsx` writes on every one of its
-                * eleven cards. `CardContent` alone is `px-5 pb-5` — designed to
-                * sit under a `CardHeader` that already paid for the top — so
-                * without it the first line of text is flush against the card's
-                * border and the border runs into the words. */}
-              <CardContent >
+               * it is what `screens/settings.tsx` writes on every one of its
+               * eleven cards. `CardContent` alone is `px-5 pb-5` — designed to
+               * sit under a `CardHeader` that already paid for the top — so
+               * without it the first line of text is flush against the card's
+               * border and the border runs into the words. */}
+              <CardContent>
                 {rows.length === 0 ? (
                   /*
                    * ONE QUIET LINE, NOT A ROOM. `EmptyState` draws a dashed
@@ -648,29 +706,31 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
                   </ul>
                 )}
                 {/*
-                  * `selfAssertable: false` MEANS NO FIELD AT ALL, and the form
-                  * has no idea why — it reads the flag. That is §3.4 working:
-                  * a rule that lives in the definition rather than in a branch
-                  * here.
-                  */}
+                 * `selfAssertable: false` MEANS NO FIELD AT ALL, and the form
+                 * has no idea why — it reads the flag. That is §3.4 working:
+                 * a rule that lives in the definition rather than in a branch
+                 * here.
+                 */}
                 {definition.selfAssertable && (rows.length === 0 || definition.multiple) ? (
                   <>
                     {/* THE ADD-ROW STARTS SOMEWHERE. Without a rule and a gap
-                      * above it, *No first name yet.* and *New first name* are
-                      * two stacked lines that read as one broken sentence. */}
+                     * above it, *No first name yet.* and *New first name* are
+                     * two stacked lines that read as one broken sentence. */}
                     <Separator decorative className="my-4" />
                     <AddOne
                       definition={definition}
-                      onAdd={(text, label) => guarded(
-                        () => selfAssert(
-                          profile, registry, definition.name, text, label, Date.now()))}
+                      onAdd={(text, label) =>
+                        guarded(() => selfAssert(profile, registry, definition.name, text, label, Date.now()))
+                      }
                     />
                   </>
-                ) : !definition.selfAssertable && (
-                  <p className="m-0 mt-4 text-sm text-muted-foreground" data-issued-only={definition.name}>
-                    This is not something you can state about yourself. It has to come from
-                    whoever is in a position to check it.
-                  </p>
+                ) : (
+                  !definition.selfAssertable && (
+                    <p className="m-0 mt-4 text-sm text-muted-foreground" data-issued-only={definition.name}>
+                      This is not something you can state about yourself. It has to come from whoever is in a position
+                      to check it.
+                    </p>
+                  )
                 )}
               </CardContent>
             </Card>
@@ -679,7 +739,9 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
       })}
 
       <Section
-        list={false} box={false} aria-label="What you have sent, and to whom"
+        list={false}
+        box={false}
+        aria-label="What you have sent, and to whom"
         title="What you have sent, and to whom"
         description="What is sent, is sent. This is a record of what left this wallet — not a list of what anyone still holds, and not something this wallet can take back."
       >
@@ -696,16 +758,14 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
                 className="rounded-md border border-border p-3"
               >
                 {/* A COMPANY'S NAME WRAPS ON ITS SPACES; ITS ORIGIN HAS NONE
-                  * AND BREAKS ANYWHERE. Both were leaving the card. */}
+                 * AND BREAKS ANYWHERE. Both were leaving the card. */}
                 <p className="m-0 text-base break-words text-foreground">{grant.recipient.name}</p>
                 <p className="m-0 font-mono text-sm break-all text-muted-foreground">
                   {`${grant.recipient.origin} · wallet ${grant.subwallet}`}
                 </p>
                 <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0" data-disclosures>
                   {grant.disclosures.length === 0 && (
-                    <li className="text-sm text-muted-foreground">
-                      Agreed, but nothing has been sent yet.
-                    </li>
+                    <li className="text-sm text-muted-foreground">Agreed, but nothing has been sent yet.</li>
                   )}
                   {runsOf(grant.disclosures).map((run) => (
                     <RunEntry key={run.key} run={run} />
@@ -716,13 +776,16 @@ export function ProfileScreen({ identity, registry = REGISTRY, port = browserPor
           </ul>
         )}
         <Card>
-          <CardHeader><CardTitle role="heading" aria-level={3}>What this wallet cannot do</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle role="heading" aria-level={3}>
+              What this wallet cannot do
+            </CardTitle>
+          </CardHeader>
           <CardContent>
             <p className="m-0 text-sm text-muted-foreground">
-              You cannot un-tell a company something. Anything above has already been given
-              to them and they keep their own copy — which is normally what you want, because
-              it is how they pay you. This wallet can stop sending them anything new; it
-              cannot reach into their records.
+              You cannot un-tell a company something. Anything above has already been given to them and they keep their
+              own copy — which is normally what you want, because it is how they pay you. This wallet can stop sending
+              them anything new; it cannot reach into their records.
             </p>
           </CardContent>
         </Card>

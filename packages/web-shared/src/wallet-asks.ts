@@ -11,7 +11,12 @@ import { openWalletDialog, US_TO_A_WALLET, type Openable, type WalletDialog } fr
 import { askWalletToPay } from './wallet-balance.js';
 import { askWalletToSignCommittee, type CommitteeAsked } from './wallet-committee.js';
 import {
-  askWalletToSignRecordsKey, askWalletWhoHolds, type HoldersAsked, type HoldersRead, type RecordsKeyAsked, type RecordsKeySigned,
+  askWalletToSignRecordsKey,
+  askWalletWhoHolds,
+  type HoldersAsked,
+  type HoldersRead,
+  type RecordsKeyAsked,
+  type RecordsKeySigned
 } from './wallet-records-key.js';
 import { walletInThisPage, walletQuietlyInThisPage } from './wallet-frame.js';
 
@@ -36,7 +41,9 @@ const watching = new Set<WalletWaiting>();
 /** Returns the way to stop watching. Call it from an effect's cleanup. */
 export function onWalletWaiting(watch: WalletWaiting): () => void {
   watching.add(watch);
-  return () => { watching.delete(watch); };
+  return () => {
+    watching.delete(watch);
+  };
 }
 
 const nowWaiting = (dialog: WalletDialog | null): void => {
@@ -52,16 +59,16 @@ const nowWaiting = (dialog: WalletDialog | null): void => {
  * company opens the wallet in the press, then talks to this server, then asks
  * the wallet — so the second half does not open a second window.
  */
-export function openTheWallet(
-  view: Openable, walletOrigin: string, already?: WalletDialog,
-): WalletDialog {
+export function openTheWallet(view: Openable, walletOrigin: string, already?: WalletDialog): WalletDialog {
   const dialog = already ?? openWalletDialog(view, walletOrigin);
   nowWaiting(dialog);
   return dialog;
 }
 
 /** Nothing is waiting on a wallet any more, however it ended. */
-export const doneWaiting = (): void => { nowWaiting(null); };
+export const doneWaiting = (): void => {
+  nowWaiting(null);
+};
 
 /**
  * **A JOURNEY THAT OPENS ITS OWN DIALOG ANNOUNCES IT HERE.** Accepting an
@@ -85,7 +92,9 @@ export function showWaitingFor(dialog: WalletDialog): () => void {
  * an ask that already ended has already closed it, and a second close is not a
  * second event.
  */
-export const putAway = (dialog: WalletDialog): void => { dialog.giveUp(); };
+export const putAway = (dialog: WalletDialog): void => {
+  dialog.giveUp();
+};
 
 /**
  * **ASKS THIS PERSON'S WALLET TO PUT IN THE COINS A DEPOSIT NEEDS.** Opened in
@@ -96,14 +105,22 @@ export async function payIntoAVaultFromTheWallet(
   ask: { company: CompanyLabel; account: AccountAddress; vault: VaultAddress; transaction: string },
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-  already?: WalletDialog,
+  already?: WalletDialog
 ): Promise<{ transaction: string; leaves: readonly unknown[] }> {
   if (!sessionIsLive()) throw new Error('not signed in');
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
-    return await askWalletToPay(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+    return await askWalletToPay(
+      view,
+      walletOrigin,
+      {
+        ...ask,
+        atOrigin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
+      },
+      dialog
+    );
   } catch (e) {
     if (!already) putAway(dialog);
     throw e;
@@ -122,14 +139,22 @@ export async function signCommitteeChangeFromTheWallet(
   ask: Pick<CommitteeAsked, 'company' | 'account' | 'to' | 'contracts'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-  already?: WalletDialog,
+  already?: WalletDialog
 ): Promise<Awaited<ReturnType<typeof askWalletToSignCommittee>>> {
   if (!sessionIsLive()) throw new Error('not signed in');
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
-    return await askWalletToSignCommittee(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+    return await askWalletToSignCommittee(
+      view,
+      walletOrigin,
+      {
+        ...ask,
+        atOrigin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
+      },
+      dialog
+    );
   } catch (e) {
     if (!already) putAway(dialog);
     throw e;
@@ -153,14 +178,22 @@ export async function recordsKeyFromTheWallet(
   ask: Pick<RecordsKeyAsked, 'company' | 'account' | 'seat' | 'vault' | 'signingKey' | 'invitedBy' | 'firstSecret'>,
   view: Openable = walletInThisPage(window),
   atOrigin: string = window.location.origin,
-  already?: WalletDialog,
+  already?: WalletDialog
 ): Promise<RecordsKeySigned> {
   if (!sessionIsLive()) throw new Error('not signed in');
   const dialog = openTheWallet(view, walletOrigin, already);
   try {
-    return await askWalletToSignRecordsKey(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+    return await askWalletToSignRecordsKey(
+      view,
+      walletOrigin,
+      {
+        ...ask,
+        atOrigin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
+      },
+      dialog
+    );
   } catch (e) {
     if (!already) putAway(dialog);
     throw e;
@@ -179,7 +212,9 @@ let walletsIndexer: { readonly indexerUri: string; readonly indexerWsUri: string
 export const walletsIndexerNamed = (): typeof walletsIndexer => walletsIndexer;
 
 /** The indexer the wallet named belongs to the sign-in it was learnt in, so it is dropped with that sign-in. */
-export const forgetTheWalletsIndexer = (): void => { walletsIndexer = null; };
+export const forgetTheWalletsIndexer = (): void => {
+  walletsIndexer = null;
+};
 
 /**
  * **WHO HOLDS THE COMPANY NOW, AS THIS PERSON'S OWN WALLET READS THE CHAIN**, with
@@ -192,14 +227,22 @@ export async function holdersFromTheWallet(
   walletOrigin: string,
   ask: Pick<HoldersAsked, 'company' | 'account' | 'movements' | 'roles'>,
   view: Openable = walletQuietlyInThisPage(window),
-  atOrigin: string = window.location.origin,
+  atOrigin: string = window.location.origin
 ): Promise<HoldersRead> {
   if (!sessionIsLive()) throw new Error('not signed in');
   const dialog = openWalletDialog(view, walletOrigin);
   try {
-    const read = await askWalletWhoHolds(view, walletOrigin, {
-      ...ask, atOrigin, name: US_TO_A_WALLET.name, rdns: US_TO_A_WALLET.rdns,
-    }, dialog);
+    const read = await askWalletWhoHolds(
+      view,
+      walletOrigin,
+      {
+        ...ask,
+        atOrigin,
+        name: US_TO_A_WALLET.name,
+        rdns: US_TO_A_WALLET.rdns
+      },
+      dialog
+    );
     if (read.indexer !== null) walletsIndexer = read.indexer;
     return read;
   } finally {

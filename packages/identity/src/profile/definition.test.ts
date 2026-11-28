@@ -24,18 +24,19 @@ describe('a definition cannot disagree with itself', () => {
      * of read off the rule passed it. A mutation survived and said so. The
      * check has to stand on a rule the shipped vocabulary does not use.
      */
-    const made = (rule: Rule): Kind => define({
-      name: 'a-shape',
-      version: 1,
-      source: 'stated',
-      validate: rule,
-      selfAssertable: true,
-      acceptedIssuers: null,
-      multiple: false,
-      sensitivity: 'ordinary',
-      render: { label: 'A shape', hint: '', abbreviate: 'none' },
-      provable: [],
-    }).kind;
+    const made = (rule: Rule): Kind =>
+      define({
+        name: 'a-shape',
+        version: 1,
+        source: 'stated',
+        validate: rule,
+        selfAssertable: true,
+        acceptedIssuers: null,
+        multiple: false,
+        sensitivity: 'ordinary',
+        render: { label: 'A shape', hint: '', abbreviate: 'none' },
+        provable: []
+      }).kind;
     expect(made({ of: 'enum', members: [{ value: 'a', label: 'A' }] })).toBe('enum');
     expect(made({ of: 'date' })).toBe('date');
     expect(made({ of: 'number' })).toBe('number');
@@ -43,34 +44,38 @@ describe('a definition cannot disagree with itself', () => {
   });
 
   it('refuses an attribute nobody may ever state — it would hold nothing', () => {
-    expect(() => define({
-      name: 'nobody-can-say-this',
-      version: 1,
-      source: 'stated',
-      validate: { of: 'text', minLength: 1, maxLength: 10 },
-      selfAssertable: false,
-      acceptedIssuers: null,
-      multiple: false,
-      sensitivity: 'ordinary',
-      render: { label: 'X', hint: '', abbreviate: 'none' },
-      provable: [],
-    })).toThrow(RegistryError);
-  });
-
-  it('refuses a name that is not a vocabulary name', () => {
-    for (const bad of ['Given Name', 'given_name', '1st', '']) {
-      expect(() => define({
-        name: bad,
+    expect(() =>
+      define({
+        name: 'nobody-can-say-this',
         version: 1,
         source: 'stated',
         validate: { of: 'text', minLength: 1, maxLength: 10 },
-        selfAssertable: true,
+        selfAssertable: false,
         acceptedIssuers: null,
         multiple: false,
         sensitivity: 'ordinary',
         render: { label: 'X', hint: '', abbreviate: 'none' },
-        provable: [],
-      })).toThrow(RegistryError);
+        provable: []
+      })
+    ).toThrow(RegistryError);
+  });
+
+  it('refuses a name that is not a vocabulary name', () => {
+    for (const bad of ['Given Name', 'given_name', '1st', '']) {
+      expect(() =>
+        define({
+          name: bad,
+          version: 1,
+          source: 'stated',
+          validate: { of: 'text', minLength: 1, maxLength: 10 },
+          selfAssertable: true,
+          acceptedIssuers: null,
+          multiple: false,
+          sensitivity: 'ordinary',
+          render: { label: 'X', hint: '', abbreviate: 'none' },
+          provable: []
+        })
+      ).toThrow(RegistryError);
     }
   });
 
@@ -81,7 +86,7 @@ describe('a definition cannot disagree with itself', () => {
 });
 
 describe('checking a typed value uses the RULE and never the name', () => {
-  it('says what is wrong in the person\'s language, not in a code', () => {
+  it("says what is wrong in the person's language, not in a code", () => {
     const outcome = check(definitionOf(EMAIL), 'not-an-email');
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.says).toBe('An email address looks like name@example.com.');
@@ -113,7 +118,7 @@ describe('checking a typed value uses the RULE and never the name', () => {
       multiple: false,
       sensitivity: 'sensitive',
       render: { label: 'A date', hint: '', abbreviate: 'none' },
-      provable: [],
+      provable: []
     });
     expect(check(dob, '2001-02-30')).toMatchObject({ ok: false });
     expect(check(dob, '2001-02-28')).toMatchObject({ ok: true });
@@ -126,13 +131,19 @@ describe('checking a typed value uses the RULE and never the name', () => {
       name: 'a-choice',
       version: 1,
       source: 'stated',
-      validate: { of: 'enum', members: [{ value: 'a', label: 'Alpha' }, { value: 'b', label: 'Beta' }] },
+      validate: {
+        of: 'enum',
+        members: [
+          { value: 'a', label: 'Alpha' },
+          { value: 'b', label: 'Beta' }
+        ]
+      },
       selfAssertable: true,
       acceptedIssuers: null,
       multiple: false,
       sensitivity: 'ordinary',
       render: { label: 'A choice', hint: '', abbreviate: 'none' },
-      provable: [],
+      provable: []
     });
     const outcome = check(colour, 'c');
     expect(outcome.ok === false && outcome.says).toContain('Alpha, Beta');
@@ -149,7 +160,7 @@ describe('checking a typed value uses the RULE and never the name', () => {
       multiple: false,
       sensitivity: 'ordinary',
       render: { label: 'Digits', hint: '', abbreviate: 'none' },
-      provable: [],
+      provable: []
     });
     expect(check(digits, '123')).toMatchObject({ ok: true });
     expect(check(digits, 'abc123def')).toMatchObject({ ok: false });
@@ -158,7 +169,10 @@ describe('checking a typed value uses the RULE and never the name', () => {
 
 describe('abbreviating keeps both ends', () => {
   it('a middle abbreviation shows the start AND the end', () => {
-    const definition = { ...definitionOf(GIVEN_NAME), render: { ...definitionOf(GIVEN_NAME).render, abbreviate: 'middle' as const } };
+    const definition = {
+      ...definitionOf(GIVEN_NAME),
+      render: { ...definitionOf(GIVEN_NAME).render, abbreviate: 'middle' as const }
+    };
     const shown = abbreviate(definition, 'abcdefghijklmnop');
     expect(shown.startsWith('abcde')).toBe(true);
     expect(shown.endsWith('lmnop')).toBe(true);
@@ -183,27 +197,23 @@ describe('a derived attribute is stated by nobody, and that is checked', () => {
     multiple: false,
     sensitivity: 'ordinary' as const,
     render: { label: 'A derived thing', hint: '', abbreviate: 'none' as const },
-    provable: [],
+    provable: []
   };
 
   it('one that nobody states and nobody issues is ACCEPTED, where a stated one is not', () => {
     /* The same three lines on a `stated` attribute mean *this can never hold
      * anything* and are refused. On a derived one they are the point. */
     expect(define(derived).source).toBe('derived');
-    expect(() => define({ ...derived, source: 'stated' }))
-      .toThrow(/can never hold anything/u);
+    expect(() => define({ ...derived, source: 'stated' })).toThrow(/can never hold anything/u);
   });
 
   it('AND ONE THAT CLAIMS SOMEBODY STATES IT IS REFUSED', () => {
     /* A text box for a value nothing typed into it could change, and whatever
      * was typed would be sent as though the wallet had computed it. */
-    expect(() => define({ ...derived, selfAssertable: true }))
-      .toThrow(/nobody states it and nobody issues it/u);
-    expect(() => define({ ...derived, acceptedIssuers: 'any' }))
-      .toThrow(/nobody states it and nobody issues it/u);
+    expect(() => define({ ...derived, selfAssertable: true })).toThrow(/nobody states it and nobody issues it/u);
+    expect(() => define({ ...derived, acceptedIssuers: 'any' })).toThrow(/nobody states it and nobody issues it/u);
     /* `multiple` asks how many of a STORED thing are held, and nothing derived
      * is ever stored. */
-    expect(() => define({ ...derived, multiple: true }))
-      .toThrow(/holds no second value/u);
+    expect(() => define({ ...derived, multiple: true })).toThrow(/holds no second value/u);
   });
 });

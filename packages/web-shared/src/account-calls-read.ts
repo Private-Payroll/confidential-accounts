@@ -39,7 +39,8 @@ const isFieldOfTheAccount = (op: unknown, writing: boolean, at: number): boolean
   const field = key.tag === 'value' ? atomOf(key.value) : null;
   return field !== null && field.length <= 1 && (field[0] ?? 0) === at;
 };
-const isOpenProposalsField = (op: unknown, writing: boolean): boolean => isFieldOfTheAccount(op, writing, OPEN_PROPOSALS_FIELD);
+const isOpenProposalsField = (op: unknown, writing: boolean): boolean =>
+  isFieldOfTheAccount(op, writing, OPEN_PROPOSALS_FIELD);
 const proposalKeyOf = (op: unknown): string | null => {
   const push = (op as { push?: { storage?: unknown; value?: { tag?: unknown; content?: AlignedHere } } } | null)?.push;
   if (push === undefined || push.storage !== false || push.value?.tag !== 'cell') return null;
@@ -72,21 +73,33 @@ const memberAnswerOf = (op: unknown): boolean | null => {
  * the bytes are not such a transaction or its parts cannot be read.
  */
 export function callsOnTheAccountIn(
-  deps: Partial<Pick<GovernedCallDeps, 'ledger'>>, raw: Uint8Array, account: string,
+  deps: Partial<Pick<GovernedCallDeps, 'ledger'>>,
+  raw: Uint8Array,
+  account: string
 ): CallOnTheAccount[] {
   const here = String(account).toLowerCase().replace(/^0x/u, '');
-  if (deps.ledger === undefined) throw new Error('this device was not given the ledger, so which call raised or closed a proposal was not read. Reload the page');
+  if (deps.ledger === undefined)
+    throw new Error(
+      'this device was not given the ledger, so which call raised or closed a proposal was not read. Reload the page'
+    );
   let tx: { intents?: unknown };
   try {
     tx = deps.ledger.Transaction.deserialize('signature', 'proof', 'binding', raw);
   } catch (cause) {
-    throw new Error('a transaction in the account\'s history could not be read, so which call raised or closed a proposal is not known. Read again', { cause });
+    throw new Error(
+      "a transaction in the account's history could not be read, so which call raised or closed a proposal is not known. Read again",
+      { cause }
+    );
   }
-  if (!(tx.intents instanceof Map)) throw new Error('a transaction in the account\'s history holds no parts this device can read. Read again');
+  if (!(tx.intents instanceof Map))
+    throw new Error("a transaction in the account's history holds no parts this device can read. Read again");
   const out: CallOnTheAccount[] = [];
   for (const [, intent] of [...tx.intents].sort(([a], [b]) => Number(a) - Number(b))) {
     const actions = (intent as { actions?: unknown } | null)?.actions;
-    if (!Array.isArray(actions)) throw new Error('a transaction in the account\'s history holds a part whose calls this device cannot read. Read again');
+    if (!Array.isArray(actions))
+      throw new Error(
+        "a transaction in the account's history holds a part whose calls this device cannot read. Read again"
+      );
     for (const a of actions as Array<Record<string, unknown>>) {
       if (!('entryPoint' in a) || String(a['address'] ?? '').toLowerCase() !== here) continue;
       const entry = a['entryPoint'];
@@ -99,7 +112,8 @@ export function callsOnTheAccountIn(
       for (const part of [a['guaranteedTranscript'], a['fallibleTranscript']]) {
         const program = (part as { program?: unknown } | undefined)?.program;
         if (part === undefined) continue;
-        if (!Array.isArray(program)) throw new Error('a call in the account\'s history carries operations this device cannot read. Read again');
+        if (!Array.isArray(program))
+          throw new Error("a call in the account's history carries operations this device cannot read. Read again");
         program.forEach((op, i) => {
           if (isFieldOfTheAccount(op, true, SIGNER_LEAVES_FIELD)) {
             const leaf = proposalKeyOf(program[i + 1]);
@@ -214,13 +228,31 @@ export interface RoundOnChain {
  * source by every-circuit-that-closes-a-proposal-is-known.test.ts.
  */
 export const PROPOSAL_CLOSING_CIRCUITS: readonly string[] = Object.freeze([
-  'adopt', 'approveVaultChange', 'cancel', 'closeExpiredRun', 'recoverAnchor', 'removeSignerAndSetThreshold',
-  'reseatSigner', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold',
+  'adopt',
+  'approveVaultChange',
+  'cancel',
+  'closeExpiredRun',
+  'recoverAnchor',
+  'removeSignerAndSetThreshold',
+  'reseatSigner',
+  'retireVault',
+  'sealPayKey',
+  'seatInvited',
+  'setPolicy',
+  'setPolicyBar',
+  'setThreshold',
+  'setVaultThreshold'
 ]);
 
 export interface VouchedRunOnTheWire {
-  readonly root: string; readonly payees: string; readonly opensAt: string; readonly closesAt: string; readonly required: string;
-  readonly vault: string; readonly head: string; readonly r: string;
+  readonly root: string;
+  readonly payees: string;
+  readonly opensAt: string;
+  readonly closesAt: string;
+  readonly required: string;
+  readonly vault: string;
+  readonly head: string;
+  readonly r: string;
 }
 
 /**
@@ -230,9 +262,13 @@ export interface VouchedRunOnTheWire {
  * run's own identity knows the run's approvers approved that head. Null for a
  * run of no vault, which vouches for nothing.
  */
-export function vouchedRunIdentityOf(deps: Pick<GovernedCallDeps, 'accountPure'>, run: VouchedRunOnTheWire): string | null {
+export function vouchedRunIdentityOf(
+  deps: Pick<GovernedCallDeps, 'accountPure'>,
+  run: VouchedRunOnTheWire
+): string | null {
   const P = deps.accountPure;
-  if (P.retrySaltOf === undefined) throw new Error('this device was not given the account\'s functions a run\'s salt is made with. Reload the page');
+  if (P.retrySaltOf === undefined)
+    throw new Error("this device was not given the account's functions a run's salt is made with. Reload the page");
   const whole = (what: string, v: string): bigint => {
     if (!/^(0|[1-9][0-9]*)$/u.test(String(v))) throw new Error(`a vouching run's ${what} is not a whole number`);
     return BigInt(v);
@@ -240,14 +276,26 @@ export function vouchedRunIdentityOf(deps: Pick<GovernedCallDeps, 'accountPure'>
   if (vouchedRefusal({ head: run.head, r: run.r }) !== null) return null;
   const vault = bytesOf('vault', String(run.vault).toLowerCase());
   if (hexOf(vault) === hexOf(P.noVault())) return null;
-  const payload = P.runPayload(bytesOf('run root', String(run.root).toLowerCase()), whole('payee count', run.payees),
-    whole('window', run.opensAt), whole('window', run.closesAt), whole('approvals', run.required));
-  const salt = P.retrySaltOf(NO_LEG(), bytesOf('fresh', vouchedFreshOf(run.head.toLowerCase() as Hex, run.r.toLowerCase() as Hex)));
+  const payload = P.runPayload(
+    bytesOf('run root', String(run.root).toLowerCase()),
+    whole('payee count', run.payees),
+    whole('window', run.opensAt),
+    whole('window', run.closesAt),
+    whole('approvals', run.required)
+  );
+  const salt = P.retrySaltOf(
+    NO_LEG(),
+    bytesOf('fresh', vouchedFreshOf(run.head.toLowerCase() as Hex, run.r.toLowerCase() as Hex))
+  );
   return hexOf(P.proposalIdOf(payload, vault, salt));
 }
 
 /** A payroll run that vouches for the head its raiser sealed: its identity on chain, and the block of the last state showing it paid or charged. */
-export interface VouchingRun { readonly chainId: string; readonly height: number; readonly at: number }
+export interface VouchingRun {
+  readonly chainId: string;
+  readonly height: number;
+  readonly at: number;
+}
 
 /**
  * **EVERY RUN WHOSE APPROVALS VOUCH FOR WHAT IT WAS RAISED OVER, FROM THE
@@ -264,18 +312,29 @@ export interface VouchingRun { readonly chainId: string; readonly height: number
  */
 export function vouchingRunsIn(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
-  steps: ReadonlyArray<{ readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number } }>,
+  steps: ReadonlyArray<{ readonly state: Uint8Array; readonly block: { readonly height: number; readonly at: number } }>
 ): VouchingRun[] {
   const P = deps.accountPure;
-  if (deps.accountLedger === undefined || P.clearedMark === undefined || P.paidFromMark === undefined || P.removalCountKey === undefined
-    || P.runApprovalsNeeded === undefined) {
-    throw new Error('this device was not given the account\'s reader, so which runs vouch for the company\'s records was not read. Reload the page');
+  if (
+    deps.accountLedger === undefined ||
+    P.clearedMark === undefined ||
+    P.paidFromMark === undefined ||
+    P.removalCountKey === undefined ||
+    P.runApprovalsNeeded === undefined
+  ) {
+    throw new Error(
+      "this device was not given the account's reader, so which runs vouch for the company's records was not read. Reload the page"
+    );
   }
   const cleared = hexOf(P.clearedMark());
   const paidFrom = hexOf(P.paidFromMark());
   const removalKey = P.removalCountKey();
   const neededFor = P.runApprovalsNeeded;
-  type Hold = { readonly needed: bigint; readonly removals: bigint; readonly runHold: { readonly placedBy: Uint8Array } };
+  type Hold = {
+    readonly needed: bigint;
+    readonly removals: bigint;
+    readonly runHold: { readonly placedBy: Uint8Array };
+  };
   type View = {
     readonly threshold: bigint;
     readonly openProposals: Iterable<[Uint8Array, Uint8Array]>;
@@ -290,18 +349,23 @@ export function vouchingRunsIn(
     if (step.block.height === height) continue;
     height = step.block.height;
     const view = deps.accountLedger((deps.runtimeState.deserialize(step.state) as { data: unknown }).data) as View;
-    const removals = view.proposalHolds.member(removalKey) ? BigInt(view.proposalHolds.lookup(removalKey).removals) : 0n;
+    const removals = view.proposalHolds.member(removalKey)
+      ? BigInt(view.proposalHolds.lookup(removalKey).removals)
+      : 0n;
     for (const [id, change] of view.openProposals) {
       const hold = view.proposalHolds.member(id) ? view.proposalHolds.lookup(id) : null;
       const marked = hexOf(change) === cleared || (hold !== null && hexOf(hold.runHold.placedBy) === paidFrom);
       if (!marked) continue;
       const approvals = view.approvalCounts.member(id) ? BigInt(view.approvalCounts.lookup(id)) : 0n;
-      const vouches = hold !== null
-        && approvals >= BigInt(neededFor(BigInt(hold.needed), BigInt(view.threshold), removals, BigInt(hold.removals)));
+      const vouches =
+        hold !== null &&
+        approvals >= BigInt(neededFor(BigInt(hold.needed), BigInt(view.threshold), removals, BigInt(hold.removals)));
       last.set(hexOf(id), { vouches, height: step.block.height, at: step.block.at });
     }
   }
-  return [...last].filter(([, l]) => l.vouches).map(([chainId, l]) => ({ chainId, height: l.height, at: l.at }))
+  return [...last]
+    .filter(([, l]) => l.vouches)
+    .map(([chainId, l]) => ({ chainId, height: l.height, at: l.at }))
     .sort((a, b) => a.height - b.height);
 }
 
@@ -314,11 +378,13 @@ export function vouchingRunsIn(
  */
 export function runsOutrunIn(
   deps: Pick<GovernedCallDeps, 'accountPure' | 'accountLedger' | 'runtimeState'>,
-  steps: ReadonlyArray<{ readonly state: Uint8Array }>,
+  steps: ReadonlyArray<{ readonly state: Uint8Array }>
 ): Record<string, number> {
   const removalKey = deps.accountPure.removalCountKey?.();
   if (deps.accountLedger === undefined || removalKey === undefined) {
-    throw new Error('this device was not given the account\'s reader, so the runs open on the chain were not read. Reload the page');
+    throw new Error(
+      "this device was not given the account's reader, so the runs open on the chain were not read. Reload the page"
+    );
   }
   const newest = steps[steps.length - 1];
   if (newest === undefined) return {};

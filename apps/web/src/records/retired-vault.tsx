@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useText } from 'vaults-ui';
-import { emptyOnChain, ON_CHAIN, readRetiredVaultOnChain, type RetiredVaultOnChain } from '../adapters/retired-vault-on-chain.js';
+import {
+  emptyOnChain,
+  ON_CHAIN,
+  readRetiredVaultOnChain,
+  type RetiredVaultOnChain
+} from '../adapters/retired-vault-on-chain.js';
 import { useCompanyView } from './company-records.js';
 
 /*
@@ -18,8 +23,12 @@ export function useRetiredVaultOnChain(vault: string, retired: boolean): Retired
     if (!retired || view === null) return undefined;
     let alive = true;
     setRead(null);
-    void readRetiredVaultOnChain(view, vault).then((r) => { if (alive) setRead(r); });
-    return () => { alive = false; };
+    void readRetiredVaultOnChain(view, vault).then((r) => {
+      if (alive) setRead(r);
+    });
+    return () => {
+      alive = false;
+    };
   }, [view, vault, retired]);
   return read;
 }
@@ -31,5 +40,9 @@ export const retiredVaultShown = (read: RetiredVaultOnChain | null): boolean => 
 export function RetiredMayHold({ read }: { read: RetiredVaultOnChain | null }) {
   const t = useText();
   if (read !== null && read.notes !== ON_CHAIN.unread && read.public !== ON_CHAIN.unread) return null;
-  return <span className="text-muted-foreground" data-retired-may-hold>{t('vaults.retired.mayHold')}</span>;
+  return (
+    <span className="text-muted-foreground" data-retired-may-hold>
+      {t('vaults.retired.mayHold')}
+    </span>
+  );
 }

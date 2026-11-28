@@ -40,10 +40,15 @@ export interface ReaderDirectoryDoors {
 }
 
 /** The statements of the roster's believed entries, or none when the roster is not opened or not believed. */
-async function rosterAttestedHere(base: Omit<DirectoryHereDeps, 'attested'>, held: PurposeWrapsHeld, d: ReaderDirectoryDoors): Promise<Attested> {
-  const account = await d.view.account() as { roster?: SealedCompanyRecord | null } | null;
+async function rosterAttestedHere(
+  base: Omit<DirectoryHereDeps, 'attested'>,
+  held: PurposeWrapsHeld,
+  d: ReaderDirectoryDoors
+): Promise<Attested> {
+  const account = (await d.view.account()) as { roster?: SealedCompanyRecord | null } | null;
   const roster = account?.roster ?? null;
-  if (roster === null || roster.company !== d.view.company || roster.kind !== 'roster' || roster.id !== ROSTER_ID) return [];
+  if (roster === null || roster.company !== d.view.company || roster.kind !== 'roster' || roster.id !== ROSTER_ID)
+    return [];
   let signers: Signer[];
   try {
     signers = openRoster(roster, purposeKeysAt(held, roster.keyEpoch)).signers;
@@ -51,18 +56,37 @@ async function rosterAttestedHere(base: Omit<DirectoryHereDeps, 'attested'>, hel
     /* A roster this reader's keys do not open names no statement: nothing filed is then believed, and nothing released. */
     return [];
   }
-  const read = await directoryHere({ ...base, attested: async () => [] }, {
-    records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }], founding: roster.version === 1,
+  const read = await directoryHere(
+    { ...base, attested: async () => [] },
+    {
+      records: [{ store: 'company', kind: 'roster', id: ROSTER_ID }],
+      founding: roster.version === 1
+    }
+  );
+  const judged = rosterFilerJudged({ signers }, read, roster, {
+    accountId: d.view.company,
+    label: d.label,
+    account: d.account,
+    own: null
   });
-  const judged = rosterFilerJudged({ signers }, read, roster, { accountId: d.view.company, label: d.label, account: d.account, own: null });
   return judged.why === null ? attestedIn({ signers: judged.attesting }) : [];
 }
 
 /** The directory a reader's wallet or page reads with the keys `held` its grant wraps (`readerKeysHere`, the reader's page). */
-export const readerDirectoryFor = (d: ReaderDirectoryDoors) => (held: PurposeWrapsHeld): DirectoryRead => (asked) => {
-  const base: Omit<DirectoryHereDeps, 'attested'> = {
-    accountId: d.view.company, label: d.label, viewingKey: held, filings: () => d.view.filings(),
-    holders: () => d.view.holders(), leaves: d.leaves, anchored: d.anchored, invitedSeats: d.invitedSeats, proposalIdentity: d.proposalIdentity,
+export const readerDirectoryFor =
+  (d: ReaderDirectoryDoors) =>
+  (held: PurposeWrapsHeld): DirectoryRead =>
+  (asked) => {
+    const base: Omit<DirectoryHereDeps, 'attested'> = {
+      accountId: d.view.company,
+      label: d.label,
+      viewingKey: held,
+      filings: () => d.view.filings(),
+      holders: () => d.view.holders(),
+      leaves: d.leaves,
+      anchored: d.anchored,
+      invitedSeats: d.invitedSeats,
+      proposalIdentity: d.proposalIdentity
+    };
+    return directoryHere({ ...base, attested: () => rosterAttestedHere(base, held, d) }, asked);
   };
-  return directoryHere({ ...base, attested: () => rosterAttestedHere(base, held, d) }, asked);
-};

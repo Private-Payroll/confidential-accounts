@@ -34,8 +34,23 @@
  * held. A proposal whose run is anything else than what its record says is
  * refused, whatever the record says.
  */
-import { buildOneOffRun, buildRetryRun, buildRun, paidOnceOfNonce, type DetailsOfKind, type PaymentFacts } from '../../../src/midnight/payout-tree.js';
-import { oneOffEntryOf, oneOffSaltOf, oneOffSecretsOf, payRecordNonceOf, type PayoutSeed, type PayRecord, type RunIdentity } from '../../../src/midnight/run-keys.js';
+import {
+  buildOneOffRun,
+  buildRetryRun,
+  buildRun,
+  paidOnceOfNonce,
+  type DetailsOfKind,
+  type PaymentFacts
+} from '../../../src/midnight/payout-tree.js';
+import {
+  oneOffEntryOf,
+  oneOffSaltOf,
+  oneOffSecretsOf,
+  payRecordNonceOf,
+  type PayoutSeed,
+  type PayRecord,
+  type RunIdentity
+} from '../../../src/midnight/run-keys.js';
 import { fromHex, toHex, type Hex } from '../../../src/core/crypto.js';
 import { secretRunOf, type AccountStartPure, type VaultStartPure } from '../../../src/midnight/vault-start.js';
 import { NO_LEG } from '../../../src/midnight/spending-policy-record.js';
@@ -152,7 +167,13 @@ export interface AccountLedgerView {
 }
 
 interface MadeHereDeps {
-  readonly runPayload: (root: Uint8Array, payees: bigint, opensAt: bigint, closesAt: bigint, required: bigint) => Uint8Array;
+  readonly runPayload: (
+    root: Uint8Array,
+    payees: bigint,
+    opensAt: bigint,
+    closesAt: bigint,
+    required: bigint
+  ) => Uint8Array;
   /** The account's own commitment to a pay-record key. */
   readonly payKeyCommitmentOf?: (key: Uint8Array) => Uint8Array;
   /** The account's and the vault's circuits a vault's first secret run is made with. */
@@ -174,7 +195,8 @@ export class NotMadeOnThisDevice extends Error {
 const DO_NOT = 'Do not approve it, and tell the person who raised it.';
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 const digits = (what: string, v: string): bigint => {
-  if (!/^[0-9]+$/u.test(String(v))) throw new NotMadeOnThisDevice(`what this device worked out for the ${what} is not a whole number.`);
+  if (!/^[0-9]+$/u.test(String(v)))
+    throw new NotMadeOnThisDevice(`what this device worked out for the ${what} is not a whole number.`);
   return BigInt(v);
 };
 
@@ -185,7 +207,10 @@ const digits = (what: string, v: string): bigint => {
 export function refuseWhatThisDeviceDidNotMake(
   deps: MadeHereDeps,
   opened: {
-    readonly chainId: string; readonly digest: string; readonly vault?: string; readonly salt?: string;
+    readonly chainId: string;
+    readonly digest: string;
+    readonly vault?: string;
+    readonly salt?: string;
     /**
      * For a payroll run: the head of the company's records its raiser checked
      * and the random value, sealed in its proposal beside the salt, which the
@@ -198,34 +223,45 @@ export function refuseWhatThisDeviceDidNotMake(
   },
   ledger: AccountLedgerView | null,
   /** An approval is of a proposal the chain holds open; a raise is of one it does not hold yet. */
-  when: 'approve' | 'raise' = 'approve',
+  when: 'approve' | 'raise' = 'approve'
 ): void {
   const made = opened.made;
   if (made === undefined) {
-    throw new NotMadeOnThisDevice('This device did not rebuild what this proposal pays from the company\'s own records, '
-      + (when === 'raise' ? 'so it will not raise it. Reload the page and raise it from the company\'s runs.'
-        : 'so it will not approve it. Reload the page and approve it from the company\'s proposals.'));
+    throw new NotMadeOnThisDevice(
+      "This device did not rebuild what this proposal pays from the company's own records, " +
+        (when === 'raise'
+          ? "so it will not raise it. Reload the page and raise it from the company's runs."
+          : "so it will not approve it. Reload the page and approve it from the company's proposals.")
+    );
   }
   if (ledger === null) {
-    throw new NotMadeOnThisDevice('This page cannot read the company\'s account on the chain, so it cannot check this '
-      + 'proposal. Reload the page to get the current version.');
+    throw new NotMadeOnThisDevice(
+      "This page cannot read the company's account on the chain, so it cannot check this " +
+        'proposal. Reload the page to get the current version.'
+    );
   }
   if (when === 'approve' && !ledger.openProposals.member(fromHex(opened.chainId))) {
-    throw new NotMadeOnThisDevice('The chain holds no open proposal by this name, so there is nothing to approve. Reload '
-      + 'the page to see where it stands.');
+    throw new NotMadeOnThisDevice(
+      'The chain holds no open proposal by this name, so there is nothing to approve. Reload ' +
+        'the page to see where it stands.'
+    );
   }
   if (when === 'raise') {
     if (made.kind !== 'payroll' && made.kind !== 'transfer') {
       throw new NotMadeOnThisDevice('This device raises payroll runs and one-off payments here, and this is neither.');
     }
     if (ledger.openProposals.member(fromHex(opened.chainId))) {
-      throw new NotMadeOnThisDevice('The chain already holds this proposal open, so there is nothing to send. Reload the '
-        + 'page to see where it stands.');
+      throw new NotMadeOnThisDevice(
+        'The chain already holds this proposal open, so there is nothing to send. Reload the ' +
+          'page to see where it stands.'
+      );
     }
     /* What the chain holds beyond the company's records is judged by the raise checks over these, before anything is built. */
     if (made.kind === 'payroll' && made.raising === undefined) {
-      throw new NotMadeOnThisDevice('This device did not read what the company\'s records account for on the chain, so it will '
-        + 'not raise this run. Reload the page and raise it again.');
+      throw new NotMadeOnThisDevice(
+        "This device did not read what the company's records account for on the chain, so it will " +
+          'not raise this run. Reload the page and raise it again.'
+      );
     }
   }
   let root: Hex;
@@ -234,19 +270,26 @@ export function refuseWhatThisDeviceDidNotMake(
   let required = 0n;
   if (made.kind === 'vault-secret') {
     if (deps.secretRun === undefined) {
-      throw new NotMadeOnThisDevice('This page cannot make a vault\'s secret run again, so it will not approve one. '
-        + 'Reload the page to get the current version.');
+      throw new NotMadeOnThisDevice(
+        "This page cannot make a vault's secret run again, so it will not approve one. " +
+          'Reload the page to get the current version.'
+      );
     }
     const secretRun = secretRunOf(deps.secretRun, {
-      vault: made.vault.toLowerCase() as Hex, secret: made.secret.toLowerCase() as Hex, readers: made.readers.map((r) => r.toLowerCase() as Hex), ...(made.previous === undefined ? {} : { previous: made.previous.toLowerCase() }),
+      vault: made.vault.toLowerCase() as Hex,
+      secret: made.secret.toLowerCase() as Hex,
+      readers: made.readers.map((r) => r.toLowerCase() as Hex),
+      ...(made.previous === undefined ? {} : { previous: made.previous.toLowerCase() })
     });
     root = secretRun.root;
     payees = secretRun.payees;
     window = { opensAt: digits('window', made.opensAt), closesAt: digits('window', made.closesAt) };
   } else if (made.kind === 'transfer') {
     if (deps.vaultDetails === undefined || deps.retrySaltOf === undefined) {
-      throw new NotMadeOnThisDevice(`This page cannot make a one-off payment again, so it will not ${when === 'raise' ? 'raise' : 'approve'} one. `
-        + 'Reload the page to get the current version.');
+      throw new NotMadeOnThisDevice(
+        `This page cannot make a one-off payment again, so it will not ${when === 'raise' ? 'raise' : 'approve'} one. ` +
+          'Reload the page to get the current version.'
+      );
     }
     let built: ReturnType<typeof buildOneOffRun>;
     let secrets: ReturnType<typeof oneOffSecretsOf>;
@@ -254,22 +297,30 @@ export function refuseWhatThisDeviceDidNotMake(
       secrets = oneOffSecretsOf(made.seed as Hex);
       built = buildOneOffRun(made.facts, secrets, deps.vaultDetails, made.asset);
     } catch (e) {
-      throw new NotMadeOnThisDevice(`This one-off payment's record cannot be made into a payment (${(e as Error)?.message ?? String(e)}). ${DO_NOT}`);
+      throw new NotMadeOnThisDevice(
+        `This one-off payment's record cannot be made into a payment (${(e as Error)?.message ?? String(e)}). ${DO_NOT}`
+      );
     }
     /* Its salt is a first payment's, made from the record's own seed: never a leg's retry, which the chain charges nothing. */
     if (opened.salt === undefined || !same(oneOffSaltOf(secrets, deps.retrySaltOf), opened.salt)) {
-      throw new NotMadeOnThisDevice(`This proposal's salt was not made from its one-off payment's record, so the chain would not charge it as `
-        + `that payment. ${DO_NOT}`);
+      throw new NotMadeOnThisDevice(
+        `This proposal's salt was not made from its one-off payment's record, so the chain would not charge it as ` +
+          `that payment. ${DO_NOT}`
+      );
     }
     if (when === 'approve') {
       const read = made.wallet;
       const entry = oneOffEntryOf(secrets, (nonce) => fromHex(paidOnceOfNonce(toHex(nonce))));
       if (read === undefined || !read.asked.some((e) => e.toLowerCase() === entry)) {
-        throw new NotMadeOnThisDevice('Your wallet did not read whether this one-off payment was already paid, so this device will not '
-          + 'approve it. Reload the page and try again.');
+        throw new NotMadeOnThisDevice(
+          'Your wallet did not read whether this one-off payment was already paid, so this device will not ' +
+            'approve it. Reload the page and try again.'
+        );
       }
       if (read.held.some((e) => e.toLowerCase() === entry)) {
-        throw new NotMadeOnThisDevice(`This one-off payment is already recorded as paid, so it would be refused when paid. ${DO_NOT}`);
+        throw new NotMadeOnThisDevice(
+          `This one-off payment is already recorded as paid, so it would be refused when paid. ${DO_NOT}`
+        );
       }
     }
     root = built.tree.root;
@@ -278,8 +329,10 @@ export function refuseWhatThisDeviceDidNotMake(
     required = digits('approvals required', made.required);
   } else {
     if (deps.payKeyCommitmentOf === undefined) {
-      throw new NotMadeOnThisDevice('This page cannot read the company\'s pay-record key off the chain, so it will not '
-        + 'approve a payroll run. Reload the page to get the current version.');
+      throw new NotMadeOnThisDevice(
+        "This page cannot read the company's pay-record key off the chain, so it will not " +
+          'approve a payroll run. Reload the page to get the current version.'
+      );
     }
     /*
      * **THE PAY-RECORD KEY AND WHO IS PAID ARE READ BY THE PERSON'S OWN WALLET,
@@ -289,35 +342,51 @@ export function refuseWhatThisDeviceDidNotMake(
      */
     const read = made.wallet;
     if (read === undefined) {
-      throw new NotMadeOnThisDevice('Your wallet did not read whether the people on this run were already paid, so this '
-        + `device will not ${when === 'raise' ? 'raise' : 'approve'} it. Reload the page and try again.`);
+      throw new NotMadeOnThisDevice(
+        'Your wallet did not read whether the people on this run were already paid, so this ' +
+          `device will not ${when === 'raise' ? 'raise' : 'approve'} it. Reload the page and try again.`
+      );
     }
     const asked = new Set(read.asked.map((e) => e.toLowerCase()));
     const held = new Set(read.held.map((e) => e.toLowerCase()));
     const paidOnce = (nonce: Hex): boolean => {
       const entry = paidOnceOfNonce(nonce).toLowerCase();
       if (!asked.has(entry)) {
-        throw new NotMadeOnThisDevice('Your wallet was not asked about every payment on this run, so this device cannot say '
-          + 'who on it was already paid. Reload the page and try again.');
+        throw new NotMadeOnThisDevice(
+          'Your wallet was not asked about every payment on this run, so this device cannot say ' +
+            'who on it was already paid. Reload the page and try again.'
+        );
       }
       return held.has(entry);
     };
     const committed = read.payKeyCommitment;
     if (committed === null || !same(toHex(deps.payKeyCommitmentOf(fromHex(made.payKey))), committed)) {
-      throw new NotMadeOnThisDevice('The company state this run was rebuilt from carries a pay-record key other than the '
-        + `one the company committed to on the chain, so its payments would not be recorded as the chain records them. ${DO_NOT}`);
+      throw new NotMadeOnThisDevice(
+        'The company state this run was rebuilt from carries a pay-record key other than the ' +
+          `one the company committed to on the chain, so its payments would not be recorded as the chain records them. ${DO_NOT}`
+      );
     }
     if (deps.vaultDetails === undefined) {
-      throw new NotMadeOnThisDevice('This page cannot rebuild a payroll run, so it will not approve one. Reload the page '
-        + 'to get the current version.');
+      throw new NotMadeOnThisDevice(
+        'This page cannot rebuild a payroll run, so it will not approve one. Reload the page ' +
+          'to get the current version.'
+      );
     }
     const built = buildRun(
-      [...made.seeds], made.identity, [...made.facts], deps.vaultDetails,
-      { key: made.payKey as Hex, records: [...made.records] }, made.asset);
+      [...made.seeds],
+      made.identity,
+      [...made.facts],
+      deps.vaultDetails,
+      { key: made.payKey as Hex, records: [...made.records] },
+      made.asset
+    );
     const positions = made.retry ?? made.facts.map((_, i) => i);
-    if (made.retry !== undefined && (made.retry.length === 0
-      || made.retry.some((i) => !Number.isInteger(i) || i < 0 || i >= built.tree.leaves.length)
-      || new Set(made.retry).size !== made.retry.length)) {
+    if (
+      made.retry !== undefined &&
+      (made.retry.length === 0 ||
+        made.retry.some((i) => !Number.isInteger(i) || i < 0 || i >= built.tree.leaves.length) ||
+        new Set(made.retry).size !== made.retry.length)
+    ) {
       throw new NotMadeOnThisDevice(`This retry names people who are not on the run it retries. ${DO_NOT}`);
     }
     /* A retry is raised over a tree of its own, of only the people it names. */
@@ -333,14 +402,18 @@ export function refuseWhatThisDeviceDidNotMake(
      * retry whose salt names another leg, is refused.
      */
     if (deps.retrySaltOf === undefined) {
-      throw new NotMadeOnThisDevice('This page cannot make a run\'s salt again, so it cannot tell whether the run pays somebody '
-        + 'again without a charge. Reload the page to get the current version.');
+      throw new NotMadeOnThisDevice(
+        "This page cannot make a run's salt again, so it cannot tell whether the run pays somebody " +
+          'again without a charge. Reload the page to get the current version.'
+      );
     }
     const vouched = opened.vouched;
     if (vouched === undefined || vouchedRefusal(vouched) !== null) {
-      throw new NotMadeOnThisDevice('The company\'s record of this proposal does not say how its salt was made, so this '
-        + 'device cannot tell whether it pays somebody again without a charge. It was raised before this version: withdraw '
-        + 'it and raise it again.');
+      throw new NotMadeOnThisDevice(
+        "The company's record of this proposal does not say how its salt was made, so this " +
+          'device cannot tell whether it pays somebody again without a charge. It was raised before this version: withdraw ' +
+          'it and raise it again.'
+      );
     }
     /*
      * **AN APPROVAL VOUCHES FOR THE HEAD ITS RUN WAS RAISED OVER**, since the
@@ -348,19 +421,23 @@ export function refuseWhatThisDeviceDidNotMake(
      * this device checked itself, never over one only its raiser read.
      */
     if (vouched.checkedHere !== true) {
-      throw new NotMadeOnThisDevice('This run was raised over the company\'s records as they stood at a point this device has '
-        + 'not checked itself, so it will not approve it. Reload the page so this device reads the company\'s records, then '
-        + 'approve it again; if it is still refused, this device began checking the records after that point: check them '
-        + 'from the first and approve it again.');
+      throw new NotMadeOnThisDevice(
+        "This run was raised over the company's records as they stood at a point this device has " +
+          "not checked itself, so it will not approve it. Reload the page so this device reads the company's records, then " +
+          'approve it again; if it is still refused, this device began checking the records after that point: check them ' +
+          'from the first and approve it again.'
+      );
     }
     const fresh = vouchedFreshOf(vouched.head as Hex, vouched.r as Hex);
     const leg = made.retry === undefined ? NO_LEG() : fromHex(built.tree.root);
     if (opened.salt === undefined || !same(toHex(deps.retrySaltOf(leg, fromHex(fresh))), opened.salt)) {
-      throw new NotMadeOnThisDevice(made.retry === undefined
-        ? 'This proposal\'s salt says it pays a leg\'s people again, while the company\'s record says it is a first payment, '
-          + `so the chain would charge it nothing against that leg's charge. ${DO_NOT}`
-        : 'This retry\'s salt was not made over the leg it pays again, so the chain would charge it as some other leg\'s '
-          + `retry. ${DO_NOT}`);
+      throw new NotMadeOnThisDevice(
+        made.retry === undefined
+          ? "This proposal's salt says it pays a leg's people again, while the company's record says it is a first payment, " +
+              `so the chain would charge it nothing against that leg's charge. ${DO_NOT}`
+          : "This retry's salt was not made over the leg it pays again, so the chain would charge it as some other leg's " +
+              `retry. ${DO_NOT}`
+      );
     }
     root = raised.tree.root;
     payees = raised.tree.payees;
@@ -368,12 +445,19 @@ export function refuseWhatThisDeviceDidNotMake(
       const record = made.records[i]!;
       const nonce = payRecordNonceOf(made.payKey as Hex, record);
       if (paidOnce(nonce)) {
-        throw new NotMadeOnThisDevice(`This run pays somebody already recorded as paid for ${record.month}, so it would `
-          + `be refused when paid. ${DO_NOT}`);
+        throw new NotMadeOnThisDevice(
+          `This run pays somebody already recorded as paid for ${record.month}, so it would ` +
+            `be refused when paid. ${DO_NOT}`
+        );
       }
-      if (record.occurrence > 0 && !paidOnce(payRecordNonceOf(made.payKey as Hex, { ...record, occurrence: record.occurrence - 1 }))) {
-        throw new NotMadeOnThisDevice(`This run pays an extra payment for ${record.month} to somebody whose payment `
-          + `before it has not been made, so it would pay them twice for one month. ${DO_NOT}`);
+      if (
+        record.occurrence > 0 &&
+        !paidOnce(payRecordNonceOf(made.payKey as Hex, { ...record, occurrence: record.occurrence - 1 }))
+      ) {
+        throw new NotMadeOnThisDevice(
+          `This run pays an extra payment for ${record.month} to somebody whose payment ` +
+            `before it has not been made, so it would pay them twice for one month. ${DO_NOT}`
+        );
       }
     }
     window = { opensAt: digits('window', made.opensAt), closesAt: digits('window', made.closesAt) };
@@ -381,7 +465,9 @@ export function refuseWhatThisDeviceDidNotMake(
   }
   const payload = toHex(deps.runPayload(fromHex(root), payees, window.opensAt, window.closesAt, required));
   if (!same(payload, opened.digest)) {
-    throw new NotMadeOnThisDevice('What this proposal pays is not what this device rebuilt from the company\'s records: '
-      + `other people, other amounts, another month or another window. ${DO_NOT}`);
+    throw new NotMadeOnThisDevice(
+      "What this proposal pays is not what this device rebuilt from the company's records: " +
+        `other people, other amounts, another month or another window. ${DO_NOT}`
+    );
   }
 }

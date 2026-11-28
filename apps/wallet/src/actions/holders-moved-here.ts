@@ -12,7 +12,8 @@ import type { MovingSend } from './step-views.js';
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 /* A threshold of 0 is the account's word for "keep the one in force". */
-const thresholdTo = (threshold: number): Partial<AccountHoldersRead> => (threshold === 0 ? {} : { approvals: threshold });
+const thresholdTo = (threshold: number): Partial<AccountHoldersRead> =>
+  threshold === 0 ? {} : { approvals: threshold };
 
 /* The approvals a policy change needs, raised to `most` and never lowered by it: a missing row reads as none. */
 const barRaisedTo = (bar: number | null, most: number): number | null => ((bar ?? 0) < most ? most : bar);
@@ -30,8 +31,13 @@ export const CARRIED_BY = {
   'spending-policy': { circuit: 'setPolicy', on: 'account', service: 'proposal' },
   'policy-bar': { circuit: 'setPolicyBar', on: 'account', service: 'proposal' },
   'adopt-vault': { circuit: 'adopt', on: 'account', service: 'vault-start' },
-  'retire-vault': { circuit: 'retire', on: 'vault', service: null },
-} as const satisfies Readonly<Record<string, { readonly circuit: string; readonly on: 'account' | 'vault'; readonly service: 'proposal' | 'vault-start' | null }>>;
+  'retire-vault': { circuit: 'retire', on: 'vault', service: null }
+} as const satisfies Readonly<
+  Record<
+    string,
+    { readonly circuit: string; readonly on: 'account' | 'vault'; readonly service: 'proposal' | 'vault-start' | null }
+  >
+>;
 
 /** A kind of proposal whose carrying out moves who holds the company. */
 export type MovingKind = keyof typeof CARRIED_BY;
@@ -44,44 +50,67 @@ export interface CarryMoves {
 }
 
 /** The chain call that carries `moves` out: its kind's circuit, on the company's `account` or on the vault named. */
-export const carriedCall = (moves: CarryMoves, account: string): { readonly circuit: string; readonly contract: string } => {
+export const carriedCall = (
+  moves: CarryMoves,
+  account: string
+): { readonly circuit: string; readonly contract: string } => {
   const by = CARRIED_BY[moves.kind];
-  if (by.on === 'vault' && moves.vault === undefined) throw new Error(`the carrying out of ${moves.kind} names no vault, so nothing was sent.`);
+  if (by.on === 'vault' && moves.vault === undefined)
+    throw new Error(`the carrying out of ${moves.kind} names no vault, so nothing was sent.`);
   return { circuit: by.circuit, contract: (by.on === 'account' ? account : moves.vault!).toLowerCase() };
 };
 
 /** Whether a call on the chain is one some kind of proposal is carried out by, so it moves who holds the company. */
-export const movesWhoHoldsByCircuit = (circuit: string): boolean => Object.values(CARRIED_BY).some((by) => by.circuit === circuit);
+export const movesWhoHoldsByCircuit = (circuit: string): boolean =>
+  Object.values(CARRIED_BY).some((by) => by.circuit === circuit);
 
 /** The sends a carry's move is declared under before anything is sent: its write through the view, when the service is asked by one. */
 export const carryWrites = (id: string, moves: CarryMoves): readonly MovingSend[] =>
-  (CARRIED_BY[moves.kind].service === 'proposal' ? [{ proposal: id }] : []);
+  CARRIED_BY[moves.kind].service === 'proposal' ? [{ proposal: id }] : [];
 
 /** Taking an invited seat: the invitee's leaf seated, and the threshold the invitation sets, when it sets one. */
-export const seated = (leaf: string, threshold: number): HoldersMove => (h) =>
-  ({ ...h, seats: [...h.seats, leaf.toLowerCase()], ...thresholdTo(threshold) });
+export const seated =
+  (leaf: string, threshold: number): HoldersMove =>
+  (h) => ({ ...h, seats: [...h.seats, leaf.toLowerCase()], ...thresholdTo(threshold) });
 
 /** A removal: the leaf's seat emptied, and the threshold it leaves the company at, when it names one. */
-export const removed = (leaf: string, threshold: number): HoldersMove => (h) =>
-  ({ ...h, seats: h.seats.filter((s) => !same(s, leaf)), ...thresholdTo(threshold) });
+export const removed =
+  (leaf: string, threshold: number): HoldersMove =>
+  (h) => ({ ...h, seats: h.seats.filter((s) => !same(s, leaf)), ...thresholdTo(threshold) });
 
 /** A change of the account's threshold. */
-export const thresholdSet = (threshold: number): HoldersMove => (h) => ({ ...h, approvals: threshold });
+export const thresholdSet =
+  (threshold: number): HoldersMove =>
+  (h) => ({ ...h, approvals: threshold });
 
 /** A vault's own threshold set, which raises the approvals a policy change needs to it. */
-export const vaultThresholdSet = (vault: string, threshold: number): HoldersMove => (h) => ({
-  ...h, policyBar: barRaisedTo(h.policyBar, threshold),
-  vaultThresholds: [...h.vaultThresholds.filter((v) => !same(v.vault, vault)), { vault: vault.toLowerCase(), threshold }],
-});
+export const vaultThresholdSet =
+  (vault: string, threshold: number): HoldersMove =>
+  (h) => ({
+    ...h,
+    policyBar: barRaisedTo(h.policyBar, threshold),
+    vaultThresholds: [
+      ...h.vaultThresholds.filter((v) => !same(v.vault, vault)),
+      { vault: vault.toLowerCase(), threshold }
+    ]
+  });
 
 /** A change of the approvals a policy change needs. */
-export const policyBarSet = (bar: number): HoldersMove => (h) => ({ ...h, policyBar: bar });
+export const policyBarSet =
+  (bar: number): HoldersMove =>
+  (h) => ({ ...h, policyBar: bar });
 
 /** A spending policy set, which raises the approvals a policy change needs to its highest band's. */
-export const policySet = (most: number): HoldersMove => (h) => ({ ...h, policyBar: barRaisedTo(h.policyBar, most) });
+export const policySet =
+  (most: number): HoldersMove =>
+  (h) => ({ ...h, policyBar: barRaisedTo(h.policyBar, most) });
 
 /** A vault retired by the account, which lets go of it. */
-export const retired = (vault: string): HoldersMove => (h) => ({ ...h, adoptedVaults: h.adoptedVaults.filter((v) => !same(v, vault)) });
+export const retired =
+  (vault: string): HoldersMove =>
+  (h) => ({ ...h, adoptedVaults: h.adoptedVaults.filter((v) => !same(v, vault)) });
 
 /** A vault adopted by the account. */
-export const adopted = (vault: string): HoldersMove => (h) => ({ ...h, adoptedVaults: [...h.adoptedVaults, vault.toLowerCase()] });
+export const adopted =
+  (vault: string): HoldersMove =>
+  (h) => ({ ...h, adoptedVaults: [...h.adoptedVaults, vault.toLowerCase()] });

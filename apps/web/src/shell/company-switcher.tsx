@@ -1,8 +1,19 @@
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Add01Icon, Building03Icon, Tick02Icon, UnfoldMoreIcon } from '@hugeicons/core-free-icons';
 import {
-  ComingSoon, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, usePopupSide, useSidebar, useText,
+  ComingSoon,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  usePopupSide,
+  useSidebar,
+  useText
 } from 'vaults-ui';
 import { HOME, VIEWS } from '../pages.js';
 import { go } from '../router.js';
@@ -42,12 +53,21 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
       <SidebarMenuItem>
         <DropdownMenu open={open} onOpenChange={onOpenChange}>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuButton size="lg" className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground" data-action="company-switcher">
+            <SidebarMenuButton
+              size="lg"
+              className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+              data-action="company-switcher"
+            >
               <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-4" />
               </span>
               <span className="grid flex-1 text-start text-sm leading-tight">
-                <span className="truncate font-medium" data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}>{shown === null ? t('app.title') : nameOf(shown, names.get(shown.id))}</span>
+                <span
+                  className="truncate font-medium"
+                  data-shown-name={shown !== null && names.has(shown.id) ? true : undefined}
+                >
+                  {shown === null ? t('app.title') : nameOf(shown, names.get(shown.id))}
+                </span>
                 <span className="truncate text-xs text-muted-foreground">
                   {employee ? t('switcher.yourPay') : shown === null ? t('switcher.noCompany') : words.approvals(shown)}
                 </span>
@@ -55,7 +75,13 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
               <HugeiconsIcon icon={UnfoldMoreIcon} strokeWidth={2} className="ms-auto size-4" />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="min-w-64 rounded-lg" side={isMobile ? 'bottom' : end} align="start" sideOffset={4} data-company-switcher>
+          <DropdownMenuContent
+            className="min-w-64 rounded-lg"
+            side={isMobile ? 'bottom' : end}
+            align="start"
+            sideOffset={4}
+            data-company-switcher
+          >
             <DropdownMenuLabel className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>{employee ? t('switcher.companiesThatPayYou') : t('switcher.companies')}</span>
               <ShortcutKeys id={SHORTCUT.switchCompany} bare />
@@ -68,21 +94,40 @@ export function CompanySwitcher({ open, onOpenChange }: { open: boolean; onOpenC
             ) : (
               <>
                 {companies.map((c) => (
-                  <DropdownMenuItem key={c.id} onSelect={() => openCompany(c.id, () => chooseCompany(c.id))} className="gap-2 p-2" data-company={c.id}>
+                  <DropdownMenuItem
+                    key={c.id}
+                    onSelect={() => openCompany(c.id, () => chooseCompany(c.id))}
+                    className="gap-2 p-2"
+                    data-company={c.id}
+                  >
                     <span className="flex size-6 items-center justify-center rounded-md border">
                       <HugeiconsIcon icon={Building03Icon} strokeWidth={2} className="size-3.5" />
                     </span>
-                    <CompanyFacts company={c} name={names.get(c.id) ?? null} whyUnnamed={names.whyNot?.get(c.id) ?? null} inList />
+                    <CompanyFacts
+                      company={c}
+                      name={names.get(c.id) ?? null}
+                      whyUnnamed={names.whyNot?.get(c.id) ?? null}
+                      inList
+                    />
                     {c.id === company ? <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-4" /> : null}
                   </DropdownMenuItem>
                 ))}
                 {companies.every((c) => names.has(c.id)) ? null : (
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground" data-company-names="locked">{t('switcher.namesLocked')}</p>
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground" data-company-names="locked">
+                    {t('switcher.namesLocked')}
+                  </p>
                 )}
               </>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => { startSetupAt(STEP.createCompany, true); go(HOME.setup); }} className="gap-2 p-2" data-action="create-company">
+            <DropdownMenuItem
+              onSelect={() => {
+                startSetupAt(STEP.createCompany, true);
+                go(HOME.setup);
+              }}
+              className="gap-2 p-2"
+              data-action="create-company"
+            >
               <HugeiconsIcon icon={Add01Icon} strokeWidth={2} className="size-4" />
               <span className="flex-1">{t('switcher.create')}</span>
             </DropdownMenuItem>

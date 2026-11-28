@@ -53,17 +53,22 @@ describe('whether the keys on disk are the keys this build compiled', () => {
     const answer = keysOnDisk([c]);
     /* RED WHEN a key is taken because it exists, so keys from an earlier compile pass and fail inside a proof. */
     expect(answer.ok).toBe(false);
-    expect(answer.problems).toEqual([`${join(c.dir, 'first.verifier')} is stale: its sha256 is not the key its compiled module pins for first`]);
+    expect(answer.problems).toEqual([
+      `${join(c.dir, 'first.verifier')} is stale: its sha256 is not the key its compiled module pins for first`
+    ]);
     rmSync(c.dir, { recursive: true });
   });
 
   it('REFUSES a key the compiled module pins nothing for, and a module that pins nothing at all', () => {
     const c = twoCircuits();
     /* RED WHEN a key with nothing to compare it against is taken as current. */
-    expect(keysOnDisk([{ ...c, expectedVk: { first: c.expectedVk.first! } }]).problems)
-      .toEqual([`${join(c.dir, 'second.verifier')} has no key pinned for it in its compiled module`]);
+    expect(keysOnDisk([{ ...c, expectedVk: { first: c.expectedVk.first! } }]).problems).toEqual([
+      `${join(c.dir, 'second.verifier')} has no key pinned for it in its compiled module`
+    ]);
     /* RED WHEN a module compiled without keys is taken as agreeing with any keys on disk. */
-    expect(keysOnDisk([{ ...c, expectedVk: {} }]).problems[0]).toBe('its compiled module pins no verifier key for a contract, so no key on disk can be checked against it');
+    expect(keysOnDisk([{ ...c, expectedVk: {} }]).problems[0]).toBe(
+      'its compiled module pins no verifier key for a contract, so no key on disk can be checked against it'
+    );
     rmSync(c.dir, { recursive: true });
   });
 
@@ -86,7 +91,9 @@ describe('whether the keys on disk are the keys this build compiled', () => {
      * filled only when keys are built, so it cannot say which circuits there
      * are; a module that pins no key at all is the gate's own refusal, tested above.
      */
-    const neverCalled = (): never => { throw new Error('this test builds no call, so no witness is asked'); };
+    const neverCalled = (): never => {
+      throw new Error('this test builds no call, so no witness is asked');
+    };
     const account = new AccountContract(accountWitnesses);
     const vault = new VaultContract({ noteToSpend: neverCalled, nonceSecret: neverCalled });
     /* RED WHEN either contract's gate leaves a circuit out, so a build missing that circuit's key passes. */
@@ -99,30 +106,42 @@ describe('whether the keys on disk are the keys this build compiled', () => {
 });
 
 /* The repository's own keys, copied into a folder of this test's own: never the repository's files themselves. */
-const BUILT = [ACCOUNT_KEYS, VAULT_KEYS].every((c) => existsSync(c.dir) && readdirSync(c.dir).some((f) => f.endsWith('.verifier')));
-if (!BUILT) console.log('  NOT CHECKED HERE: no verifier keys are on disk to copy, so the gate was not asked of this build\'s own keys. `npm run compact` then `npm run compact:vault -- --full` build them.');
+const BUILT = [ACCOUNT_KEYS, VAULT_KEYS].every(
+  (c) => existsSync(c.dir) && readdirSync(c.dir).some((f) => f.endsWith('.verifier'))
+);
+if (!BUILT)
+  console.log(
+    "  NOT CHECKED HERE: no verifier keys are on disk to copy, so the gate was not asked of this build's own keys. `npm run compact` then `npm run compact:vault -- --full` build them."
+  );
 
-describe.skipIf(!BUILT)('the gate, asked of a copy of this build\'s own keys [needs verifier keys in contracts/managed*/keys; `npm run compact` then `npm run compact:vault -- --full` build them]', () => {
-  const copied = (c: ContractKeys): ContractKeys => {
-    const dir = aFolder();
-    for (const f of readdirSync(c.dir)) if (f.endsWith('.verifier')) copyFileSync(join(c.dir, f), join(dir, f));
-    return { ...c, dir };
-  };
+describe.skipIf(!BUILT)(
+  "the gate, asked of a copy of this build's own keys [needs verifier keys in contracts/managed*/keys; `npm run compact` then `npm run compact:vault -- --full` build them]",
+  () => {
+    const copied = (c: ContractKeys): ContractKeys => {
+      const dir = aFolder();
+      for (const f of readdirSync(c.dir)) if (f.endsWith('.verifier')) copyFileSync(join(c.dir, f), join(dir, f));
+      return { ...c, dir };
+    };
 
-  it('passes on the copy as on the original, and refuses the copy once one of its keys is changed', () => {
-    const account = copied(ACCOUNT_KEYS);
-    const vault = copied(VAULT_KEYS);
-    expect(keysOnDisk([account, vault])).toEqual(keysOnDisk());
-    writeFileSync(join(vault.dir, 'payout.verifier'), Buffer.from('a key an earlier compile made'));
-    /* RED WHEN a stale vault key passes the gate. */
-    expect(keysOnDisk([account, vault]).problems).toContain(`${join(vault.dir, 'payout.verifier')} is stale: its sha256 is not the key ${VAULT_KEYS.module} pins for payout`);
-    rmSync(join(account.dir, 'recordPaymentFromVault.verifier'));
-    /* RED WHEN a missing account key passes the gate. */
-    expect(keysOnDisk([account, vault]).problems).toContain(`${join(account.dir, 'recordPaymentFromVault.verifier')} is missing`);
-    rmSync(account.dir, { recursive: true });
-    rmSync(vault.dir, { recursive: true });
-  });
-});
+    it('passes on the copy as on the original, and refuses the copy once one of its keys is changed', () => {
+      const account = copied(ACCOUNT_KEYS);
+      const vault = copied(VAULT_KEYS);
+      expect(keysOnDisk([account, vault])).toEqual(keysOnDisk());
+      writeFileSync(join(vault.dir, 'payout.verifier'), Buffer.from('a key an earlier compile made'));
+      /* RED WHEN a stale vault key passes the gate. */
+      expect(keysOnDisk([account, vault]).problems).toContain(
+        `${join(vault.dir, 'payout.verifier')} is stale: its sha256 is not the key ${VAULT_KEYS.module} pins for payout`
+      );
+      rmSync(join(account.dir, 'recordPaymentFromVault.verifier'));
+      /* RED WHEN a missing account key passes the gate. */
+      expect(keysOnDisk([account, vault]).problems).toContain(
+        `${join(account.dir, 'recordPaymentFromVault.verifier')} is missing`
+      );
+      rmSync(account.dir, { recursive: true });
+      rmSync(vault.dir, { recursive: true });
+    });
+  }
+);
 
 /*
  * **WHERE THE CHECKS HAVE BUILT THE KEYS, THE GATE MUST OPEN.** Every key-gated
@@ -132,12 +151,18 @@ describe.skipIf(!BUILT)('the gate, asked of a copy of this build\'s own keys [ne
  * gated tests down is a failure naming what is missing or stale.
  */
 const KEYS_MUST_BE_BUILT = (process.env.KEYS_MUST_BE_BUILT ?? '') !== '';
-if (!KEYS_MUST_BE_BUILT) console.log('  NOT CHECKED HERE: KEYS_MUST_BE_BUILT is not set, so a gate that stands the key-gated tests down is not a failure here. The job that builds the keys sets it.');
+if (!KEYS_MUST_BE_BUILT)
+  console.log(
+    '  NOT CHECKED HERE: KEYS_MUST_BE_BUILT is not set, so a gate that stands the key-gated tests down is not a failure here. The job that builds the keys sets it.'
+  );
 
-describe.skipIf(!KEYS_MUST_BE_BUILT)('where the checks built the keys, every key-gated test runs [needs KEYS_MUST_BE_BUILT, which the job that runs `npm run compact` then `npm run compact:vault -- --full` sets]', () => {
-  it('the keys on disk are every circuit\'s, each the one this build compiled', () => {
-    const keys = keysOnDisk();
-    /* RED WHEN a key the job built is missing or stale, which would stand every gated page test down green. */
-    expect(keys.ok, keys.why).toBe(true);
-  });
-});
+describe.skipIf(!KEYS_MUST_BE_BUILT)(
+  'where the checks built the keys, every key-gated test runs [needs KEYS_MUST_BE_BUILT, which the job that runs `npm run compact` then `npm run compact:vault -- --full` sets]',
+  () => {
+    it("the keys on disk are every circuit's, each the one this build compiled", () => {
+      const keys = keysOnDisk();
+      /* RED WHEN a key the job built is missing or stale, which would stand every gated page test down green. */
+      expect(keys.ok, keys.why).toBe(true);
+    });
+  }
+);

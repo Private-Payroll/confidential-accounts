@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { accountCircuitsBeside, networkCircuitsBeside } from './circuits-served-beside.js';
 import type { ArtefactSource } from './key-material.js';
 import {
-  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS, ACCOUNT_CIRCUITS_AN_INVITEE_PROVES, ACCOUNT_CIRCUITS_A_DEVICE_CHARGES, ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS, ACCOUNT_CIRCUITS_A_VAULT_CALLS, ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE, VAULT_CIRCUITS,
+  ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS,
+  ACCOUNT_CIRCUITS_AN_INVITEE_PROVES,
+  ACCOUNT_CIRCUITS_A_DEVICE_CHARGES,
+  ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS,
+  ACCOUNT_CIRCUITS_A_VAULT_CALLS,
+  ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE,
+  VAULT_CIRCUITS
 } from '../../../src/midnight/vault-contract.js';
 
 /*
@@ -11,55 +17,88 @@ import {
  * and the SDK names each by its contract, circuit and key hash.
  */
 const source = (name: string, log: string[]): ArtefactSource => ({
-  lookupKey: async (l) => { log.push(`${name} key ${l}`); return undefined; },
-  getParams: async (k) => { log.push(`${name} params ${k}`); return new Uint8Array(); },
-  artefact: async (kind, l) => { log.push(`${name} ${kind} ${l}`); return new Uint8Array(); },
+  lookupKey: async (l) => {
+    log.push(`${name} key ${l}`);
+    return undefined;
+  },
+  getParams: async (k) => {
+    log.push(`${name} params ${k}`);
+    return new Uint8Array();
+  },
+  artefact: async (kind, l) => {
+    log.push(`${name} ${kind} ${l}`);
+    return new Uint8Array();
+  }
 });
 const at = (circuit: string, address = 'ab'.repeat(32)) => `contract:${address}/${circuit}?vk=${'0f'.repeat(32)}`;
 
-describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
-  it('the account\'s receipt step from the account\'s folder, the vault\'s own and the network\'s from their own folders', async () => {
+describe("WHERE A PAYMENT OUT'S PROVING MATERIAL IS FETCHED FROM", () => {
+  it("the account's receipt step from the account's folder, the vault's own and the network's from their own folders", async () => {
     /* RED WHEN: the account's circuits are not routed apart - recordPaymentFromVault is then asked of the vault's folder, which has none. */
     const log: string[] = [];
-    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    const routed = networkCircuitsBeside(
+      accountCircuitsBeside(source('vault', log), source('account', log)),
+      source('network', log)
+    );
     await routed.lookupKey(at('recordPaymentFromVault', 'c0'.repeat(32)));
     await routed.lookupKey(at('payout'));
     await routed.artefact('ir', at('recordPaymentFromVault', 'c0'.repeat(32)));
     await routed.lookupKey('midnight/zswap/spend');
     await routed.getParams(14);
     expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual([
-      'account key', 'vault key', 'account ir', 'network key', 'vault params',
+      'account key',
+      'vault key',
+      'account ir',
+      'network key',
+      'vault params'
     ]);
   });
 
-  it('a raise and an approval are the account\'s own circuits and are fetched from the account\'s folder too', async () => {
+  it("a raise and an approval are the account's own circuits and are fetched from the account's folder too", async () => {
     /* RED WHEN: propose or approve is asked of the vault's folder, which has neither. */
     const log: string[] = [];
-    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    const routed = networkCircuitsBeside(
+      accountCircuitsBeside(source('vault', log), source('account', log)),
+      source('network', log)
+    );
     await routed.lookupKey(at('propose', 'c0'.repeat(32)));
     await routed.artefact('prover', at('approve', 'c0'.repeat(32)));
     await routed.lookupKey('propose');
     await routed.lookupKey(at('deposit'));
     expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual([
-      'account key', 'account prover', 'account key', 'vault key',
+      'account key',
+      'account prover',
+      'account key',
+      'vault key'
     ]);
   });
 
-  it('A RETIRE PROVED ON A DEVICE TAKES THE ACCOUNT\'S retireVault MATERIAL FROM THE ACCOUNT\'S FOLDER, AND THE VAULT\'S retire FROM THE VAULT\'S', async () => {
+  it("A RETIRE PROVED ON A DEVICE TAKES THE ACCOUNT'S retireVault MATERIAL FROM THE ACCOUNT'S FOLDER, AND THE VAULT'S retire FROM THE VAULT'S", async () => {
     /* RED WHEN: the account's retireVault, which the vault's retire calls in the same transaction, is asked of the vault's folder, which has none, so no retire is ever proved on a device. */
     const log: string[] = [];
-    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    const routed = networkCircuitsBeside(
+      accountCircuitsBeside(source('vault', log), source('account', log)),
+      source('network', log)
+    );
     await routed.lookupKey(at('retire'));
     await routed.lookupKey(at('retireVault', 'c0'.repeat(32)));
     await routed.artefact('prover', at('retireVault', 'c0'.repeat(32)));
     await routed.artefact('ir', at('retireVault', 'c0'.repeat(32)));
-    expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual(['vault key', 'account key', 'account prover', 'account ir']);
+    expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual([
+      'vault key',
+      'account key',
+      'account prover',
+      'account ir'
+    ]);
   });
 
-  it('an anchor and its recovery are the account\'s own circuits and are fetched from the account\'s folder', async () => {
+  it("an anchor and its recovery are the account's own circuits and are fetched from the account's folder", async () => {
     /* RED WHEN: anchor or recoverAnchor is asked of the vault's folder, which has neither, so no record is ever anchored from a device. */
     const log: string[] = [];
-    const routed = networkCircuitsBeside(accountCircuitsBeside(source('vault', log), source('account', log)), source('network', log));
+    const routed = networkCircuitsBeside(
+      accountCircuitsBeside(source('vault', log), source('account', log)),
+      source('network', log)
+    );
     await routed.lookupKey(at('anchor', 'c0'.repeat(32)));
     await routed.lookupKey(at('recoverAnchor', 'c0'.repeat(32)));
     expect(log.map((l) => l.split(' ').slice(0, 2).join(' '))).toEqual(['account key', 'account key']);
@@ -69,20 +108,57 @@ describe('WHERE A PAYMENT OUT\'S PROVING MATERIAL IS FETCHED FROM', () => {
     /* RED WHEN: the served list is not exactly the lists above, or a vault circuit is named like one of them. */
     /* A vault's creation adopts it on the account from the device that made it; a company's creation seals its pay-record key from its founding signer's. */
     /* A withdrawal, a change of one vault's own approvals needed, a vault's spending policy and the approvals a policy change needs are proved on a signer's device too. */
-    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual(['propose', 'approve', 'removeSignerAndSetThreshold', 'setThreshold', 'adopt', 'sealPayKey', 'cancel', 'setVaultThreshold', 'setPolicy', 'setPolicyBar']);
+    expect(ACCOUNT_CIRCUITS_A_DEVICE_GOVERNS).toEqual([
+      'propose',
+      'approve',
+      'removeSignerAndSetThreshold',
+      'setThreshold',
+      'adopt',
+      'sealPayKey',
+      'cancel',
+      'setVaultThreshold',
+      'setPolicy',
+      'setPolicyBar'
+    ]);
     /* Charging an approved run to its vault's period is proved on the paying signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_CHARGES).toEqual(['clearRun']);
     /* The company's record anchor and its recovery are proved on a signer's device. */
     expect(ACCOUNT_CIRCUITS_A_DEVICE_ANCHORS).toEqual(['anchor', 'recoverAnchor']);
     /* The seat a person invited takes is proved on their own device, by their own wallet. */
     expect(ACCOUNT_CIRCUITS_AN_INVITEE_PROVES).toEqual(['seatInvited']);
-    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual(['adopt', 'anchor', 'approve', 'approveVaultChange', 'cancel', 'clearRun', 'propose', 'recordBatchFromVault', 'recordPaymentFromVault', 'recoverAnchor', 'removeSignerAndSetThreshold', 'retireVault', 'sealPayKey', 'seatInvited', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold']);
-    expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))).toEqual([]);
+    expect([...ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE].sort()).toEqual([
+      'adopt',
+      'anchor',
+      'approve',
+      'approveVaultChange',
+      'cancel',
+      'clearRun',
+      'propose',
+      'recordBatchFromVault',
+      'recordPaymentFromVault',
+      'recoverAnchor',
+      'removeSignerAndSetThreshold',
+      'retireVault',
+      'sealPayKey',
+      'seatInvited',
+      'setPolicy',
+      'setPolicyBar',
+      'setThreshold',
+      'setVaultThreshold'
+    ]);
+    expect(
+      (VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_SERVED_TO_A_DEVICE.includes(c))
+    ).toEqual([]);
   });
 
   it('NO VAULT CIRCUIT SHARES A NAME WITH AN ACCOUNT CIRCUIT A VAULT CALLS, which is what routing by name rests on', () => {
     /* RED WHEN: a vault circuit is named like one of these - its proof would then be made with the account's key. */
-    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual(['approveVaultChange', 'recordBatchFromVault', 'recordPaymentFromVault', 'retireVault']);
+    expect(ACCOUNT_CIRCUITS_A_VAULT_CALLS).toEqual([
+      'approveVaultChange',
+      'recordBatchFromVault',
+      'recordPaymentFromVault',
+      'retireVault'
+    ]);
     expect((VAULT_CIRCUITS as readonly string[]).filter((c) => ACCOUNT_CIRCUITS_A_VAULT_CALLS.includes(c))).toEqual([]);
   });
 });

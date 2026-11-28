@@ -6,14 +6,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * files once, and says nothing to the person when that fails.
  */
 const w = vi.hoisted(() => ({ worker: {} as Record<string, unknown>, starts: 0, fails: false }));
-vi.mock('vaults-web-shared/vault-worker-client.js', () => ({ startVaultBuilder: async () => { w.starts += 1; if (w.fails) throw new Error('the builder did not start'); return w.worker; } }));
+vi.mock('vaults-web-shared/vault-worker-client.js', () => ({
+  startVaultBuilder: async () => {
+    w.starts += 1;
+    if (w.fails) throw new Error('the builder did not start');
+    return w.worker;
+  }
+}));
 
 const aWorker = (): Record<string, unknown> => ({});
 async function load() {
   vi.resetModules();
   return import('./proving-warmed.js');
 }
-beforeEach(() => { w.worker = aWorker(); w.starts = 0; w.fails = false; });
+beforeEach(() => {
+  w.worker = aWorker();
+  w.starts = 0;
+  w.fails = false;
+});
 
 describe('warming the proving files', () => {
   const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -24,9 +34,15 @@ describe('warming the proving files', () => {
    */
   it('starts the one builder and asks for the files once, however often it is called', async () => {
     let asked = 0;
-    w.worker = { ...aWorker(), provingWarmed: async () => { asked += 1; } };
+    w.worker = {
+      ...aWorker(),
+      provingWarmed: async () => {
+        asked += 1;
+      }
+    };
     const m = await load();
-    m.warmTheProving(); m.warmTheProving();
+    m.warmTheProving();
+    m.warmTheProving();
     await settle();
     m.warmTheProving();
     await settle();
@@ -39,7 +55,13 @@ describe('warming the proving files', () => {
    */
   it('says nothing when the files could not be fetched, and asks again at the next call', async () => {
     let asked = 0;
-    w.worker = { ...aWorker(), provingWarmed: async () => { asked += 1; throw new Error('the public parameters did not arrive'); } };
+    w.worker = {
+      ...aWorker(),
+      provingWarmed: async () => {
+        asked += 1;
+        throw new Error('the public parameters did not arrive');
+      }
+    };
     const m = await load();
     expect(m.warmTheProving()).toBeUndefined();
     await settle();
@@ -71,4 +93,3 @@ describe('warming the proving files', () => {
     expect(w.starts).toBe(1);
   });
 });
-

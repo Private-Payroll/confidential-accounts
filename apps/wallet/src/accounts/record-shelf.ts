@@ -80,9 +80,10 @@ export function slotToWrite(secret: Secret): string {
   const slot = slotOf(secret);
   if (slot === null) {
     throw new Error(
-      'this window has a different wallet open than the one being written to. '
-      + 'Nothing was written. This is a defect: two wallets are never unlocked '
-      + 'at once, so a secret in hand is always the open wallet\u2019s.');
+      'this window has a different wallet open than the one being written to. ' +
+        'Nothing was written. This is a defect: two wallets are never unlocked ' +
+        'at once, so a secret in hand is always the open wallet\u2019s.'
+    );
   }
   return slot;
 }

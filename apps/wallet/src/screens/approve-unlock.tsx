@@ -20,35 +20,36 @@ export function unlockFacts(v: Unlock): ReactNode {
   const { request, companyCheck } = v;
   return (
     <Section
-      list={false} box={false} aria-label="What is being opened, and who is asking"
+      list={false}
+      box={false}
+      aria-label="What is being opened, and who is asking"
       title="What is being opened, and who is asking"
       description="One of these your browser saw for itself. The other is what the page says."
     >
       <p className="m-0 text-sm text-muted-foreground">This page really came from</p>
-      <p
-        className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`}
-        data-observed-origin
-      >
+      <p className={`m-0 font-mono break-all text-foreground ${FACT_TEXT}`} data-observed-origin>
         {request.requester.origin}
       </p>
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
         The company whose records it wants to open, as the page names it
       </p>
       {/*
-        * **THE THING A PERSON CAN ACTUALLY COMPARE**, rendered twenty
-        * characters wide from the company's label and its account together,
-        * and only once this wallet has read the account and found the label
-        * on it. `profile/fingerprint.ts` carries the arithmetic for the
-        * width and the reason it covers both.
-        */}
+       * **THE THING A PERSON CAN ACTUALLY COMPARE**, rendered twenty
+       * characters wide from the company's label and its account together,
+       * and only once this wallet has read the account and found the label
+       * on it. `profile/fingerprint.ts` carries the arithmetic for the
+       * width and the reason it covers both.
+       */}
       <CompanyOnChain
-        label={request.company} account={request.account} check={companyCheck}
+        label={request.company}
+        account={request.account}
+        check={companyCheck}
         fingerprintClass={FINGERPRINT_TEXT}
         compareWith="the person who invited you to this company gave you themselves, and not through this page"
       />
       <p className="m-0 text-sm text-muted-foreground" style={{ marginTop: '0.75rem' }}>
-        This wallet cannot check that the company belongs to the page asking. It can only
-        show you both. If you do not recognise the company, do not give the key.
+        This wallet cannot check that the company belongs to the page asking. It can only show you both. If you do not
+        recognise the company, do not give the key.
       </p>
     </Section>
   );
@@ -58,7 +59,9 @@ export function unlockAgreeing(v: Unlock): ReactNode {
   const { request } = v;
   return (
     <Section
-      list={false} box={false} aria-label="What you are agreeing to"
+      list={false}
+      box={false}
+      aria-label="What you are agreeing to"
       title="What you are agreeing to"
       description="This is not a fact about you. It is the ability to read."
     >
@@ -68,12 +71,12 @@ export function unlockAgreeing(v: Unlock): ReactNode {
       </p>
       <p className="m-0 text-sm text-muted-foreground">
         {`From the moment you press the button, ${request.requester.origin} can open `}
-        those records whenever their page is running. This wallet cannot watch it
-        happen and cannot tell you afterwards how often it did.
+        those records whenever their page is running. This wallet cannot watch it happen and cannot tell you afterwards
+        how often it did.
       </p>
       <p className="m-0 text-sm text-muted-foreground" data-unlock-held-addresses>
-        It also lets this page check whether a payslip was paid to one of your wallets. It
-        does not tell the page any of your addresses.
+        It also lets this page check whether a payslip was paid to one of your wallets. It does not tell the page any of
+        your addresses.
       </p>
     </Section>
   );
@@ -82,14 +85,15 @@ export function unlockAgreeing(v: Unlock): ReactNode {
 function unlockHowLong(): ReactNode {
   return (
     <Section
-      list={false} box={false} aria-label="How long they have it"
+      list={false}
+      box={false}
+      aria-label="How long they have it"
       title="How long they have it"
       description="The honest answer, which is not “until you say stop”."
     >
       <p className="m-0 text-sm text-muted-foreground">
-        Their page holds the key while it is open, and this wallet never stores it. But
-        nothing stops them keeping their own copy, and nothing here could tell. Treat
-        this as given for good.
+        Their page holds the key while it is open, and this wallet never stores it. But nothing stops them keeping their
+        own copy, and nothing here could tell. Treat this as given for good.
       </p>
     </Section>
   );
@@ -98,18 +102,18 @@ function unlockHowLong(): ReactNode {
 function unlockNotPerWallet(): ReactNode {
   return (
     <Section
-      list={false} box={false} aria-label="It does not matter which of this wallet's addresses you use, or which page asked"
+      list={false}
+      box={false}
+      aria-label="It does not matter which of this wallet's addresses you use, or which page asked"
       title="It does not matter which of this wallet's addresses you use, or which page asked"
       description="The key belongs to the company and to this wallet, not to this website."
     >
       <p className="m-0 text-sm text-muted-foreground" data-not-per-wallet>
-        This is one key, for this company and no other: no other company can be opened
-        with it, and no other key of yours opens theirs. It is the same key on every
-        device you sign in on, the same key again if you ever have to rebuild this
-        wallet from your recovery pieces, and — this is the part that matters — the
-        same key if you one day open these records somewhere that is not this website
-        at all. That last one is what stops these records being ours rather than yours.
-        It is made from this wallet, though: another wallet held in this browser gives a
+        This is one key, for this company and no other: no other company can be opened with it, and no other key of
+        yours opens theirs. It is the same key on every device you sign in on, the same key again if you ever have to
+        rebuild this wallet from your recovery pieces, and — this is the part that matters — the same key if you one day
+        open these records somewhere that is not this website at all. That last one is what stops these records being
+        ours rather than yours. It is made from this wallet, though: another wallet held in this browser gives a
         different key for the same company.
       </p>
     </Section>
@@ -128,7 +132,19 @@ function unlockNotPerWallet(): ReactNode {
  * does not happen. A site that could obtain a key without a person present could read a company whenever it liked.
  */
 export function unlockView(v: Unlock): ReactNode {
-  const { port, now, setChannelState, channel, profile, thisWallet, request, companyOnChain, consent, release, whoIsAsking } = v;
+  const {
+    port,
+    now,
+    setChannelState,
+    channel,
+    profile,
+    thisWallet,
+    request,
+    companyOnChain,
+    consent,
+    release,
+    whoIsAsking
+  } = v;
   /*
    * **WHERE ELSE THIS COMPANY'S KEY HAS ALREADY GONE.**
    *
@@ -138,51 +154,60 @@ export function unlockView(v: Unlock): ReactNode {
    * stopped depending on one. Losing every row costs this warning and cannot
    * cost access.
    */
-  const elsewhere = originsFor(profile ?? emptyProfile(now()), request.company, request.account)
-    .filter((origin) => origin !== request.requester.origin);
+  const elsewhere = originsFor(profile ?? emptyProfile(now()), request.company, request.account).filter(
+    (origin) => origin !== request.requester.origin
+  );
   /* Read at render, from this browser's own record of which wallet signed in to this page. */
   const notThisWallet = whyNotThisWallet(port, request.requester.origin, thisWallet);
 
   return (
     <>
       {/*
-        * **THE HEADLINE IS BUILT FROM THE OBSERVED ORIGIN.** It used
-        * to be built from `request.requester.name` — the one field on the
-        * whole ask that the ASKER chose — which is how a page served from
-        * `payroll-b.example` came to sit under a wallet headline reading
-        * *"Let Payroll A open your records"*. The name is still shown, in the
-        * card below, labelled as what they call themselves.
-        */}
+       * **THE HEADLINE IS BUILT FROM THE OBSERVED ORIGIN.** It used
+       * to be built from `request.requester.name` — the one field on the
+       * whole ask that the ASKER chose — which is how a page served from
+       * `payroll-b.example` came to sit under a wallet headline reading
+       * *"Let Payroll A open your records"*. The name is still shown, in the
+       * card below, labelled as what they call themselves.
+       */}
       <h1 data-headline>{`Let ${request.requester.origin} open a company’s records`}</h1>
 
       {/*
-        * **THE TWO FACTS, TOGETHER, AND NEITHER SMALLER THAN A NAME.**
-        * One of them your browser observed; the other the
-        * page claims, and the screen says which is which rather than
-        * presenting both as though the wallet checked them.
-        */}
+       * **THE TWO FACTS, TOGETHER, AND NEITHER SMALLER THAN A NAME.**
+       * One of them your browser observed; the other the
+       * page claims, and the screen says which is which rather than
+       * presenting both as though the wallet checked them.
+       */}
       {unlockFacts(v)}
 
       {whoIsAsking}
 
-      {elsewhere.length > 0 && (
-        seenElsewhere({ company: request.company, account: request.account, asking: request.requester.origin, elsewhere, companyOnChain, withExplanation: true })
-      )}
+      {elsewhere.length > 0 &&
+        seenElsewhere({
+          company: request.company,
+          account: request.account,
+          asking: request.requester.origin,
+          elsewhere,
+          companyOnChain,
+          withExplanation: true
+        })}
 
       {unlockAgreeing(v)}
 
       {unlockHowLong()}
 
       {/*
-        * SAID BECAUSE IT IS TRUE AND BECAUSE IT IS THE REASON THIS IS SAFE
-        * ENOUGH TO DO AT ALL. One key per site, and the same key for ever —
-        * which is also why a recovery gets the records back.
-        */}
+       * SAID BECAUSE IT IS TRUE AND BECAUSE IT IS THE REASON THIS IS SAFE
+       * ENOUGH TO DO AT ALL. One key per site, and the same key for ever —
+       * which is also why a recovery gets the records back.
+       */}
       {unlockNotPerWallet()}
 
       {notThisWallet !== null && (
         <StatusAlert tone="danger" title="Another wallet answered this page's last sign-in">
-          <p className="m-0" data-not-this-wallet>{notThisWallet}</p>
+          <p className="m-0" data-not-this-wallet>
+            {notThisWallet}
+          </p>
           <p className="m-0">No key has been given.</p>
         </StatusAlert>
       )}
@@ -190,20 +215,28 @@ export function unlockView(v: Unlock): ReactNode {
       {/* §6 — NO REVOCATION LANGUAGE, ANYWHERE. */}
       <StatusAlert tone="warning" role={null} title="What is given, is given">
         <p className="m-0">
-          You can refuse the next time they ask. That is the whole of what stopping
-          means: whoever is behind that page keeps everything they have already opened
-          and anything they copied while it was open, and nothing can take back a key.
+          You can refuse the next time they ask. That is the whole of what stopping means: whoever is behind that page
+          keeps everything they have already opened and anything they copied while it was open, and nothing can take
+          back a key.
         </p>
       </StatusAlert>
 
       <div className="flex flex-wrap gap-2">
         {/* THE BUTTON IS THE HEADLINE'S RULE AGAIN. The rule names the button
-          * as well as the `<h1>`: a person who skims reads those two and
-          * nothing else, so neither may be written in the asker's own words. */}
+         * as well as the `<h1>`: a person who skims reads those two and
+         * nothing else, so neither may be written in the asker's own words. */}
         {/* Disabled for a wallet that did not answer this page's last sign-in: a
-          * disabled button fires no press in React, by click or by key, so this is
-          * the gate and `release` has no second copy of it. */}
-        <Button size="lg" type="button" variant="default" onClick={release} disabled={!consent.ok || notThisWallet !== null || !companyOnChain} data-approve data-unlock>
+         * disabled button fires no press in React, by click or by key, so this is
+         * the gate and `release` has no second copy of it. */}
+        <Button
+          size="lg"
+          type="button"
+          variant="default"
+          onClick={release}
+          disabled={!consent.ok || notThisWallet !== null || !companyOnChain}
+          data-approve
+          data-unlock
+        >
           {`Give ${request.requester.origin} the key`}
         </Button>
         <Button
@@ -211,7 +244,10 @@ export function unlockView(v: Unlock): ReactNode {
           type="button"
           variant="ghost"
           data-decline
-          onClick={() => { channel?.refuse('declined'); setChannelState({ of: 'waiting' }); }}
+          onClick={() => {
+            channel?.refuse('declined');
+            setChannelState({ of: 'waiting' });
+          }}
         >
           Do not give a key
         </Button>

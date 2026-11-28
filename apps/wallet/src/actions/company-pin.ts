@@ -5,8 +5,19 @@
  * label already pinned answers `another` rather than throwing in the middle of a step. A joining person's seat is
  * pinned only once they confirmed the company's fingerprint and the chain seats its leaf (`pinTheJoiner`).
  */
-import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
-import { pinIn, withPin, type Keyring, type PendingSeat, type PinFrom } from '../../../../packages/web-shared/src/keyring-blob.js';
+import {
+  readAccountAddress,
+  readCompanyLabel,
+  type AccountAddress,
+  type CompanyLabel
+} from 'midnight-identity/profile/company-label';
+import {
+  pinIn,
+  withPin,
+  type Keyring,
+  type PendingSeat,
+  type PinFrom
+} from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { StepContext } from './definition.js';
 
 /** What the saved keys say of a label: pinned to an account, and how; no pin; or no saved keys open to say. */
@@ -45,23 +56,34 @@ export function pinnedFor(ctx: Keys, label: string): PinRead {
 /** The saved keys' word that `label` is pinned to `account`, or null when they pin no account or another one. */
 export function pinHeldFor(ctx: Keys, label: CompanyLabel, account: AccountAddress): PinHeld | null {
   const read = pinnedFor(ctx, label);
-  return read.of === 'pinned' && read.account === account.toLowerCase() ? { label, account: read.account, from: read.from } : null;
+  return read.of === 'pinned' && read.account === account.toLowerCase()
+    ? { label, account: read.account, from: read.from }
+    : null;
 }
 
 /**
  * **PINS `account` AS THE COMPANY `label`'S, ONCE**, kept in the saved keys before this resolves. The same pin again
  * writes nothing. A label already pinned to another account is left as it is and answered `another`.
  */
-export async function pinCompany(ctx: Keys, label: string, account: string, from: PinFrom, now: () => number = Date.now): Promise<PinWritten> {
+export async function pinCompany(
+  ctx: Keys,
+  label: string,
+  account: string,
+  from: PinFrom,
+  now: () => number = Date.now
+): Promise<PinWritten> {
   const keyring = ctx.keyring;
   const company = readCompanyLabel(label);
   const address = readAccountAddress(String(account).toLowerCase());
   if (keyring === null || company === null || address === null) return { of: 'not-open' };
   const before = readIn(keyring.open().read(), company);
-  if (before.of === 'none') await keyring.keep((k) => withPin(k, company, address, from, new Date(now()).toISOString()));
+  if (before.of === 'none')
+    await keyring.keep((k) => withPin(k, company, address, from, new Date(now()).toISOString()));
   const after = readIn(keyring.open().read(), company);
   if (after.of !== 'pinned') return { of: 'not-open' };
-  return after.account === address ? { of: 'pinned', held: { label: company, account: address, from: after.from } } : { of: 'another', account: after.account };
+  return after.account === address
+    ? { of: 'pinned', held: { label: company, account: address, from: after.from } }
+    : { of: 'another', account: after.account };
 }
 
 /** How pinning a joining seat ended, when it did not write a pin: not confirmed by the person, or its leaf not seated. */
@@ -72,7 +94,13 @@ export type JoinerPinned = PinWritten | { readonly of: 'not-confirmed' } | { rea
  * the chain seats its leaf on that account: `leaf` is the seat's leaf, `leaves` the seats of `readFrom` as read. Seats
  * read from any other account pin nothing, and a pending seat the person never confirmed is never pinned.
  */
-export async function pinTheJoiner(ctx: Keys, pending: PendingSeat, leaf: string, leaves: readonly string[], readFrom: string): Promise<JoinerPinned> {
+export async function pinTheJoiner(
+  ctx: Keys,
+  pending: PendingSeat,
+  leaf: string,
+  leaves: readonly string[],
+  readFrom: string
+): Promise<JoinerPinned> {
   const joining = pending.joining;
   if (joining === undefined || joining.confirmed !== true) return { of: 'not-confirmed' };
   if (String(joining.account).toLowerCase() !== readFrom.toLowerCase()) return { of: 'not-seated' };

@@ -25,7 +25,8 @@ const EPOCH = /^(?:0|[1-9][0-9]{0,8})$/u;
 const PURPOSE = /^[a-z]+(?:-[a-z]+){0,3}$/u;
 const KEY = /^[0-9a-f]{64}$/u;
 
-const plainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const plainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The keys of one epoch read whole, or null. */
 const purposesRead = (raw: unknown, known: (purpose: string) => boolean): Readonly<Record<string, string>> | null => {
@@ -44,7 +45,10 @@ const purposesRead = (raw: unknown, known: (purpose: string) => boolean): Readon
  * The release read whole, or null when any part of it is not in its one shape or names a kind of record `known` does
  * not; without `known`, a kind is checked for its form alone, as the channel reads an end before anyone places it.
  */
-export function readReleasedReadKeys(raw: unknown, known: (purpose: string) => boolean = () => true): ReadKeysReleased | null {
+export function readReleasedReadKeys(
+  raw: unknown,
+  known: (purpose: string) => boolean = () => true
+): ReadKeysReleased | null {
   if (!plainObject(raw) || Object.keys(raw).sort().join(',') !== 'accountId,byEpoch') return null;
   const { accountId, byEpoch } = raw;
   if (typeof accountId !== 'string' || !RECORD_ID.test(accountId) || !plainObject(byEpoch)) return null;

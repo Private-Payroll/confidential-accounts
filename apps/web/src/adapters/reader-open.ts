@@ -14,24 +14,41 @@ import { READER_OF, READER_REFUSED, readReaderCompany, type ReaderCompany, type 
 
 /** Why a reader's company did not open, by the code the wallet or the read gave; each has its own phrase on the page. */
 export const READER_WHY = {
-  noGrant: 'no-grant', takenAway: 'taken-away', notAReaderHere: 'not-a-reader-here', notRead: 'not-read', notOnChain: 'not-on-chain', notACompany: 'not-a-company',
-  unreached: 'unreached', notTheCompanys: 'not-the-companys', noKeys: 'no-keys', other: 'other',
+  noGrant: 'no-grant',
+  takenAway: 'taken-away',
+  notAReaderHere: 'not-a-reader-here',
+  notRead: 'not-read',
+  notOnChain: 'not-on-chain',
+  notACompany: 'not-a-company',
+  unreached: 'unreached',
+  notTheCompanys: 'not-the-companys',
+  noKeys: 'no-keys',
+  other: 'other'
 } as const;
 export type ReaderWhy = (typeof READER_WHY)[keyof typeof READER_WHY];
 
 const FROM_THE_WALLET: Readonly<Record<string, ReaderWhy>> = {
-  'no-grant': READER_WHY.noGrant, 'taken-away': READER_WHY.takenAway, 'not-a-reader-here': READER_WHY.notAReaderHere, 'not-read': READER_WHY.notRead,
-  'not-on-chain': READER_WHY.notOnChain, 'not-a-company': READER_WHY.notACompany, 'service-unreached': READER_WHY.unreached,
+  'no-grant': READER_WHY.noGrant,
+  'taken-away': READER_WHY.takenAway,
+  'not-a-reader-here': READER_WHY.notAReaderHere,
+  'not-read': READER_WHY.notRead,
+  'not-on-chain': READER_WHY.notOnChain,
+  'not-a-company': READER_WHY.notACompany,
+  'service-unreached': READER_WHY.unreached
 };
 
 /** The code at the end of the key of the words the wallet refused in (`act.reader-keys.why.no-grant`), as the page tells it; other when the wallet named none it knows. */
-export const readerWhyOf = (refused: string | null): ReaderWhy => FROM_THE_WALLET[/^act\.[a-z-]+\.why\.([a-z-]+)$/u.exec(refused ?? '')?.[1] ?? ''] ?? READER_WHY.other;
+export const readerWhyOf = (refused: string | null): ReaderWhy =>
+  FROM_THE_WALLET[/^act\.[a-z-]+\.why\.([a-z-]+)$/u.exec(refused ?? '')?.[1] ?? ''] ?? READER_WHY.other;
 
 /** Whether the wallet gave the reader's keys, or the company stayed closed; compared by the code. */
 export const READER_KEYS = { held: 'held', closed: 'closed' } as const;
 
 export type ReaderOpened =
-  | { readonly of: typeof READER_OF.open; readonly company: Extract<ReaderCompany, { readonly of: typeof READER_OF.open }> }
+  | {
+      readonly of: typeof READER_OF.open;
+      readonly company: Extract<ReaderCompany, { readonly of: typeof READER_OF.open }>;
+    }
   | { readonly of: typeof READER_KEYS.closed; readonly why: ReaderWhy }
   | { readonly of: typeof ACTED.refused; readonly why: ActRefusal };
 
@@ -47,7 +64,8 @@ const closed = new Map<string, ReaderOpened>();
 
 /** Keeps `opened` for the sign-up page of `id` when it is not an open company, and forgets what was kept when it is. */
 export function rememberWhyNotOpen(id: string, opened: ReaderOpened): void {
-  if (opened.of === READER_OF.open) closed.delete(id); else closed.set(id, opened);
+  if (opened.of === READER_OF.open) closed.delete(id);
+  else closed.set(id, opened);
 }
 
 /** What was kept for `id`, once. */
@@ -63,16 +81,27 @@ export async function readOpened(link: ReaderLink): Promise<ReaderOpened> {
   if (held === null) return { of: READER_KEYS.closed, why: READER_WHY.noKeys };
   const read = await readReaderCompany(held, link);
   if (read.of === READER_OF.open) return { of: READER_OF.open, company: read };
-  return { of: READER_KEYS.closed, why: read.why === READER_REFUSED.notTheCompanys ? READER_WHY.notTheCompanys : READER_WHY.unreached };
+  return {
+    of: READER_KEYS.closed,
+    why: read.why === READER_REFUSED.notTheCompanys ? READER_WHY.notTheCompanys : READER_WHY.unreached
+  };
 }
 
 /** Asks the wallet for the reader's keys for the company: nothing held and the reason when it gave none, which drops any keys held before. */
-export async function askForReaderKeys(personId: string, link: ReaderLink): Promise<{ readonly of: typeof READER_KEYS.held } | Exclude<ReaderOpened, { readonly of: typeof READER_OF.open }>> {
+export async function askForReaderKeys(
+  personId: string,
+  link: ReaderLink
+): Promise<{ readonly of: typeof READER_KEYS.held } | Exclude<ReaderOpened, { readonly of: typeof READER_OF.open }>> {
   if (ACCOUNT_ORIGIN === '') return { of: ACTED.refused, why: ACT_REFUSAL.notSetUp };
   try {
     if (!(await keyringFor(personId))) return { of: ACTED.refused, why: ACT_REFUSAL.notSignedIn };
-    const asked = await readerKeysFromTheWallet({ accountId: link.id, label: link.label, account: link.account }, ACCOUNT_ORIGIN);
-    return asked.of === READER_KEYS.held ? { of: READER_KEYS.held } : { of: READER_KEYS.closed, why: readerWhyOf(asked.refused) };
+    const asked = await readerKeysFromTheWallet(
+      { accountId: link.id, label: link.label, account: link.account },
+      ACCOUNT_ORIGIN
+    );
+    return asked.of === READER_KEYS.held
+      ? { of: READER_KEYS.held }
+      : { of: READER_KEYS.closed, why: readerWhyOf(asked.refused) };
   } catch (e) {
     return { of: ACTED.refused, why: refusalOf(e) };
   }

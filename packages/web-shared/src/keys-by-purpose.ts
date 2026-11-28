@@ -22,18 +22,23 @@ interface KeysByPurpose {
 }
 
 /** The keys by purpose of whoever holds `held`. */
-export const keysByPurpose = (held: HeldForReading): KeysByPurpose => (isPurposeWraps(held)
-  ? { at: (epoch) => purposeKeysAt(held, epoch), everyEpoch: () => [...purposeKeysOfEveryEpoch(held)].reverse() }
-  : {
-    at: (epoch) => purposeKeysOfTheCompanyKey(keyOf(held, epoch)),
-    everyEpoch: () => keysHeld(held).map(purposeKeysOfTheCompanyKey),
-  });
+export const keysByPurpose = (held: HeldForReading): KeysByPurpose =>
+  isPurposeWraps(held)
+    ? { at: (epoch) => purposeKeysAt(held, epoch), everyEpoch: () => [...purposeKeysOfEveryEpoch(held)].reverse() }
+    : {
+        at: (epoch) => purposeKeysOfTheCompanyKey(keyOf(held, epoch)),
+        everyEpoch: () => keysHeld(held).map(purposeKeysOfTheCompanyKey)
+      };
 
 /** What `open` makes of the first epoch's keys it does not throw on, newest first; the last refusal when every epoch's does. */
 export const openedWithAnyEpoch = <T>(keys: KeysByPurpose, open: (keys: PurposeKeys) => T): T => {
   let last: unknown = new Error('this device holds no key of the company.');
   for (const k of keys.everyEpoch()) {
-    try { return open(k); } catch (e) { last = e; }
+    try {
+      return open(k);
+    } catch (e) {
+      last = e;
+    }
   }
   throw last;
 };

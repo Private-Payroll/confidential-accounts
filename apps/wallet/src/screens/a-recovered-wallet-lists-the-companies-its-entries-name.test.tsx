@@ -4,7 +4,14 @@ import { identityFromSecret, newSecret } from 'midnight-identity/keys/derivation
 import { drawCompanyLabel, type AccountAddress } from 'midnight-identity/profile/company-label';
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { registryEntriesFound } from '../chain/private-registry-on-chain.js';
-import { ACCOUNT_STATE, NETWORK, REGISTRY_STATE, entryFor, leafOf, registryWorld } from '../chain/registry-entries.test-support.js';
+import {
+  ACCOUNT_STATE,
+  NETWORK,
+  REGISTRY_STATE,
+  entryFor,
+  leafOf,
+  registryWorld
+} from '../chain/registry-entries.test-support.js';
 import { cleanup, render, screen } from '../testing/render.js';
 import EN from '../locales/en.json' with { type: 'json' };
 import { CompaniesFoundAgain } from './companies-found-again.js';
@@ -22,7 +29,10 @@ const B = 'b2'.repeat(32) as AccountAddress;
 const FIRST = 'e1'.repeat(32);
 const seated = { label: LABEL, state: ACCOUNT_STATE, seats: [leafOf(identity, LABEL, 0)] };
 const finding = (held: Parameters<typeof registryWorld>[1]['registries'][string]['held']) => {
-  const w = registryWorld(identity, { registries: { [FIRST]: { state: REGISTRY_STATE, held } }, accounts: { [A]: seated, [B]: seated } });
+  const w = registryWorld(identity, {
+    registries: { [FIRST]: { state: REGISTRY_STATE, held } },
+    accounts: { [A]: seated, [B]: seated }
+  });
   return (who: typeof identity) => registryEntriesFound(who, NETWORK, w.reads);
 };
 
@@ -40,7 +50,9 @@ describe('a recovered wallet lists the companies its entries name', () => {
   });
 
   it('shows a clash with both fingerprints and keeps neither', async () => {
-    render(<CompaniesFoundAgain identity={identity} find={finding({ 0: entryFor(LABEL, A), 1: entryFor(LABEL, B) })} />);
+    render(
+      <CompaniesFoundAgain identity={identity} find={finding({ 0: entryFor(LABEL, A), 1: entryFor(LABEL, B) })} />
+    );
     /* RED WHEN: one account of a clash is hidden, or the clash is listed as a company found. */
     expect(await screen.findByText(EN['recover.found.clash'])).toBeTruthy();
     expect(screen.getByText(companyFingerprint(LABEL, A))).toBeTruthy();
@@ -49,13 +61,22 @@ describe('a recovered wallet lists the companies its entries name', () => {
   });
 
   it('says in words that a network lists no registry', async () => {
-    render(<CompaniesFoundAgain identity={identity} find={async () => ({ of: 'no-registries', network: 'preprod' })} />);
+    render(
+      <CompaniesFoundAgain identity={identity} find={async () => ({ of: 'no-registries', network: 'preprod' })} />
+    );
     /* RED WHEN: a network with no registry shows nothing, or an error. */
     expect(await screen.findByText(EN['recover.found.no-registries'].replace('{network}', 'preprod'))).toBeTruthy();
   });
 
   it('says the chain could not be read when the find fails, and lists nothing', async () => {
-    render(<CompaniesFoundAgain identity={identity} find={async () => { throw new Error('the indexer did not answer'); }} />);
+    render(
+      <CompaniesFoundAgain
+        identity={identity}
+        find={async () => {
+          throw new Error('the indexer did not answer');
+        }}
+      />
+    );
     /* RED WHEN: a failed find is silent, or listed as finding nothing. */
     expect(await screen.findByText(EN['recover.found.failed'])).toBeTruthy();
   });

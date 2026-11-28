@@ -19,7 +19,9 @@ export function ShortcutsHelp({ open, onOpenChange }: { open: boolean; onOpenCha
                 <span>{s.does(t)}</span>
                 {s.soon === undefined ? null : <ComingSoon explanation={s.soon(t)} />}
               </dt>
-              <dd><ShortcutKeys id={s.id} /></dd>
+              <dd>
+                <ShortcutKeys id={s.id} />
+              </dd>
             </div>
           ))}
         </dl>

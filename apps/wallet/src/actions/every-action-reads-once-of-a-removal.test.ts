@@ -6,6 +6,6 @@
 import { describe } from 'vitest';
 import { setUpActionsCounted } from './actions-set-up-first.test-support.js';
 
-describe('RAISING A SIGNER\'S REMOVAL READS THE SAME AT EVERY SIZE OF THE COMPANY', { timeout: 160_000 }, () => {
+describe("RAISING A SIGNER'S REMOVAL READS THE SAME AT EVERY SIZE OF THE COMPANY", { timeout: 160_000 }, () => {
   setUpActionsCounted(import.meta.url);
 });

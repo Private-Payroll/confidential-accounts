@@ -26,24 +26,37 @@ import { serviceCallOf, serviceSource } from './records-source.js';
 vi.mock('./vault-page-doors.js', async (real) => ({
   ...(await real<typeof import('./vault-page-doors.js')>()),
   judgeIn: () => () => null,
-  namedHere: () => [],
+  namedHere: () => []
 }));
 
 const NETWORK = 'undeployed';
 const walletOf = (n: number) => identityFromSecret(new Uint8Array(32).fill(n));
-const unshieldedOf = (n: number): string => addressOfVerifyingKey(
-  signatureVerifyingKey({ tag: 'schnorr', value: Buffer.from(walletOf(n).moneyAt(0).night).toString('hex') }).value, NETWORK as never);
+const unshieldedOf = (n: number): string =>
+  addressOfVerifyingKey(
+    signatureVerifyingKey({ tag: 'schnorr', value: Buffer.from(walletOf(n).moneyAt(0).night).toString('hex') }).value,
+    NETWORK as never
+  );
 const FOR: AddressClaimFor = Object.freeze({
-  company: 'acme-label', person: 'emp_0123456789abcdef0123', payslipKey: 'ab'.repeat(32), address: unshieldedOf(5), network: NETWORK,
+  company: 'acme-label',
+  person: 'emp_0123456789abcdef0123',
+  payslipKey: 'ab'.repeat(32),
+  address: unshieldedOf(5),
+  network: NETWORK
 });
 const GOOD = signUnshieldedClaim(walletOf(5), 0, FOR);
 const FORGED = { ...signUnshieldedClaim(walletOf(6), 0, { ...FOR, address: unshieldedOf(6) }), address: FOR.address };
 const FLIPPED = { ...GOOD, signature: (GOOD.signature[0] === '0' ? '1' : '0') + GOOD.signature.slice(1) };
 
 const inTheWorker = async (claim: unknown, f: AddressClaimFor) => {
-  const answer = await answerVaultAsk(async () => ({}) as WorkerDeps,
-    { id: 7, network: NETWORK, ask: 'address-claim-refusal', claim, for: f } as unknown as VaultAsk);
-  if (!answer.ok || answer.ask !== 'address-claim-refusal') throw new Error(`the worker did not answer the check: ${JSON.stringify(answer)}`);
+  const answer = await answerVaultAsk(async () => ({}) as WorkerDeps, {
+    id: 7,
+    network: NETWORK,
+    ask: 'address-claim-refusal',
+    claim,
+    for: f
+  } as unknown as VaultAsk);
+  if (!answer.ok || answer.ask !== 'address-claim-refusal')
+    throw new Error(`the worker did not answer the check: ${JSON.stringify(answer)}`);
   return answer.refusal;
 };
 
@@ -78,18 +91,42 @@ const TYPED = 'mn_addr_stagenet1qgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqsz
 const PAYSLIP = '02'.repeat(32);
 const code = signJoinCode(walletOf(2), LABEL as never, 'usr_2', { kind: 'payee', address: TYPED, payslipKey: PAYSLIP });
 const bo = {
-  id: 'emp_0123456789abcdef0123', accountId: 'c1', name: 'Bo', email: null, title: 'Designer', asset: 'NIGHT', baseAmount: 1n,
-  startDate: '2026-02-01', status: 'active', invitedAddress: TYPED, address: { kind: 'unshielded', network: 'stagenet', userAddress: '02'.repeat(32), bech32: TYPED },
-  wrappingPublicKey: PAYSLIP, handedOverBy: code.committeeKey.value, payeeCode: code,
+  id: 'emp_0123456789abcdef0123',
+  accountId: 'c1',
+  name: 'Bo',
+  email: null,
+  title: 'Designer',
+  asset: 'NIGHT',
+  baseAmount: 1n,
+  startDate: '2026-02-01',
+  status: 'active',
+  invitedAddress: TYPED,
+  address: { kind: 'unshielded', network: 'stagenet', userAddress: '02'.repeat(32), bech32: TYPED },
+  wrappingPublicKey: PAYSLIP,
+  handedOverBy: code.committeeKey.value,
+  payeeCode: code,
   addressClaim: { kind: 'unshielded', address: TYPED, verifyingKey: 'aa'.repeat(32), signature: 'ff'.repeat(64) },
-  admittedBy: null, admittedAt: null, madeBy: signingPublicKeyOf(SEAT), madeAt: '2026-09-01T00:00:00Z',
+  admittedBy: null,
+  admittedAt: null,
+  madeBy: signingPublicKeyOf(SEAT),
+  madeAt: '2026-09-01T00:00:00Z'
 };
 const filed = toCompanyWire(signCompanyFiling(sealPerson(bo as never, 1, 1, VK), SEAT));
-const readerWith = (claimRefusal: ClaimRefusal) => ({
-  company: { id: 'c1', label: LABEL, viewingKey: KEYS }, network: 'stagenet', claimRefusal,
-  directory: async () => ({}),
-  view: serviceSource(serviceCallOf(async (path: string) => (path.endsWith('/people') ? { status: 200, body: { people: [{ filed, handedOver: false }] } } : { status: 404, body: {} })), 'c1'),
-}) as never;
+const readerWith = (claimRefusal: ClaimRefusal) =>
+  ({
+    company: { id: 'c1', label: LABEL, viewingKey: KEYS },
+    network: 'stagenet',
+    claimRefusal,
+    directory: async () => ({}),
+    view: serviceSource(
+      serviceCallOf(async (path: string) =>
+        path.endsWith('/people')
+          ? { status: 200, body: { people: [{ filed, handedOver: false }] } }
+          : { status: 404, body: {} }
+      ),
+      'c1'
+    )
+  }) as never;
 
 describe('a read of the people, with the claim check as its door', () => {
   it('pays a person added by an unshielded address only when the door answers null', async () => {
@@ -99,7 +136,13 @@ describe('a read of the people, with the claim check as its door', () => {
 
   /* RED WHEN: a claim check that fails is read as the person being payable. */
   it('refuses the read when the door throws, and never reads the person as payable', async () => {
-    await expect(readPeopleHere(readerWith(async () => { throw new Error('the vault builder stopped'); }))).rejects.toThrow(/stopped/u);
+    await expect(
+      readPeopleHere(
+        readerWith(async () => {
+          throw new Error('the vault builder stopped');
+        })
+      )
+    ).rejects.toThrow(/stopped/u);
   });
 
   /* RED WHEN: a door that answers anything but null, undefined among it, lets the person be paid. */

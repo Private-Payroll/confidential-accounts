@@ -3,7 +3,14 @@ import { readVaultAddress } from 'midnight-identity/profile/company-label';
 import type { Hex } from '../../../../src/core/crypto.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { companyReachFor, keptReach, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { rotationDoorsIn, UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
 import type { VaultDoorsReach } from './vault-doors-here.js';
 import { stillOwed, toldOf, vaultSecretsChangedHere } from './vault-secrets-changed-here.js';
@@ -26,7 +33,8 @@ export interface RotateVaultSecretsReach extends VaultDoorsReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.rotate-vault-secrets.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.rotate-vault-secrets.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 
 /** The vault the page names, null for every vault, or the words refusing a vault that is not one. */
@@ -47,11 +55,15 @@ export function rotateVaultSecretsAction(reach: RotateVaultSecretsReach): Action
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => [
       intent.fields['vault'] === undefined
         ? { key: 'act.rotate-vault-secrets.shown.every-vault', from: 'action' as const }
-        : { key: 'act.rotate-vault-secrets.shown.vault', values: { vault: intent.fields['vault'] }, from: 'page' as const },
+        : {
+            key: 'act.rotate-vault-secrets.shown.vault',
+            values: { vault: intent.fields['vault'] },
+            from: 'page' as const
+          },
       { key: 'act.rotate-vault-secrets.shown.what', from: 'action' as const },
       { key: 'act.rotate-vault-secrets.shown.proofs', from: 'action' as const },
       ...upkeepShown(),
-      { key: 'act.rotate-vault-secrets.shown.nothing-else', from: 'action' as const },
+      { key: 'act.rotate-vault-secrets.shown.nothing-else', from: 'action' as const }
     ],
     checks: [{ key: 'act.rotate-vault-secrets.check.owed' }, UPKEEP_CHECK],
     check: async (intent) => {
@@ -60,7 +72,9 @@ export function rotateVaultSecretsAction(reach: RotateVaultSecretsReach): Action
       return v !== null && typeof v === 'object' ? v : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, { vaultSecrets: reach });
       const change: ActionStep = {
         title: { key: 'act.rotate-vault-secrets.step.change' },
@@ -68,12 +82,19 @@ export function rotateVaultSecretsAction(reach: RotateVaultSecretsReach): Action
           const v = vaultAsked(intent);
           if (v !== null && typeof v === 'object') throw new StepRefused(v);
           const r = await read.at(ctx);
-          const changed = await vaultSecretsChangedHere(ctx, r, reach, await rotationDoorsIn(r), 'raise', v === null ? {} : { vault: v });
+          const changed = await vaultSecretsChangedHere(
+            ctx,
+            r,
+            reach,
+            await rotationDoorsIn(r),
+            'raise',
+            v === null ? {} : { vault: v }
+          );
           const told = toldOf(changed);
           ctx.tell({ state: stillOwed(changed) ? STATE.partial : STATE.done, ...told });
-        },
+        }
       };
       return [upkeep.first, change, upkeep.last];
-    },
+    }
   } satisfies ActionDefinition);
 }

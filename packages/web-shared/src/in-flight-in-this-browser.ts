@@ -5,7 +5,12 @@
  */
 import type { DepositInFlight, DepositsInFlight } from './vault-private-deposit.js';
 import type { PaymentInFlight, PaymentsInFlight } from './vault-payment-in-flight.js';
-import { sealedOnThisDevice, type InFlightOpener, type InFlightRecords, type SealedInFlight } from './in-flight-on-this-device.js';
+import {
+  sealedOnThisDevice,
+  type InFlightOpener,
+  type InFlightRecords,
+  type SealedInFlight
+} from './in-flight-on-this-device.js';
 import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
 /**
  * **WHERE THIS BROWSER KEEPS A DEPOSIT, A PAYMENT OR A CHARGE ON ITS WAY: SEALED RECORDS
@@ -20,16 +25,28 @@ import type { ChargeInFlight, ChargesInFlight } from './run-charged-here.js';
  */
 export function browserInFlightRecords(factory: IDBFactory = indexedDB): InFlightRecords {
   const STORE = 'sealed';
-  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
-    const req = factory.open('vault-operations-in-flight', 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(new Error('this browser would not open its record of deposits, payments and charges on their way, '
-      + 'so nothing was sent and no money moved. Check that this browser lets this site store data (a private window '
-      + 'may not), then try again.', { cause: req.error }));
-  });
+  const open = () =>
+    new Promise<IDBDatabase>((resolve, reject) => {
+      const req = factory.open('vault-operations-in-flight', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () =>
+        reject(
+          new Error(
+            'this browser would not open its record of deposits, payments and charges on their way, ' +
+              'so nothing was sent and no money moved. Check that this browser lets this site store data (a private window ' +
+              'may not), then try again.',
+            { cause: req.error }
+          )
+        );
+    });
   /** One read, then at most one write, inside one transaction. */
-  const step = async <T>(slot: string, decide: (there: SealedInFlight | null) => { write?: SealedInFlight | 'delete'; answer: T }): Promise<T> => {
+  const step = async <T>(
+    slot: string,
+    decide: (there: SealedInFlight | null) => { write?: SealedInFlight | 'delete'; answer: T }
+  ): Promise<T> => {
     const db = await open();
     try {
       return await new Promise<T>((resolve, reject) => {
@@ -44,9 +61,15 @@ export function browserInFlightRecords(factory: IDBFactory = indexedDB): InFligh
           else if (decided.write !== undefined) store.put({ ...decided.write }, slot);
         };
         tx.oncomplete = () => resolve(answer);
-        const failed = () => reject(new Error('this browser could not read or keep its record of a deposit, a payment or a charge on '
-          + 'its way, so nothing was sent and no money moved. Check that this browser lets this site store data (a '
-          + 'private window may not), then try again.', { cause: tx.error }));
+        const failed = () =>
+          reject(
+            new Error(
+              'this browser could not read or keep its record of a deposit, a payment or a charge on ' +
+                'its way, so nothing was sent and no money moved. Check that this browser lets this site store data (a ' +
+                'private window may not), then try again.',
+              { cause: tx.error }
+            )
+          );
         tx.onerror = failed;
         tx.onabort = failed;
       });
@@ -56,9 +79,15 @@ export function browserInFlightRecords(factory: IDBFactory = indexedDB): InFligh
   };
   return {
     get: (slot) => step(slot, (there) => ({ answer: there })),
-    add: (slot, record) => step(slot, (there) => (there === null ? { write: record, answer: true } : { answer: false })),
-    replace: (slot, claim, record) => step(slot, (there) => (there?.claim === claim ? { write: record, answer: true } : { answer: false })),
-    remove: async (slot, claim) => { await step(slot, (there) => (there?.claim === claim ? { write: 'delete' as const, answer: undefined } : { answer: undefined })); },
+    add: (slot, record) =>
+      step(slot, (there) => (there === null ? { write: record, answer: true } : { answer: false })),
+    replace: (slot, claim, record) =>
+      step(slot, (there) => (there?.claim === claim ? { write: record, answer: true } : { answer: false })),
+    remove: async (slot, claim) => {
+      await step(slot, (there) =>
+        there?.claim === claim ? { write: 'delete' as const, answer: undefined } : { answer: undefined }
+      );
+    }
   };
 }
 

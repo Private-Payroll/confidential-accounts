@@ -92,8 +92,8 @@ export function WalletsHere(): ReactNode {
     <section className="card" data-wallets-here="">
       <h2>Wallets in this browser</h2>
       <p className="muted small">
-        This browser holds {wallets.length}. One is open at a time; each opens with
-        its own passkey. Press one to unlock it.
+        This browser holds {wallets.length}. One is open at a time; each opens with its own passkey. Press one to unlock
+        it.
       </p>
       <ul className="plain">
         {wallets.map((wallet, index) => (
@@ -105,9 +105,7 @@ export function WalletsHere(): ReactNode {
               onClick={() => open(wallet.id)}
               data-current-wallet={wallet.current ? '' : undefined}
             >
-              {wallet.current
-                ? <strong>{label(wallet, index)}</strong>
-                : label(wallet, index)}
+              {wallet.current ? <strong>{label(wallet, index)}</strong> : label(wallet, index)}
             </button>
           </li>
         ))}
@@ -148,23 +146,21 @@ export function AddAnotherWallet(): ReactNode {
       <h2>Add another wallet</h2>
       <p className="small">
         <strong>
-          The {wallets.length === 1 ? 'wallet' : `${wallets.length} wallets`} already in
-          this browser stay exactly as they are.
+          The {wallets.length === 1 ? 'wallet' : `${wallets.length} wallets`} already in this browser stay exactly as
+          they are.
         </strong>{' '}
-        A new wallet is kept beside them, in its own place, with its own passkey —
-        nothing here is replaced and nothing here is lost.
+        A new wallet is kept beside them, in its own place, with its own passkey — nothing here is replaced and nothing
+        here is lost.
       </p>
-      <WalletNameField
-        label="A name for the new wallet (optional)"
-        value={walletName}
-        onChange={setWalletName}
-      />
+      <WalletNameField label="A name for the new wallet (optional)" value={walletName} onChange={setWalletName} />
       <div className="actions">
         <button
           type="button"
           className="primary"
           disabled={busy !== null}
-          onClick={() => { void createAccount(walletName); }}
+          onClick={() => {
+            void createAccount(walletName);
+          }}
         >
           Create a new wallet here
         </button>
@@ -172,10 +168,8 @@ export function AddAnotherWallet(): ReactNode {
         <ErrorNote message={error} />
       </div>
       <p className="muted small" style={{ marginTop: '1rem' }}>
-        Already have one elsewhere?{' '}
-        <a href={hrefOf('add-device')}>Move it onto this machine</a>, or{' '}
-        <a href={hrefOf('recover')}>recover it from its pieces</a>. Both land beside
-        what is here too.
+        Already have one elsewhere? <a href={hrefOf('add-device')}>Move it onto this machine</a>, or{' '}
+        <a href={hrefOf('recover')}>recover it from its pieces</a>. Both land beside what is here too.
       </p>
       <p className="faint small">
         <button type="button" className="quiet" onClick={() => setOpen(false)}>

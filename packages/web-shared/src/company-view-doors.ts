@@ -15,7 +15,10 @@ import type { DirectoryBelieved } from './vault-page-doors.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 
 /** The reads of the company on the chain a device may answer from its own doors (`ViewDoors.chain`). */
-export type OwnChainReads = Pick<RecordSource, 'callState' | 'vaultChain' | 'payoutState' | 'authority' | 'committeeChange' | 'vaultKeys'>;
+export type OwnChainReads = Pick<
+  RecordSource,
+  'callState' | 'vaultChain' | 'payoutState' | 'authority' | 'committeeChange' | 'vaultKeys'
+>;
 
 /** The doors a view is given. `H` is how this device reads who holds the company. */
 export interface ViewDoors<H> {
@@ -50,7 +53,9 @@ export interface ViewDoors<H> {
 }
 
 /** The account's roles as the chain holds them, for the roles asked. */
-export interface RolesRead { readonly roles?: readonly AccountRoleEntry[] }
+export interface RolesRead {
+  readonly roles?: readonly AccountRoleEntry[];
+}
 
 /** How many times a view went through each of its doors and asked each of the source's asks. */
 export interface ViewCounts {
@@ -60,8 +65,12 @@ export interface ViewCounts {
 /** A tally kept by one view. */
 export class Tally {
   private readonly n = new Map<string, number>();
-  add(ask: string, by = 1): void { this.n.set(ask, (this.n.get(ask) ?? 0) + by); }
-  get counts(): ViewCounts { return Object.freeze(Object.fromEntries(this.n)); }
+  add(ask: string, by = 1): void {
+    this.n.set(ask, (this.n.get(ask) ?? 0) + by);
+  }
+  get counts(): ViewCounts {
+    return Object.freeze(Object.fromEntries(this.n));
+  }
 }
 
 /**
@@ -74,29 +83,49 @@ export const once = <T>(read: () => Promise<T>): (() => Promise<T>) => {
     if (held !== null) return held;
     const answer = read();
     held = answer;
-    answer.catch(() => { if (held === answer) held = null; });
+    answer.catch(() => {
+      if (held === answer) held = null;
+    });
     return answer;
   };
 };
 
 /** The doors, each counted in `tally` under its name; `holders` is read at most once, and the view keeps `onChain`. */
-export const countedDoors = <H>(doors: ViewDoors<H>, tally: Tally): ViewDoors<H> & {
+export const countedDoors = <H>(
+  doors: ViewDoors<H>,
+  tally: Tally
+): ViewDoors<H> & {
   readonly freshHolders: () => Promise<H>;
   readonly roles: (asked: readonly string[]) => Promise<RolesRead>;
 } => {
-  const freshHolders = (): Promise<H> => { tally.add('holders'); return doors.holders(); };
+  const freshHolders = (): Promise<H> => {
+    tally.add('holders');
+    return doors.holders();
+  };
   return Object.freeze({
     holders: once(freshHolders),
     freshHolders,
-    onChain: () => { tally.add('onChain'); return doors.onChain(); },
+    onChain: () => {
+      tally.add('onChain');
+      return doors.onChain();
+    },
     builder: {
-      anchorHeads: (ask: Parameters<VaultBuilderClient['anchorHeads']>[0]) => { tally.add('anchorHeads'); return doors.builder.anchorHeads(ask); },
-      ...(doors.builder.vaultsOnChain === undefined ? {} : { vaultsOnChain: (ask: Parameters<VaultBuilderClient['vaultsOnChain']>[0]) => doors.builder.vaultsOnChain!(ask) }),
+      anchorHeads: (ask: Parameters<VaultBuilderClient['anchorHeads']>[0]) => {
+        tally.add('anchorHeads');
+        return doors.builder.anchorHeads(ask);
+      },
+      ...(doors.builder.vaultsOnChain === undefined
+        ? {}
+        : {
+            vaultsOnChain: (ask: Parameters<VaultBuilderClient['vaultsOnChain']>[0]) =>
+              doors.builder.vaultsOnChain!(ask)
+          })
     },
     roles: (asked: readonly string[]): Promise<RolesRead> => {
-      if (doors.roles === undefined) return Promise.reject(new Error('this read of the company was given no way to read its roles on the chain.'));
+      if (doors.roles === undefined)
+        return Promise.reject(new Error('this read of the company was given no way to read its roles on the chain.'));
       tally.add('roles');
       return doors.roles(asked);
-    },
+    }
   });
 };

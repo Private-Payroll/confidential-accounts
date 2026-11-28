@@ -26,30 +26,37 @@ export type ReaderView = JudgeView;
 const ENDED = { readDone: 'its read is done' } as const;
 
 /* A reader holds no seat on the company, so its page opens no account and no company key. */
-const readerHoldsNoSeat = (): never => { throw new Fault(FAULT.readerHoldsNoSeat); };
+const readerHoldsNoSeat = (): never => {
+  throw new Fault(FAULT.readerHoldsNoSeat);
+};
 
 /** The judges of a reader's view: every one of them reads the company through it, and through it alone, and none holds a seat. */
-export const readerJudgesOf = (view: ReaderView) => companyJudges({
-  view: onlyItsOwn(view),
-  indexer: () => indexerOnPage(view),
-  builder: () => theVaultBuilder(),
-  keysFor: () => null,
-  servedKeyFor: readerHoldsNoSeat,
-  released: () => null,
-  askReleased: async () => null,
-  treeKept: () => treeKeptHere(),
-  openAccount: async () => null,
-  seatsAdmittedFor: async () => readerHoldsNoSeat(),
-  noAccount: readerHoldsNoSeat,
-});
+export const readerJudgesOf = (view: ReaderView) =>
+  companyJudges({
+    view: onlyItsOwn(view),
+    indexer: () => indexerOnPage(view),
+    builder: () => theVaultBuilder(),
+    keysFor: () => null,
+    servedKeyFor: readerHoldsNoSeat,
+    released: () => null,
+    askReleased: async () => null,
+    treeKept: () => treeKeptHere(),
+    openAccount: async () => null,
+    seatsAdmittedFor: async () => readerHoldsNoSeat(),
+    noAccount: readerHoldsNoSeat
+  });
 
 /** The company's directory as a reader's page believes it over `view`: read with the purpose keys `held`, never a company key. */
 export const readerDirectoryIn = (view: ReaderView, link: ReaderLink, held: PurposeWrapsHeld): DirectoryRead => {
   const judges = readerJudgesOf(view);
   return readerDirectoryFor({
-    view, label: link.label, account: link.account,
-    leaves: judges.leavesFor(link.account), anchored: judges.anchoredForAReader(view.company, link.label, link.account),
-    invitedSeats: judges.invitedSeatsFor(link.label, link.account), proposalIdentity: judges.identityHere,
+    view,
+    label: link.label,
+    account: link.account,
+    leaves: judges.leavesFor(link.account),
+    anchored: judges.anchoredForAReader(view.company, link.label, link.account),
+    invitedSeats: judges.invitedSeatsFor(link.label, link.account),
+    proposalIdentity: judges.identityHere
   })(held);
 };
 
@@ -59,11 +66,15 @@ const readerDoors = (link: ReaderLink, held: PurposeWrapsHeld): PageDoors => ({
   builder: () => theVaultBuilder(),
   /* A reader's records are proven against its own directory with no checkpoint kept (`anchoredForAReader`), never through a seat's held read. */
   held: () => readerHoldsNoSeat,
-  directory: (view) => readerDirectoryIn(view, link, held)(),
+  directory: (view) => readerDirectoryIn(view, link, held)()
 });
 
 /** `read` through a view of the company `link` names, opened for one opening of the reader's page and ended when it is done. */
-export const readThroughAReaderView = async <T>(link: ReaderLink, held: PurposeWrapsHeld, read: (view: ReaderView) => Promise<T>): Promise<T> => {
+export const readThroughAReaderView = async <T>(
+  link: ReaderLink,
+  held: PurposeWrapsHeld,
+  read: (view: ReaderView) => Promise<T>
+): Promise<T> => {
   const view = openOnPage(link.id, readerDoors(link, held));
   try {
     return await read(view);

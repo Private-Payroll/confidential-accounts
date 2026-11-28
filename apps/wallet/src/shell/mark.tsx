@@ -34,8 +34,7 @@ const MIDDLE = 2;
 
 /** Bit `n` of the digest, most significant first — a stable order, so the
  * same address draws the same mark in every build. */
-const bitAt = (digest: Uint8Array, n: number): boolean =>
-  (((digest[n >> 3] ?? 0) >> (7 - (n & 7))) & 1) === 1;
+const bitAt = (digest: Uint8Array, n: number): boolean => (((digest[n >> 3] ?? 0) >> (7 - (n & 7))) & 1) === 1;
 
 export function markCells(address: string): readonly boolean[] {
   const digest = sha256(new TextEncoder().encode(address));
@@ -51,7 +50,11 @@ export function markCells(address: string): readonly boolean[] {
   return cells;
 }
 
-export function Mark({ address, account, size = 28 }: {
+export function Mark({
+  address,
+  account,
+  size = 28
+}: {
   readonly address: string;
   readonly account: number;
   readonly size?: number;
@@ -67,17 +70,19 @@ export function Mark({ address, account, size = 28 }: {
       aria-hidden="true"
       focusable="false"
     >
-      {cells.map((on, index) => (on ? (
-        <rect
-          /* The grid is fixed and positional: the index IS the cell. */
-          key={index}
-          x={index % SIDE}
-          y={Math.floor(index / SIDE)}
-          width="1"
-          height="1"
-          fill="hsl(var(--wallet-hue) 68% 68%)"
-        />
-      ) : null))}
+      {cells.map((on, index) =>
+        on ? (
+          <rect
+            /* The grid is fixed and positional: the index IS the cell. */
+            key={index}
+            x={index % SIDE}
+            y={Math.floor(index / SIDE)}
+            width="1"
+            height="1"
+            fill="hsl(var(--wallet-hue) 68% 68%)"
+          />
+        ) : null
+      )}
     </svg>
   );
 }

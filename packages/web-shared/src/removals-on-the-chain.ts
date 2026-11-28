@@ -20,11 +20,17 @@ export async function removalsOnTheChainHere(doors: RemovalsDoors, vault: Hex): 
   const chain = await chainAtOneBlockHere(doors, vault);
   const now = Math.floor((doors.clock?.() ?? Date.now()) / 1000);
   const read = await doors.builder.startStanding({
-    vault, account: chain.account, accountState: chain.accountState, vaultState: chain.vaultState, now: String(now),
+    vault,
+    account: chain.account,
+    accountState: chain.accountState,
+    vaultState: chain.vaultState,
+    now: String(now)
   });
   const removals = read.standing.removals;
   if (!Number.isSafeInteger(removals) || removals < 0) {
-    throw new Error('this device could not read how many signers the company has removed, so nothing was done. Try again.');
+    throw new Error(
+      'this device could not read how many signers the company has removed, so nothing was done. Try again.'
+    );
   }
   return removals;
 }

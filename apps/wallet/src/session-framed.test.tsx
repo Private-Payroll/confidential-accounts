@@ -14,7 +14,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 vi.mock('midnight-identity', async (importOriginal) => {
   const actual = await importOriginal<typeof import('midnight-identity')>();
@@ -41,13 +41,25 @@ import { savePasskey, saveSecret } from './accounts/storage.js';
 
 const EMBEDDER = 'https://app.payroll.example';
 const passkey = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7,
-  signCount: 0, provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false,
-  transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 const registration = {
-  credentialId: 'cred-1', personHandle: 'cGVyc29uLTE', clientDataJSON: new Uint8Array(),
-  authenticatorData: new Uint8Array(), publicKeySpki: new Uint8Array([1, 2, 3]), publicKeyAlgorithm: -7, transports: [],
+  credentialId: 'cred-1',
+  personHandle: 'cGVyc29uLTE',
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  publicKeyAlgorithm: -7,
+  transports: []
 };
 
 function Probe(): ReactNode {
@@ -55,15 +67,38 @@ function Probe(): ReactNode {
   return (
     <div>
       <div data-testid="phase">{session.phase.name}</div>
-      <button type="button" onClick={() => { void session.createAccount(); }}>create</button>
-      <button type="button" onClick={() => { void session.unlock(); }}>unlock</button>
-      <button type="button" onClick={() => { void session.startFresh(); }}>fresh</button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.createAccount();
+        }}
+      >
+        create
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.unlock();
+        }}
+      >
+        unlock
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          void session.startFresh();
+        }}
+      >
+        fresh
+      </button>
     </div>
   );
 }
 const phase = (): string => screen.getByTestId('phase').textContent ?? '';
 const expected = (calls: unknown[][]): { allowFramedBy?: readonly string[] } =>
-  calls[0]!.find((a) => typeof a === 'object' && a !== null && 'challenge' in a) as { allowFramedBy?: readonly string[] };
+  calls[0]!.find((a) => typeof a === 'object' && a !== null && 'challenge' in a) as {
+    allowFramedBy?: readonly string[];
+  };
 
 beforeEach(() => {
   cleanup();
@@ -73,11 +108,15 @@ beforeEach(() => {
   forgetOpenWallet();
 });
 
-describe('passkey ceremonies inside the application\'s frame', () => {
+describe("passkey ceremonies inside the application's frame", () => {
   it('MAKING A WALLET accepts the embedder as the page around it', async () => {
     vi.mocked(createPasskey).mockResolvedValue(registration);
     vi.mocked(verifyRegistration).mockResolvedValue(passkey('cred-1'));
-    render(<SessionProvider><Probe /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>
+    );
     fireEvent.click(screen.getByText('create'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
     expect(expected(vi.mocked(verifyRegistration).mock.calls).allowFramedBy).toEqual([EMBEDDER]);
@@ -87,13 +126,24 @@ describe('passkey ceremonies inside the application\'s frame', () => {
     savePasskey(passkey('cred-1'), ORIGINAL_SLOT);
     await saveSecret(newSecret());
     vi.mocked(usePasskey).mockResolvedValue({
-      credentialId: 'cred-1', clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(),
-      signature: new Uint8Array(), userHandle: 'cGVyc29uLTE',
+      credentialId: 'cred-1',
+      clientDataJSON: new Uint8Array(),
+      authenticatorData: new Uint8Array(),
+      signature: new Uint8Array(),
+      userHandle: 'cGVyc29uLTE'
     });
     vi.mocked(verifyAssertion).mockResolvedValue({
-      personHandle: 'person-1', signCount: 1, userVerified: true, backedUpNow: false, passkey: passkey('cred-1'),
+      personHandle: 'person-1',
+      signCount: 1,
+      userVerified: true,
+      backedUpNow: false,
+      passkey: passkey('cred-1')
     });
-    render(<SessionProvider><Probe /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>
+    );
     fireEvent.click(screen.getByText('unlock'));
     await waitFor(() => expect(phase()).toBe('unlocked'));
     expect(expected(vi.mocked(verifyAssertion).mock.calls).allowFramedBy).toEqual([EMBEDDER]);
@@ -104,7 +154,11 @@ describe('passkey ceremonies inside the application\'s frame', () => {
     await saveSecret(newSecret());
     vi.mocked(createPasskey).mockResolvedValue(registration);
     vi.mocked(verifyRegistration).mockResolvedValue(passkey('cred-2'));
-    render(<SessionProvider><Probe /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>
+    );
     fireEvent.click(screen.getByText('fresh'));
     await waitFor(() => expect(vi.mocked(verifyRegistration)).toHaveBeenCalled());
     expect(expected(vi.mocked(verifyRegistration).mock.calls).allowFramedBy ?? []).toEqual([]);

@@ -6,7 +6,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  feePayerSetupFrom, FEE_PAYER_PORT_SETTING, FEE_PAYER_SEED_SETTING, FEE_PAYER_HOST,
+  feePayerSetupFrom,
+  FEE_PAYER_PORT_SETTING,
+  FEE_PAYER_SEED_SETTING,
+  FEE_PAYER_HOST
 } from './serve-fee-payer-rules.js';
 import { FEE_CEILING_SETTING } from '../src/midnight/fee-ceiling.js';
 import { FEE_PAYER_SECRET_SETTING } from '../src/fee-payer/client.js';
@@ -16,7 +19,7 @@ const good = {
   [FEE_PAYER_SEED_SETTING]: '/deployment/fee-payer.seed',
   [FEE_PAYER_PORT_SETTING]: '6310',
   [FEE_PAYER_SECRET_SETTING]: 'not-a-secret: a test literal of enough length',
-  [FEE_CEILING_SETTING]: '20000',
+  [FEE_CEILING_SETTING]: '20000'
 };
 const everywhere = () => true;
 
@@ -27,7 +30,7 @@ describe('what the fee payer needs before it brings a wallet up', () => {
       port: 6310,
       seedFile: '/deployment/fee-payer.seed',
       secret: good[FEE_PAYER_SECRET_SETTING],
-      ceiling: { perTransaction: 20_000n },
+      ceiling: { perTransaction: 20_000n }
     });
   });
 
@@ -88,7 +91,8 @@ describe('what the fee payer needs before it brings a wallet up', () => {
 
 describe('the process itself, read rather than run', () => {
   const text = readFileSync(join(import.meta.dirname, 'serve-fee-payer.ts'), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
 
   /* RED WHEN: the service is served on anything but loopback. */
   it('listens on loopback only', () => {
@@ -106,7 +110,7 @@ describe('the process itself, read rather than run', () => {
   });
 
   /* RED WHEN: the fee payer is built some way other than the shared construction, which carries the ceiling. */
-  it('builds each payment\'s fee payer through the shared construction, with the ceiling', () => {
+  it("builds each payment's fee payer through the shared construction, with the ceiling", () => {
     expect(text).toMatch(/feePayerOver\([\s\S]*?setup\.ceiling\s*,?\s*\)/);
     expect(text).not.toMatch(/new WalletFeeSponsor/);
   });

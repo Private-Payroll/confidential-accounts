@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { PROGRESS_SCHEMA, READY_PING } from 'midnight-identity/profile/channel';
 import {
-  ANSWER_TIMEOUT_MS, OUT_OF_TIME_SAYS, RAN_OUT_SAYS, UNREADABLE_SAYS, WENT_QUIET_SAYS, WalletClosed, askWallet, openWalletDialog,
+  ANSWER_TIMEOUT_MS,
+  OUT_OF_TIME_SAYS,
+  RAN_OUT_SAYS,
+  UNREADABLE_SAYS,
+  WENT_QUIET_SAYS,
+  WalletClosed,
+  askWallet,
+  openWalletDialog
 } from './wallet-sign-in.js';
 import type { Openable, WalletWindow } from './wallet-sign-in.js';
 
@@ -23,33 +30,68 @@ class APage implements Openable {
   private next = 1;
   readonly posted: unknown[] = [];
   readonly wallet: WalletWindow = {
-    postMessage: (m: unknown) => { this.posted.push(m); },
+    postMessage: (m: unknown) => {
+      this.posted.push(m);
+    },
     close: () => {},
     focus: () => {},
-    closed: false,
+    closed: false
   };
 
-  open(): WalletWindow { return this.wallet; }
-  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void { this.handler = h; }
-  removeEventListener(): void { this.handler = null; }
-  setTimeout(run: () => void, ms: number): number { const id = this.next++; this.timers.set(id, { run, at: this.clock + ms }); return id; }
-  clearTimeout(id: number): void { this.timers.delete(id); }
-  now(): number { return this.clock; }
+  open(): WalletWindow {
+    return this.wallet;
+  }
+  addEventListener(_t: 'message', h: (e: MessageEvent) => void): void {
+    this.handler = h;
+  }
+  removeEventListener(): void {
+    this.handler = null;
+  }
+  setTimeout(run: () => void, ms: number): number {
+    const id = this.next++;
+    this.timers.set(id, { run, at: this.clock + ms });
+    return id;
+  }
+  clearTimeout(id: number): void {
+    this.timers.delete(id);
+  }
+  now(): number {
+    return this.clock;
+  }
 
   /** The one wait now armed: when it fires, as a delay from now. */
-  get armedFor(): number[] { return [...this.timers.values()].map((t) => t.at - this.clock); }
+  get armedFor(): number[] {
+    return [...this.timers.values()].map((t) => t.at - this.clock);
+  }
   /** Moves the clock and runs what came due. */
   pass(ms: number): void {
     this.clock += ms;
-    for (const [id, t] of [...this.timers]) if (t.at <= this.clock) { this.timers.delete(id); t.run(); }
+    for (const [id, t] of [...this.timers])
+      if (t.at <= this.clock) {
+        this.timers.delete(id);
+        t.run();
+      }
   }
-  say(data: unknown): void { this.handler?.({ origin: WALLET, source: this.wallet, data } as unknown as MessageEvent); }
+  say(data: unknown): void {
+    this.handler?.({ origin: WALLET, source: this.wallet, data } as unknown as MessageEvent);
+  }
 }
 
-const settle = async (): Promise<void> => { for (let i = 0; i < 5; i += 1) await Promise.resolve(); };
+const settle = async (): Promise<void> => {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+};
 const outcome = (p: Promise<unknown>) => {
   const seen: { value?: unknown; error?: unknown; done: boolean } = { done: false };
-  p.then((value) => { seen.value = value; seen.done = true; }, (error: unknown) => { seen.error = error; seen.done = true; });
+  p.then(
+    (value) => {
+      seen.value = value;
+      seen.done = true;
+    },
+    (error: unknown) => {
+      seen.error = error;
+      seen.done = true;
+    }
+  );
   return seen;
 };
 
@@ -79,7 +121,7 @@ describe('A WALLET AT WORK IS NEVER THE ANSWER', () => {
   });
 });
 
-describe('THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK\'S OWN DEADLINE', () => {
+describe("THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK'S OWN DEADLINE", () => {
   it('every progress message starts the silence again; a wallet that goes quiet is told apart by where it stopped', async () => {
     const page = new APage();
     const asked = outcome(askWallet(page, WALLET, { ask: 1, expiresAt: START + 30 * 60_000 }));
@@ -106,8 +148,9 @@ describe('THE WAIT IS A SILENCE, NOT A TOTAL, AND IT ENDS AT THE ASK\'S OWN DEAD
     expect(WENT_QUIET_SAYS.proving).not.toMatch(/prov/iu);
     expect(WENT_QUIET_SAYS.proving).not.toContain('in your browser');
     expect(WENT_QUIET_SAYS.proving).toBe(
-      'your wallet stopped answering while it was preparing the transaction, so this page stopped waiting. '
-      + 'It handed this page nothing, so nothing has been sent. Try again.');
+      'your wallet stopped answering while it was preparing the transaction, so this page stopped waiting. ' +
+        'It handed this page nothing, so nothing has been sent. Try again.'
+    );
   });
 
   it('a wallet at work for ever is still stopped at the deadline this page wrote into its ask', async () => {

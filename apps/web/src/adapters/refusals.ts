@@ -12,13 +12,16 @@ export { ACT_REFUSAL, ACTED, SEAT_REFUSALS, type ActRefusal } from './refusal-co
 /** Each reason the account could not make a payment it was asked for, as the refusal that says it. */
 function paymentFailure(why: WalletPaymentFailure): ActRefusal {
   switch (why) {
-    case 'chain-unreadable': return ACT_REFUSAL.payChainUnreadable;
-    case 'not-enough': return ACT_REFUSAL.payNotEnough;
-    case 'not-as-approved': return ACT_REFUSAL.payNotAsApproved;
-    default: return ACT_REFUSAL.payDidNotFinish;
+    case 'chain-unreadable':
+      return ACT_REFUSAL.payChainUnreadable;
+    case 'not-enough':
+      return ACT_REFUSAL.payNotEnough;
+    case 'not-as-approved':
+      return ACT_REFUSAL.payNotAsApproved;
+    default:
+      return ACT_REFUSAL.payDidNotFinish;
   }
 }
-
 
 /** The refusal a failure from the keyring, the service, the account or the network is, told apart by its kind and never by its words (an ask that ran out while the account was open, by the refusal's `while`). */
 export function refusalOf(e: unknown): ActRefusal {
@@ -38,15 +41,24 @@ export function refusalOf(e: unknown): ActRefusal {
   if (e instanceof ServiceRefused && e.code === 'network-refused') return ACT_REFUSAL.networkRefused;
   if (e instanceof WalletClosed) {
     switch (e.refusal.of) {
-      case 'declined': return ACT_REFUSAL.declined;
-      case 'expired': return e.refusal.while === 'open' ? ACT_REFUSAL.ranOut : ACT_REFUSAL.expired;
-      case 'unreadable': return ACT_REFUSAL.unreadable;
-      case 'failed': return paymentFailure(e.refusal.why);
-      case 'no-wallet-tab': return ACT_REFUSAL.noWindow;
-      case 'window-gone': return ACT_REFUSAL.windowGone;
-      case 'gave-up': return ACT_REFUSAL.gaveUp;
-      case 'silent': return ACT_REFUSAL.silent;
-      default: return ACT_REFUSAL.didNotFinish;
+      case 'declined':
+        return ACT_REFUSAL.declined;
+      case 'expired':
+        return e.refusal.while === 'open' ? ACT_REFUSAL.ranOut : ACT_REFUSAL.expired;
+      case 'unreadable':
+        return ACT_REFUSAL.unreadable;
+      case 'failed':
+        return paymentFailure(e.refusal.why);
+      case 'no-wallet-tab':
+        return ACT_REFUSAL.noWindow;
+      case 'window-gone':
+        return ACT_REFUSAL.windowGone;
+      case 'gave-up':
+        return ACT_REFUSAL.gaveUp;
+      case 'silent':
+        return ACT_REFUSAL.silent;
+      default:
+        return ACT_REFUSAL.didNotFinish;
     }
   }
   return ACT_REFUSAL.didNotFinish;

@@ -19,8 +19,8 @@ vi.mock('../../../../packages/web-shared/src/company-judges.js', async (real) =>
   ...(await real<typeof import('../../../../packages/web-shared/src/company-judges.js')>()),
   companyJudges: (d: { view: (id: string) => { list: (kind: 'proposals') => Promise<unknown> } }) => ({
     companyKeysFor: async () => ({}),
-    probe: () => d.view('acc_1').list('proposals'),
-  }),
+    probe: () => d.view('acc_1').list('proposals')
+  })
 }));
 
 const { vaultKeysSteps } = await import('./give-vault-keys.js');
@@ -33,7 +33,11 @@ const ACCOUNT = 'c0'.repeat(32);
 const LEAF = 'aa'.repeat(32);
 /* The founding seat this wallet's words make for the company, with the company pinned to its account. */
 const SEAT = {
-  signerId: 's1', signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'), wrappingSecret: '02'.repeat(32), blinding: '03'.repeat(32), scope: '04'.repeat(32),
+  signerId: 's1',
+  signingSecret: Buffer.from(seatKeysFor(identity, LABEL, 0).signingSecret).toString('hex'),
+  wrappingSecret: '02'.repeat(32),
+  blinding: '03'.repeat(32),
+  scope: '04'.repeat(32)
 };
 const SEALED = { id: 'acc_1', companyLabel: LABEL, contractAddress: ACCOUNT, wrappedKeys: [] };
 const why = (key: string) => ({ key });
@@ -45,9 +49,18 @@ const world = () => {
     indexer: { indexerUri: 'https://indexer.example', indexerWsUri: 'wss://indexer.example' },
     holders: async () => {
       reads += 1;
-      return { seats: [LEAF], committee: [], threshold: 1, approvals: 1, vaultThresholds: [], adoptedVaults: [], account: ACCOUNT, founding: LEAF } as never;
+      return {
+        seats: [LEAF],
+        committee: [],
+        threshold: 1,
+        approvals: 1,
+        vaultThresholds: [],
+        adoptedVaults: [],
+        account: ACCOUNT,
+        founding: LEAF
+      } as never;
     },
-    callState: async () => null,
+    callState: async () => null
   };
   const builder = { ownSeat: async () => LEAF } as never;
   const at = (step: number): StepContext => {
@@ -55,33 +68,49 @@ const world = () => {
       seen.push([step, `${method} ${path}`]);
       /* The service as a view reads it first: no directory filed yet, and no record entered. */
       if (path.endsWith('/directory')) return { status: 200, body: { filings: [] } };
-      if (path.endsWith('/manifest/newest')) return { status: 200, body: { versions: (JSON.parse(body!) as { records: unknown[] }).records.map(() => 0) } };
+      if (path.endsWith('/manifest/newest'))
+        return { status: 200, body: { versions: (JSON.parse(body!) as { records: unknown[] }).records.map(() => 0) } };
       return { status: 200, body: SEALED };
     };
     return stepOverItsCall({
       intent: { name: 'give-vault-keys', fields: { record: 'acc_1', company: LABEL, account: ACCOUNT } } as ActIntent,
-      asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' }, person: 'usr_a',
+      asker: { origin: 'https://app.example', name: 'Payroll', rdns: 'example.payroll' },
+      person: 'usr_a',
       held: { identity, secret },
-      at: { step, steps: 5 }, signal: new AbortController().signal,
+      at: { step, steps: 5 },
+      signal: new AbortController().signal,
       relay: async () => {},
       call,
       tell: () => {},
-      keyring: { open: () => ({ read: () => pinnedIn({ accounts: { acc_1: SEAT } }, LABEL, ACCOUNT) }) as never, keep: async () => {} },
+      keyring: {
+        open: () => ({ read: () => pinnedIn({ accounts: { acc_1: SEAT } }, LABEL, ACCOUNT) }) as never,
+        keep: async () => {}
+      }
     }) as unknown as StepContext;
   };
   return { seen, reads: () => reads, chain, builder, at };
 };
 
-const throughEveryDoor = async (r: { stepView: { current(): { list(kind: string): Promise<unknown> } }; judges: unknown }) => {
+const throughEveryDoor = async (r: {
+  stepView: { current(): { list(kind: string): Promise<unknown> } };
+  judges: unknown;
+}) => {
   await r.stepView.current().list('people');
   await (r.judges as { probe: () => Promise<unknown> }).probe();
 };
-const LATER = (step: number) => [[step, 'GET /api/accounts/acc_1/people'], [step, 'GET /api/accounts/acc_1/proposals']];
+const LATER = (step: number) => [
+  [step, 'GET /api/accounts/acc_1/people'],
+  [step, 'GET /api/accounts/acc_1/proposals']
+];
 
-describe('a company is read once for each step, through the step\'s own view', () => {
-  it('giving vault keys reads the company again in a later step, and hands the page each call with that step\'s number', async () => {
+describe("a company is read once for each step, through the step's own view", () => {
+  it("giving vault keys reads the company again in a later step, and hands the page each call with that step's number", async () => {
     const w = world();
-    const keys = vaultKeysSteps({ chain: () => w.chain, builder: () => w.builder, now: () => 1 } as never, why, 'act.give-vault-keys');
+    const keys = vaultKeysSteps(
+      { chain: () => w.chain, builder: () => w.builder, now: () => 1 } as never,
+      why,
+      'act.give-vault-keys'
+    );
     const first = await keys.company(w.at(1));
     const readsAtFirst = w.reads();
     w.seen.length = 0;
@@ -95,7 +124,7 @@ describe('a company is read once for each step, through the step\'s own view', (
     expect(w.seen).toEqual(LATER(4));
   });
 
-  it('every ask of one step is answered by the step\'s one read, and the read is let go when the step reads again', async () => {
+  it("every ask of one step is answered by the step's one read, and the read is let go when the step reads again", async () => {
     const w = world();
     const kept = keptReach((ctx) => companyReachFor(ctx, w.chain, w.builder, why));
     const step = w.at(3);

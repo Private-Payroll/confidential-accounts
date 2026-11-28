@@ -5,9 +5,33 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { SEED_ASSETS } from '../../../src/core/assets.js';
 import {
-  amountsMadeOutsideTheAdapters, amountsOutsideTheComponent, arbitraryValues, codesUnder, colourValues, declaredBy, namedOutside, stylesReachingIntoComponents, englishSentences, filesUnder, gapsThatDiffer, hasPhrase,
-  inlineStyles, isShippingCode, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, SCREEN_FORMATTERS,
-  secondCn, THE_WAY_THROUGH, undeclaredImports, waysIntoSharedCode, wordingCensus, wordingInCode, type Source,
+  amountsMadeOutsideTheAdapters,
+  amountsOutsideTheComponent,
+  arbitraryValues,
+  codesUnder,
+  colourValues,
+  declaredBy,
+  namedOutside,
+  stylesReachingIntoComponents,
+  englishSentences,
+  filesUnder,
+  gapsThatDiffer,
+  hasPhrase,
+  inlineStyles,
+  isShippingCode,
+  keysAskedFor,
+  missingPhrases,
+  paletteClasses,
+  pathsIntoTheKit,
+  physicalClasses,
+  SCREEN_FORMATTERS,
+  secondCn,
+  THE_WAY_THROUGH,
+  undeclaredImports,
+  waysIntoSharedCode,
+  wordingCensus,
+  wordingInCode,
+  type Source
 } from 'vaults-ui/rules/source-rules.test-support';
 import { WORKERS } from '../vite.config.js';
 import { LOCALES, wordsOf } from './english.test-support.js';
@@ -42,7 +66,12 @@ const CONFIG = read('apps/web/vite.config.ts');
 const STYLE = filesUnder(ROOT, 'apps/web', (p) => /\.(css|html)$/.test(p) && !p.includes('/dist/')).map(read);
 const CODES = new Set(SEED_ASSETS.map((a) => a.symbol));
 /* A language is one name, `en.json`, however many files under `locales/` carry it: its words are all of them together. */
-const languageFiles = () => [...new Set((readdirSync(LOCALES, { recursive: true }) as string[]).filter((p) => p.endsWith('.json')).map((p) => basename(p)))].sort();
+const languageFiles = () =>
+  [
+    ...new Set(
+      (readdirSync(LOCALES, { recursive: true }) as string[]).filter((p) => p.endsWith('.json')).map((p) => basename(p))
+    )
+  ].sort();
 const messagesOf = (name: string) => wordsOf(name.replace(/\.json$/, ''));
 
 /*
@@ -50,7 +79,13 @@ const messagesOf = (name: string) => wordsOf(name.replace(/\.json$/, ''));
  * is typechecked where it lives, under the scripts' settings, and not a second
  * time under this application's stricter ones. What is used of it is typed here.
  */
-interface BuildGraph { entries: string[]; files: string[]; staticNode: unknown[]; dynamicNode: unknown[]; unresolved: { file: string; specifier: string }[] }
+interface BuildGraph {
+  entries: string[];
+  files: string[];
+  staticNode: unknown[];
+  dynamicNode: unknown[];
+  unresolved: { file: string; specifier: string }[];
+}
 interface Walker {
   BROWSER_BUILDS: { name: string }[];
   walkBuild: (build: unknown, root: string) => Promise<BuildGraph>;
@@ -63,7 +98,8 @@ const ADAPTERS = 'apps/web/src/adapters';
  * below holds each to that.
  */
 const PLAIN_SDK: Readonly<Record<string, string>> = {
-  '@midnightntwrk/wallet-sdk-hd': 'the shared keyring reaches the account\'s key derivation through midnight-identity, as the legacy page does; it is @scure/bip32 and @scure/bip39, with no WebAssembly',
+  '@midnightntwrk/wallet-sdk-hd':
+    "the shared keyring reaches the account's key derivation through midnight-identity, as the legacy page does; it is @scure/bip32 and @scure/bip39, with no WebAssembly"
 };
 const WALKER = new URL('../../../scripts/browser-graph.ts', import.meta.url).href;
 
@@ -83,12 +119,20 @@ const WORKER_ENTRIES = Object.keys(WORKERS).map((p) => relative(ROOT, join(ROOT,
  * starts it by.
  */
 const STARTED_BY: Readonly<Record<string, { file: string; as: string }>> = {
-  'packages/web-shared/src/vault-worker-entry.ts': { file: 'packages/web-shared/src/vault-worker-client.ts', as: './vault-worker-entry.js' },
-  'packages/web-shared/src/vault-proof-worker-entry.ts': { file: 'packages/web-shared/src/vault-proof-workers.ts', as: './vault-proof-worker-entry.js' },
+  'packages/web-shared/src/vault-worker-entry.ts': {
+    file: 'packages/web-shared/src/vault-worker-client.ts',
+    as: './vault-worker-entry.js'
+  },
+  'packages/web-shared/src/vault-proof-worker-entry.ts': {
+    file: 'packages/web-shared/src/vault-proof-workers.ts',
+    as: './vault-proof-worker-entry.js'
+  }
 };
 const STAND_IN = 'apps/web/src/adapters/reads.ts';
-const pageSideOf = <B extends { alias: unknown[] }>(build: B): B =>
-  ({ ...build, alias: [...build.alias, ...Object.values(STARTED_BY).map((w) => ({ find: w.as, replacement: STAND_IN }))] });
+const pageSideOf = <B extends { alias: unknown[] }>(build: B): B => ({
+  ...build,
+  alias: [...build.alias, ...Object.values(STARTED_BY).map((w) => ({ find: w.as, replacement: STAND_IN }))]
+});
 
 let graph: BuildGraph;
 let pageGraph: BuildGraph;
@@ -113,20 +157,28 @@ const adapterGraphs = new Map<string, Promise<BuildGraph>>();
 function adaptersWalk(pageSide = false): Promise<BuildGraph> {
   const key = String(pageSide);
   if (!adapterGraphs.has(key)) {
-    adapterGraphs.set(key, (async () => {
-      const { BROWSER_BUILDS, walkBuild } = (await import(WALKER)) as Walker;
-      const found = BROWSER_BUILDS.find((b) => b.name === 'web')!;
-      const web = pageSide ? pageSideOf(found as unknown as { alias: unknown[] }) as unknown as typeof found : found;
-      const adapters = OWN.map((f) => f.path).filter((p) => p.startsWith(`${ADAPTERS}/`));
-      const dir = mkdtempSync(join(tmpdir(), 'adapters-'));
-      try {
-        const page = join(dir, 'index.html');
-        writeFileSync(page, adapters.map((p) => `<script type="module" src="${relative(dirname(page), ROOT + p)}"></script>`).join('\n'));
-        return await walkBuild({ ...web, name: 'adapters', pages: [relative(ROOT, page)] }, ROOT);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    })());
+    adapterGraphs.set(
+      key,
+      (async () => {
+        const { BROWSER_BUILDS, walkBuild } = (await import(WALKER)) as Walker;
+        const found = BROWSER_BUILDS.find((b) => b.name === 'web')!;
+        const web = pageSide
+          ? (pageSideOf(found as unknown as { alias: unknown[] }) as unknown as typeof found)
+          : found;
+        const adapters = OWN.map((f) => f.path).filter((p) => p.startsWith(`${ADAPTERS}/`));
+        const dir = mkdtempSync(join(tmpdir(), 'adapters-'));
+        try {
+          const page = join(dir, 'index.html');
+          writeFileSync(
+            page,
+            adapters.map((p) => `<script type="module" src="${relative(dirname(page), ROOT + p)}"></script>`).join('\n')
+          );
+          return await walkBuild({ ...web, name: 'adapters', pages: [relative(ROOT, page)] }, ROOT);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      })()
+    );
   }
   return adapterGraphs.get(key)!;
 }
@@ -141,12 +193,14 @@ const SENTENCES_FOR_THE_LEGACY_PAGE: Readonly<Record<string, { writes: string; t
   'packages/web-shared/src/vault-step-reads.ts': {
     writes: 'toLocaleString',
     times: 1,
-    why: 'the time a deposit or a payment still on its way can no longer land, written into the sentences of two errors and of a check\'s summary; creating a vault (adapters/create-vault.ts) reaches the module and hands a screen a code for each answer',
-  },
+    why: "the time a deposit or a payment still on its way can no longer land, written into the sentences of two errors and of a check's summary; creating a vault (adapters/create-vault.ts) reaches the module and hands a screen a code for each answer"
+  }
 };
 
 /** The application's code and the kit's code its page reaches, each once. */
-const ownAndKit = () => [...new Map([...OWN, ...reached.filter((f) => f.path.startsWith('packages/ui/'))].map((f) => [f.path, f])).values()];
+const ownAndKit = () => [
+  ...new Map([...OWN, ...reached.filter((f) => f.path.startsWith('packages/ui/'))].map((f) => [f.path, f])).values()
+];
 
 describe('the application is read', () => {
   /* RED WHEN: the walk or the file list reads nothing, or stops at an import it cannot follow, so a rule passes over less than the page. */
@@ -169,8 +223,12 @@ describe('the application is read', () => {
     const { importsOf } = (await import(WALKER)) as Walker;
     const named: string[] = [];
     for (const f of pageGraph.files) {
-      for (const e of (await importsOf(ROOT + f, readFileSync(ROOT + f, 'utf8'))) as { specifier: string; worker?: boolean }[]) {
-        if (Object.values(STARTED_BY).some((w) => w.as === e.specifier) && e.worker !== true) named.push(`${f} ${e.specifier}`);
+      for (const e of (await importsOf(ROOT + f, readFileSync(ROOT + f, 'utf8'))) as {
+        specifier: string;
+        worker?: boolean;
+      }[]) {
+        if (Object.values(STARTED_BY).some((w) => w.as === e.specifier) && e.worker !== true)
+          named.push(`${f} ${e.specifier}`);
       }
     }
     expect(named).toEqual([]);
@@ -182,12 +240,16 @@ describe('the application is read', () => {
   });
 
   /* RED WHEN: the refusing rules read nothing of the application, so they pass over it because they saw nothing to refuse. */
-  it('reads every string the refusing rules look at, the application\'s own among them', () => {
+  it("reads every string the refusing rules look at, the application's own among them", () => {
     const census = wordingCensus(ownAndKit(), CODES);
     expect(census.read).toBeGreaterThan(150);
     const own = wordingCensus(OWN, CODES);
-    expect(own.byPosition).toEqual(expect.objectContaining({ module: expect.any(Number), 'translation key': expect.any(Number), 'element id': 1 }));
-    expect(ownAndKit().map((f) => f.path)).toEqual(expect.arrayContaining(['apps/web/src/main.ts', 'packages/ui/src/components/amount.tsx']));
+    expect(own.byPosition).toEqual(
+      expect.objectContaining({ module: expect.any(Number), 'translation key': expect.any(Number), 'element id': 1 })
+    );
+    expect(ownAndKit().map((f) => f.path)).toEqual(
+      expect.arrayContaining(['apps/web/src/main.ts', 'packages/ui/src/components/amount.tsx'])
+    );
   });
 });
 
@@ -196,7 +258,10 @@ describe('every rule, over the application', () => {
   it('declares every package it imports', async () => {
     const pkg = readFileSync(ROOT + 'apps/web/package.json', 'utf8');
     expect(await undeclaredImports(OWN, declaredBy(pkg))).toEqual([]);
-    const withDev = new Set([...declaredBy(pkg), ...Object.keys((JSON.parse(pkg) as { devDependencies?: object }).devDependencies ?? {})]);
+    const withDev = new Set([
+      ...declaredBy(pkg),
+      ...Object.keys((JSON.parse(pkg) as { devDependencies?: object }).devDependencies ?? {})
+    ]);
     expect((await undeclaredImports([CONFIG], withDev)).filter((b) => !b.what.startsWith('node:'))).toEqual([]);
   });
 
@@ -206,13 +271,17 @@ describe('every rule, over the application', () => {
     expect(adapters.map((f) => f.path)).toContain(`${ADAPTERS}/vault-public-money.ts`);
     expect(await waysIntoSharedCode(OWN, ROOT, 'apps/web/src', ADAPTERS), THE_WAY_THROUGH).toEqual([]);
     /* Read as if they were screens, the adapters' own ways in are named, so the rule is reading them and not passing over them. */
-    expect((await waysIntoSharedCode(adapters, ROOT, 'apps/web/src', null)).map((b) => b.what)).toEqual(expect.arrayContaining(['imports vaults-web-shared/device-vault-holdings.js']));
+    expect((await waysIntoSharedCode(adapters, ROOT, 'apps/web/src', null)).map((b) => b.what)).toEqual(
+      expect.arrayContaining(['imports vaults-web-shared/device-vault-holdings.js'])
+    );
   });
 
   /* RED WHEN: a file outside the adapters makes an amount, so its decimals would be typed instead of read from the token's record. */
   it('makes amounts only in its adapters', () => {
     expect(amountsMadeOutsideTheAdapters(OWN, ROOT, ADAPTERS)).toEqual([]);
-    expect(amountsMadeOutsideTheAdapters(OWN, ROOT, null).map((b) => b.path)).toContain(`${ADAPTERS}/vault-public-money.ts`);
+    expect(amountsMadeOutsideTheAdapters(OWN, ROOT, null).map((b) => b.path)).toContain(
+      `${ADAPTERS}/vault-public-money.ts`
+    );
   });
 
   /*
@@ -230,9 +299,17 @@ describe('every rule, over the application', () => {
     const g = await adaptersWalk(true);
     expect(g.entries).toEqual(adapters);
     expect([g.staticNode, g.dynamicNode, g.unresolved]).toEqual([[], [], []]);
-    expect(g.files).toEqual(expect.arrayContaining(['packages/web-shared/src/device-vault-holdings.ts', 'packages/web-shared/src/wallet-sign-in.ts', 'src/core/assets.ts']));
+    expect(g.files).toEqual(
+      expect.arrayContaining([
+        'packages/web-shared/src/device-vault-holdings.ts',
+        'packages/web-shared/src/wallet-sign-in.ts',
+        'src/core/assets.ts'
+      ])
+    );
     const packages = new Set<string>();
-    for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
+    for (const f of g.files)
+      for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8')))
+        if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
     expect([...packages].filter((p) => /^@midnight(ntwrk|-ntwrk)\//.test(p) && !(p in PLAIN_SDK))).toEqual([]);
   });
 
@@ -245,18 +322,31 @@ describe('every rule, over the application', () => {
     const { importsOf } = (await import(WALKER)) as Walker;
     const g = await adaptersWalk(true);
     const packages = new Set<string>();
-    for (const f of g.files) for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8'))) if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
+    for (const f of g.files)
+      for (const e of await importsOf(f, readFileSync(ROOT + f, 'utf8')))
+        if (!/^[./]/.test(e.specifier)) packages.add(e.specifier);
     for (const [name, why] of Object.entries(PLAIN_SDK)) {
       expect(packages, name).toContain(name);
       expect(why.length, name).toBeGreaterThan(20);
       const dir = realpathSync(ROOT + 'node_modules/' + name);
-      expect(filesUnder(dir, '.', (p) => p.endsWith('.wasm')), name).toEqual([]);
+      expect(
+        filesUnder(dir, '.', (p) => p.endsWith('.wasm')),
+        name
+      ).toEqual([]);
       /* Nor WebAssembly carried inside its JavaScript. */
       const scripts = filesUnder(dir, '.', (p) => /\.(c|m)?js$/.test(p) && !p.includes('node_modules'));
       expect(scripts.length, name).toBeGreaterThan(0);
-      expect(scripts.filter((p) => /\bWebAssembly\./.test(readFileSync(join(dir, p), 'utf8'))), name).toEqual([]);
-      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
-      expect(Object.keys(pkg.dependencies ?? {}).filter((d) => /^@midnight(ntwrk|-ntwrk)\//.test(d)), name).toEqual([]);
+      expect(
+        scripts.filter((p) => /\bWebAssembly\./.test(readFileSync(join(dir, p), 'utf8'))),
+        name
+      ).toEqual([]);
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dependencies?: Record<string, string>;
+      };
+      expect(
+        Object.keys(pkg.dependencies ?? {}).filter((d) => /^@midnight(ntwrk|-ntwrk)\//.test(d)),
+        name
+      ).toEqual([]);
     }
   });
 
@@ -288,7 +378,9 @@ describe('every rule, over the application', () => {
     expect(stylesReachingIntoComponents([...OWN, ...STYLE])).toEqual([]);
     expect(namedOutside(OWN, 'AmountFigure', [])).toEqual([]);
     /* The figure alone, with no Public pill, only where a column of the same row says whether it is public, and in `PayAmount`, for an amount somebody is paid when no address decides yet whether it is: the words beside it say no address is set. */
-    expect(namedOutside(OWN, 'AmountFigureOnly', ['apps/web/src/screens/vault.tsx', 'apps/web/src/records/parts.tsx'])).toEqual([]);
+    expect(
+      namedOutside(OWN, 'AmountFigureOnly', ['apps/web/src/screens/vault.tsx', 'apps/web/src/records/parts.tsx'])
+    ).toEqual([]);
   });
 
   /* RED WHEN: the application, its stylesheet or its page spaces, aligns or places by left and right. */
@@ -336,8 +428,12 @@ describe('every rule, over the application', () => {
       /* Each let through is a time, written by the date's own formatter on a line that makes the date, and there are exactly as many as named: a number formatted there is refused. */
       const lines = readFileSync(ROOT + path, 'utf8').split('\n');
       const here = found.filter((b) => b.path === path);
-      expect(here.map((b) => b.what), path).toEqual(Array(what.times).fill(what.writes));
-      for (const b of here) expect(lines[b.line - 1], `${path}:${b.line}`).toMatch(/new Date\([^()]*\)\.toLocaleString\(\)/);
+      expect(
+        here.map((b) => b.what),
+        path
+      ).toEqual(Array(what.times).fill(what.writes));
+      for (const b of here)
+        expect(lines[b.line - 1], `${path}:${b.line}`).toMatch(/new Date\([^()]*\)\.toLocaleString\(\)/);
       expect(what.why.length, path).toBeGreaterThan(40);
     }
   });
@@ -366,17 +462,23 @@ describe('the language files', () => {
   /* RED WHEN: a language file lacks a phrase or a plural form its language needs, or has one English does not. */
   it('gives every language every phrase', () => {
     const english = messagesOf('en.json');
-    expect(languageFiles().flatMap((n) => missingPhrases(english, n.replace(/\.json$/, ''), messagesOf(n)))).toEqual([]);
+    expect(languageFiles().flatMap((n) => missingPhrases(english, n.replace(/\.json$/, ''), messagesOf(n)))).toEqual(
+      []
+    );
   });
 
   /* RED WHEN: a phrase has other gaps in a language than in English. */
   it('gives every phrase the same gaps in every language', () => {
     const english = messagesOf('en.json');
-    expect(languageFiles().flatMap((n) => gapsThatDiffer(english, n.replace(/\.json$/, ''), messagesOf(n)))).toEqual([]);
+    expect(languageFiles().flatMap((n) => gapsThatDiffer(english, n.replace(/\.json$/, ''), messagesOf(n)))).toEqual(
+      []
+    );
   });
 
   /* RED WHEN: a phrase is empty, or a value is not text. */
   it('has text for every phrase', () => {
-    for (const n of languageFiles()) for (const [k, v] of Object.entries(messagesOf(n))) expect(typeof v === 'string' && v.trim().length > 0, `${n} ${k}`).toBe(true);
+    for (const n of languageFiles())
+      for (const [k, v] of Object.entries(messagesOf(n)))
+        expect(typeof v === 'string' && v.trim().length > 0, `${n} ${k}`).toBe(true);
   });
 });

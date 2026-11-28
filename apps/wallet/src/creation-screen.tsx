@@ -27,12 +27,20 @@ createRoot(document.getElementById('app')!).render(
     <ApproveCreation
       request={given.request}
       identity={identityFromWords(given.words)}
-      channel={{ answer: (a: unknown) => { window.__creationAnswer = a; return true; }, refuse: () => true } as never}
+      channel={
+        {
+          answer: (a: unknown) => {
+            window.__creationAnswer = a;
+            return true;
+          },
+          refuse: () => true
+        } as never
+      }
       consent={{ ok: true } as never}
       whoIsAsking={given.request.requester.origin}
       onDecline={() => undefined}
       onPin={async () => undefined}
       drewTheLabel
     />
-  </KitProvider>,
+  </KitProvider>
 );

@@ -19,9 +19,20 @@
 import { zkirEngineFor, type KeyMaterialSource } from '../../../src/midnight/wasm-proving.js';
 
 type FromTheVaultWorker =
-  | { readonly op: 'prove'; readonly keyLocation: string; readonly preimage: Uint8Array; readonly overwriteBindingInput?: bigint }
+  | {
+      readonly op: 'prove';
+      readonly keyLocation: string;
+      readonly preimage: Uint8Array;
+      readonly overwriteBindingInput?: bigint;
+    }
   | { readonly op: 'check'; readonly keyLocation: string; readonly preimage: Uint8Array }
-  | { readonly op: 'answer'; readonly askId: number; readonly ok: boolean; readonly value?: unknown; readonly error?: string };
+  | {
+      readonly op: 'answer';
+      readonly askId: number;
+      readonly ok: boolean;
+      readonly value?: unknown;
+      readonly error?: string;
+    };
 
 declare const self: {
   postMessage(message: unknown): void;
@@ -53,19 +64,24 @@ const ask = (payload: { op: 'lookupKey'; keyLocation: string } | { op: 'getParam
 const asked = new Map<string, Promise<never>>();
 let refusedBecause: string | null = null;
 
-const once = (key: string, payload: { op: 'lookupKey'; keyLocation: string } | { op: 'getParams'; k: number }): Promise<never> => {
+const once = (
+  key: string,
+  payload: { op: 'lookupKey'; keyLocation: string } | { op: 'getParams'; k: number }
+): Promise<never> => {
   const held = asked.get(key);
   if (held !== undefined) return held;
   const answer = ask(payload);
   asked.set(key, answer);
-  answer.catch(() => { if (asked.get(key) === answer) asked.delete(key); });
+  answer.catch(() => {
+    if (asked.get(key) === answer) asked.delete(key);
+  });
   return answer;
 };
 
 /* The material comes from the vault worker, which owns the source, its checks and its cache; this thread owns nothing but the compute. */
 const material: KeyMaterialSource = {
   lookupKey: (keyLocation: string) => once(`key ${keyLocation}`, { op: 'lookupKey', keyLocation }),
-  getParams: (k: number) => once(`params ${k}`, { op: 'getParams', k }),
+  getParams: (k: number) => once(`params ${k}`, { op: 'getParams', k })
 };
 
 const failure = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -92,7 +108,7 @@ self.addEventListener('message', ({ data }) => {
   });
   work.then(
     (value) => self.postMessage({ op: 'result', value }),
-    (e: unknown) => self.postMessage({ op: 'failure', error: refusedBecause ?? failure(e) }),
+    (e: unknown) => self.postMessage({ op: 'failure', error: refusedBecause ?? failure(e) })
   );
 });
 

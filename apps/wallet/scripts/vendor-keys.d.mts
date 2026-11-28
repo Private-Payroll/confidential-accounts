@@ -19,7 +19,11 @@ export declare function ledgerSourceOf(relPath: string): string;
 export declare function declaredRefusal(relPath: string, hash: string, from: string): string[] | null;
 export declare function droppedRefusal(relPath: string, url: string, cause: unknown): string[];
 /** Every folder of ledger circuit files the keys folder or the pins hold, one generation deep. */
-export declare function ledgerFoldersOf(input: { keysDir: string; artefacts: Record<string, { bytes: number; sha256: string }>; circuits: readonly string[] }): string[];
+export declare function ledgerFoldersOf(input: {
+  keysDir: string;
+  artefacts: Record<string, { bytes: number; sha256: string }>;
+  circuits: readonly string[];
+}): string[];
 
 export interface AccountFile {
   /** Where the wallet serves it, under its keys folder. */
@@ -29,7 +33,12 @@ export interface AccountFile {
   readonly circuit: string;
 }
 
-export declare function accountFilesOf(circuits: readonly string[], folder: string, compiled?: string, verifierOnly?: boolean): AccountFile[];
+export declare function accountFilesOf(
+  circuits: readonly string[],
+  folder: string,
+  compiled?: string,
+  verifierOnly?: boolean
+): AccountFile[];
 
 export declare function vendorAccountKeys(input: {
   repoRoot: string;

@@ -37,9 +37,8 @@ import { describe, expect, it } from 'vitest';
  * Line comments are recognised only when not preceded by ':' or a quote, so a
  * `https://…` inside a string survives. A tripwire needs to catch a string
  * literal, not parse TypeScript. */
-const stripComments = (source: string): string => source
-  .replace(/\/\*[\s\S]*?\*\//gu, '')
-  .replace(/(^|[^:'"`\\])\/\/.*$/gmu, '$1');
+const stripComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:'"`\\])\/\/.*$/gmu, '$1');
 
 const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 /** `packages/identity/src` -> the repository root. */
@@ -59,10 +58,7 @@ const SELF = 'packages/identity/src/security-claims.test.ts';
  * Paths are reported from the REPOSITORY root so that a name in an expected
  * list below is a path somebody can open.
  */
-const ROOTS = [
-  path.join(REPO, 'packages', 'identity', 'src'),
-  path.join(REPO, 'apps', 'wallet'),
-];
+const ROOTS = [path.join(REPO, 'packages', 'identity', 'src'), path.join(REPO, 'apps', 'wallet')];
 
 /** Every `.ts`/`.tsx` of the product, as [repo-relative path, code without comments]. */
 const sources = (): ReadonlyArray<readonly [string, string]> => {
@@ -72,7 +68,10 @@ const sources = (): ReadonlyArray<readonly [string, string]> => {
       /* Build output and vendored material are not source and are not swept. */
       if (name === 'node_modules' || name === 'dist' || name === 'public') continue;
       const full = path.join(dir, name);
-      if (statSync(full).isDirectory()) { walk(full); continue; }
+      if (statSync(full).isDirectory()) {
+        walk(full);
+        continue;
+      }
       if (!/\.(ts|tsx)$/u.test(name)) continue;
       found.push([path.relative(REPO, full), stripComments(readFileSync(full, 'utf8'))]);
     }
@@ -82,7 +81,10 @@ const sources = (): ReadonlyArray<readonly [string, string]> => {
 };
 
 const carrying = (needle: RegExp): readonly string[] =>
-  sources().filter(([, code]) => needle.test(code)).map(([file]) => file).sort();
+  sources()
+    .filter(([, code]) => needle.test(code))
+    .map(([file]) => file)
+    .sort();
 
 describe('no extended public key above the leaf leaves this library', () => {
   /* THE PROPERTY, AND WHY IT IS SHARP RATHER THAN TIDY. Role and index are NOT
@@ -124,12 +126,12 @@ describe('no extended public key above the leaf leaves this library', () => {
       'packages/identity/src/keys/derivation.portability.test.ts',
       'packages/identity/src/profile/committee-key.test.ts',
       'packages/identity/src/profile/unlock.test.ts',
-      SELF,
+      SELF
     ].sort();
     const found = carrying(/HDKey/u);
     expect(
       found.filter((f) => !DELIBERATE.includes(f)),
-      'a file derives or names an HD node and is not one of the four that do it deliberately',
+      'a file derives or names an HD node and is not one of the four that do it deliberately'
     ).toEqual([]);
     /*
      * **THE REACH IS ASSERTED AGAINST THE DISK, NOT AGAINST THE SWEEP.** Asking
@@ -147,11 +149,11 @@ describe('no extended public key above the leaf leaves this library', () => {
     const inThisCopy = (f: string): boolean => existsSync(path.join(REPO, f));
     expect(
       DELIBERATE.filter((f) => inThisCopy(f) && !found.includes(f)),
-      'a file named here is in this copy and no longer walks an HD node',
+      'a file named here is in this copy and no longer walks an HD node'
     ).toEqual([]);
     expect(
       DELIBERATE.filter((f) => inThisCopy(f) && !walked.has(f)),
-      'a file named here is in this copy and the sweep did not reach it',
+      'a file named here is in this copy and the sweep did not reach it'
     ).toEqual([]);
   });
 
@@ -179,8 +181,7 @@ describe('a passkey authenticates and never carries key material', () => {
      * completed one real sign-in (`passkey/verify.test.ts:85`, `:95`). If this
      * literal ever became 'direct' or 'enterprise', that sentence would be
      * wrong and nothing else would say so. */
-    const withAttestation = sources()
-      .filter(([file, code]) => file !== SELF && /attestation\s*:/u.test(code));
+    const withAttestation = sources().filter(([file, code]) => file !== SELF && /attestation\s*:/u.test(code));
     expect(withAttestation.map(([file]) => file)).toEqual(['packages/identity/src/browser/passkey.ts']);
     expect(withAttestation[0]?.[1]).toContain("attestation: 'none'");
   });
@@ -219,7 +220,8 @@ describe('the wallet page asks nobody anything when it opens', () => {
     const offenders = sources()
       .filter(([file]) => !/\.test(?:-support)?\.tsx?$|\.fixtures\.ts$/u.test(file) && file !== SELF)
       .filter(([, code]) => /["'`](?:https?|wss?):\/\//u.test(code))
-      .map(([file]) => file).sort();
+      .map(([file]) => file)
+      .sort();
     /* RED WHEN a wallet file writes an address of its own, a party the network's record does not name. */
     expect(offenders).toEqual(['apps/wallet/src/chain/rehearsal.ts']);
   });

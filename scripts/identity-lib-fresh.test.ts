@@ -9,7 +9,9 @@ import { assertIdentityLibFresh, staleIdentityLib } from './identity-lib-fresh.j
  * no test passes on the library from before the change.
  */
 const made: string[] = [];
-afterEach(() => { made.length = 0; });
+afterEach(() => {
+  made.length = 0;
+});
 const aPackage = (): string => {
   const root = mkdtempSync(join(tmpdir(), 'identity-lib-'));
   made.push(root);
@@ -17,7 +19,9 @@ const aPackage = (): string => {
   mkdirSync(join(root, 'lib', 'profile'), { recursive: true });
   return root;
 };
-const at = (path: string, seconds: number): void => { utimesSync(path, seconds, seconds); };
+const at = (path: string, seconds: number): void => {
+  utimesSync(path, seconds, seconds);
+};
 
 describe('the identity library is not older than its source', () => {
   it('names a source file whose built file is older, or missing, and nothing else', () => {

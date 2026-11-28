@@ -13,7 +13,11 @@ import type { SeatOpeningsAnswer } from './vault-worker-wire.js';
 import type { VaultBuilderClient } from './vault-worker-client.js';
 
 /** The three parts of a seat's opening the builder reads. */
-export interface OpeningAsked { readonly publicKey: string; readonly scope: string; readonly blinding: string }
+export interface OpeningAsked {
+  readonly publicKey: string;
+  readonly scope: string;
+  readonly blinding: string;
+}
 type OpeningAnswered = SeatOpeningsAnswer['openings'][number];
 type Answering = Pick<VaultBuilderClient, 'seatOpenings' | 'proposalIdentity'>;
 type IdentityAsked = { readonly change: SeatByAddressChange; readonly salt: string };
@@ -33,8 +37,8 @@ const keptOf = (builder: Answering): Kept => {
       openings: new Map(),
       identities: new JoinedAsks<IdentityAsked, { readonly chainId: string }>(
         (i) => canonical([i.change, i.salt]),
-        (part) => Promise.all(part.map((i) => builder.proposalIdentity(i.change, i.salt))),
-      ),
+        (part) => Promise.all(part.map((i) => builder.proposalIdentity(i.change, i.salt)))
+      )
     };
     keptFor.set(builder, kept);
   }
@@ -59,14 +63,21 @@ export const builderAnswersOf = (builder: Answering): BuilderAnswers => {
       const on = String(account).toLowerCase();
       let joined = kept.openings.get(on);
       if (joined === undefined) {
-        joined = new JoinedAsks<OpeningAsked, OpeningAnswered>(openingKeyOf, async (part) => (await builder.seatOpenings({
-          account, openings: part.map((o) => ({ publicKey: o.publicKey, scope: o.scope, blinding: o.blinding })),
-        })).openings);
+        joined = new JoinedAsks<OpeningAsked, OpeningAnswered>(
+          openingKeyOf,
+          async (part) =>
+            (
+              await builder.seatOpenings({
+                account,
+                openings: part.map((o) => ({ publicKey: o.publicKey, scope: o.scope, blinding: o.blinding }))
+              })
+            ).openings
+        );
         kept.openings.set(on, joined);
       }
       return joined.many(openings);
     },
-    proposalIdentity: (change, salt) => kept.identities.get({ change, salt }),
+    proposalIdentity: (change, salt) => kept.identities.get({ change, salt })
   });
 };
 
@@ -89,26 +100,43 @@ const headsKeptFor = new WeakMap<object, HeadsKept>();
  */
 export const anchorHeadsKept = (builder: HeadsAnswering): HeadsAnswering['anchorHeads'] => {
   let kept = headsKeptFor.get(builder);
-  if (kept === undefined) { kept = { after: new Map(), holders: new Map() }; headsKeptFor.set(builder, kept); }
+  if (kept === undefined) {
+    kept = { after: new Map(), holders: new Map() };
+    headsKeptFor.set(builder, kept);
+  }
   const k = kept;
   return async (ask: HeadsAsked): Promise<HeadsAnswer> => {
     const steps = ask.after.map((s) => canonical(s));
     const holders = (ask.holders ?? []).map((h) => canonical(h));
-    const after = [...new Map(ask.after.map((s, i) => [steps[i]!, s] as const).filter(([key]) => !k.after.has(key))).values()];
-    const more = [...new Map((ask.holders ?? []).map((h, i) => [holders[i]!, h] as const).filter(([key]) => !k.holders.has(key))).values()];
+    const after = [
+      ...new Map(ask.after.map((s, i) => [steps[i]!, s] as const).filter(([key]) => !k.after.has(key))).values()
+    ];
+    const more = [
+      ...new Map(
+        (ask.holders ?? []).map((h, i) => [holders[i]!, h] as const).filter(([key]) => !k.holders.has(key))
+      ).values()
+    ];
     if (after.length > 0 || more.length > 0) {
       const a = await builder.anchorHeads(more.length === 0 ? { after } : { after, holders: more });
-      const whole = Array.isArray(a?.after) && a.after.length === after.length && a.after.every((h) => typeof h === 'string')
-        && Array.isArray(a.seats) && a.seats.length === after.length
-        && Array.isArray(a.holderSeats) && a.holderSeats.length === more.length;
-      if (!whole) throw new Error('the builder did not answer one head and one list of seats for each step asked, and one list of seats for each holder asked, so nothing of its answer is believed.');
+      const whole =
+        Array.isArray(a?.after) &&
+        a.after.length === after.length &&
+        a.after.every((h) => typeof h === 'string') &&
+        Array.isArray(a.seats) &&
+        a.seats.length === after.length &&
+        Array.isArray(a.holderSeats) &&
+        a.holderSeats.length === more.length;
+      if (!whole)
+        throw new Error(
+          'the builder did not answer one head and one list of seats for each step asked, and one list of seats for each holder asked, so nothing of its answer is believed.'
+        );
       after.forEach((s, i) => k.after.set(canonical(s), { head: a.after[i]!, seats: a.seats[i] ?? null }));
       more.forEach((h, i) => k.holders.set(canonical(h), a.holderSeats[i] ?? null));
     }
     return {
       after: steps.map((key) => k.after.get(key)!.head),
       seats: steps.map((key) => k.after.get(key)!.seats),
-      holderSeats: holders.map((key) => k.holders.get(key)!),
+      holderSeats: holders.map((key) => k.holders.get(key)!)
     };
   };
 };

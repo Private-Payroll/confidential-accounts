@@ -27,11 +27,23 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  AccountSimulator, privateStateFor, change, type Change, payoutTreeOf, sumArgsOf, invitePayloadFor, removalPayloadFor,
+  AccountSimulator,
+  privateStateFor,
+  change,
+  type Change,
+  payoutTreeOf,
+  sumArgsOf,
+  invitePayloadFor,
+  removalPayloadFor
 } from './simulator.js';
 import { pureCircuits } from '../managed/contract/index.js';
 import {
-  ALL_VAULTS, NO_VAULT, scopeOfRights, rightsRecordOf, type SignerRights, type AccountPrivateState,
+  ALL_VAULTS,
+  NO_VAULT,
+  scopeOfRights,
+  rightsRecordOf,
+  type SignerRights,
+  type AccountPrivateState
 } from '../src/witnesses.js';
 import { toHex, fromHex } from '../../src/core/crypto.js';
 
@@ -48,7 +60,9 @@ const NOTHING: SignerRights = { mayRaise: false, mayApprove: false, mayHold: fal
 
 /** A device seated with `rights` instead of every right on every vault. */
 const withRights = (seed: number, rights: SignerRights): Device => ({
-  ...privateStateFor(seed), rights, scope: scopeOfRights(rights),
+  ...privateStateFor(seed),
+  rights,
+  scope: scopeOfRights(rights)
 });
 
 const A = privateStateFor(1);
@@ -72,39 +86,72 @@ const raiseGov = async (sim: AccountSimulator, by: Device, c: Change, payload: U
   return sim.proposalId(payload, c.salt);
 };
 
-interface Run { id: Uint8Array; c: Change; payload: Uint8Array; vault: Uint8Array; pay: () => Promise<unknown> }
+interface Run {
+  id: Uint8Array;
+  c: Change;
+  payload: Uint8Array;
+  vault: Uint8Array;
+  pay: () => Promise<unknown>;
+}
 
 /** Raises a one-payee run on `vault` from `by`. */
 const raiseRun = async (
-  sim: AccountSimulator, by: Device, vault: Uint8Array, seed: number, required = 0n,
+  sim: AccountSimulator,
+  by: Device,
+  vault: Uint8Array,
+  seed: number,
+  required = 0n
 ): Promise<Run> => {
   const c = change(0n, seed);
   const tree = payoutTreeOf([{ details: toHex(fill(0x10)), nonce: toHex(fill(seed)) }]);
   await sim.as(sim.applying(by, c)).proposeRun({
-    root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault, required,
+    root: fromHex(tree.root),
+    payees: tree.payees,
+    from: OPENS,
+    until: CLOSES,
+    vault,
+    required
   });
   const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, required);
   const id = sim.proposalId(payload, c.salt, vault);
-  const pay = () => sim.as(sim.applying(A, c)).recordPaymentFromVault({
-    proposal: id, vault, root: fromHex(tree.root), payees: tree.payees,
-    from: OPENS, until: CLOSES, required, salt: c.salt,
-    details: fill(0x10), nonce: fill(seed), ...sumArgsOf(tree, 0),
-  });
+  const pay = () =>
+    sim.as(sim.applying(A, c)).recordPaymentFromVault({
+      proposal: id,
+      vault,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      required,
+      salt: c.salt,
+      details: fill(0x10),
+      nonce: fill(seed),
+      ...sumArgsOf(tree, 0)
+    });
   return { id, c, payload, vault, pay };
 };
 
 /** A device that holds what `run`'s id opens to, as a device given the run's material does. */
-const knowing = (d: Device, run: Run, opening: Partial<{ payload: Uint8Array; vault: Uint8Array; salt: Uint8Array }> = {}): Device => ({
+const knowing = (
+  d: Device,
+  run: Run,
+  opening: Partial<{ payload: Uint8Array; vault: Uint8Array; salt: Uint8Array }> = {}
+): Device => ({
   ...d,
   runOpenings: {
     ...(d.runOpenings ?? {}),
-    [hex(run.id)]: { payload: run.payload, vault: run.vault, salt: run.c.salt, ...opening },
-  },
+    [hex(run.id)]: { payload: run.payload, vault: run.vault, salt: run.c.salt, ...opening }
+  }
 });
 
 /** Re-seats `from`'s leaf as `to`'s, raised by `by` (which counts as `by`'s approval) and approved by `approvers`. */
 const reseat = async (
-  sim: AccountSimulator, from: Device, to: Device, by: Device, approvers: Device[], seed: number,
+  sim: AccountSimulator,
+  from: Device,
+  to: Device,
+  by: Device,
+  approvers: Device[],
+  seed: number
 ) => {
   const c = change(0n, seed);
   const payload = pureCircuits.reseatPayload(sim.leafOf(from), sim.leafOf(to));
@@ -114,7 +161,13 @@ const reseat = async (
 };
 
 /** Re-seats `from`'s leaf as the bytes `newLeaf`, raised by A (which counts as A's approval) and approved by `approvers`. */
-const reseatTo = async (sim: AccountSimulator, from: Device, newLeaf: Uint8Array, approvers: Device[], seed: number) => {
+const reseatTo = async (
+  sim: AccountSimulator,
+  from: Device,
+  newLeaf: Uint8Array,
+  approvers: Device[],
+  seed: number
+) => {
   const c = change(0n, seed);
   const payload = pureCircuits.reseatPayload(sim.leafOf(from), newLeaf);
   const id = await raiseGov(sim, A, c, payload);
@@ -160,11 +213,13 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     const payrollOnly = withRights(22, { ...NOTHING, mayRaise: true, vaults: [PAYROLL] });
     const sim = await live([A, approverOnly, payrollOnly], 1n);
     /* RED WHEN `grants` reads the approve flag for the raise right. */
-    await expect(raiseRun(sim, approverOnly, PAYROLL, 31))
-      .rejects.toThrow(/your seat does not let you propose payments from that vault or finish setting it up/);
+    await expect(raiseRun(sim, approverOnly, PAYROLL, 31)).rejects.toThrow(
+      /your seat does not let you propose payments from that vault or finish setting it up/
+    );
     /* RED WHEN `coversVault` stops comparing the named vaults. */
-    await expect(raiseRun(sim, payrollOnly, TREASURY, 32))
-      .rejects.toThrow(/your seat does not let you propose payments from that vault or finish setting it up/);
+    await expect(raiseRun(sim, payrollOnly, TREASURY, 32)).rejects.toThrow(
+      /your seat does not let you propose payments from that vault or finish setting it up/
+    );
     const run = await raiseRun(sim, payrollOnly, PAYROLL, 33);
     expect(sim.isOpen(run.id)).toBe(true);
   });
@@ -176,17 +231,21 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     const sim = await live([A, raiser, treasuryApprover, payrollApprover], 1n);
     const run = await raiseRun(sim, A, PAYROLL, 34);
     /* RED WHEN the approve right is taken from the raise flag. */
-    await expect(sim.as(knowing(raiser, run)).approve(run.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(knowing(raiser, run)).approve(run.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
     /* RED WHEN the run's vault is not checked against the set. */
-    await expect(sim.as(knowing(treasuryApprover, run)).approve(run.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(knowing(treasuryApprover, run)).approve(run.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
     /* An opening that names a vault the run does not: RED WHEN the opening is not checked against the id. */
-    await expect(sim.as(knowing(treasuryApprover, run, { vault: TREASURY })).approve(run.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(knowing(treasuryApprover, run, { vault: TREASURY })).approve(run.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
     /* No opening at all: the device proves nothing about the run's vault. */
-    await expect(sim.as(payrollApprover).approve(run.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(payrollApprover).approve(run.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
     await sim.as(knowing(payrollApprover, run)).approve(run.id);
     /* A's raise counted A, so the approver's is the second. */
     expect(sim.approvalsFor(run.id)).toBe(2n);
@@ -211,11 +270,14 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     /* RED WHEN the raise counts its raiser without reading the approve right. */
     expect(sim.approvalsFor(plain.id)).toBe(0n);
     /* RED WHEN a raise that is not counted still burns the raiser's approval. */
-    expect([...(sim.ledger.approvals as unknown as Iterable<Uint8Array>)].map(hex).filter((n) => !seen.has(n))).toEqual([]);
+    expect([...(sim.ledger.approvals as unknown as Iterable<Uint8Array>)].map(hex).filter((n) => !seen.has(n))).toEqual(
+      []
+    );
     /* At a threshold of one the raise alone does not carry it: the raiser may not approve. */
     await expect(plain.pay()).rejects.toThrow(/not enough approvals yet/);
-    await expect(sim.as(knowing(raiseOnly, plain)).approve(plain.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(knowing(raiseOnly, plain)).approve(plain.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
     await sim.as(A).approve(plain.id);
     expect(sim.approvalsFor(plain.id)).toBe(1n);
     await plain.pay();
@@ -223,8 +285,9 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     const counted = await raiseRun(sim, raiseAndApprove, PAYROLL, 44);
     /* RED WHEN the raise stops counting a raiser who may approve on the run's vault. */
     expect(sim.approvalsFor(counted.id)).toBe(1n);
-    await expect(sim.as(knowing(raiseAndApprove, counted)).approve(counted.id))
-      .rejects.toThrow(/you have already approved this proposal/);
+    await expect(sim.as(knowing(raiseAndApprove, counted)).approve(counted.id)).rejects.toThrow(
+      /you have already approved this proposal/
+    );
     await counted.pay();
 
     const byEveryRight = await raiseRun(sim, A, TREASURY, 45);
@@ -237,13 +300,15 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     /* The device claims every right while its leaf commits to a raise right on one vault. */
     const lying = { ...X, rights: { ...NOTHING, mayRaise: true, everyVault: true } };
     /* RED WHEN the raise stops comparing the record's hash with the scope (`raisesAndApproves`). */
-    await expect(raiseRun(sim, lying, TREASURY, 36))
-      .rejects.toThrow(/your seat does not let you propose payments from that vault or finish setting it up/);
+    await expect(raiseRun(sim, lying, TREASURY, 36)).rejects.toThrow(
+      /your seat does not let you propose payments from that vault or finish setting it up/
+    );
     const run = await raiseRun(sim, A, PAYROLL, 46);
     const claimsApproval = { ...X, rights: { ...NOTHING, mayApprove: true, everyVault: true } };
     /* RED WHEN `grants` stops comparing the record's hash with the scope. */
-    await expect(sim.as(knowing(claimsApproval, run)).approve(run.id))
-      .rejects.toThrow(/your seat does not let you approve payments from that vault or finish setting it up/);
+    await expect(sim.as(knowing(claimsApproval, run)).approve(run.id)).rejects.toThrow(
+      /your seat does not let you approve payments from that vault or finish setting it up/
+    );
   });
 
   it('HOLD: refused without the hold right, or on a governance proposal', async () => {
@@ -251,8 +316,9 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     const sim = await live([A, noHold, B], 2n);
     const run = await raiseRun(sim, A, PAYROLL, 37);
     /* RED WHEN the hold right is taken from the approve flag. */
-    await expect(sim.as(knowing(noHold, run)).holdRun(run.id))
-      .rejects.toThrow(/your seat does not let you hold runs on that vault/);
+    await expect(sim.as(knowing(noHold, run)).holdRun(run.id)).rejects.toThrow(
+      /your seat does not let you hold runs on that vault/
+    );
     const gov = await raiseGov(sim, A, change(0n, 503), pureCircuits.setThresholdPayload(1n));
     /* RED WHEN `holdRun` stops refusing a proposal with no window. */
     await expect(sim.as(B).holdRun(gov)).rejects.toThrow(/only a run can be held/);
@@ -263,11 +329,13 @@ describe("a run is raised, approved and held only as a signer's rights allow", (
     const sim = await live([A, treasuryHolder, B], 2n);
     const payroll = await raiseRun(sim, A, PAYROLL, 38);
     /* RED WHEN `holdRun` stops checking the run's vault against the set. */
-    await expect(sim.as(knowing(treasuryHolder, payroll)).holdRun(payroll.id))
-      .rejects.toThrow(/your seat does not let you hold runs on that vault/);
+    await expect(sim.as(knowing(treasuryHolder, payroll)).holdRun(payroll.id)).rejects.toThrow(
+      /your seat does not let you hold runs on that vault/
+    );
     /* An opening that names Treasury for a Payroll run. RED WHEN `holdRun` stops checking the opening rebuilds the id. */
-    await expect(sim.as(knowing(treasuryHolder, payroll, { vault: TREASURY })).holdRun(payroll.id))
-      .rejects.toThrow(/your seat does not let you hold runs on that vault/);
+    await expect(sim.as(knowing(treasuryHolder, payroll, { vault: TREASURY })).holdRun(payroll.id)).rejects.toThrow(
+      /your seat does not let you hold runs on that vault/
+    );
     const treasury = await raiseRun(sim, A, TREASURY, 39);
     /* RED WHEN `grants` stops reading the hold right: a seat that may hold is refused. */
     await sim.as(knowing(treasuryHolder, treasury)).holdRun(treasury.id);
@@ -412,12 +480,14 @@ describe("changing a signer's rights is a re-seat, and a re-seat counts as a rem
     expect(sim.ledger.signerLeaves.size()).toBe(size);
     await expect(sim.as(C).approve(pending)).rejects.toThrow(/you are not a signer on this account/);
     /* RED WHEN the old leaf's path still opens a seat: the circuit, given the path it had before, refuses it. */
-    await expect(sim.as(sim.dishonest(C, { ...sim.pathFor(cReseated), leaf: sim.leafOf(C) })).approve(pending))
-      .rejects.toThrow(/(?<!you are )not a signer on this account/);
+    await expect(
+      sim.as(sim.dishonest(C, { ...sim.pathFor(cReseated), leaf: sim.leafOf(C) })).approve(pending)
+    ).rejects.toThrow(/(?<!you are )not a signer on this account/);
     /* A governance proposal raised before the re-seat is void, as after any removal. */
     for (const d of [B, cReseated]) await sim.as(d).approve(pending);
-    await expect(sim.as(sim.applying(A, change(0n, 505))).setThreshold(3n, pending))
-      .rejects.toThrow(/a signer has been removed or replaced since this was raised; raise it again/);
+    await expect(sim.as(sim.applying(A, change(0n, 505))).setThreshold(3n, pending)).rejects.toThrow(
+      /a signer has been removed or replaced since this was raised; raise it again/
+    );
   });
 
   it('refuses a leaf that is not seated, one already seated, and a proposal for another change', async () => {
@@ -433,17 +503,21 @@ describe("changing a signer's rights is a re-seat, and a re-seat counts as a rem
     const id = await raiseGov(sim, A, c, removalPayloadFor(sim.leafOf(C)));
     for (const d of [B]) await sim.as(d).approve(id);
     /* RED WHEN `reseatSigner` stops asking whether the proposal is approved: one signer then replaces any seat. */
-    await expect((await reseatTo(sim, C, sim.leafOf(privateStateFor(12)), [A], 519))())
-      .rejects.toThrow(/not enough approvals yet/);
+    await expect((await reseatTo(sim, C, sim.leafOf(privateStateFor(12)), [A], 519))()).rejects.toThrow(
+      /not enough approvals yet/
+    );
     /* RED WHEN `reseatSigner` stops refusing an empty leaf. */
-    await expect((await reseatTo(sim, C, new Uint8Array(32), [A, B], 520))())
-      .rejects.toThrow(/that is not a usable signer leaf/);
+    await expect((await reseatTo(sim, C, new Uint8Array(32), [A, B], 520))()).rejects.toThrow(
+      /that is not a usable signer leaf/
+    );
     /* RED WHEN `reseatSigner` stops refusing the vacancy marker, which would unseat C with no removal's checks. */
-    await expect((await reseatTo(sim, C, pureCircuits.vacantSlot(), [A, B], 521))())
-      .rejects.toThrow(/that is not a usable signer leaf/);
+    await expect((await reseatTo(sim, C, pureCircuits.vacantSlot(), [A, B], 521))()).rejects.toThrow(
+      /that is not a usable signer leaf/
+    );
     /* RED WHEN `reseatSigner` stops binding the proposal to both leaves. */
-    await expect(sim.as(sim.applying(A, c)).reseatSigner(sim.leafOf(C), sim.leafOf(privateStateFor(10)), id))
-      .rejects.toThrow(/that proposal is not for this change of seat/);
+    await expect(
+      sim.as(sim.applying(A, c)).reseatSigner(sim.leafOf(C), sim.leafOf(privateStateFor(10)), id)
+    ).rejects.toThrow(/that proposal is not for this change of seat/);
   });
 
   it('refuses a path for the old leaf from another tree', async () => {
@@ -456,13 +530,14 @@ describe("changing a signer's rights is a re-seat, and a re-seat counts as a rem
     const real = sim.pathFor(C);
     const forged = {
       leaf: real.leaf,
-      path: real.path.map((step, i) => (i === 0 ? { ...step, sibling: { field: step.sibling.field + 1n } } : step)),
+      path: real.path.map((step, i) => (i === 0 ? { ...step, sibling: { field: step.sibling.field + 1n } } : step))
     };
     /* Pinned for C's leaf only, so A's own membership path is still the real one. */
     const withForgedPath = { ...sim.applying(A, c), pinnedPath: forged, pinAnyLeaf: false };
     /* RED WHEN `reseatSigner` stops checking the old leaf's path against the signers' tree. */
-    await expect(sim.as(withForgedPath).reseatSigner(sim.leafOf(C), sim.leafOf(to), id))
-      .rejects.toThrow(/that signer is not on this account/);
+    await expect(sim.as(withForgedPath).reseatSigner(sim.leafOf(C), sim.leafOf(to), id)).rejects.toThrow(
+      /that signer is not on this account/
+    );
     expect(sim.slotOf(C)).toBe(slot);
   });
 });
@@ -481,13 +556,16 @@ describe('the approvals a policy change needs', () => {
     const id = await raiseGov(sim, A, c, pureCircuits.setVaultThresholdPayload(pureCircuits.policyBarKey(), 1n));
     for (const d of [B]) await sim.as(d).approve(id);
     /* RED WHEN `setVaultThreshold` stops refusing `policyBarKey()`. */
-    await expect(sim.as(sim.applying(A, c)).setVaultThreshold(pureCircuits.policyBarKey(), 1n, id))
-      .rejects.toThrow(/that is not a vault; to change the approvals a policy change needs, raise that change instead/);
+    await expect(sim.as(sim.applying(A, c)).setVaultThreshold(pureCircuits.policyBarKey(), 1n, id)).rejects.toThrow(
+      /that is not a vault; to change the approvals a policy change needs, raise that change instead/
+    );
   });
 
   it('IS CHANGED ONLY AT THE BAR IT HOLDS TODAY', async () => {
     const sim = await live([A, B, C], 2n);
-    await (await setBar(sim, 3n, [A, B], 511))();
+    await (
+      await setBar(sim, 3n, [A, B], 511)
+    )();
     expect(sim.ledger.thresholds.lookup(pureCircuits.policyBarKey())).toBe(3n);
     const lower = await setBar(sim, 2n, [A, B], 512);
     /* RED WHEN `setPolicyBar` takes the account's threshold alone. */
@@ -503,8 +581,9 @@ describe('the approvals a policy change needs', () => {
     const id = await raiseGov(sim, A, c, pureCircuits.setThresholdPayload(2n));
     for (const d of [B]) await sim.as(d).approve(id);
     /* RED WHEN `setPolicyBar` stops binding the proposal to the bar it sets. */
-    await expect(sim.as(sim.applying(A, c)).setPolicyBar(2n, id))
-      .rejects.toThrow(/that proposal is not for this number of approvals for policy changes/);
+    await expect(sim.as(sim.applying(A, c)).setPolicyBar(2n, id)).rejects.toThrow(
+      /that proposal is not for this number of approvals for policy changes/
+    );
   });
 
   it('refuses zero and more than the signers', async () => {
@@ -512,26 +591,31 @@ describe('the approvals a policy change needs', () => {
     /* RED WHEN the zero check goes. */
     await expect((await setBar(sim, 0n, [A, B], 513))()).rejects.toThrow(/a policy change needs at least one approval/);
     /* RED WHEN the signer-count check goes. */
-    await expect((await setBar(sim, 3n, [A, B], 514))())
-      .rejects.toThrow(/a policy change cannot need more approvals than the company has signers/);
+    await expect((await setBar(sim, 3n, [A, B], 514))()).rejects.toThrow(
+      /a policy change cannot need more approvals than the company has signers/
+    );
   });
 
   it('NO REMOVAL LEAVES FEWER SIGNERS THAN A POLICY CHANGE NEEDS', async () => {
     const sim = await live([A, B, C], 2n);
-    await (await setBar(sim, 3n, [A, B], 515))();
+    await (
+      await setBar(sim, 3n, [A, B], 515)
+    )();
     const c = change(0n, 516);
     const id = await raiseGov(sim, A, c, removalPayloadFor(sim.leafOf(C)));
     /* All three, because a removal needs the policy bar's approvals too. */
     for (const d of [B, C]) await sim.as(d).approve(id);
     /* RED WHEN a removal that keeps the threshold stops comparing with the policy bar. */
-    await expect(sim.as(sim.applying(A, c)).removeSigner(sim.leafOf(C), id))
-      .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+    await expect(sim.as(sim.applying(A, c)).removeSigner(sim.leafOf(C), id)).rejects.toThrow(
+      /that would leave fewer signers than a policy change needs/
+    );
     const c2 = change(0n, 517);
     const id2 = await raiseGov(sim, A, c2, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(C), 1n));
     for (const d of [B, C]) await sim.as(d).approve(id2);
     /* RED WHEN a removal that sets the threshold stops comparing with the policy bar. */
-    await expect(sim.as(sim.applying(A, c2)).removeSignerAndSetThreshold(sim.leafOf(C), 1n, id2))
-      .rejects.toThrow(/that would leave fewer signers than a policy change needs/);
+    await expect(sim.as(sim.applying(A, c2)).removeSignerAndSetThreshold(sim.leafOf(C), 1n, id2)).rejects.toThrow(
+      /that would leave fewer signers than a policy change needs/
+    );
   });
 
   it('with no bar set, a removal that lowers the threshold is not refused by it', async () => {
@@ -601,8 +685,9 @@ describe('a change of who is seated needs the policy bar, not the threshold alon
     const id2 = await raiseGov(sim, A, c2, pureCircuits.removeAndSetThresholdPayload(sim.leafOf(D), 2n));
     for (const d of [B]) await sim.as(d).approve(id2);
     /* RED WHEN a removal that sets the threshold stops calling `requireSeatBar`. */
-    await expect(sim.as(sim.applying(A, c2)).removeSignerAndSetThreshold(sim.leafOf(D), 2n, id2))
-      .rejects.toThrow(SEAT_BAR);
+    await expect(sim.as(sim.applying(A, c2)).removeSignerAndSetThreshold(sim.leafOf(D), 2n, id2)).rejects.toThrow(
+      SEAT_BAR
+    );
     expect(sim.removals()).toBe(0n);
     /* Down to exactly the bar: three signers left of a bar of three. RED WHEN the count check refuses at the bar. */
     await sim.as(C).approve(id);
@@ -627,20 +712,34 @@ describe('a hold never strands a run', () => {
     const c = change(0n, seed);
     const payees = [
       { details: toHex(fill(0x10)), nonce: toHex(fill(seed)) },
-      { details: toHex(fill(0x11)), nonce: toHex(fill(seed + 1)) },
+      { details: toHex(fill(0x11)), nonce: toHex(fill(seed + 1)) }
     ];
     const tree = payoutTreeOf(payees);
     await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault: PAYROLL, required: 0n,
+      root: fromHex(tree.root),
+      payees: tree.payees,
+      from: OPENS,
+      until: CLOSES,
+      vault: PAYROLL,
+      required: 0n
     });
     const payload = pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n);
     const id = sim.proposalId(payload, c.salt, PAYROLL);
     for (const d of [B]) await sim.as(d).approve(id);
-    const pay = (i: number) => sim.as(sim.applying(A, c)).recordPaymentFromVault({
-      proposal: id, vault: PAYROLL, root: fromHex(tree.root), payees: tree.payees,
-      from: OPENS, until: CLOSES, required: 0n, salt: c.salt,
-      details: fill(0x10 + i), nonce: fill(seed + i), ...sumArgsOf(tree, i),
-    });
+    const pay = (i: number) =>
+      sim.as(sim.applying(A, c)).recordPaymentFromVault({
+        proposal: id,
+        vault: PAYROLL,
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from: OPENS,
+        until: CLOSES,
+        required: 0n,
+        salt: c.salt,
+        details: fill(0x10 + i),
+        nonce: fill(seed + i),
+        ...sumArgsOf(tree, i)
+      });
     return { id, pay };
   };
 
@@ -651,7 +750,9 @@ describe('a hold never strands a run', () => {
     /* RED WHEN the receipt step stops marking the run as paid from: C could then hold the second payee. */
     expect(toHex(sim.runHoldOf(run.id)!.placedBy)).toBe(toHex(pureCircuits.paidFromMark()));
     /* RED WHEN `holdRun`'s paid-from refusal goes: it is then refused for the wrong reason, as held and released. */
-    await expect(sim.as(C).holdRun(run.id)).rejects.toThrow(/a payment or a change from that run has already been made, so it can no longer be held/);
+    await expect(sim.as(C).holdRun(run.id)).rejects.toThrow(
+      /a payment or a change from that run has already been made, so it can no longer be held/
+    );
     /* RED WHEN the paid-from mark is read as a hold: the second payee would be refused. */
     await run.pay(1);
     await expect(sim.as(C).releaseHold(run.id)).rejects.toThrow(/that run is not held/);
@@ -697,20 +798,80 @@ describe('who may release a hold, in every case', () => {
   const released = (sim: AccountSimulator, id: Uint8Array) =>
     toHex(sim.runHoldOf(id)!.placedBy) === toHex(pureCircuits.releasedMark());
   const CASES = [
-    { title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder seated', n: 2, bar: 2, removed: false },
-    { title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder removed', n: 2, bar: 2, removed: true },
-    { title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder seated', n: 2, bar: 1, removed: false },
-    { title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder removed', n: 2, bar: 1, removed: true },
-    { title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder seated', n: 3, bar: 3, removed: false },
-    { title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder removed', n: 3, bar: 3, removed: true },
-    { title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder seated', n: 3, bar: 2, removed: false },
-    { title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder removed', n: 3, bar: 2, removed: true },
-    { title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder seated', n: 5, bar: 5, removed: false },
-    { title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder removed', n: 5, bar: 5, removed: true },
-    { title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder seated', n: 5, bar: 4, removed: false },
-    { title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder removed', n: 5, bar: 4, removed: true },
+    {
+      title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder seated',
+      n: 2,
+      bar: 2,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 2 signers, a run needing every signer (2), the holder removed',
+      n: 2,
+      bar: 2,
+      removed: true
+    },
+    {
+      title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder seated',
+      n: 2,
+      bar: 1,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 2 signers, a run needing fewer than every signer (1), the holder removed',
+      n: 2,
+      bar: 1,
+      removed: true
+    },
+    {
+      title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder seated',
+      n: 3,
+      bar: 3,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 3 signers, a run needing every signer (3), the holder removed',
+      n: 3,
+      bar: 3,
+      removed: true
+    },
+    {
+      title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder seated',
+      n: 3,
+      bar: 2,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 3 signers, a run needing fewer than every signer (2), the holder removed',
+      n: 3,
+      bar: 2,
+      removed: true
+    },
+    {
+      title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder seated',
+      n: 5,
+      bar: 5,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 5 signers, a run needing every signer (5), the holder removed',
+      n: 5,
+      bar: 5,
+      removed: true
+    },
+    {
+      title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder seated',
+      n: 5,
+      bar: 4,
+      removed: false
+    },
+    {
+      title: 'THE RELEASE TABLE: 5 signers, a run needing fewer than every signer (4), the holder removed',
+      n: 5,
+      bar: 4,
+      removed: true
+    },
     { title: 'THE RELEASE TABLE: 5 signers, a run needing three (3), the holder seated', n: 5, bar: 3, removed: false },
-    { title: 'THE RELEASE TABLE: 5 signers, a run needing three (3), the holder removed', n: 5, bar: 3, removed: true },
+    { title: 'THE RELEASE TABLE: 5 signers, a run needing three (3), the holder removed', n: 5, bar: 3, removed: true }
   ];
 
   it('THE HOLDER ALONE RELEASES THEIR OWN HOLD, in every case of the table while seated', async () => {
@@ -754,9 +915,7 @@ describe('who may release a hold, in every case', () => {
        * signer and its holder stays. RED WHEN the cap is dropped, when it is one below the signers
        * seated, when a removal adds one to the agreements needed (capped or not: the run needing
        * three of five, its holder removed), or when fewer than the bar release it. */
-      const expected = needed <= others.length
-        ? [...Array(needed - 1).fill(false), true]
-        : others.map(() => false);
+      const expected = needed <= others.length ? [...Array(needed - 1).fill(false), true] : others.map(() => false);
       expect(after).toEqual(expected);
     });
   }
@@ -767,12 +926,16 @@ describe('a seat without a leaf is not a signer', () => {
     const sim = await live([A, B], 1n);
     const outsider = privateStateFor(8);
     const run = await raiseRun(sim, A, PAYROLL, 47);
-    await expect(sim.as(knowing(outsider, run)).approve(run.id)).rejects.toThrow(/you are not a signer on this account/);
+    await expect(sim.as(knowing(outsider, run)).approve(run.id)).rejects.toThrow(
+      /you are not a signer on this account/
+    );
     await expect(raiseRun(sim, outsider, PAYROLL, 48)).rejects.toThrow(/you are not a signer on this account/);
     /* RED WHEN a leaf the signers' tree does not hold opens a seat: the device offers a path for its own leaf
      * beside a signer's siblings, so the witness answers and the circuit refuses. */
     const offering = sim.dishonest(outsider, { ...sim.pathFor(A), leaf: sim.leafOf(outsider) });
-    await expect(sim.as(knowing(offering, run)).approve(run.id)).rejects.toThrow(/(?<!you are )not a signer on this account/);
+    await expect(sim.as(knowing(offering, run)).approve(run.id)).rejects.toThrow(
+      /(?<!you are )not a signer on this account/
+    );
     await expect(raiseRun(sim, offering, PAYROLL, 48)).rejects.toThrow(/(?<!you are )not a signer on this account/);
   });
 });
@@ -792,19 +955,26 @@ describe('a run needs the approvals its total needs, from its bar when raised', 
 describe('the rights record', () => {
   it('names at most four vaults', () => {
     /* RED WHEN `rightsRecordOf` stops refusing a fifth vault. */
-    expect(() => rightsRecordOf({ ...NOTHING, vaults: [1, 2, 3, 4, 5].map(fill) }))
-      .toThrow(/a signer's rights can name at most 4 vaults/);
+    expect(() => rightsRecordOf({ ...NOTHING, vaults: [1, 2, 3, 4, 5].map(fill) })).toThrow(
+      /a signer's rights can name at most 4 vaults/
+    );
   });
 
   it('never hashes to the scope of a seat with every right', () => {
     /* RED WHEN `rightsScopeOf` is given `allVaults()`'s tag, or returns it. */
-    expect(toHex(scopeOfRights({ mayRaise: true, mayApprove: true, mayHold: true, everyVault: true, vaults: [] })))
-      .not.toBe(toHex(ALL_VAULTS));
+    expect(
+      toHex(scopeOfRights({ mayRaise: true, mayApprove: true, mayHold: true, everyVault: true, vaults: [] }))
+    ).not.toBe(toHex(ALL_VAULTS));
   });
 
   it('NAMING COMPANY-WIDE RUNS IN A PLACE COVERS NOTHING; ONLY A RECORD FOR EVERY VAULT COVERS THEM', () => {
-    const named = { mayRaise: true, mayApprove: true, mayHold: true, everyVault: false,
-      vaults: [pureCircuits.companyWide(), PAYROLL, new Uint8Array(32), new Uint8Array(32)] };
+    const named = {
+      mayRaise: true,
+      mayApprove: true,
+      mayHold: true,
+      everyVault: false,
+      vaults: [pureCircuits.companyWide(), PAYROLL, new Uint8Array(32), new Uint8Array(32)]
+    };
     /* RED WHEN `coversVault` stops refusing the company-wide marker in a named place. */
     expect(pureCircuits.coversVault(named, pureCircuits.companyWide())).toBe(false);
     expect(pureCircuits.coversVault(named, PAYROLL)).toBe(true);
@@ -814,8 +984,9 @@ describe('the rights record', () => {
 
   it('a device refuses to build a rights record that names company-wide runs as a vault', () => {
     /* RED WHEN `rightsRecordOf` stops refusing the company-wide marker. */
-    expect(() => rightsRecordOf({ ...NOTHING, mayApprove: true, vaults: [pureCircuits.companyWide()] }))
-      .toThrow(/cannot name company-wide runs as if they were one vault/);
+    expect(() => rightsRecordOf({ ...NOTHING, mayApprove: true, vaults: [pureCircuits.companyWide()] })).toThrow(
+      /cannot name company-wide runs as if they were one vault/
+    );
     expect(rightsRecordOf({ ...NOTHING, mayApprove: true, vaults: [PAYROLL] }).vaults).toHaveLength(4);
   });
 
@@ -830,7 +1001,8 @@ describe('the rights record', () => {
   it('a device seated with rights that holds no record is refused before anything is proved', async () => {
     const X = withRights(51, { ...NOTHING, mayRaise: true, everyVault: true });
     const sim = await live([A, X], 1n);
-    await expect(raiseRun(sim, { ...X, rights: null }, PAYROLL, 52))
-      .rejects.toThrow(/this device does not hold the rights your seat was given/);
+    await expect(raiseRun(sim, { ...X, rights: null }, PAYROLL, 52)).rejects.toThrow(
+      /this device does not hold the rights your seat was given/
+    );
   });
 });

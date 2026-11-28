@@ -7,34 +7,48 @@ import { ENGLISH } from '../english.test-support.js';
  * a change of rights is invisible, and a hold is kept and released by seat, so no word says it is a person's or that it can always be
  * released. Read over every word of the page and every word of the invite form, in English.
  */
-const OWN = Object.entries(ENGLISH).filter(([key]) => key.startsWith('roles.') || key.startsWith('invite.') || key.startsWith('page.settingsRoles.'));
+const OWN = Object.entries(ENGLISH).filter(
+  ([key]) => key.startsWith('roles.') || key.startsWith('invite.') || key.startsWith('page.settingsRoles.')
+);
 
 describe('the words about rights and holds', () => {
   /* RED WHEN: the page has no words of its own, so the rules below read nothing. */
-  it('reads the page\'s words and the invite form\'s', () => {
+  it("reads the page's words and the invite form's", () => {
     expect(OWN.filter(([key]) => key.startsWith('roles.')).length).toBeGreaterThan(20);
     expect(OWN.filter(([key]) => key.startsWith('invite.role.')).length).toBeGreaterThan(5);
   });
 
   /* RED WHEN: a word says a change of rights, of a role or of a seat is invisible, hidden or private. */
   it('says no change of rights is invisible', () => {
-    const says = OWN.filter(([, text]) => /(?:invisible|unseen|hidden|not shown|nobody can see|no one can see|cannot be seen)/iu.test(text)
-      && /(?:right|role|seat|signer)/iu.test(text));
+    const says = OWN.filter(
+      ([, text]) =>
+        /(?:invisible|unseen|hidden|not shown|nobody can see|no one can see|cannot be seen)/iu.test(text) &&
+        /(?:right|role|seat|signer)/iu.test(text)
+    );
     expect(says.map(([key]) => key)).toEqual([]);
   });
 
   /* RED WHEN: a word says a hold is a person's, or that a hold can always be released. */
   it('says no hold is per person and none can always be released', () => {
-    const says = OWN.filter(([, text]) => /\b(?:hold|holds|held)\b/iu.test(text)
-      && /(?:per person|each person|a person's hold|can always be released|always be released|always released)/iu.test(text));
+    const says = OWN.filter(
+      ([, text]) =>
+        /\b(?:hold|holds|held)\b/iu.test(text) &&
+        /(?:per person|each person|a person's hold|can always be released|always be released|always released)/iu.test(
+          text
+        )
+    );
     expect(says.map(([key]) => key)).toEqual([]);
   });
 
   /* RED WHEN: the words about a role change leave out that a seat leaving and a seat joining are public, or say it of a fact the change does not make public. */
   it('says a role change makes a seat leaving and a seat joining public, as a change of who is seated does', () => {
     const held = { approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2, seated: 3 };
-    expect(whatAChangeCosts(held, { kind: 'seating', seat: 'remove' }).publicFacts).toContainEqual({ fact: 'a-seat-leaves' });
-    expect(whatAChangeCosts(held, { kind: 'seating', seat: 'add' }).publicFacts).toContainEqual({ fact: 'a-seat-joins' });
+    expect(whatAChangeCosts(held, { kind: 'seating', seat: 'remove' }).publicFacts).toContainEqual({
+      fact: 'a-seat-leaves'
+    });
+    expect(whatAChangeCosts(held, { kind: 'seating', seat: 'add' }).publicFacts).toContainEqual({
+      fact: 'a-seat-joins'
+    });
     const says = ENGLISH['roles.change.public']!;
     expect(says).toMatch(/seat leaving/u);
     expect(says).toMatch(/seat joining/u);
@@ -74,7 +88,9 @@ describe('the words about rights and holds', () => {
 
   /* RED WHEN: a role change is told without that the person comes back on every vault, or the empty readers list claims nobody but the signers reads. */
   it('says a role change invites again on every vault, and claims no more of who reads than the grants show', () => {
-    expect(ENGLISH['roles.change.description']).toMatch(/invited again on every vault, so a seat that held only named vaults comes back on all of them/u);
+    expect(ENGLISH['roles.change.description']).toMatch(
+      /invited again on every vault, so a seat that held only named vaults comes back on all of them/u
+    );
     expect(ENGLISH['roles.readers.none']).toMatch(/^No reader has been given read access/u);
     expect(ENGLISH['roles.readers.none']).not.toMatch(/nobody|but its signers/iu);
   });

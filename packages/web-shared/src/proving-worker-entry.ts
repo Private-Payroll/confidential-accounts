@@ -56,8 +56,7 @@ export const preimageOver = (fetchImpl: typeof fetch) => async (job: Job) => {
   const { circuit, preimageUrl } = job.payload as PreimagePayload;
   if (typeof circuit !== 'string' || typeof preimageUrl !== 'string') {
     throw new Error(
-      'this approval does not say what it is approving, so there is nothing to prove. ' +
-        'Raise it again.',
+      'this approval does not say what it is approving, so there is nothing to prove. ' + 'Raise it again.'
     );
   }
   /*
@@ -70,14 +69,14 @@ export const preimageOver = (fetchImpl: typeof fetch) => async (job: Job) => {
   if (!preimageUrl.startsWith('/') || preimageUrl.startsWith('//')) {
     throw new Error(
       'this approval points somewhere outside the application for the material it needs, ' +
-        'so it has not been fetched. Nothing has been sent. Raise it again.',
+        'so it has not been fetched. Nothing has been sent. Raise it again.'
     );
   }
   const res = await fetchImpl(preimageUrl);
   if (!res.ok) {
     throw new Error(
       `the material for this approval is no longer available (${res.status}). ` +
-        'Nothing has been sent. Raise it again.',
+        'Nothing has been sent. Raise it again.'
     );
   }
   return { circuit, unprovenTransaction: new Uint8Array(await res.arrayBuffer()) };
@@ -114,19 +113,21 @@ export const sendOver = (fetchImpl: typeof fetch): SendProven => {
     const res = await fetchImpl(path, {
       method,
       headers: { 'content-type': 'application/json' },
-      ...(sent === undefined ? {} : { body: sent }),
+      ...(sent === undefined ? {} : { body: sent })
     });
     let answer: unknown = {};
-    try { answer = await res.json(); } catch { /* an answer that is not ours */ }
+    try {
+      answer = await res.json();
+    } catch {
+      /* an answer that is not ours */
+    }
     return { status: res.status, body: answer };
   });
   return async (job, proven) => {
     const { status, body: answer } = await handOver(job.accountId, base64Of(proven));
     const body = answer as { txRef?: unknown; error?: unknown; nothingWasSent?: unknown };
     if (status >= 200 && status < 300 && typeof body.txRef === 'string') return { txRef: body.txRef };
-    const why = typeof body.error === 'string'
-      ? body.error
-      : `the service answered ${status} to this approval`;
+    const why = typeof body.error === 'string' ? body.error : `the service answered ${status} to this approval`;
     if (body.nothingWasSent === true) throw new NothingWasSent(why);
     if (body.nothingWasSent !== false && status >= 400 && status < 500) {
       throw new NothingWasSent(why);
@@ -151,7 +152,7 @@ export const provingCapability = (
   scope: any,
   artefactBase: string,
   onProgressJobId: () => string | null,
-  deps: WorkerProvingDeps,
+  deps: WorkerProvingDeps
 ): ProvingCapability => ({
   preimageFor: preimageOver(scope.fetch.bind(scope)),
 
@@ -170,11 +171,11 @@ export const provingCapability = (
       const jobId = onProgressJobId();
       if (jobId === null) return;
       scope.postMessage({ kind: 'fetch-progress', jobId, progress });
-    },
+    }
   }),
 
   transactionCodec: deps.transactionCodec,
-  proofProvider: deps.proofProvider,
+  proofProvider: deps.proofProvider
 });
 
 /**
@@ -192,9 +193,22 @@ export const withABuffer = (runner: JobRunner): JobRunner => {
   const recover = runner.recover;
   return {
     ...runner,
-    prove: async (job) => { ensureBuffer(); return runner.prove(job); },
-    submit: async (job, proof) => { ensureBuffer(); return runner.submit(job, proof); },
-    ...(recover === undefined ? {} : { recover: async (job: Job) => { ensureBuffer(); return recover.call(runner, job); } }),
+    prove: async (job) => {
+      ensureBuffer();
+      return runner.prove(job);
+    },
+    submit: async (job, proof) => {
+      ensureBuffer();
+      return runner.submit(job, proof);
+    },
+    ...(recover === undefined
+      ? {}
+      : {
+          recover: async (job: Job) => {
+            ensureBuffer();
+            return recover.call(runner, job);
+          }
+        })
   };
 };
 
@@ -229,23 +243,27 @@ export const startProvingWorker = async (scope: any): Promise<void> => {
          */
         deserializeUnproven: (raw: Uint8Array) =>
           ledger.Transaction.deserialize('signature', 'pre-proof', 'pre-binding', raw),
-        serializeProven: (tx: any) => tx.serialize(),
+        serializeProven: (tx: any) => tx.serialize()
       };
-    },
+    }
   });
 
   const runner = provingRunner(capability, sendOver(scope.fetch.bind(scope)));
-  startJobWorker(scope, withABuffer({
-    ...runner,
-    prove: async (job) => {
-      working = job.id;
-      try {
-        return await runner.prove(job);
-      } finally {
-        working = null;
+  startJobWorker(
+    scope,
+    withABuffer({
+      ...runner,
+      prove: async (job) => {
+        working = job.id;
+        try {
+          return await runner.prove(job);
+        } finally {
+          working = null;
+        }
       }
-    },
-  }), config.dbName);
+    }),
+    config.dbName
+  );
 
   /*
    * Only now: the queue is built and `serveJobs` has registered its listener,
@@ -260,7 +278,11 @@ export const startProvingWorker = async (scope: any): Promise<void> => {
  * start a queue and open a database as a side effect of the import.
  */
 declare const self: any;
-if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typeof (self as any).window === 'undefined') {
+if (
+  typeof self !== 'undefined' &&
+  typeof self.postMessage === 'function' &&
+  typeof (self as any).window === 'undefined'
+) {
   void startProvingWorker(self).catch((e) => {
     /*
      * An unhandled rejection inside a Worker is invisible from the page - the
@@ -270,10 +292,17 @@ if (typeof self !== 'undefined' && typeof self.postMessage === 'function' && typ
     self.postMessage({
       kind: 'change',
       job: {
-        id: 'worker', accountId: '', kind: 'approve', state: 'failed', signerId: '',
-        payload: {}, attempts: 0, createdAt: '', updatedAt: '',
-        error: `the proving worker could not start: ${String((e as any)?.message ?? e)}`,
-      },
+        id: 'worker',
+        accountId: '',
+        kind: 'approve',
+        state: 'failed',
+        signerId: '',
+        payload: {},
+        attempts: 0,
+        createdAt: '',
+        updatedAt: '',
+        error: `the proving worker could not start: ${String((e as any)?.message ?? e)}`
+      }
     });
   });
 }

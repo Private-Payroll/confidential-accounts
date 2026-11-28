@@ -13,5 +13,8 @@ describe('RAISING A RUN READS THE SAME AT EVERY SIZE OF THE COMPANY', { timeout:
    * is still open at twice it, and the company grows its other open proposals beside it, as a change of the approvals is
    * raised while a run is open.
    */
-  setUpActionsCounted(import.meta.url, { first: { people: 0, vendors: 2, vaults: 2, proposals: 1 }, grown: { people: 0, vendors: 4, vaults: 4, proposals: 2 } });
+  setUpActionsCounted(import.meta.url, {
+    first: { people: 0, vendors: 2, vaults: 2, proposals: 1 },
+    grown: { people: 0, vendors: 4, vaults: 4, proposals: 2 }
+  });
 });

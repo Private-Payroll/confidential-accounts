@@ -26,7 +26,9 @@ import type { ChannelState, ChannelWindow } from 'midnight-identity/profile/chan
 const EMBEDDER = 'http://localhost:5173';
 const STRANGER = 'https://evil.example';
 
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('a framed wallet is framed by its embedder, and hears nobody else', () => {
   it('THE HEADER NAMES ONLY THE EMBEDDER, AND THE CHANNEL REFUSES A STRANGER PARENT', { timeout: 60_000 }, async () => {
@@ -35,7 +37,10 @@ describe('a framed wallet is framed by its embedder, and hears nobody else', () 
     vi.stubEnv('VITE_APP_ORIGIN', EMBEDDER);
     const file = fileURLToPath(new URL('../vite.config.ts', import.meta.url));
     const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' }, file, undefined, 'silent');
-    const config = loaded!.config as { server?: { headers?: Record<string, string> }; preview?: { headers?: Record<string, string> } };
+    const config = loaded!.config as {
+      server?: { headers?: Record<string, string> };
+      preview?: { headers?: Record<string, string> };
+    };
     expect(config.server?.headers?.['Content-Security-Policy']).toBe(`frame-ancestors ${EMBEDDER}`);
     expect(config.preview?.headers?.['Content-Security-Policy']).toBe(`frame-ancestors ${EMBEDDER}`);
 
@@ -43,19 +48,36 @@ describe('a framed wallet is framed by its embedder, and hears nobody else', () 
     const parent = { postMessage: () => {} };
     let handler: ((e: MessageEvent) => void) | null = null;
     const view = {
-      opener: null, parent, self: undefined as unknown, location: { ancestorOrigins: [EMBEDDER] },
-      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => { handler = h; },
-      removeEventListener: () => {},
+      opener: null,
+      parent,
+      self: undefined as unknown,
+      location: { ancestorOrigins: [EMBEDDER] },
+      addEventListener: (_t: 'message', h: (e: MessageEvent) => void) => {
+        handler = h;
+      },
+      removeEventListener: () => {}
     };
     view.self = view;
     const states: ChannelState[] = [];
-    listen(view as unknown as ChannelWindow, () => 0, (s) => states.push(s), EMBEDDER);
+    listen(
+      view as unknown as ChannelWindow,
+      () => 0,
+      (s) => states.push(s),
+      EMBEDDER
+    );
     const request = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in',
-      requester: { name: 'x', rdns: 'x.x' }, purpose: 'x', nonce: 'n', expiresAt: 60_000,
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'sign-in',
+      requester: { name: 'x', rdns: 'x.x' },
+      purpose: 'x',
+      nonce: 'n',
+      expiresAt: 60_000
     };
     handler!({ source: parent, origin: STRANGER, data: request } as unknown as MessageEvent);
-    expect(states.map((s) => s.of), 'a parent at a stranger\'s origin was heard').toEqual(['waiting']);
+    expect(
+      states.map((s) => s.of),
+      "a parent at a stranger's origin was heard"
+    ).toEqual(['waiting']);
     handler!({ source: parent, origin: EMBEDDER, data: request } as unknown as MessageEvent);
     expect(states.map((s) => s.of)).toEqual(['waiting', 'request']);
   });
@@ -64,7 +86,10 @@ describe('a framed wallet is framed by its embedder, and hears nobody else', () 
     vi.stubEnv('VITE_APP_ORIGIN', '');
     const file = fileURLToPath(new URL('../vite.config.ts', import.meta.url));
     const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' }, file, undefined, 'silent');
-    const config = loaded!.config as { server?: { headers?: Record<string, string> }; preview?: { headers?: Record<string, string> } };
+    const config = loaded!.config as {
+      server?: { headers?: Record<string, string> };
+      preview?: { headers?: Record<string, string> };
+    };
     for (const headers of [config.server?.headers, config.preview?.headers]) {
       expect(headers?.['Content-Security-Policy']).toBe("frame-ancestors 'none'");
       expect(headers?.['X-Frame-Options']).toBe('DENY');

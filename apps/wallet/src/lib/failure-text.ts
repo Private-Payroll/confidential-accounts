@@ -33,7 +33,6 @@
  */
 import { shownAddressesIn } from '../../../../src/core/networks.js';
 
-
 /** How deep the `cause` chain is walked before the text is cut short. */
 const MAX_DEPTH = 8;
 
@@ -119,14 +118,18 @@ function printedForm(value: object): string {
     try {
       const printed = String(value).trim();
       if (printed !== '' && printed !== '[object Object]') return printed;
-    } catch { /* a throwing toString is not a reason to lose the failure */ }
+    } catch {
+      /* a throwing toString is not a reason to lose the failure */
+    }
   }
   try {
     const json = JSON.stringify(value, jsonSafe());
     if (typeof json === 'string' && json !== '' && json !== '{}' && json !== 'null') {
       return json.length > 600 ? `${json.slice(0, 600)}…` : json;
     }
-  } catch { /* cyclic or unserialisable — fall through */ }
+  } catch {
+    /* cyclic or unserialisable — fall through */
+  }
   return '';
 }
 

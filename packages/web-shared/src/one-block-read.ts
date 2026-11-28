@@ -43,17 +43,21 @@ export type BlockReader = Pick<PublicDataProvider, 'queryBlock' | 'queryZSwapAnd
  * chain keeps only a window of past roots a spend may prove against. Null when
  * the indexer names no block, or holds either contract at none.
  */
-export async function atOneBlockOver(
-  r: BlockReader, vault: string, account: string,
-): Promise<VaultAtOneBlock | null> {
+export async function atOneBlockOver(r: BlockReader, vault: string, account: string): Promise<VaultAtOneBlock | null> {
   const block = await r.queryBlock();
   if (block === null) return null;
   const at = { type: 'blockHash' as const, blockHash: block.hash };
-  const [both, accountRead] = await Promise.all([r.queryZSwapAndContractState(vault, at), r.queryContractState(account, at)]);
+  const [both, accountRead] = await Promise.all([
+    r.queryZSwapAndContractState(vault, at),
+    r.queryContractState(account, at)
+  ]);
   if (both === null || accountRead === null) return null;
   return {
-    blockHash: block.hash, zswap: both.zswapChainState, vault: both.contractState, parameters: both.ledgerParameters,
-    account: accountRead.contractState,
+    blockHash: block.hash,
+    zswap: both.zswapChainState,
+    vault: both.contractState,
+    parameters: both.ledgerParameters,
+    account: accountRead.contractState
   };
 }
 
@@ -92,17 +96,28 @@ export const toBase64 = (bytes: Uint8Array): string => {
 
 /** The vault and its account at one block as they cross to whoever builds the step: each state as base64 of its bytes. */
 export const payoutChainOf = (at: VaultAtOneBlock | null): PayoutChainOnTheWire | null =>
-  at === null ? null : {
-    blockHash: at.blockHash,
-    vaultState: toBase64(at.vault.serialize()),
-    zswapState: toBase64(at.zswap.serialize()),
-    parameters: toBase64(at.parameters.serialize()),
-    accountState: toBase64(at.account.serialize()),
-  };
+  at === null
+    ? null
+    : {
+        blockHash: at.blockHash,
+        vaultState: toBase64(at.vault.serialize()),
+        zswapState: toBase64(at.zswap.serialize()),
+        parameters: toBase64(at.parameters.serialize()),
+        accountState: toBase64(at.account.serialize())
+      };
 
 /** The account at one block as it crosses to whoever builds the call: each state as base64 of its bytes. */
 export const accountCallChainOf = (
-  at: { readonly blockHash: string; readonly account: { serialize(): Uint8Array }; readonly parameters: { serialize(): Uint8Array } } | null,
-): AccountCallChainOnTheWire | null => at === null ? null : {
-  blockHash: at.blockHash, accountState: toBase64(at.account.serialize()), parameters: toBase64(at.parameters.serialize()),
-};
+  at: {
+    readonly blockHash: string;
+    readonly account: { serialize(): Uint8Array };
+    readonly parameters: { serialize(): Uint8Array };
+  } | null
+): AccountCallChainOnTheWire | null =>
+  at === null
+    ? null
+    : {
+        blockHash: at.blockHash,
+        accountState: toBase64(at.account.serialize()),
+        parameters: toBase64(at.parameters.serialize())
+      };

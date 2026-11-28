@@ -54,8 +54,7 @@ import { MAIN_ACCOUNT, SUBWALLET_ACCOUNTS } from './subwallets.js';
  * see the header. It is deliberately NOT `WALLET_ACCOUNTS`, which is the order
  * the picker RENDERS in, and the two are different questions.
  */
-export const OFFER_ORDER: readonly number[] =
-  Object.freeze([...SUBWALLET_ACCOUNTS, MAIN_ACCOUNT]);
+export const OFFER_ORDER: readonly number[] = Object.freeze([...SUBWALLET_ACCOUNTS, MAIN_ACCOUNT]);
 
 /** Why the screen is proposing the wallet it is proposing. */
 export type Because =
@@ -96,10 +95,8 @@ export const originsOfSlot = (profile: Profile, account: number): readonly strin
  * employer here; they could learn you work for both.* The second half,
  * and the reason the first half is a default rather than a refusal.
  */
-export const alsoUsedBy = (
-  profile: Profile, account: number, origin: string,
-): readonly string[] => Object.freeze(
-  originsOfSlot(profile, account).filter((o) => o !== origin));
+export const alsoUsedBy = (profile: Profile, account: number, origin: string): readonly string[] =>
+  Object.freeze(originsOfSlot(profile, account).filter((o) => o !== origin));
 
 /**
  * THE WALLET THIS SCREEN OPENS ON.
@@ -112,9 +109,7 @@ export const alsoUsedBy = (
  * `order` is an argument only so a test can drive a short list; nothing in the
  * product passes one.
  */
-export function chooseSlot(
-  profile: Profile, origin: string, order: readonly number[] = OFFER_ORDER,
-): SlotChoice {
+export function chooseSlot(profile: Profile, origin: string, order: readonly number[] = OFFER_ORDER): SlotChoice {
   const theirs = profile.grants.find((g) => g.recipient.origin === origin);
   if (theirs !== undefined && order.includes(theirs.subwallet)) {
     return Object.freeze({ account: theirs.subwallet, because: 'already-theirs' as const });

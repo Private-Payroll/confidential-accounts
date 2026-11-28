@@ -9,7 +9,12 @@
  * seat is chosen, it must be the one this wallet's words make for the pinned label, so the seat an action signs with is
  * tied to the pinned account.
  */
-import { readAccountAddress, readCompanyLabel, type AccountAddress, type CompanyLabel } from 'midnight-identity/profile/company-label';
+import {
+  readAccountAddress,
+  readCompanyLabel,
+  type AccountAddress,
+  type CompanyLabel
+} from 'midnight-identity/profile/company-label';
 import type { Identity } from 'midnight-identity/keys/derivation';
 import type { PendingSeat, SavedAccountKeys } from '../../../../packages/web-shared/src/keyring-blob.js';
 import type { Hex } from '../../../../src/core/crypto.js';
@@ -27,7 +32,15 @@ import { pinRestoredFor, restoreFinderOf } from './pin-restored.js';
  * no saved keys are open to read a pin from; the label is pinned to another account; no account is pinned for it; the
  * saved seat is not one this wallet's words make for the pinned company.
  */
-export const HEAD_REFUSALS = ['not-a-company', 'no-saved-keys', 'pinned-elsewhere', 'no-pin', 'label-clash', 'registry-unread', 'seat-not-yours'] as const;
+export const HEAD_REFUSALS = [
+  'not-a-company',
+  'no-saved-keys',
+  'pinned-elsewhere',
+  'no-pin',
+  'label-clash',
+  'registry-unread',
+  'seat-not-yours'
+] as const;
 export type HeadRefusal = (typeof HEAD_REFUSALS)[number];
 
 /** The company the page names and the saved keys it is reached with, and that its label is pinned to that account. */
@@ -63,9 +76,19 @@ export function pinRefusal(ctx: Pick<StepContext, 'intent' | 'keyring'>): HeadRe
 }
 
 /** A pending seat kept for this company that the person confirmed for the page's label and account. */
-const confirmedFor = (pending: Readonly<Record<string, PendingSeat>> | undefined, accountId: string, label: string, account: string): readonly PendingSeat[] =>
-  Object.values(pending ?? {}).filter((p) => p.accountId === accountId && p.joining?.confirmed === true
-    && p.joining.label === label && String(p.joining.account).toLowerCase() === account);
+const confirmedFor = (
+  pending: Readonly<Record<string, PendingSeat>> | undefined,
+  accountId: string,
+  label: string,
+  account: string
+): readonly PendingSeat[] =>
+  Object.values(pending ?? {}).filter(
+    (p) =>
+      p.accountId === accountId &&
+      p.joining?.confirmed === true &&
+      p.joining.label === label &&
+      String(p.joining.account).toLowerCase() === account
+  );
 
 /**
  * **THE HEAD**: the page's company, the saved keys, and the pin for its label naming the page's account, before any
@@ -73,10 +96,15 @@ const confirmedFor = (pending: Readonly<Record<string, PendingSeat>> | undefined
  * person's own registry entries are asked once, else the reach is refused (a clash and an unread registry each by
  * their own refusal).
  */
-export async function companyReachHead(ctx: StepContext, refuse: (key: HeadRefusal) => never, reads: HeadReads): Promise<ReachHead> {
+export async function companyReachHead(
+  ctx: StepContext,
+  refuse: (key: HeadRefusal) => never,
+  reads: HeadReads
+): Promise<ReachHead> {
   const accountId = ctx.intent.fields['record'] ?? refuse('not-a-company');
   const label = readCompanyLabel(ctx.intent.fields['company']) ?? refuse('not-a-company');
-  const account = readAccountAddress(String(ctx.intent.fields['account'] ?? '').toLowerCase()) ?? refuse('not-a-company');
+  const account =
+    readAccountAddress(String(ctx.intent.fields['account'] ?? '').toLowerCase()) ?? refuse('not-a-company');
   if (ctx.keyring === null) return refuse('no-saved-keys');
   const keyring = ctx.keyring;
   const before = pinRefusal(ctx);
@@ -105,7 +133,12 @@ export async function companyReachHead(ctx: StepContext, refuse: (key: HeadRefus
  * none) of this wallet's words for the pinned label, by its signing secret. With the leaf check on the pinned account,
  * this ties the seat an action signs with to the pinned company.
  */
-export async function seatOfThePin(identity: Identity, head: Pick<ReachHead, 'label'>, seat: SavedAccountKeys & { readonly scope: Hex }, refuse: (key: HeadRefusal) => never): Promise<void> {
+export async function seatOfThePin(
+  identity: Identity,
+  head: Pick<ReachHead, 'label'>,
+  seat: SavedAccountKeys & { readonly scope: Hex },
+  refuse: (key: HeadRefusal) => never
+): Promise<void> {
   const { MidnightCommitments } = await import('../../../../src/midnight/commitments.js');
   const n = seat.seat ?? FOUNDING_SEAT;
   if (!Number.isSafeInteger(n) || n < 0) refuse('seat-not-yours');
@@ -125,24 +158,40 @@ export interface RegistryEntryDoors {
  * stands on the head's pin and never reads the pin again.
  */
 export function entryOwedThroughTheReach(
-  ctx: StepContext, chain: CompanyChain, head: Pick<ReachHead, 'accountId' | 'label' | 'account' | 'pin'>,
-  seat: SavedAccountKeys & { readonly scope: Hex; readonly leaf: Hex }, seats: readonly string[],
+  ctx: StepContext,
+  chain: CompanyChain,
+  head: Pick<ReachHead, 'accountId' | 'label' | 'account' | 'pin'>,
+  seat: SavedAccountKeys & { readonly scope: Hex; readonly leaf: Hex },
+  seats: readonly string[]
 ): void {
   const doors = chain.registryEntry;
   if (doors === undefined || ctx.registryEntryOwed === undefined) return;
   const entry: SeatToEnter = {
-    accountId: head.accountId, label: head.label, account: head.account, n: seat.seat ?? FOUNDING_SEAT, scope: seat.scope, leaf: seat.leaf,
-    ...(seat.rights === undefined ? {} : { rights: seat.rights }), ...(seat.registry === undefined ? {} : { mark: seat.registry }),
+    accountId: head.accountId,
+    label: head.label,
+    account: head.account,
+    n: seat.seat ?? FOUNDING_SEAT,
+    scope: seat.scope,
+    leaf: seat.leaf,
+    ...(seat.rights === undefined ? {} : { rights: seat.rights }),
+    ...(seat.registry === undefined ? {} : { mark: seat.registry })
   };
   if (!registryEntryOwed(entry, { pinned: head.pin.account, page: head.account }, seats)) return;
   ctx.registryEntryOwed(async (c) => {
-    await registryWriteThrough(c, {
-      accountId: head.accountId, network: doors.network, build: doors.build(), now: Date.now,
-      ...(chain.ownWallet === undefined ? {} : { ownWallet: chain.ownWallet }),
-      read: async (registry) => {
-        const at = await chain.callState(registry as AccountAddress);
-        return at === null ? null : { registryState: at.accountState, parameters: at.parameters };
+    await registryWriteThrough(
+      c,
+      {
+        accountId: head.accountId,
+        network: doors.network,
+        build: doors.build(),
+        now: Date.now,
+        ...(chain.ownWallet === undefined ? {} : { ownWallet: chain.ownWallet }),
+        read: async (registry) => {
+          const at = await chain.callState(registry as AccountAddress);
+          return at === null ? null : { registryState: at.accountState, parameters: at.parameters };
+        }
       },
-    }, entry);
+      entry
+    );
   });
 }

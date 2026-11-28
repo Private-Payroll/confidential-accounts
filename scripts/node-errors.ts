@@ -20,14 +20,16 @@ export const NODE_ERROR_CODES: Record<string, string> = {
   '114': 'ContractNotPresent',
   '115': 'InvalidProof — the zero-knowledge proof did not verify',
   '116': 'BindingCommitmentOpeningInvalid',
-  '117': 'NotNormalized — the transaction is not in canonical form. In our case: empty DustActions, i.e. the fee balancer selected no dust to spend because the computed fee was 0 (M-52)',
+  '117':
+    'NotNormalized — the transaction is not in canonical form. In our case: empty DustActions, i.e. the fee balancer selected no dust to spend because the computed fee was 0 (M-52)',
   '118': 'FallibleWithoutCheckpoint',
   '137': 'TooManyZswapEntries — the transaction has more Zswap inputs/outputs than the ledger allows',
   '138': 'BalanceCheckOverspend — the transaction spends more than it provides',
   '166': 'InvalidNetworkId — built for a different network than the one it was sent to',
   '167': 'IllegallyDeclaredGuaranteed',
   '169': 'InvalidDustRegistrationSignature',
-  '170': 'InvalidDustSpendProof — the dust fee payment proof did not verify. Usually the dust wallet had not finished syncing when the proof was built',
+  '170':
+    'InvalidDustSpendProof — the dust fee payment proof did not verify. Usually the dust wallet had not finished syncing when the proof was built',
   '171': 'OutOfDustValidityWindow — the dust spend was proved for a time window the block is outside of',
   '172': 'MultipleDustRegistrationsForKey',
   '173': 'InsufficientDustForRegistrationFee',
@@ -50,7 +52,7 @@ export const NODE_ERROR_CODES: Record<string, string> = {
   '153': 'ContractCallCostError',
   '154': 'BlockLimitExceededError',
   '155': 'FeeCalculationError',
-  '156': 'ContractNotPresent — no contract at that address',
+  '156': 'ContractNotPresent — no contract at that address'
 };
 
 /** Turns "Custom error: 170" in any message into something readable. */
@@ -60,4 +62,3 @@ export function explainNodeError(text: string): string | null {
   const meaning = NODE_ERROR_CODES[m[1]!];
   return meaning ? `node rejection ${m[1]} = ${meaning}` : `node rejection ${m[1]} (not in our table)`;
 }
-

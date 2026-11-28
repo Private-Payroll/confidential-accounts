@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { parseAsk, RequestError, type AddressesAndBalancesRequest } from './request.js';
 import {
-  ADDRESSES_AND_BALANCES_SCHEMA, AddressesAndBalancesRefused, addressesAndBalancesAnswerFor, readAddressesAndBalancesAnswer,
-  type AddressesAndBalancesShown,
+  ADDRESSES_AND_BALANCES_SCHEMA,
+  AddressesAndBalancesRefused,
+  addressesAndBalancesAnswerFor,
+  readAddressesAndBalancesAnswer,
+  type AddressesAndBalancesShown
 } from './addresses-and-balances.js';
 
 /*
@@ -20,13 +23,21 @@ const OTHER = 'ab'.repeat(32);
 const PRIVATE = `mn_shield-addr_test1${'q'.repeat(60)}`;
 const PUBLIC = `mn_addr_test1${'p'.repeat(60)}`;
 const body = (more: Record<string, unknown> = {}) => ({
-  schema: 'midnight-identity/disclosure-request/v1', kind: 'addresses-and-balances',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' }, purpose: 'To show your deposit options.',
-  nonce: 'ab1', expiresAt: NOW + 600_000, ...more,
+  schema: 'midnight-identity/disclosure-request/v1',
+  kind: 'addresses-and-balances',
+  requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+  purpose: 'To show your deposit options.',
+  nonce: 'ab1',
+  expiresAt: NOW + 600_000,
+  ...more
 });
 const ask = (): AddressesAndBalancesRequest => parseAsk(body(), ORIGIN, NOW) as AddressesAndBalancesRequest;
 const refusal = (raw: unknown): RequestError => {
-  try { parseAsk(raw, ORIGIN, NOW); } catch (e) { return e as RequestError; }
+  try {
+    parseAsk(raw, ORIGIN, NOW);
+  } catch (e) {
+    return e as RequestError;
+  }
   throw new Error('it was not refused');
 };
 const SHOWN: AddressesAndBalancesShown = {
@@ -34,12 +45,12 @@ const SHOWN: AddressesAndBalancesShown = {
   balances: [
     { token: NIGHT, amount: '5000000', visibility: 'private' },
     { token: OTHER, amount: '7', visibility: 'private' },
-    { token: NIGHT, amount: '12', visibility: 'public' },
+    { token: NIGHT, amount: '12', visibility: 'public' }
   ],
-  read: { private: NOW - 5, public: NOW - 3 },
+  read: { private: NOW - 5, public: NOW - 3 }
 };
 
-describe('THE ASK FOR A WALLET\'S ADDRESSES AND BALANCES', () => {
+describe("THE ASK FOR A WALLET'S ADDRESSES AND BALANCES", () => {
   it('parses with nothing of its own, and its origin is the one observed', () => {
     const parsed = ask();
     /* RED WHEN: the kind is not answered at all, or the origin is taken from anywhere but the browser. */
@@ -47,9 +58,14 @@ describe('THE ASK FOR A WALLET\'S ADDRESSES AND BALANCES', () => {
     expect(parsed.requester.origin).toBe(ORIGIN);
   });
 
-  it('REFUSES ANYTHING MORE THAN EVERY ASK CARRIES, BY NAME: THE WALLET THAT ANSWERS IS THE PERSON\'S CHOICE', () => {
+  it("REFUSES ANYTHING MORE THAN EVERY ASK CARRIES, BY NAME: THE WALLET THAT ANSWERS IS THE PERSON'S CHOICE", () => {
     /* RED WHEN: a page can name which wallet answers, or ask to hear the wallet while it works, and the extra is ignored rather than refused. */
-    for (const extra of [{ account: 0 }, { wallet: 'main' }, { progress: 'midnight-identity/wallet-progress/v1' }, { tokens: [NIGHT] }]) {
+    for (const extra of [
+      { account: 0 },
+      { wallet: 'main' },
+      { progress: 'midnight-identity/wallet-progress/v1' },
+      { tokens: [NIGHT] }
+    ]) {
       const e = refusal(body(extra));
       expect(e.code, JSON.stringify(extra)).toBe('more-than-addresses-and-balances');
       expect(e.message).toContain(`'${Object.keys(extra)[0]}'`);
@@ -61,7 +77,7 @@ describe('THE ASK FOR A WALLET\'S ADDRESSES AND BALANCES', () => {
 });
 
 describe('THE ANSWER IS WHAT THE SCREEN SHOWED, AND NOTHING ELSE', () => {
-  it('carries the shown addresses, amounts and moments unchanged, with the observed origin and the ask\'s nonce', () => {
+  it("carries the shown addresses, amounts and moments unchanged, with the observed origin and the ask's nonce", () => {
     const answer = addressesAndBalancesAnswerFor(ask(), SHOWN, NOW);
     /* RED WHEN: the answer adds, drops or changes anything the screen showed. */
     expect({ addresses: answer.addresses, balances: answer.balances, read: answer.read }).toEqual(SHOWN);
@@ -71,18 +87,23 @@ describe('THE ANSWER IS WHAT THE SCREEN SHOWED, AND NOTHING ELSE', () => {
   });
 
   it('A SIDE THAT WAS NOT READ IS NOT KNOWN: IT CARRIES NO AMOUNT, AND ONE ARRIVING FOR IT IS REFUSED', () => {
-    const notRead: AddressesAndBalancesShown = { ...SHOWN, balances: [SHOWN.balances[2]!], read: { private: null, public: NOW } };
+    const notRead: AddressesAndBalancesShown = {
+      ...SHOWN,
+      balances: [SHOWN.balances[2]!],
+      read: { private: null, public: NOW }
+    };
     /* RED WHEN: a side the wallet could not read cannot be said at all. */
     expect(addressesAndBalancesAnswerFor(ask(), notRead, NOW).read.private).toBeNull();
     /* RED WHEN: an amount for an unread side is handed over, so "not known" reads as a figure. */
-    expect(() => addressesAndBalancesAnswerFor(ask(), { ...notRead, balances: SHOWN.balances }, NOW))
-      .toThrow(AddressesAndBalancesRefused);
+    expect(() => addressesAndBalancesAnswerFor(ask(), { ...notRead, balances: SHOWN.balances }, NOW)).toThrow(
+      AddressesAndBalancesRefused
+    );
   });
 
   it('NEVER HANDS OVER THE PUBLIC ADDRESS: BESIDE THE PRIVATE ONE, OR IN ITS PLACE', () => {
     for (const [why, bent] of [
       ['beside the private one', { ...SHOWN, addresses: { private: PRIVATE, public: PUBLIC } }],
-      ['in the private one\'s place', { ...SHOWN, addresses: { private: PUBLIC } }],
+      ["in the private one's place", { ...SHOWN, addresses: { private: PUBLIC } }]
     ] as const) {
       /* RED WHEN: the wallet can hand a page the account's public address. */
       expect(() => addressesAndBalancesAnswerFor(ask(), bent as never, NOW), why).toThrow(AddressesAndBalancesRefused);
@@ -94,7 +115,7 @@ describe('THE ANSWER IS WHAT THE SCREEN SHOWED, AND NOTHING ELSE', () => {
       ['no address', { ...SHOWN, addresses: {} }],
       ['a token twice', { ...SHOWN, balances: [...SHOWN.balances, SHOWN.balances[0]!] }],
       ['not whole digits', { ...SHOWN, balances: [{ token: NIGHT, amount: '1.5', visibility: 'private' }] }],
-      ['no side', { ...SHOWN, balances: [{ token: NIGHT, amount: '1', visibility: 'shielded' }] }],
+      ['no side', { ...SHOWN, balances: [{ token: NIGHT, amount: '1', visibility: 'shielded' }] }]
     ] as const) {
       /* RED WHEN: the named defect is handed to a page. */
       expect(() => addressesAndBalancesAnswerFor(ask(), bent as never, NOW), why).toThrow(AddressesAndBalancesRefused);
@@ -105,24 +126,42 @@ describe('THE ANSWER IS WHAT THE SCREEN SHOWED, AND NOTHING ELSE', () => {
 describe('THE PAGE BELIEVES AN ANSWER TO ITS OWN QUESTION, AND NOTHING ELSE', () => {
   const expecting = { atOrigin: ORIGIN, expectingNonce: 'ab1' };
   it('reads the answer whole', () => {
-    const read = readAddressesAndBalancesAnswer(JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW))), expecting);
+    const read = readAddressesAndBalancesAnswer(
+      JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW))),
+      expecting
+    );
     /* RED WHEN: the page reads back anything but what the wallet showed. */
     expect(read).toEqual({ ok: true, shown: SHOWN, at: NOW });
   });
   it('DOES NOT BELIEVE AN ANSWER THAT CARRIES THE PUBLIC ADDRESS', () => {
     const good = JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW)));
     /* RED WHEN: a page believes a wallet that sent it the account's public address, beside the private one or in its place. */
-    expect(readAddressesAndBalancesAnswer({ ...good, addresses: { private: PRIVATE, public: PUBLIC } }, expecting))
-      .toMatchObject({ ok: false, code: 'not-an-answer' });
-    expect(readAddressesAndBalancesAnswer({ ...good, addresses: { private: PUBLIC } }, expecting))
-      .toMatchObject({ ok: false, code: 'not-an-answer' });
+    expect(
+      readAddressesAndBalancesAnswer({ ...good, addresses: { private: PRIVATE, public: PUBLIC } }, expecting)
+    ).toMatchObject({ ok: false, code: 'not-an-answer' });
+    expect(readAddressesAndBalancesAnswer({ ...good, addresses: { private: PUBLIC } }, expecting)).toMatchObject({
+      ok: false,
+      code: 'not-an-answer'
+    });
   });
-  it('refuses another page\'s, another nonce\'s, and one that is not whole', () => {
+  it("refuses another page's, another nonce's, and one that is not whole", () => {
     const good = JSON.parse(JSON.stringify(addressesAndBalancesAnswerFor(ask(), SHOWN, NOW)));
     /* RED WHEN: an answer shown to another page, to another ask, or carrying an amount for an unread side is believed. */
-    expect(readAddressesAndBalancesAnswer({ ...good, origin: 'https://elsewhere.example' }, expecting)).toMatchObject({ ok: false, code: 'origin-mismatch' });
-    expect(readAddressesAndBalancesAnswer({ ...good, nonce: 'ab2' }, expecting)).toMatchObject({ ok: false, code: 'nonce-mismatch' });
-    expect(readAddressesAndBalancesAnswer({ ...good, read: { private: null, public: NOW } }, expecting)).toMatchObject({ ok: false, code: 'not-an-answer' });
-    expect(readAddressesAndBalancesAnswer({ ...good, schema: 'x' }, expecting)).toMatchObject({ ok: false, code: 'not-an-answer' });
+    expect(readAddressesAndBalancesAnswer({ ...good, origin: 'https://elsewhere.example' }, expecting)).toMatchObject({
+      ok: false,
+      code: 'origin-mismatch'
+    });
+    expect(readAddressesAndBalancesAnswer({ ...good, nonce: 'ab2' }, expecting)).toMatchObject({
+      ok: false,
+      code: 'nonce-mismatch'
+    });
+    expect(readAddressesAndBalancesAnswer({ ...good, read: { private: null, public: NOW } }, expecting)).toMatchObject({
+      ok: false,
+      code: 'not-an-answer'
+    });
+    expect(readAddressesAndBalancesAnswer({ ...good, schema: 'x' }, expecting)).toMatchObject({
+      ok: false,
+      code: 'not-an-answer'
+    });
   });
 });

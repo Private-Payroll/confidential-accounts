@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * them is the shared code's own.
  */
 const warm = vi.hoisted(() => ({ calls: 0, throws: false }));
-vi.mock('./proving-warmed.js', () => ({ warmTheProving: () => { warm.calls += 1; if (warm.throws) throw new Error('the builder fell over'); } }));
+vi.mock('./proving-warmed.js', () => ({
+  warmTheProving: () => {
+    warm.calls += 1;
+    if (warm.throws) throw new Error('the builder fell over');
+  }
+}));
 
 const ACCOUNT = 'http://wallet.localhost:5180';
 const READY = 'midnight-identity/wallet-ready/v1';
@@ -16,11 +21,16 @@ const READY = 'midnight-identity/wallet-ready/v1';
 type Call = { path: string; method: string; headers: Record<string, string>; body: unknown };
 let calls: Call[] = [];
 let answers: Record<string, () => Response | Promise<Response>> = {};
-const reply = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const reply = (status: number, body: unknown) => () =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** The account's frame: what the page posts into it, and a way to answer from it. */
 const posted: unknown[] = [];
-const frameWindow = { postMessage: (m: unknown) => { posted.push(m); } };
+const frameWindow = {
+  postMessage: (m: unknown) => {
+    posted.push(m);
+  }
+};
 const fromTheAccount = (data: unknown, origin = ACCOUNT) => {
   const e = new MessageEvent('message', { data, origin });
   Object.defineProperty(e, 'source', { value: frameWindow });
@@ -37,19 +47,40 @@ async function load(origin = ACCOUNT) {
 }
 
 /** Every string anywhere in a value. */
-const stringsIn = (v: unknown): string[] => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(stringsIn)
-  : v !== null && typeof v === 'object' ? Object.values(v).flatMap(stringsIn) : []);
+const stringsIn = (v: unknown): string[] =>
+  typeof v === 'string'
+    ? [v]
+    : Array.isArray(v)
+      ? v.flatMap(stringsIn)
+      : v !== null && typeof v === 'object'
+        ? Object.values(v).flatMap(stringsIn)
+        : [];
 
 beforeEach(() => {
-  calls = []; answers = {}; posted.length = 0; warm.calls = 0; warm.throws = false;
-  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => {
-    calls.push({ path, method: init.method ?? 'GET', headers: { ...(init.headers as Record<string, string>) }, body: init.body === undefined ? undefined : JSON.parse(String(init.body)) });
-    const a = answers[path];
-    if (a === undefined) throw new TypeError('network');
-    return (a as (init: RequestInit) => Response | Promise<Response>)(init);
-  }));
+  calls = [];
+  answers = {};
+  posted.length = 0;
+  warm.calls = 0;
+  warm.throws = false;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (path: string, init: RequestInit = {}) => {
+      calls.push({
+        path,
+        method: init.method ?? 'GET',
+        headers: { ...(init.headers as Record<string, string>) },
+        body: init.body === undefined ? undefined : JSON.parse(String(init.body))
+      });
+      const a = answers[path];
+      if (a === undefined) throw new TypeError('network');
+      return (a as (init: RequestInit) => Response | Promise<Response>)(init);
+    })
+  );
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 const CHALLENGE = { handle: 'h-1', nonce: 'n-1', expiresAt: new Date(Date.now() + 60_000).toISOString() };
 const SIGNED = { payload: { schema: 'x' }, signature: 's' };
@@ -63,7 +94,12 @@ describe('signing in', () => {
   it('signs in with the account and prepares the tab for that person', async () => {
     const m = await load();
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
-    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, session: { expiresAt: 'x' }, address: 'a', created: true });
+    answers['/api/auth/wallet'] = reply(200, {
+      user: { id: 'u1', email: null, name: 'Priya' },
+      session: { expiresAt: 'x' },
+      address: 'a',
+      created: true
+    });
     const signing = m.signIn({ name: 'Private Vaults', purpose: 'Why' });
     await settle();
     fromTheAccount({ schema: READY });
@@ -71,7 +107,10 @@ describe('signing in', () => {
     fromTheAccount(SIGNED);
     const r = await signing;
     expect(r).toEqual({ of: m.OF.signedIn, person: { id: 'u1', name: 'Priya' }, firstTime: true });
-    expect(calls.map((c) => [c.method, c.path])).toEqual([['POST', '/api/auth/wallet/challenge'], ['POST', '/api/auth/wallet']]);
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ['POST', '/api/auth/wallet/challenge'],
+      ['POST', '/api/auth/wallet']
+    ]);
     expect(calls[1]!.body).toEqual({ handle: 'h-1', nonce: 'n-1', response: SIGNED });
     answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [] });
     await m.whoIsSignedIn();
@@ -84,7 +123,7 @@ describe('signing in', () => {
    * account's frame at the account's origin, is taken as the account's; the
    * page must go on waiting.
    */
-  it('takes an answer only from the account\'s frame, at the account\'s address', async () => {
+  it("takes an answer only from the account's frame, at the account's address", async () => {
     const m = await load();
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
     answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', name: 'Priya' }, created: false });
@@ -108,7 +147,7 @@ describe('signing in', () => {
    * instead of one of the reasons a screen says in its own; or the account is
    * left on screen after the sign-in ended.
    */
-  it('hands on a reason, never the shared code\'s or the service\'s words, and puts the account away', async () => {
+  it("hands on a reason, never the shared code's or the service's words, and puts the account away", async () => {
     const m = await load();
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
     const signing = m.signIn({ name: 'n', purpose: 'p' });
@@ -122,7 +161,10 @@ describe('signing in', () => {
     expect(stringsIn(r).filter((s) => !codes.has(s))).toEqual([]);
     expect(m.accountFrame.shown()).toBe(false);
 
-    answers['/api/auth/wallet'] = reply(401, { error: 'that is not something this wallet could have signed.', code: 'not-a-response' });
+    answers['/api/auth/wallet'] = reply(401, {
+      error: 'that is not something this wallet could have signed.',
+      code: 'not-a-response'
+    });
     const again = m.signIn({ name: 'n', purpose: 'p' });
     await settle();
     fromTheAccount({ schema: READY });
@@ -147,7 +189,10 @@ describe('signing in', () => {
   /* RED WHEN: an ask that ran out while the account was open is told as one that had expired before it arrived, or as the account not answering; or one the account says had expired on arrival is told as ran out. */
   it('tells an ask that ran out while open apart from one that expired on arrival', async () => {
     const m = await load();
-    answers['/api/auth/wallet/challenge'] = reply(200, { ...CHALLENGE, expiresAt: new Date(Date.now() + 30).toISOString() });
+    answers['/api/auth/wallet/challenge'] = reply(200, {
+      ...CHALLENGE,
+      expiresAt: new Date(Date.now() + 30).toISOString()
+    });
     const ranOut = m.signIn({ name: 'n', purpose: 'p' });
     await settle();
     fromTheAccount({ schema: READY });
@@ -170,7 +215,9 @@ describe('signing in', () => {
       const signing = m.signIn({ name: 'n', purpose: 'p' });
       await vi.advanceTimersByTimeAsync(25_000);
       expect(await signing).toMatchObject({ of: m.OF.refused, why: m.REFUSAL.silent });
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /* RED WHEN: a request the account would not take is told as signing in not finishing. */
@@ -185,16 +232,26 @@ describe('signing in', () => {
   });
 
   /* RED WHEN: too many tries loses the wait the service asked for, the service out of reach is said as a refusal, or signing in without the account's address asks the service anything. */
-  it('says too many tries with the wait, a service out of reach, and a page built without the account\'s address', async () => {
+  it("says too many tries with the wait, a service out of reach, and a page built without the account's address", async () => {
     let m = await load();
     answers['/api/auth/wallet/challenge'] = reply(429, { error: 'x', retryAfterSeconds: 120 });
-    expect(await m.signIn({ name: 'n', purpose: 'p' })).toEqual({ of: m.OF.refused, why: m.REFUSAL.tooMany, retryAfterSeconds: 120 });
+    expect(await m.signIn({ name: 'n', purpose: 'p' })).toEqual({
+      of: m.OF.refused,
+      why: m.REFUSAL.tooMany,
+      retryAfterSeconds: 120
+    });
     expect(m.accountFrame.shown()).toBe(false);
     delete answers['/api/auth/wallet/challenge'];
-    expect((await m.signIn({ name: 'n', purpose: 'p' })) as { why?: string }).toMatchObject({ why: m.REFUSAL.unreachable });
+    expect((await m.signIn({ name: 'n', purpose: 'p' })) as { why?: string }).toMatchObject({
+      why: m.REFUSAL.unreachable
+    });
     calls = [];
     m = await load('');
-    expect(await m.signIn({ name: 'n', purpose: 'p' })).toEqual({ of: m.OF.refused, why: m.REFUSAL.notSetUp, retryAfterSeconds: null });
+    expect(await m.signIn({ name: 'n', purpose: 'p' })).toEqual({
+      of: m.OF.refused,
+      why: m.REFUSAL.notSetUp,
+      retryAfterSeconds: null
+    });
     expect(calls).toEqual([]);
   });
 
@@ -206,7 +263,15 @@ describe('signing in', () => {
    */
   it('listens before the account can say it is listening', async () => {
     const m = await load();
-    m.accountFrame.mount({ get src() { return ''; }, set src(_v: string) { queueMicrotask(() => fromTheAccount({ schema: READY })); }, contentWindow: frameWindow });
+    m.accountFrame.mount({
+      get src() {
+        return '';
+      },
+      set src(_v: string) {
+        queueMicrotask(() => fromTheAccount({ schema: READY }));
+      },
+      contentWindow: frameWindow
+    });
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
     answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', name: 'Priya' }, created: false });
     const signing = m.signIn({ name: 'n', purpose: 'p' });
@@ -249,13 +314,21 @@ describe('who is signed in', () => {
     answers['/api/me'] = reply(200, {
       user: { id: 'u1', email: null, name: 'Priya' },
       accounts: [
-        { id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signerCount: 3, threshold: 2, sealedRoster: { ct: 'x' }, memberUserIds: ['u1'] },
-        { id: 'c2', createdAt: 5, signerCount: 1, threshold: 1 },
-      ],
+        {
+          id: 'c1',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          signerCount: 3,
+          threshold: 2,
+          sealedRoster: { ct: 'x' },
+          memberUserIds: ['u1']
+        },
+        { id: 'c2', createdAt: 5, signerCount: 1, threshold: 1 }
+      ]
     });
     expect(await m.whoIsSignedIn()).toEqual({
-      of: m.OF.signedIn, person: { id: 'u1', name: 'Priya' },
-      companies: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signers: 3 }],
+      of: m.OF.signedIn,
+      person: { id: 'u1', name: 'Priya' },
+      companies: [{ id: 'c1', createdAt: '2026-09-01T00:00:00.000Z', signers: 3 }]
     });
   });
 });
@@ -277,9 +350,15 @@ describe('a service that could not check the sign-in', () => {
     let asked = 0;
     answers['/api/me'] = () => {
       asked += 1;
-      return asked < 3 ? couldNotCheck() : reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, accounts: [] })();
+      return asked < 3
+        ? couldNotCheck()
+        : reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, accounts: [] })();
     };
-    expect(await m.whoIsSignedIn(async (ms) => { waited.push(ms); })).toMatchObject({ of: m.OF.signedIn, person: { id: 'u1' } });
+    expect(
+      await m.whoIsSignedIn(async (ms) => {
+        waited.push(ms);
+      })
+    ).toMatchObject({ of: m.OF.signedIn, person: { id: 'u1' } });
     expect(waited).toEqual([600, 1500]);
     expect(await stillKept()).toEqual(kept);
   });
@@ -290,7 +369,11 @@ describe('a service that could not check the sign-in', () => {
     keepSignIn(window.sessionStorage, kept);
     const waited: number[] = [];
     answers['/api/me'] = couldNotCheck;
-    expect(await m.whoIsSignedIn(async (ms) => { waited.push(ms); })).toEqual({ of: m.OF.unreachable });
+    expect(
+      await m.whoIsSignedIn(async (ms) => {
+        waited.push(ms);
+      })
+    ).toEqual({ of: m.OF.unreachable });
     expect(waited).toEqual([600, 1500, 4000]);
     expect(await stillKept()).toEqual(kept);
     delete answers['/api/me'];
@@ -316,7 +399,10 @@ describe('another person signed in, in another tab', () => {
     await m.whoIsSignedIn();
     let first = true;
     answers['/api/me'] = () => {
-      if (first) { first = false; return reply(409, { error: 'x', code: 'another-person' })(); }
+      if (first) {
+        first = false;
+        return reply(409, { error: 'x', code: 'another-person' })();
+      }
       return reply(200, { user: { id: 'u2', name: 'Sam' }, accounts: [] })();
     };
     expect(await m.whoIsSignedIn()).toEqual({ of: m.OF.signedIn, person: { id: 'u2', name: 'Sam' }, companies: [] });
@@ -342,7 +428,16 @@ describe('signing out', () => {
 });
 
 describe('signing out while reads of the service are in flight', () => {
-  const inFlight = () => { const held: { release: () => void } = { release: () => {} }; const answer = () => new Promise<Response>((r) => { held.release = () => { r(reply(200, { ok: true })()); }; }); return { held, answer }; };
+  const inFlight = () => {
+    const held: { release: () => void } = { release: () => {} };
+    const answer = () =>
+      new Promise<Response>((r) => {
+        held.release = () => {
+          r(reply(200, { ok: true })());
+        };
+      });
+    return { held, answer };
+  };
 
   /*
    * RED WHEN: the sign-out is posted while a read of the service is still unanswered (the read then comes
@@ -363,7 +458,10 @@ describe('signing out while reads of the service are in flight', () => {
     held.release();
     await read;
     expect(await out).toEqual({ of: m.OF.signedOut });
-    expect(calls.map((c) => [c.method, c.path])).toEqual([['GET', '/api/slow'], ['POST', '/api/auth/logout']]);
+    expect(calls.map((c) => [c.method, c.path])).toEqual([
+      ['GET', '/api/slow'],
+      ['POST', '/api/auth/logout']
+    ]);
   });
 
   it('waits for a read of its own too: the person lookup that is still out', async () => {
@@ -398,7 +496,9 @@ describe('signing out while reads of the service are in flight', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(await out).toEqual({ of: m.OF.signedOut });
       expect(calls.map((c) => c.path)).toEqual(['/api/never', '/api/auth/logout']);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -413,7 +513,11 @@ describe('the shared keyring is told who signed in', () => {
     const m = await load();
     const keyring = await import('vaults-web-shared/keyring.js');
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
-    answers['/api/auth/wallet'] = reply(200, { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    answers['/api/auth/wallet'] = reply(200, {
+      user: { id: 'u1', email: null, name: 'Priya' },
+      address: 'mn_addr_a',
+      created: true
+    });
     const signing = m.signIn({ name: 'n', purpose: 'p' });
     await settle();
     fromTheAccount({ schema: READY });
@@ -437,7 +541,8 @@ describe('the shared keyring is told who signed in', () => {
   it('has the keyring forget when the person goes, and when somebody else is signed in now', async () => {
     const m = await load();
     const keyring = await import('vaults-web-shared/keyring.js');
-    const signInAs = (id: string) => keyring.signedInByAnotherScreen({ user: { id, email: null, name: 'x' }, address: 'mn_addr_a' });
+    const signInAs = (id: string) =>
+      keyring.signedInByAnotherScreen({ user: { id, email: null, name: 'x' }, address: 'mn_addr_a' });
     signInAs('u1');
     answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [] });
     await m.whoIsSignedIn();
@@ -458,7 +563,9 @@ describe('the shared keyring is told who signed in', () => {
 
 describe('the address a sign-in was for, across a reload of the tab', () => {
   const KEPT = 'private-vaults.signed-in-as';
-  beforeEach(() => { window.sessionStorage.clear(); });
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
 
   async function signInAs(m: Awaited<ReturnType<typeof load>>, body: Record<string, unknown>) {
     answers['/api/auth/wallet/challenge'] = reply(200, CHALLENGE);
@@ -477,7 +584,11 @@ describe('the address a sign-in was for, across a reload of the tab', () => {
    * their first company after a reload must sign in again.
    */
   it('is kept at the sign-in and handed back to the keyring after a reload', async () => {
-    await signInAs(await load(), { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    await signInAs(await load(), {
+      user: { id: 'u1', email: null, name: 'Priya' },
+      address: 'mn_addr_a',
+      created: true
+    });
     expect(JSON.parse(window.sessionStorage.getItem(KEPT)!)).toEqual({ personId: 'u1', address: 'mn_addr_a' });
     /* The reload: every module, the keyring among them, starts again knowing nobody. */
     await load();
@@ -508,7 +619,11 @@ describe('the address a sign-in was for, across a reload of the tab', () => {
 
   /* RED WHEN: an address kept for one person is handed to the keyring as the address of another signed in since. */
   it('is not taken for anybody else', async () => {
-    await signInAs(await load(), { user: { id: 'u1', email: null, name: 'Priya' }, address: 'mn_addr_a', created: true });
+    await signInAs(await load(), {
+      user: { id: 'u1', email: null, name: 'Priya' },
+      address: 'mn_addr_a',
+      created: true
+    });
     await load();
     const keyring = await import('vaults-web-shared/keyring.js');
     const { keyringFor } = await import('./keyring-person.js');
@@ -538,7 +653,9 @@ describe('who holds a company, asked of the account with nothing shown', () => {
     expect(frame).not.toBeNull();
     expect(frame.hidden).toBe(true);
     const quietPosted: Array<{ nonce: string; kind: string }> = [];
-    (frame.contentWindow as unknown as { postMessage: (m: unknown) => void }).postMessage = (msg) => { quietPosted.push(msg as never); };
+    (frame.contentWindow as unknown as { postMessage: (m: unknown) => void }).postMessage = (msg) => {
+      quietPosted.push(msg as never);
+    };
     const fromTheQuietFrame = (data: unknown) => {
       const e = new MessageEvent('message', { data, origin: ACCOUNT });
       Object.defineProperty(e, 'source', { value: frame.contentWindow });
@@ -549,11 +666,24 @@ describe('who holds a company, asked of the account with nothing shown', () => {
     expect(m.accountFrame.shown()).toBe(false);
     expect(posted).toEqual([]);
     fromTheQuietFrame({
-      schema: 'midnight-identity/holders-answer/v1', origin: window.location.origin, company, account, nonce: quietPosted[0]!.nonce, at: 1,
+      schema: 'midnight-identity/holders-answer/v1',
+      origin: window.location.origin,
+      company,
+      account,
+      nonce: quietPosted[0]!.nonce,
+      at: 1,
       holders: {
-        committee: [{ tag: 'schnorr', value: '11'.repeat(32) }], threshold: 1, seats: ['5a'.repeat(32)], approvals: 1, vaultThresholds: [], policyBar: null, seatBar: 1, adoptedVaults: [],
-        founding: '5a'.repeat(32), foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
-      },
+        committee: [{ tag: 'schnorr', value: '11'.repeat(32) }],
+        threshold: 1,
+        seats: ['5a'.repeat(32)],
+        approvals: 1,
+        vaultThresholds: [],
+        policyBar: null,
+        seatBar: 1,
+        adoptedVaults: [],
+        founding: '5a'.repeat(32),
+        foundingCommittee: [{ tag: 'schnorr', value: '11'.repeat(32) }]
+      }
     });
     expect((await asking).holders.approvals).toBe(1);
     expect(document.querySelector('iframe')).toBeNull();
@@ -635,7 +765,7 @@ describe('the proving files, fetched quietly once somebody is signed in', () => 
   });
 });
 
-describe('the names of a person\'s companies, read as a page loads', () => {
+describe("the names of a person's companies, read as a page loads", () => {
   /*
    * RED WHEN: the names are read with the open that may ask the wallet, so a company that changed its key opens the wallet's
    * window when the landing loads; or a company whose key the wallet has not released is told as unreadable, or left with no
@@ -648,20 +778,33 @@ describe('the names of a person\'s companies, read as a page loads', () => {
     vi.doMock('./filing-judge.js', async () => {
       const { ACT_REFUSAL, refusalOf } = await import('./refusals.js');
       return {
-        ACT_REFUSAL, refusalOf,
+        ACT_REFUSAL,
+        refusalOf,
         /* Each company is read through a view of its own; the wallet says nothing of who holds it here. */
-        readThroughAViewOf: (company: string, read: (view: unknown) => Promise<unknown>) => read({ company, holders: async () => { throw new Error('the wallet could not read the account'); } }),
-        openedHere: async () => { asked.withTheWallet += 1; return null; },
+        readThroughAViewOf: (company: string, read: (view: unknown) => Promise<unknown>) =>
+          read({
+            company,
+            holders: async () => {
+              throw new Error('the wallet could not read the account');
+            }
+          }),
+        openedHere: async () => {
+          asked.withTheWallet += 1;
+          return null;
+        },
         openedQuietly: async (_view: unknown, row: { id: string }) => {
           asked.quietly.push(row.id);
           if (row.id === 'c_changed') throw Object.assign(new Error('not opened'), { name: 'CompanyKeyNotOpened' });
           return { id: row.id, name: 'Acme' };
-        },
+        }
       };
     });
     try {
       const m = await load();
-      answers['/api/me'] = reply(200, { user: { id: 'u1', name: 'Priya' }, accounts: [{ id: 'c_plain' }, { id: 'c_changed' }] });
+      answers['/api/me'] = reply(200, {
+        user: { id: 'u1', name: 'Priya' },
+        accounts: [{ id: 'c_plain' }, { id: 'c_changed' }]
+      });
       await m.whoIsSignedIn();
       const names = await m.companyNamesFor('u1');
       expect(asked).toEqual({ quietly: ['c_plain', 'c_changed'], withTheWallet: 0 });

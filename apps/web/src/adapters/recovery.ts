@@ -1,10 +1,36 @@
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
 import { PROPOSAL_ACTED } from 'vaults-web-shared/proposal-in-the-wallet.js';
 import {
-  approveRecoveryInTheWallet, carryOutRecoveryInTheWallet, FILE_OPENED, FILE_REFUSED, HELD_ON_CHAIN, isRecoveryParts, raiseRecoveryInTheWallet, recoveryFileName,
-  recoveryFileTextOf, recoveryLatestAt, recoveryOutcomeOf, recoveryPartsInFile, RECOVERY_ACT, RECOVERY_FILE_ACCEPT, RECOVERY_STATE, RECOVERY_WHY, RECOVERY_WITHIN, recoveryPartsToldBy, recoveryTimePassed, recoveryUntil, recoveryWhyOf,
-  saveFileText, STANDING_READ, type FileRefusal, type HeldOnChain, type RecoveryAct, type RecoveryParts, type RecoveryState, type RecoveryWhy,
-  type RecoveryWithin,
+  approveRecoveryInTheWallet,
+  carryOutRecoveryInTheWallet,
+  FILE_OPENED,
+  FILE_REFUSED,
+  HELD_ON_CHAIN,
+  isRecoveryParts,
+  raiseRecoveryInTheWallet,
+  recoveryFileName,
+  recoveryFileTextOf,
+  recoveryLatestAt,
+  recoveryOutcomeOf,
+  recoveryPartsInFile,
+  RECOVERY_ACT,
+  RECOVERY_FILE_ACCEPT,
+  RECOVERY_STATE,
+  RECOVERY_WHY,
+  RECOVERY_WITHIN,
+  recoveryPartsToldBy,
+  recoveryTimePassed,
+  recoveryUntil,
+  recoveryWhyOf,
+  saveFileText,
+  STANDING_READ,
+  type FileRefusal,
+  type HeldOnChain,
+  type RecoveryAct,
+  type RecoveryParts,
+  type RecoveryState,
+  type RecoveryWhy,
+  type RecoveryWithin
 } from 'vaults-web-shared/recovery-in-the-wallet.js';
 import type { ActOutcome } from 'vaults-web-shared/wallet-act.js';
 import type { RecordsHeldHere } from 'vaults-web-shared/vault-page-doors.js';
@@ -29,13 +55,25 @@ import { theVaultBuilder } from './vault-builder.js';
  * and the codes a stop is told by are the shared code's (`recovery-in-the-wallet.ts`); a screen is handed codes, never words.
  */
 export {
-  FILE_OPENED, FILE_REFUSED, HELD_ON_CHAIN, PROPOSAL_ACTED as RECOVERED, RECOVERY_ACT, RECOVERY_FILE_ACCEPT, RECOVERY_STATE, RECOVERY_WHY, RECOVERY_WITHIN, STANDING_READ,
-  type FileRefusal, type RecoveryAct, type RecoveryState, type RecoveryWhy, type RecoveryWithin,
+  FILE_OPENED,
+  FILE_REFUSED,
+  HELD_ON_CHAIN,
+  PROPOSAL_ACTED as RECOVERED,
+  RECOVERY_ACT,
+  RECOVERY_FILE_ACCEPT,
+  RECOVERY_STATE,
+  RECOVERY_WHY,
+  RECOVERY_WITHIN,
+  STANDING_READ,
+  type FileRefusal,
+  type RecoveryAct,
+  type RecoveryState,
+  type RecoveryWhy,
+  type RecoveryWithin
 };
 /** The range a recovery window may be set in, and the waits a recovery may be asked for within the window in force. */
 export { RECOVERY_WINDOW_RANGE } from '../../../../src/midnight/recovery-window-record.js';
 export { recoveryWithinUpTo } from 'vaults-web-shared/recovery-in-the-wallet.js';
-
 
 /** A recovery this page holds: its parts, the last moment it may be carried out, and the name its file is saved under. */
 export interface RecoveryHere {
@@ -47,33 +85,58 @@ export interface RecoveryHere {
 
 /** A recovery made from its parts; null where the parts are not a recovery's. */
 const heldFrom = (parts: RecoveryParts): RecoveryHere | null =>
-  (isRecoveryParts(parts) ? { parts, until: recoveryUntil(parts), fileName: recoveryFileName(parts) } : null);
+  isRecoveryParts(parts) ? { parts, until: recoveryUntil(parts), fileName: recoveryFileName(parts) } : null;
 
 /** How a press on a recovery ended; `held` is the recovery the page holds after it, with its file. */
 export type RecoveryActed =
   | {
-    readonly of: typeof PROPOSAL_ACTED.done; readonly act: RecoveryAct; readonly state: RecoveryState | null; readonly approvals: number | null;
-    readonly needed: number | null; readonly held: RecoveryHere | null;
-  }
-  | { readonly of: typeof PROPOSAL_ACTED.stopped; readonly act: RecoveryAct; readonly why: RecoveryWhy; readonly partial: boolean; readonly held: RecoveryHere | null }
+      readonly of: typeof PROPOSAL_ACTED.done;
+      readonly act: RecoveryAct;
+      readonly state: RecoveryState | null;
+      readonly approvals: number | null;
+      readonly needed: number | null;
+      readonly held: RecoveryHere | null;
+    }
+  | {
+      readonly of: typeof PROPOSAL_ACTED.stopped;
+      readonly act: RecoveryAct;
+      readonly why: RecoveryWhy;
+      readonly partial: boolean;
+      readonly held: RecoveryHere | null;
+    }
   | { readonly of: typeof PROPOSAL_ACTED.refused; readonly why: ActRefusal };
 
 const refused = (why: ActRefusal): RecoveryActed => ({ of: PROPOSAL_ACTED.refused, why });
 
-async function actedOf(act: RecoveryAct, ended: ActOutcome, named: Named, held: RecoveryHere | null): Promise<RecoveryActed> {
+async function actedOf(
+  act: RecoveryAct,
+  ended: ActOutcome,
+  named: Named,
+  held: RecoveryHere | null
+): Promise<RecoveryActed> {
   const parts = act === RECOVERY_ACT.raise ? recoveryPartsToldBy(named.record, named.account, ended.outcome) : null;
   const here = act === RECOVERY_ACT.raise ? (parts === null ? null : heldFrom(parts)) : held;
   if (ended.of === PROPOSAL_ACTED.done) {
     return { of: PROPOSAL_ACTED.done, act, ...recoveryOutcomeOf(ended), held: here };
   }
   const why = recoveryWhyOf(ended.refused);
-  return { of: PROPOSAL_ACTED.stopped, act, why, partial: why === RECOVERY_WHY.mayBeSent || ended.relayed > 0 || ended.unconfirmed > 0, held: here };
+  return {
+    of: PROPOSAL_ACTED.stopped,
+    act,
+    why,
+    partial: why === RECOVERY_WHY.mayBeSent || ended.relayed > 0 || ended.unconfirmed > 0,
+    held: here
+  };
 }
 
-interface Named { readonly record: string; readonly company: CompanyLabel; readonly account: AccountAddress }
+interface Named {
+  readonly record: string;
+  readonly company: CompanyLabel;
+  readonly account: AccountAddress;
+}
 
-
-const onStepOf = (onStep?: (step: number, steps: number) => void) => (onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) });
+const onStepOf = (onStep?: (step: number, steps: number) => void) =>
+  onStep === undefined ? {} : { onStep: (at: { step: number; steps: number }) => onStep(at.step, at.steps) };
 
 const isThisCompanys = (held: RecoveryHere, named: Named): boolean =>
   held.parts.company === named.record && held.parts.account.toLowerCase() === named.account.toLowerCase();
@@ -84,14 +147,22 @@ const isThisCompanys = (held: RecoveryHere, named: Named): boolean =>
  * account needs. The file comes back on a stop as well as on a finish, wherever the wallet had raised the recovery before it stopped.
  */
 export async function raiseRecovery(
-  personId: string, view: PageView, within: RecoveryWithin, onStep?: (step: number, steps: number) => void, now: () => number = Date.now,
+  personId: string,
+  view: PageView,
+  within: RecoveryWithin,
+  onStep?: (step: number, steps: number) => void,
+  now: () => number = Date.now
 ): Promise<RecoveryActed> {
   try {
     const seconds = RECOVERY_WITHIN.find((w) => w.id === within)?.seconds;
     if (seconds === undefined) return refused(ACT_REFUSAL.didNotFinish);
     const named = await namedBefore(personId, view);
     if (typeof named === 'string') return refused(named);
-    const ended = await raiseRecoveryInTheWallet({ ...named, latest: recoveryLatestAt(now(), seconds) }, ACCOUNT_ORIGIN, onStepOf(onStep));
+    const ended = await raiseRecoveryInTheWallet(
+      { ...named, latest: recoveryLatestAt(now(), seconds) },
+      ACCOUNT_ORIGIN,
+      onStepOf(onStep)
+    );
     return await actedOf(RECOVERY_ACT.raise, ended, named, null);
   } catch (e) {
     return refused(refusalOf(e));
@@ -100,7 +171,10 @@ export async function raiseRecovery(
 
 /** Ask the person's wallet to approve this recovery, and to carry it out in the same window if the approval is the last the account needs. */
 export async function approveRecovery(
-  personId: string, view: PageView, held: RecoveryHere, onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  held: RecoveryHere,
+  onStep?: (step: number, steps: number) => void
 ): Promise<RecoveryActed> {
   try {
     const named = await namedBefore(personId, view);
@@ -115,7 +189,10 @@ export async function approveRecovery(
 
 /** Ask the person's wallet to carry this recovery out, if the chain counts the approvals the account needs; short of them it sends nothing. */
 export async function carryOutRecovery(
-  personId: string, view: PageView, held: RecoveryHere, onStep?: (step: number, steps: number) => void,
+  personId: string,
+  view: PageView,
+  held: RecoveryHere,
+  onStep?: (step: number, steps: number) => void
 ): Promise<RecoveryActed> {
   try {
     const named = await namedBefore(personId, view);
@@ -142,7 +219,8 @@ export async function openRecoveryFile(view: PageView, text: string): Promise<Re
     const named = await namedIn(view);
     if (named === null) return notOpened(FILE_REFUSED.companyUnread);
     const { parts } = read;
-    if (parts.company !== view.company || parts.account.toLowerCase() !== named.account.toLowerCase()) return notOpened(FILE_REFUSED.notThisCompany);
+    if (parts.company !== view.company || parts.account.toLowerCase() !== named.account.toLowerCase())
+      return notOpened(FILE_REFUSED.notThisCompany);
     const held = heldFrom(parts);
     return held === null ? notOpened(FILE_REFUSED.unreadable) : { of: FILE_OPENED.opened, held };
   } catch {
@@ -153,9 +231,13 @@ export async function openRecoveryFile(view: PageView, text: string): Promise<Re
 /** Where the chain holds a recovery, as the account's own history shows it. */
 export type RecoveryStanding =
   | {
-    readonly of: typeof STANDING_READ.read; readonly held: HeldOnChain; readonly approvals: number; readonly needed: number | null;
-    readonly outrun: boolean; readonly passed: boolean;
-  }
+      readonly of: typeof STANDING_READ.read;
+      readonly held: HeldOnChain;
+      readonly approvals: number;
+      readonly needed: number | null;
+      readonly outrun: boolean;
+      readonly passed: boolean;
+    }
   | { readonly of: typeof STANDING_READ.unread };
 
 const unread: RecoveryStanding = { of: STANDING_READ.unread };
@@ -165,18 +247,28 @@ const unread: RecoveryStanding = { of: STANDING_READ.unread };
  * no longer open, or never raised; and whether the last moment to carry it out has passed. Never throws; what cannot be read is `unread`.
  * The number the account asks for now can be higher than its hold's (the wallet works that out when it carries the recovery out).
  */
-export async function recoveryStanding(view: PageView, held: RecoveryHere, now: () => number = Date.now): Promise<RecoveryStanding> {
+export async function recoveryStanding(
+  view: PageView,
+  held: RecoveryHere,
+  now: () => number = Date.now
+): Promise<RecoveryStanding> {
   try {
     const named = await namedIn(view);
     if (named === null) return unread;
     const indexer = await walletIndexerIn(view);
     if (indexer === null) return unread;
     const id = held.parts.chainId.toLowerCase();
-    const round = (await (await theVaultBuilder()).roundsOnChain({ account: named.account, indexer, chainIds: [id] }))[id];
+    const round = (await (await theVaultBuilder()).roundsOnChain({ account: named.account, indexer, chainIds: [id] }))[
+      id
+    ];
     if (round === undefined) return unread;
     return {
-      of: STANDING_READ.read, held: round.held, approvals: round.approvals, needed: round.needed ?? null, outrun: round.outrun === true,
-      passed: recoveryTimePassed(held.parts, now()),
+      of: STANDING_READ.read,
+      held: round.held,
+      approvals: round.approvals,
+      needed: round.needed ?? null,
+      outrun: round.outrun === true,
+      passed: recoveryTimePassed(held.parts, now())
     };
   } catch {
     return unread;
@@ -184,8 +276,8 @@ export async function recoveryStanding(view: PageView, held: RecoveryHere, now: 
 }
 
 /** Save a recovery's file to the person's disk, under the name it carries, with `summary` in it for whoever reads it. */
-export const saveRecoveryFile = (held: RecoveryHere, summary: string): void => saveFileText(held.fileName, recoveryFileTextOf(held.parts, summary));
-
+export const saveRecoveryFile = (held: RecoveryHere, summary: string): void =>
+  saveFileText(held.fileName, recoveryFileTextOf(held.parts, summary));
 
 /**
  * Where the company's records stand on this device, as the recovery page tells it: the batch this device checked up to, a stop in the
@@ -219,16 +311,28 @@ export async function readRecordsStates(personId: string, view: PageView): Promi
     const account = await openedHere(view, sealed);
     if (account === null) return { of: READ.unreadable };
     const viewingKey = await companyKeysFor(view, sealed, { signingPublicKey: keys.signingPublicKey });
-    const here = await directoryWithItsRecordsFor(view, label as CompanyLabel, address as AccountAddress, viewingKey, async () => account)({});
+    const here = await directoryWithItsRecordsFor(
+      view,
+      label as CompanyLabel,
+      address as AccountAddress,
+      viewingKey,
+      async () => account
+    )({});
     const records = here.records as RecordsHeldHere;
     return {
       of: READ.read,
       value: {
-        reached: records.reached.seq, stopped: records.stopped, checkedFrom: records.checkedFrom ?? null,
-        recovered: records.recovered === undefined ? null : { resumedFrom: records.recovered.resumedFrom.seq, gaveUpTo: records.recovered.gaveUpTo },
-        notYetAnchored: records.notYetAnchored.length, passedOver: (here.passedOver ?? []).map((f) => f.version),
-        notApplied: (here.refiledRefused ?? []).map((r) => r.version),
-      },
+        reached: records.reached.seq,
+        stopped: records.stopped,
+        checkedFrom: records.checkedFrom ?? null,
+        recovered:
+          records.recovered === undefined
+            ? null
+            : { resumedFrom: records.recovered.resumedFrom.seq, gaveUpTo: records.recovered.gaveUpTo },
+        notYetAnchored: records.notYetAnchored.length,
+        passedOver: (here.passedOver ?? []).map((f) => f.version),
+        notApplied: (here.refiledRefused ?? []).map((r) => r.version)
+      }
     };
   } catch {
     return { of: READ.unreadable };

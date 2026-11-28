@@ -17,7 +17,8 @@ import { blankNonCode, scanSource, scanSourceFile } from './disclose-scan.js';
 import { contractSources } from './contract-sources.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const own = (cs: ReturnType<typeof scanSource>, name: string) => cs.find((c) => c.name === name)?.discloses.filter((d) => d.via.length === 0) ?? [];
+const own = (cs: ReturnType<typeof scanSource>, name: string) =>
+  cs.find((c) => c.name === name)?.discloses.filter((d) => d.via.length === 0) ?? [];
 
 describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
   it('does not count a disclose that is written in prose', () => {
@@ -25,7 +26,7 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
       '/* `disclose(intoVacatedSlot)` is required and is not noise. */',
       'export circuit c(x: Bytes<32>): [] {',
       '  ledgerField = disclose(x);',
-      '}',
+      '}'
     ].join('\n');
     expect(own(scanSource(src), 'c')).toHaveLength(1);
   });
@@ -39,7 +40,7 @@ describe('TRAP 1 and 2 — comments are stripped BEFORE anything else', () => {
       '/**',
       ' *     stateCommitment = disclose(stateCommitmentOf(nextBalance(), x));',
       ' */',
-      'export circuit c(): [] { }',
+      'export circuit c(): [] { }'
     ].join('\n');
     expect(own(scanSource(src), 'c')).toEqual([]);
   });
@@ -77,7 +78,7 @@ describe('TRAP 4 — a `contract X { … }` interface block declares BODILESS ci
       '}',
       'export circuit payout(x: Bytes<32>): [] {',
       '  account.recordPayment(disclose(x));',
-      '}',
+      '}'
     ].join('\n');
     const cs = scanSource(src);
     expect(cs.map((c) => c.name)).toEqual(['payout']);
@@ -92,7 +93,7 @@ describe('TRAP 4 — a `contract X { … }` interface block declares BODILESS ci
       '  circuit recordPayment(p: Bytes<32>): Bytes<32>;',
       '}',
       'export circuit one(): [] { x = disclose(1); }',
-      'export circuit two(): [] { y = disclose(2); z = disclose(3); }',
+      'export circuit two(): [] { y = disclose(2); z = disclose(3); }'
     ].join('\n');
     const cs = scanSource(src);
     expect(own(cs, 'one')).toHaveLength(1);
@@ -106,7 +107,7 @@ describe('struct literals put braces inside expressions', () => {
       'export circuit c(r: Bytes<32>): [] {',
       '  send(left<A, B>(ZswapCoinPublicKey { bytes: disclose(r) }));',
       '}',
-      'export circuit after(): [] { q = disclose(9); }',
+      'export circuit after(): [] { q = disclose(9); }'
     ].join('\n');
     const cs = scanSource(src);
     expect(own(cs, 'c')).toHaveLength(1);
@@ -128,7 +129,7 @@ describe('THE CLOSURE — a helper’s disclosures belong to its callers too', (
       'export circuit approve(p: Bytes<32>): [] {',
       '  requireSigner();',
       '  approvals.insert(disclose(p));',
-      '}',
+      '}'
     ].join('\n');
     const cs = scanSource(src);
     const approve = cs.find((c) => c.name === 'approve');
@@ -139,7 +140,7 @@ describe('THE CLOSURE — a helper’s disclosures belong to its callers too', (
   it('a circuit that does NOT call the helper inherits nothing', () => {
     const src = [
       'circuit requireSigner(): Bytes<32> { assert(x(disclose(root)), "m"); }',
-      'export circuit recordPayment(p: Bytes<32>): [] { movements.insert(disclose(p)); }',
+      'export circuit recordPayment(p: Bytes<32>): [] { movements.insert(disclose(p)); }'
     ].join('\n');
     expect(scanSource(src).find((c) => c.name === 'recordPayment')?.discloses).toHaveLength(1);
   });
@@ -154,7 +155,7 @@ describe('the real sources', () => {
     // PROSE saying `disclose`. The SITE count moved by ONE over that same edit.
     // A line count would have reported five times the change; that is the whole
     // reason this counts sites.)
-    
+
     // THE ACCOUNT'S SITE COUNT MOVED ON 2 Sep: 68 -> 67.
     // MINUS TWO for the constructor's deleted threshold argument — its floor
     // assert and its assignment to the ledger field. PLUS ONE
@@ -162,20 +163,20 @@ describe('the real sources', () => {
     // governance branch. Read off `scanSourceFile` rather than derived from
     // those three: the instrument's number, not the arithmetic. The vault's 48
     // is unchanged: only comments were added there.
-    
+
     // AND IT MOVED AGAIN ON 3 Sep: 67 -> 68. ONE site,
     // in `propose`'s RUN branch —
     //     assert(disclose(vault) != noVault(), "a run must name the vault that will pay it");
     // — the mirror of the governance branch, whose assert says a governance proposal
     // names NO vault, this says a run names ONE. The vault's 48 is again
     // unchanged; that edit did not touch the file.
-    
+
     // ======================================================================
     // WHY THAT SITE PUBLISHES NOTHING NEW. THE PIN EXISTS BECAUSE A `disclose()`
     // SITE IS PRIVACY-RELEVANT, SO RAISING THE NUMBER WITHOUT THIS PARAGRAPH IS
     // THE ONE WAY TO DO IT WRONG. Four things, in the order they were checked,
     // every line opened at source:
-    
+
     //   1. MEASURED IN THE COMPILED ARTIFACT, NOT ARGUED FROM THE SOURCE.
     //      the compiled `contracts/managed/contract/index.js` turns the assert into
     //      `assert(!this._equal_10(vault_0, this._noVault_0()), …)`. NEITHER
@@ -210,7 +211,7 @@ describe('the real sources', () => {
     //      `assert(disclose(vault) == noVault(), …)` — it PINS the value exactly
     //      where the run branch's only excludes one — and it is the `PLUS ONE` in the
     //      paragraph above, accepted by this pin on 2 Sep.
-    
+
     // THE STANDING FACT, AND IT MUST NOT BE COPIED OUT OF HERE WITHOUT ITS
     // SECOND CLAUSE, BECAUSE THE FIRST ALONE LICENSES THE NEXT MISTAKE.
     // `disclose()` HAS NO RUNTIME EFFECT — the compiler erases it, and both
@@ -224,7 +225,7 @@ describe('the real sources', () => {
     // transcript VERBATIM. Which is why point 1 above is a measurement over the
     // artifact and NOT the argument first recorded for it — *`vault` is already
     // disclosed in the same branch, in the proposal's id, so the run branch's assert is free*.
-    
+
     // BOTH POSITIONS, NEITHER MARKED CORRECT. THAT ARGUMENT IS TRUE AND
     // THIS PIN DOES NOT USE IT: the id discloses `vault` INTO A SALTED COMMITMENT
     // and the run branch's assert discloses it INTO A CONDITION GATING PUBLIC STATE — the
@@ -236,7 +237,7 @@ describe('the real sources', () => {
     // one names nobody"*, retracted 14 Aug as *"a serious privacy regression"*.
     // This pin reaches the same CONCLUSION and not by that reasoning, and this
     // is where a later reader is told so.
-    
+
     // AND THE RESIDUAL, NAMED SO NOBODY READS THIS NUMBER AS SOMETHING IT IS NOT.
     // THIS IS A COUNT OF SITES AND IT IS NOT A PRIVACY BUDGET. What makes 68 safe
     // is not that 68 is a small number; it is that THIS site reaches no ledger
@@ -301,7 +302,8 @@ describe('the real sources', () => {
     //     signer sealed a copy at that moment, and how many copies exist.
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     const vault = scanSourceFile(ROOT, 'contracts/src/Vault.compact');
-    const sites = (cs: typeof account) => cs.reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
+    const sites = (cs: typeof account) =>
+      cs.reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
     // AND 95 -> 96: A PAYMENT IS RECORDED ONLY WITH A VAULT'S RECEIPT. The old
     // payment step went and its replacement discloses what it disclosed, plus
     //   `recordPaymentFromVault` `payingVault`: NEW. The vault whose receipt the
@@ -499,11 +501,22 @@ describe('the real sources', () => {
     for (const f of ['contracts/src/ConfidentialAccount.compact', 'contracts/src/Vault.compact']) {
       // Every file the main file imports, read here by its own import lines rather than through the list the
       // scan uses, so a list that drops a module changes one side only.
-      const own = [f, ...[...readFileSync(join(ROOT, f), 'utf8').matchAll(/^import "([^"]+)";/gm)].map((m) => `contracts/src/${m[1]}.compact`)];
+      const own = [
+        f,
+        ...[...readFileSync(join(ROOT, f), 'utf8').matchAll(/^import "([^"]+)";/gm)].map(
+          (m) => `contracts/src/${m[1]}.compact`
+        )
+      ];
       expect(own).toEqual(contractSources(ROOT, f));
-      const inCode = own
-        .reduce((n: number, g: string) => n + (blankNonCode(readFileSync(join(ROOT, g), 'utf8')).match(/\bdisclose\s*\(/g) ?? []).length, 0);
-      const attributed = scanSourceFile(ROOT, f).reduce((n, c) => n + c.discloses.filter((d) => d.via.length === 0).length, 0);
+      const inCode = own.reduce(
+        (n: number, g: string) =>
+          n + (blankNonCode(readFileSync(join(ROOT, g), 'utf8')).match(/\bdisclose\s*\(/g) ?? []).length,
+        0
+      );
+      const attributed = scanSourceFile(ROOT, f).reduce(
+        (n, c) => n + c.discloses.filter((d) => d.via.length === 0).length,
+        0
+      );
       expect(attributed).toBe(inCode);
     }
   });
@@ -514,11 +527,24 @@ describe('the real sources', () => {
     const account = scanSourceFile(ROOT, 'contracts/src/ConfidentialAccount.compact');
     expect(own(account, 'openedSeat')).toHaveLength(1);
     const inheritors = account.filter((c) => c.exported && c.discloses.some((d) => d.via.includes('openedSeat')));
-    expect(inheritors.map((c) => c.name).sort()).toEqual(
-      ['adopt', 'anchor', 'approve', 'cancel', 'holdRun', 'propose', 'proposeCompanyChange', 'recoverAnchor', 'releaseHold',
-        'removeSignerAndSetThreshold',
-        'reseatSigner', 'sealPayKey', 'setPolicy', 'setPolicyBar', 'setThreshold', 'setVaultThreshold'],
-    );
+    expect(inheritors.map((c) => c.name).sort()).toEqual([
+      'adopt',
+      'anchor',
+      'approve',
+      'cancel',
+      'holdRun',
+      'propose',
+      'proposeCompanyChange',
+      'recoverAnchor',
+      'releaseHold',
+      'removeSignerAndSetThreshold',
+      'reseatSigner',
+      'sealPayKey',
+      'setPolicy',
+      'setPolicyBar',
+      'setThreshold',
+      'setVaultThreshold'
+    ]);
   });
 
   it('AGREES WITH THE FILE ABOUT THE LINE AND THE TEXT, not only the count', () => {
@@ -565,24 +591,29 @@ describe('the real sources', () => {
       const lines = blankNonCode(readFileSync(join(ROOT, relPath), 'utf8')).split('\n');
 
       const from = lines.findIndex((l) => l.startsWith(opensWith));
-      expect(from, `no line in ${relPath} starts with \`${opensWith}\` — the circuit this test `
-        + 'reads has been renamed, moved behind an export, or deleted').toBeGreaterThan(-1);
+      expect(
+        from,
+        `no line in ${relPath} starts with \`${opensWith}\` — the circuit this test ` +
+          'reads has been renamed, moved behind an export, or deleted'
+      ).toBeGreaterThan(-1);
 
       // The body ends at the first `}` in column 0 after the opener, which is
       // how every circuit in both contracts closes.
       const span = lines.slice(from).findIndex((l, i) => i > 0 && l === '}');
-      expect(span, `\`${opensWith}\` in ${relPath} has no closing brace in column 0`)
-        .toBeGreaterThan(0);
+      expect(span, `\`${opensWith}\` in ${relPath} has no closing brace in column 0`).toBeGreaterThan(0);
 
-      const found = lines.slice(from, from + span)
+      const found = lines
+        .slice(from, from + span)
         .map((text, i) => ({ line: from + i + 1, text }))
         .filter((e) => e.text.includes('disclose('));
 
       // EXACTLY ONE, so the derivation cannot quietly pick the first of
       // several. If a second disclose is added to one of these circuits this
       // test must be looked at rather than silently keep reading the old one.
-      expect(found.map((e) => e.line),
-        `expected exactly one disclose in \`${opensWith}\` in ${relPath}`).toHaveLength(1);
+      expect(
+        found.map((e) => e.line),
+        `expected exactly one disclose in \`${opensWith}\` in ${relPath}`
+      ).toHaveLength(1);
       return found[0]!.line;
     };
 
@@ -593,21 +624,24 @@ describe('the real sources', () => {
     const rsLine = discloseLineIn(ACCOUNT, 'circuit openedSeat(');
     const rs = own(scanSourceFile(ROOT, ACCOUNT), 'openedSeat');
     expect(rs).toHaveLength(1);
-    expect(rs[0]!.line,
-      'the scanner reports a different line for `openedSeat`\'s disclose than the file has '
-      + 'it on. An off-by-one here moves every generated `file:line` citation and nothing else '
-      + 'in this repository refuses it — the citation check only asks whether the file is long '
-      + 'enough to have the line.').toBe(rsLine);
-    expect(rs[0]!.text,
-      'the scanner reports the wrong expression for `openedSeat`\'s disclose. Dropping or '
-      + 'adding one character here is the defect this test was written for, and it changes what '
-      + 'a published privacy document says a circuit reveals.').toBe('root');
+    expect(
+      rs[0]!.line,
+      "the scanner reports a different line for `openedSeat`'s disclose than the file has " +
+        'it on. An off-by-one here moves every generated `file:line` citation and nothing else ' +
+        'in this repository refuses it — the citation check only asks whether the file is long ' +
+        'enough to have the line.'
+    ).toBe(rsLine);
+    expect(
+      rs[0]!.text,
+      "the scanner reports the wrong expression for `openedSeat`'s disclose. Dropping or " +
+        'adding one character here is the defect this test was written for, and it changes what ' +
+        'a published privacy document says a circuit reveals.'
+    ).toBe('root');
 
     // And the derived line really is the disclose, read raw rather than
     // blanked, so the two halves cannot both be satisfied by a search that
     // found the wrong line.
-    expect(readFileSync(join(ROOT, ACCOUNT), 'utf8').split('\n')[rsLine - 1])
-      .toContain('disclose(root)');
+    expect(readFileSync(join(ROOT, ACCOUNT), 'utf8').split('\n')[rsLine - 1]).toContain('disclose(root)');
 
     // THE VAULT. Same shape, and a different declaration keyword on purpose:
     // the account's is `circuit`, the vault's is `constructor`, so the helper
@@ -616,14 +650,12 @@ describe('the real sources', () => {
     const ctorLine = discloseLineIn(VAULT, 'constructor(');
     const ctor = own(scanSourceFile(ROOT, VAULT), 'constructor');
     expect(ctor).toHaveLength(1);
-    expect(ctor[0]!.line,
-      'the scanner reports a different line for the vault constructor\'s disclose than the file '
-      + 'has it on.').toBe(ctorLine);
-    expect(ctor[0]!.text,
-      'the scanner reports the wrong expression for the vault constructor\'s disclose.')
-      .toBe('a');
-    expect(readFileSync(join(ROOT, VAULT), 'utf8').split('\n')[ctorLine - 1])
-      .toContain('account = disclose(a);');
+    expect(
+      ctor[0]!.line,
+      "the scanner reports a different line for the vault constructor's disclose than the file " + 'has it on.'
+    ).toBe(ctorLine);
+    expect(ctor[0]!.text, "the scanner reports the wrong expression for the vault constructor's disclose.").toBe('a');
+    expect(readFileSync(join(ROOT, VAULT), 'utf8').split('\n')[ctorLine - 1]).toContain('account = disclose(a);');
   });
 
   it('the vault declares NO bodiless circuit as its own', () => {

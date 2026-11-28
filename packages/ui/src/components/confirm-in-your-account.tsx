@@ -29,8 +29,12 @@ export function ConfirmInYourAccount({ summary, onConfirm, onCancel, busy = fals
       <h2 className="text-base font-medium">{t('kit.confirm.title')}</h2>
       <div className="text-sm text-muted-foreground">{summary}</div>
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={onCancel} disabled={busy}>{t('kit.confirm.cancel')}</Button>
-        <Button onClick={onConfirm} disabled={busy}>{t('kit.confirm.confirm')}</Button>
+        <Button variant="outline" onClick={onCancel} disabled={busy}>
+          {t('kit.confirm.cancel')}
+        </Button>
+        <Button onClick={onConfirm} disabled={busy}>
+          {t('kit.confirm.confirm')}
+        </Button>
       </div>
     </section>
   );

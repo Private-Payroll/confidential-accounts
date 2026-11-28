@@ -17,7 +17,9 @@ const nameOf = (entryPoint: unknown): string =>
  * be taken for that: `unread` when its effects carry no readable list, `not-public` when it takes in anything but a
  * public token. The one reader of what a call takes in, for every check that asks.
  */
-export function publicTakesOfTranscript(transcript: unknown): Array<{ colour: string; value: bigint }> | 'unread' | 'not-public' {
+export function publicTakesOfTranscript(
+  transcript: unknown
+): Array<{ colour: string; value: bigint }> | 'unread' | 'not-public' {
   const inputs = (transcript as { effects?: { unshieldedInputs?: unknown } | null } | null)?.effects?.unshieldedInputs;
   if (!(inputs instanceof Map)) return 'unread';
   const takes: Array<{ colour: string; value: bigint }> = [];
@@ -35,20 +37,31 @@ export function publicTakesOfTranscript(transcript: unknown): Array<{ colour: st
  * `not-public` (it takes in something that is not a public token), `not-one-token` (not exactly one public token, a
  * positive amount of it).
  */
-export type PublicDepositCallRefusal = 'not-the-call' | 'split' | 'unread' | 'more-than-public' | 'not-public' | 'not-one-token';
+export type PublicDepositCallRefusal =
+  'not-the-call' | 'split' | 'unread' | 'more-than-public' | 'not-public' | 'not-one-token';
 
 /**
  * **THE ONE TOKEN AND AMOUNT A CALL PUTS INTO `vault`'S PUBLIC DEPOSIT**, or why it is not such a call. Which token
  * and how much the caller expected is the caller's own comparison; this says only what the call itself asks for.
  */
 export function readPublicDepositCall(
-  call: unknown, vault: string,
+  call: unknown,
+  vault: string
 ): { readonly colour: string; readonly amount: bigint } | { readonly refused: PublicDepositCallRefusal } {
   const c = call as {
-    address?: unknown; entryPoint?: unknown; guaranteedTranscript?: unknown; fallibleTranscript?: unknown;
+    address?: unknown;
+    entryPoint?: unknown;
+    guaranteedTranscript?: unknown;
+    fallibleTranscript?: unknown;
   } | null;
-  if (!c || c.entryPoint === undefined || c.address === undefined
-    || bare(c.address) !== bare(vault) || nameOf(c.entryPoint) !== PUBLIC_DEPOSIT_ENTRY) return { refused: 'not-the-call' };
+  if (
+    !c ||
+    c.entryPoint === undefined ||
+    c.address === undefined ||
+    bare(c.address) !== bare(vault) ||
+    nameOf(c.entryPoint) !== PUBLIC_DEPOSIT_ENTRY
+  )
+    return { refused: 'not-the-call' };
   const present = (t: unknown) => t !== undefined && t !== null;
   if (present(c.guaranteedTranscript) && present(c.fallibleTranscript)) return { refused: 'split' };
   const asked = new Map<string, bigint>();

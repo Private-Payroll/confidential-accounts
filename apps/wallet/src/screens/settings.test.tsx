@@ -23,7 +23,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -43,7 +43,12 @@ import { App } from '../app.js';
 import { SessionProvider } from '../session.js';
 import { Settings } from './settings.js';
 import {
-  hasAccount, savePasskey, saveArrival, saveCreation, saveSecret, saveSecuredSetup,
+  hasAccount,
+  savePasskey,
+  saveArrival,
+  saveCreation,
+  saveSecret,
+  saveSecuredSetup
 } from '../accounts/storage.js';
 import { ORIGINAL_SLOT } from '../accounts/wallets-held.js';
 import { recordTermsSeen } from '../chain/terms.js';
@@ -54,7 +59,7 @@ import { NODE_RPC_URL } from '../chain/facade.js';
 const PLACEMENTS: readonly Placement[] = [
   { label: 'My Google account', holder: 'google:me' },
   { label: 'Printed card', holder: 'paper' },
-  { label: 'Old laptop', holder: 'device:old' },
+  { label: 'Old laptop', holder: 'device:old' }
 ];
 
 /* THREE HOMES, THREE DIFFERENT ANSWERS. Paper can never be asked; the
@@ -63,7 +68,7 @@ const PLACEMENTS: readonly Placement[] = [
 const VERIFICATION = {
   'google:me': Date.UTC(2026, 7, 20),
   paper: null,
-  'device:old': 'never',
+  'device:old': 'never'
 } as const;
 
 const passkeyFixture = (over: Partial<Passkey> = {}): Passkey => ({
@@ -77,11 +82,15 @@ const passkeyFixture = (over: Partial<Passkey> = {}): Passkey => ({
   syncsToACloud: false,
   backedUpNow: false,
   transports: [],
-  ...over,
+  ...over
 });
 
 const settings = (secret: Secret): void => {
-  render(<SessionProvider><Settings secret={secret} /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <Settings secret={secret} />
+    </SessionProvider>
+  );
 };
 
 /** The real app, unlocked with a real passkey ceremony, standing on Settings. */
@@ -89,10 +98,13 @@ async function unlockedOnSettings(secret: Secret): Promise<void> {
   savePasskey(passkeyFixture({ credentialId: 'cred-1' }), ORIGINAL_SLOT);
   await saveSecret(secret);
   vi.mocked(usePasskey).mockResolvedValue({ credentialId: 'cred-1' } as never);
-  vi.mocked(verifyAssertion).mockResolvedValue(
-    { passkey: passkeyFixture({ credentialId: 'cred-1' }) } as never);
+  vi.mocked(verifyAssertion).mockResolvedValue({ passkey: passkeyFixture({ credentialId: 'cred-1' }) } as never);
   window.location.hash = '#/';
-  render(<SessionProvider><App /></SessionProvider>);
+  render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
   fireEvent.click(screen.getByText('Unlock with your passkey'));
   await screen.findByText('Every wallet');
   act(() => {
@@ -126,8 +138,7 @@ describe('§1 — this wallet, this device', () => {
     const secret = newSecret();
     renameWallet(secret, 0, 'Rent money');
     settings(secret);
-    expect(within(sectionNamed('This wallet, this device'))
-      .getByText('Rent money')).toBeTruthy();
+    expect(within(sectionNamed('This wallet, this device')).getByText('Rent money')).toBeTruthy();
   });
 
   it('says CREATED HERE when this browser made the account', () => {
@@ -209,8 +220,7 @@ describe('§1 — the theme is one control behind two doors', () => {
     for (const picker of pickers()) expect(picker.getAttribute('data-theme-choice')).toBe('system');
 
     /* Through Settings' own picker — the one inside the section. */
-    const inSettings = within(sectionNamed('This wallet, this device'))
-      .getByRole('button', { name: /^Theme:/ });
+    const inSettings = within(sectionNamed('This wallet, this device')).getByRole('button', { name: /^Theme:/ });
     /* Radix opens on `pointerdown`, which is what `rail.test.tsx` does too. */
     fireEvent.pointerDown(inSettings, { button: 0, ctrlKey: false });
     fireEvent.click(inSettings);
@@ -233,8 +243,7 @@ describe('§1 — the theme is one control behind two doors', () => {
 
 describe('§2 — the backup, in full', () => {
   const secure = async (secret: Secret, partial = false): Promise<void> => {
-    await saveSecuredSetup(
-      secret, await splitSecret(secret, PLACEMENTS, 2), VERIFICATION, { partial });
+    await saveSecuredSetup(secret, await splitSecret(secret, PLACEMENTS, 2), VERIFICATION, { partial });
   };
 
   it('states the quorum off the pieces themselves', async () => {
@@ -255,8 +264,7 @@ describe('§2 — the backup, in full', () => {
     settings(secret);
     const section = sectionNamed('Security');
     expect(within(section).getByText('Last proved')).toBeTruthy();
-    expect(within(section).getByText(
-      /actually rebuilt from real pieces/)).toBeTruthy();
+    expect(within(section).getByText(/actually rebuilt from real pieces/)).toBeTruthy();
     expect(within(section).getByText(/dated past fact and nothing more/)).toBeTruthy();
     expect(within(section).getByText(/not a statement about today/)).toBeTruthy();
     expect(section.textContent).not.toMatch(/you are safe/i);
@@ -292,17 +300,24 @@ describe('§2 — the backup, in full', () => {
   it('says a replaced set still works, and that re-cutting removes nothing at all', async () => {
     const secret = newSecret();
     await secure(secret);
-    await saveSecuredSetup(secret, await splitSecret(secret, [
-      { label: 'A new card', holder: 'paper' },
-      { label: 'My laptop', holder: 'device:new' },
-      { label: 'My Google account', holder: 'google:me' },
-    ], 2), { paper: null, 'device:new': 'never', 'google:me': 'never' });
+    await saveSecuredSetup(
+      secret,
+      await splitSecret(
+        secret,
+        [
+          { label: 'A new card', holder: 'paper' },
+          { label: 'My laptop', holder: 'device:new' },
+          { label: 'My Google account', holder: 'google:me' }
+        ],
+        2
+      ),
+      { paper: null, 'device:new': 'never', 'google:me': 'never' }
+    );
     settings(secret);
     expect(screen.getByText(/its pieces still work/)).toBeTruthy();
     /* The sentence is broken across elements by its own emphasis, so it is
      * read off the section rather than matched as one text node. */
-    expect(sectionNamed('Security').textContent)
-      .toMatch(/adds a way in and never removes one/);
+    expect(sectionNamed('Security').textContent).toMatch(/adds a way in and never removes one/);
     expect(screen.getByText(/A new card/)).toBeTruthy();
   });
 
@@ -312,8 +327,7 @@ describe('§2 — the backup, in full', () => {
     const section = sectionNamed('Security');
     expect(within(section).getByText(/holds no record of any pieces/)).toBeTruthy();
     expect(within(section).queryByText(/Last proved/)).toBeNull();
-    expect(within(section).getByText('Cut this account into pieces')
-      .getAttribute('href')).toBe('#/secure');
+    expect(within(section).getByText('Cut this account into pieces').getAttribute('href')).toBe('#/secure');
   });
 
   it('refuses a record cut from a DIFFERENT secret', async () => {
@@ -336,8 +350,7 @@ describe('§3 — the passkeys', () => {
     /* Twice on purpose: the row's own state, and the sentence beneath that
      * explains what that state means. */
     expect(within(section).getAllByText('this device only')).toHaveLength(2);
-    expect(within(section).getByText(
-      /If this device disappears, nothing above comes back with it/)).toBeTruthy();
+    expect(within(section).getByText(/If this device disappears, nothing above comes back with it/)).toBeTruthy();
     /* In those terms, not WebAuthn's. */
     expect(section.textContent).not.toMatch(/backup eligib|\bBE\b flag|\bBS\b flag/i);
   });
@@ -370,9 +383,14 @@ describe('§3 — the passkeys', () => {
   it('shows the difference between a credential that has signed in and one that has not yet', () => {
     const secret = newSecret();
     savePasskey(passkeyFixture({ credentialId: 'cred-never-signed-in' }), ORIGINAL_SLOT);
-    savePasskey(passkeyFixture({
-      credentialId: 'cred-has-signed-in', provenBySignIn: true, signCount: 7,
-    }), ORIGINAL_SLOT);
+    savePasskey(
+      passkeyFixture({
+        credentialId: 'cred-has-signed-in',
+        provenBySignIn: true,
+        signCount: 7
+      }),
+      ORIGINAL_SLOT
+    );
     settings(secret);
     const section = sectionNamed('Passkeys');
     expect(within(section).getByText('never signed in')).toBeTruthy();
@@ -433,8 +451,7 @@ describe('§3 — the passkeys', () => {
   it('says plainly when there are none, which is a different sentence again', () => {
     const secret = newSecret();
     settings(secret);
-    expect(within(sectionNamed('Passkeys'))
-      .getByText(/No passkeys are recorded in this browser/)).toBeTruthy();
+    expect(within(sectionNamed('Passkeys')).getByText(/No passkeys are recorded in this browser/)).toBeTruthy();
   });
 
   /*
@@ -457,8 +474,7 @@ describe('§3 — the passkeys', () => {
     settings(secret);
     const section = sectionNamed('Passkeys');
     expect(within(section).getByText(/was fixed when the\s+credential was made/)).toBeTruthy();
-    expect(within(section)
-      .getByText(/nothing in this wallet\s+can change it afterwards/)).toBeTruthy();
+    expect(within(section).getByText(/nothing in this wallet\s+can change it afterwards/)).toBeTruthy();
     /* The remedy, as its own assertion. */
     expect(within(section).getByText(/Cutting recovery pieces is what does that/)).toBeTruthy();
   });
@@ -472,10 +488,8 @@ describe('§3 — the passkeys', () => {
     savePasskey(passkeyFixture(), ORIGINAL_SLOT);
     settings(secret);
     const section = sectionNamed('Passkeys');
-    expect(within(section)
-      .queryByRole('button', { name: /rename|name|edit|change/i })).toBeNull();
-    expect(within(section)
-      .queryByRole('textbox')).toBeNull();
+    expect(within(section).queryByRole('button', { name: /rename|name|edit|change/i })).toBeNull();
+    expect(within(section).queryByRole('textbox')).toBeNull();
   });
 
   /**
@@ -487,14 +501,12 @@ describe('§3 — the passkeys', () => {
   it('is not said over an empty list or a damaged record', () => {
     const secret = newSecret();
     settings(secret);
-    expect(sectionNamed('Passkeys').textContent)
-      .not.toMatch(/Cutting recovery pieces is what does that/);
+    expect(sectionNamed('Passkeys').textContent).not.toMatch(/Cutting recovery pieces is what does that/);
     cleanup();
 
     localStorage.setItem('midnight-identity:passkeys', '{not json');
     settings(secret);
-    expect(sectionNamed('Passkeys').textContent)
-      .not.toMatch(/Cutting recovery pieces is what does that/);
+    expect(sectionNamed('Passkeys').textContent).not.toMatch(/Cutting recovery pieces is what does that/);
   });
 });
 
@@ -524,8 +536,7 @@ describe('§4 — network and hosts, read-only', () => {
     const secret = newSecret();
     settings(secret);
     const section = sectionNamed('Network and hosts');
-    expect(within(section).getByText(
-      /Reading a balance tells the indexer this wallet’s address/)).toBeTruthy();
+    expect(within(section).getByText(/Reading a balance tells the indexer this wallet’s address/)).toBeTruthy();
     expect(within(section).getByText(/no third party is asked to prove anything/)).toBeTruthy();
     /* And nothing on the screen ends in the clip character. */
     expect(section.textContent).not.toMatch(/\u2026(\s|$)/);
@@ -549,8 +560,7 @@ describe('§4 — network and hosts, read-only', () => {
   it('says the terms have not been fetched, rather than showing an empty hash', () => {
     const secret = newSecret();
     settings(secret);
-    expect(within(sectionNamed('Network and hosts'))
-      .getByText(/Not fetched yet/)).toBeTruthy();
+    expect(within(sectionNamed('Network and hosts')).getByText(/Not fetched yet/)).toBeTruthy();
   });
 
   it('shows the terms hash once this browser has seen them', () => {
@@ -559,8 +569,7 @@ describe('§4 — network and hosts, read-only', () => {
     settings(secret);
     const section = sectionNamed('Network and hosts');
     expect(within(section).getByText('abc123def456')).toBeTruthy();
-    expect(within(section).getByText('The terms document')
-      .getAttribute('href')).toBe('https://terms.example/doc');
+    expect(within(section).getByText('The terms document').getAttribute('href')).toBe('https://terms.example/doc');
   });
 });
 
@@ -575,8 +584,7 @@ describe('§5, §6, §8 — the rooms that are not built', () => {
     const secret = newSecret();
     settings(secret);
     const section = sectionNamed('Contacts');
-    expect(within(section).getByText('Manage your contacts')
-      .closest('a')?.getAttribute('href')).toBe('#/address-book');
+    expect(within(section).getByText('Manage your contacts').closest('a')?.getAttribute('href')).toBe('#/address-book');
     expect(section.querySelectorAll('input')).toHaveLength(0);
     expect(section.querySelectorAll('textarea')).toHaveLength(0);
     expect(within(section).getByText(/never stand in place of one/)).toBeTruthy();
@@ -586,8 +594,12 @@ describe('§5, §6, §8 — the rooms that are not built', () => {
     const secret = newSecret();
     settings(secret);
     const section = sectionNamed('Advanced');
-    expect(within(section).getByText(/recovery phrase/)
-      .closest('a')?.getAttribute('href')).toBe('#/advanced');
+    expect(
+      within(section)
+        .getByText(/recovery phrase/)
+        .closest('a')
+        ?.getAttribute('href')
+    ).toBe('#/advanced');
     expect(within(section).getByText(/Anyone who reads the phrase owns the account/)).toBeTruthy();
   });
 
@@ -694,7 +706,9 @@ describe('§7 — the danger section', () => {
     fireEvent.change(screen.getByLabelText(/Type/), { target: { value: 'Main wallet' } });
     fireEvent.click(screen.getByRole('button', { name: 'Forget this wallet' }));
 
-    await waitFor(() => { expect(hasAccount(ORIGINAL_SLOT)).toBe(false); });
+    await waitFor(() => {
+      expect(hasAccount(ORIGINAL_SLOT)).toBe(false);
+    });
     /* And the browser lands where a browser with nothing in it lands. */
     expect(await screen.findAllByText(/Move it onto this machine/)).not.toHaveLength(0);
   });

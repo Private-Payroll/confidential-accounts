@@ -1,12 +1,20 @@
-import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useText } from 'vaults-ui';
 import {
-  MemoryChallengeStore, cancelRecovery, completeRecovery, fromBase64Url, identityFromSecret,
-  newSecret, offerPiece, readPieceHeader, startRecovery, toBase64Url, verifyAssertion,
-  verifyRegistration, withdrawPiece,
+  MemoryChallengeStore,
+  cancelRecovery,
+  completeRecovery,
+  fromBase64Url,
+  identityFromSecret,
+  newSecret,
+  offerPiece,
+  readPieceHeader,
+  startRecovery,
+  toBase64Url,
+  verifyAssertion,
+  verifyRegistration,
+  withdrawPiece
 } from 'midnight-identity';
 import type { ChallengeStore, Identity, PieceSet, RecoverySession, Secret } from 'midnight-identity';
 import { createPasskey, passkeysAvailable, usePasskey } from 'midnight-identity/browser';
@@ -26,10 +34,24 @@ import { EMBEDDER, ORIGIN, RP_ID, RP_NAME } from './config.js';
  */
 const FRAMED_BY: readonly string[] = EMBEDDER === null ? [] : [EMBEDDER];
 import {
-  StorageError, allPasskeys, forgetAllPasskeys, forgetEverything, forgetSealingKey,
-  forgetSecuredSetup, loadSecret, readKeyringRecord, resetPasskeyRecordTo,
-  saveArrival, saveCreation, savePasskey, saveSecret, saveSecuredSetup, saveWalletName,
-  walletNameOf, walletNameOnRecord, walletOfCredential,
+  StorageError,
+  allPasskeys,
+  forgetAllPasskeys,
+  forgetEverything,
+  forgetSealingKey,
+  forgetSecuredSetup,
+  loadSecret,
+  readKeyringRecord,
+  resetPasskeyRecordTo,
+  saveArrival,
+  saveCreation,
+  savePasskey,
+  saveSecret,
+  saveSecuredSetup,
+  saveWalletName,
+  walletNameOf,
+  walletNameOnRecord,
+  walletOfCredential
 } from './accounts/storage.js';
 import { heldWallets, openWallet, openWalletId } from './accounts/wallets-held.js';
 import { describeFailure } from './lib/failure-text.js';
@@ -53,7 +75,12 @@ export type PasskeyRefused = 'none-here' | 'other-wallet';
 
 /** A passkey refused because it cannot open the wallet the window named; `why` is what the window offers next on. */
 class NotThatWallet extends Error {
-  constructor(readonly why: PasskeyRefused, message: string) { super(message); }
+  constructor(
+    readonly why: PasskeyRefused,
+    message: string
+  ) {
+    super(message);
+  }
 }
 
 export type Phase =
@@ -146,8 +173,12 @@ export interface Session {
    * the first rather than adding — the holder it replaced, so the screen can
    * say which piece was swapped out instead of counting silently.
    */
-  offerRecoveryPiece(text: string, holder: string): {
-    readonly ok: boolean; readonly replaced: string | null;
+  offerRecoveryPiece(
+    text: string,
+    holder: string
+  ): {
+    readonly ok: boolean;
+    readonly replaced: string | null;
   };
   withdrawRecoveryPiece(holder: string): void;
   /**
@@ -344,9 +375,10 @@ function derivePhase(): Phase {
  * false. Counting compartments would have missed it; counting WALLETS does
  * not.
  */
-const walletsHeldNow = (): readonly string[] => heldWallets()
-  .filter((wallet) => readKeyringRecord(wallet.id).state !== 'absent')
-  .map((wallet) => wallet.id);
+const walletsHeldNow = (): readonly string[] =>
+  heldWallets()
+    .filter((wallet) => readKeyringRecord(wallet.id).state !== 'absent')
+    .map((wallet) => wallet.id);
 
 /**
  * WHAT THIS BROWSER HOLDS, IN A SENTENCE, for a refusal that has to leave the
@@ -397,12 +429,8 @@ export interface HeldWalletView {
  * there is nothing yet for it to be told apart from.
  */
 const credentialLabel = (walletName: string | null, what: string | null): string => {
-  const wallet = walletName !== null && walletName.trim() !== ''
-    ? walletName.trim()
-    : 'Midnight wallet';
-  return what === null
-    ? wallet
-    : `${wallet} — ${what} ${new Date().toISOString().slice(0, 10)}`;
+  const wallet = walletName !== null && walletName.trim() !== '' ? walletName.trim() : 'Midnight wallet';
+  return what === null ? wallet : `${wallet} — ${what} ${new Date().toISOString().slice(0, 10)}`;
 };
 
 /**
@@ -424,7 +452,7 @@ const credentialLabel = (walletName: string | null, what: string | null): string
  */
 function settleWalletName(secret: Secret, given: string | undefined): string | null {
   const asked = (given ?? '').trim();
-  const settled = asked !== '' ? asked : walletNameOf(secret) ?? '';
+  const settled = asked !== '' ? asked : (walletNameOf(secret) ?? '');
   saveWalletName(secret, settled);
   return settled === '' ? null : settled;
 }
@@ -473,20 +501,23 @@ function settleWalletName(secret: Secret, given: string | undefined): string | n
 function theWorldMovedSince(drawnFor: readonly string[]): string | null {
   const arrived = walletsHeldNow().filter((id) => !drawnFor.includes(id));
   if (arrived.length === 0) return null;
-  const named = arrived
-    .map((id) => walletNameOnRecord(id))
-    .filter((name): name is string => name !== null);
+  const named = arrived.map((id) => walletNameOnRecord(id)).filter((name): name is string => name !== null);
   const which = named.length === 0 ? '' : ` — ${named.join(', ')}`;
-  return (arrived.length === 1 ? 'a wallet' : `${arrived.length} wallets`)
-    + ` arrived in this browser${which} since this screen was drawn — another window or `
-    + 'another tab finished something while this one was open. Nothing has been made here '
-    + 'and nothing has been replaced. This screen has been refreshed; see what this browser '
-    + 'now holds, and choose again.';
+  return (
+    (arrived.length === 1 ? 'a wallet' : `${arrived.length} wallets`) +
+    ` arrived in this browser${which} since this screen was drawn — another window or ` +
+    'another tab finished something while this one was open. Nothing has been made here ' +
+    'and nothing has been replaced. This screen has been refreshed; see what this browser ' +
+    'now holds, and choose again.'
+  );
 }
 
 const SessionContext = createContext<Session | null>(null);
 
-export function SessionProvider({ children, challenges: injected }: {
+export function SessionProvider({
+  children,
+  challenges: injected
+}: {
   readonly children: ReactNode;
   /**
    * Substitutable so the one-use rule is TESTABLE, second path. The
@@ -513,7 +544,9 @@ export function SessionProvider({ children, challenges: injected }: {
    */
   const drawnFor = useRef<readonly string[] | null>(null);
   drawnFor.current ??= walletsHeldNow();
-  useEffect(() => { drawnFor.current = walletsHeldNow(); });
+  useEffect(() => {
+    drawnFor.current = walletsHeldNow();
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [passkeyRefused, setPasskeyRefused] = useState<PasskeyRefused | null>(null);
@@ -522,209 +555,220 @@ export function SessionProvider({ children, challenges: injected }: {
   const sayNow = useRef(say);
   sayNow.current = say;
 
-  const createAccount = useCallback(async (walletName?: string) => {
-    setBusy('Waiting for your passkey…');
-    setError(null);
-    try {
-      /* Before the prompt, and before anything is written. The phase is put
-       * right first, then the sentence is thrown onto the error line — the
-       * order `adoptPasskey` uses for the mirror-image state. */
-      const moved = theWorldMovedSince(drawnFor.current ?? []);
-      if (moved !== null) {
-        setPhase(derivePhase());
-        throw new Error(moved);
-      }
-      /**
-       * WHICH COMPARTMENT A WALLET MADE NOW WOULD LAND IN — asked here,
-       * synchronously, before the prompt, because the answer decides what the
-       * exclude list must say and the list is fixed the moment the ceremony
-       * starts.
-       *
-       * `storage.ts`'s `slotForLanding` lands a new wallet in the OPEN
-       * compartment when that compartment has no keyring — which is
-       * `passkey-no-account`, credentials with nothing behind them — and in a
-       * fresh one otherwise. The read is the same one it makes.
-       */
-      const here = openWalletId();
-      const landsHere = readKeyringRecord(here).state === 'absent';
-
-      const challenge = await challenges.issue('register');
-      const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-      /* THE NAME REACHES THE CHOOSER HERE OR NOWHERE — the secret does not
-       * exist yet, so this is the given string and nothing read from disk. */
-      const label = credentialLabel(walletName ?? null, null);
-      const registration = await createPasskey({
-        rpId: RP_ID,
-        rpName: RP_NAME,
-        challenge,
-        person: { id: handle, name: label, displayName: label },
+  const createAccount = useCallback(
+    async (walletName?: string) => {
+      setBusy('Waiting for your passkey…');
+      setError(null);
+      try {
+        /* Before the prompt, and before anything is written. The phase is put
+         * right first, then the sentence is thrown onto the error line — the
+         * order `adoptPasskey` uses for the mirror-image state. */
+        const moved = theWorldMovedSince(drawnFor.current ?? []);
+        if (moved !== null) {
+          setPhase(derivePhase());
+          throw new Error(moved);
+        }
         /**
-         * **THE CREDENTIALS OF THE COMPARTMENT THIS WALLET WILL LAND IN, AND
-         * NO OTHERS — and this is a fix, not a tidy-up.**
+         * WHICH COMPARTMENT A WALLET MADE NOW WOULD LAND IN — asked here,
+         * synchronously, before the prompt, because the answer decides what the
+         * exclude list must say and the list is fixed the moment the ceremony
+         * starts.
          *
-         * An authenticator asked for a second credential under a known
-         * handle silently destroys the first, and `excludeCredentials` turns
-         * that into a refusal. The handle here is sixteen fresh random bytes,
-         * so a collision is impossible — which is exactly why `startFresh`,
-         * `finishRecovery` and `finishPairing` all pass an EMPTY list and say
-         * so. What this list still buys is the `passkey-no-account` case: a
-         * stale credential in the compartment about to be reused.
-         *
-         * **AND WHAT IT COSTS IF IT NAMES ANY OTHER WALLET'S CREDENTIAL IS THE
-         * FEATURE.** `excludeCredentials` makes the authenticator REFUSE when
-         * it already holds one of the listed credentials. This browser now
-         * holds several wallets whose passkeys are all on this authenticator,
-         * so listing another wallet's credential here does not protect
-         * anything — it makes "add another wallet" fail with
-         * `InvalidStateError`, every time, on exactly the machines where the
-         * feature matters.
+         * `storage.ts`'s `slotForLanding` lands a new wallet in the OPEN
+         * compartment when that compartment has no keyring — which is
+         * `passkey-no-account`, credentials with nothing behind them — and in a
+         * fresh one otherwise. The read is the same one it makes.
          */
-        existing: landsHere ? allPasskeys(here).map((p) => p.credentialId) : [],
-      });
-      if (!(await challenges.take(challenge, 'register'))) {
-        throw new Error('that took too long and the challenge expired. Try again.');
-      }
-      const verified = await verifyRegistration(registration, {
-        rpId: RP_ID, origin: ORIGIN, challenge, allowFramedBy: FRAMED_BY,
-      });
+        const here = openWalletId();
+        const landsHere = readKeyringRecord(here).state === 'absent';
 
-      /* ONE OF THE TWO PLACES A SECRET IS BORN, and the stamp goes on
-       * the value `newSecret()` just returned rather than on whatever is being
-       * stored. `finishRecovery` seals `done.secret`, which came out of
-       * `completeRecovery`, and `finishPairing` seals the one the other
-       * machine sent; neither calls `newSecret()` and neither can reach this
-       * binding, so neither can stamp itself as a creation. */
-      const fresh = newSecret();
+        const challenge = await challenges.issue('register');
+        const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+        /* THE NAME REACHES THE CHOOSER HERE OR NOWHERE — the secret does not
+         * exist yet, so this is the given string and nothing read from disk. */
+        const label = credentialLabel(walletName ?? null, null);
+        const registration = await createPasskey({
+          rpId: RP_ID,
+          rpName: RP_NAME,
+          challenge,
+          person: { id: handle, name: label, displayName: label },
+          /**
+           * **THE CREDENTIALS OF THE COMPARTMENT THIS WALLET WILL LAND IN, AND
+           * NO OTHERS — and this is a fix, not a tidy-up.**
+           *
+           * An authenticator asked for a second credential under a known
+           * handle silently destroys the first, and `excludeCredentials` turns
+           * that into a refusal. The handle here is sixteen fresh random bytes,
+           * so a collision is impossible — which is exactly why `startFresh`,
+           * `finishRecovery` and `finishPairing` all pass an EMPTY list and say
+           * so. What this list still buys is the `passkey-no-account` case: a
+           * stale credential in the compartment about to be reused.
+           *
+           * **AND WHAT IT COSTS IF IT NAMES ANY OTHER WALLET'S CREDENTIAL IS THE
+           * FEATURE.** `excludeCredentials` makes the authenticator REFUSE when
+           * it already holds one of the listed credentials. This browser now
+           * holds several wallets whose passkeys are all on this authenticator,
+           * so listing another wallet's credential here does not protect
+           * anything — it makes "add another wallet" fail with
+           * `InvalidStateError`, every time, on exactly the machines where the
+           * feature matters.
+           */
+          existing: landsHere ? allPasskeys(here).map((p) => p.credentialId) : []
+        });
+        if (!(await challenges.take(challenge, 'register'))) {
+          throw new Error('that took too long and the challenge expired. Try again.');
+        }
+        const verified = await verifyRegistration(registration, {
+          rpId: RP_ID,
+          origin: ORIGIN,
+          challenge,
+          allowFramedBy: FRAMED_BY
+        });
 
-      /**
-       * THE SEAL COMES FIRST NOW, AND THE ROLLBACK IS GONE BECAUSE
-       * THERE IS NOTHING LEFT TO ROLL BACK.
-       *
-       * `saveSecret` decides WHICH COMPARTMENT this wallet lands in, and it
-       * decides it at write time — which is what closes the two-window race
-       * for every landing at once. The passkey record belongs to that
-       * compartment, so it cannot be written before the compartment is known:
-       * writing it first would put the new wallet's credential into whichever
-       * wallet this window happened to have open.
-       *
-       * **THE GUARANTEE AN EARLIER FINDING BOUGHT IS UNCHANGED AND IS NOW
-       * STRUCTURAL.** A half-landed registration must not survive: a browser
-       * that cannot seal — IndexedDB refused, private browsing, quota — used
-       * to be left with a passkey record alone, and every retry then died
-       * identically on the exclude list. In this order that record is
-       * never written at all. `session.test.tsx`'s rollback test asserts the
-       * same two keys are absent and pins it either way.
-       */
-      const walletId = await saveSecret(fresh);
-      savePasskey(verified, walletId);
-      /* AFTER the seal, not before: a keyring that could not be stored is a
-       * creation that did not happen, and nothing above it ran. A stamp
-       * written first would outlive it. */
-      saveCreation(fresh);
-      /* And the name lands with it, after the seal for the same reason the
-       * stamp does: a keyring that could not be stored is a creation that did
-       * not happen, and its name must not outlive it. */
-      settleWalletName(fresh, walletName);
-      setPhase({ name: 'unlocked', identity: identityFromSecret(fresh), secret: fresh });
-    } catch (e) {
-      /* Storage failures are STATES here too: a damaged passkey
-       * record or a browser refusing IndexedDB is not something a retry
-       * clears, and the broken screen is where the doors are. */
-      if (e instanceof StorageError) {
-        setPhase({ name: 'broken', message: e.message });
-      } else {
-        setError(describeFailure(e));
-      }
-    } finally {
-      setBusy(null);
-    }
-  }, [challenges]);
+        /* ONE OF THE TWO PLACES A SECRET IS BORN, and the stamp goes on
+         * the value `newSecret()` just returned rather than on whatever is being
+         * stored. `finishRecovery` seals `done.secret`, which came out of
+         * `completeRecovery`, and `finishPairing` seals the one the other
+         * machine sent; neither calls `newSecret()` and neither can reach this
+         * binding, so neither can stamp itself as a creation. */
+        const fresh = newSecret();
 
-  const unlock = useCallback(async (options?: { onlyTheOpenWallet?: boolean; onlyThatWallet?: boolean }) => {
-    setBusy('Waiting for your passkey…');
-    setError(null);
-    setPasskeyRefused(null);
-    try {
-      /* Read before the first `await`, so the passkeys offered belong to the
-       * wallet the press switched to, not whichever one another window has
-       * turned to since. A damaged passkey record throws `StorageError` here,
-       * which lands on the broken screen below like every other read. */
-      const opening = openWalletId();
-      const allow = options?.onlyTheOpenWallet
-        ? allPasskeys(opening).map((p) => p.credentialId)
-        : undefined;
-      /* An empty list offered to the browser means ANY passkey for this site, which would open whichever wallet it
-       * belongs to - so an ask's window does not ask for a passkey for a wallet with none on record here. */
-      const wallet = walletNameOnRecord(opening) ?? sayNow.current('ask.wallet.this-one');
-      const named = options?.onlyThatWallet === true && allow !== undefined;
-      if (named && allow.length === 0) {
-        throw new NotThatWallet('none-here', sayNow.current('ask.passkey.none-here', { wallet }));
+        /**
+         * THE SEAL COMES FIRST NOW, AND THE ROLLBACK IS GONE BECAUSE
+         * THERE IS NOTHING LEFT TO ROLL BACK.
+         *
+         * `saveSecret` decides WHICH COMPARTMENT this wallet lands in, and it
+         * decides it at write time — which is what closes the two-window race
+         * for every landing at once. The passkey record belongs to that
+         * compartment, so it cannot be written before the compartment is known:
+         * writing it first would put the new wallet's credential into whichever
+         * wallet this window happened to have open.
+         *
+         * **THE GUARANTEE AN EARLIER FINDING BOUGHT IS UNCHANGED AND IS NOW
+         * STRUCTURAL.** A half-landed registration must not survive: a browser
+         * that cannot seal — IndexedDB refused, private browsing, quota — used
+         * to be left with a passkey record alone, and every retry then died
+         * identically on the exclude list. In this order that record is
+         * never written at all. `session.test.tsx`'s rollback test asserts the
+         * same two keys are absent and pins it either way.
+         */
+        const walletId = await saveSecret(fresh);
+        savePasskey(verified, walletId);
+        /* AFTER the seal, not before: a keyring that could not be stored is a
+         * creation that did not happen, and nothing above it ran. A stamp
+         * written first would outlive it. */
+        saveCreation(fresh);
+        /* And the name lands with it, after the seal for the same reason the
+         * stamp does: a keyring that could not be stored is a creation that did
+         * not happen, and its name must not outlive it. */
+        settleWalletName(fresh, walletName);
+        setPhase({ name: 'unlocked', identity: identityFromSecret(fresh), secret: fresh });
+      } catch (e) {
+        /* Storage failures are STATES here too: a damaged passkey
+         * record or a browser refusing IndexedDB is not something a retry
+         * clears, and the broken screen is where the doors are. */
+        if (e instanceof StorageError) {
+          setPhase({ name: 'broken', message: e.message });
+        } else {
+          setError(describeFailure(e));
+        }
+      } finally {
+        setBusy(null);
       }
-      const challenge = await challenges.issue('sign-in');
-      const assertion = await usePasskey({ rpId: RP_ID, challenge, ...(allow ? { allow } : {}) });
-      if (!(await challenges.take(challenge, 'sign-in'))) {
-        throw new Error('that took too long and the challenge expired. Try again.');
-      }
-      /**
-       * **THE CHOSEN CREDENTIAL IS WHAT DECIDES WHICH WALLET OPENS.**
-       *
-       * The browser's chooser offers every credential for this ORIGIN, and
-       * this origin now holds several wallets, so `passkeyById` — which asks
-       * one compartment — could not answer. `walletOfCredential` asks all of
-       * them and returns the compartment the chosen credential belongs to.
-       * This is also what makes SWITCHING work with no second ceremony: the
-       * person picks a passkey and the wallet behind it opens.
-       */
-      const owner = walletOfCredential(assertion.credentialId);
-      if (!owner) {
-        /* THE PASSKEY-WITH-NO-WALLET STATE, ALREADY SEEN IN THE WILD. A
-         * password manager keeps offering a credential long after this
-         * browser's storage stopped knowing about it — a cleared profile, a
-         * wallet removed from here. The refusal has to say what this browser
-         * DOES hold, or the person is left pressing the same button. */
-        throw new Error(
-          'that passkey does not open any wallet in this browser. '
-          + describeWhatIsHeld()
-          + ' If the wallet was made or kept somewhere else, this machine needs it '
-          + 'moved onto it first — from your recovery pieces, or from the device '
-          + 'that has it.');
-      }
-      /* THE WALLET AN ASK'S WINDOW NAMED IS THE ONE THAT OPENS. With `onlyThatWallet` the window named one wallet and
-       * offered only its passkeys; a passkey of another wallet coming back anyway (a browser that ignored the list)
-       * opens nothing, so an ask is never answered from a wallet the person did not choose. */
-      if (named && owner.walletId !== opening) {
-        throw new NotThatWallet('other-wallet', sayNow.current('ask.passkey.other-wallet', { wallet }));
-      }
-      const result = await verifyAssertion(assertion, owner.passkey, {
-        rpId: RP_ID, origin: ORIGIN, challenge, allowFramedBy: FRAMED_BY,
-      });
-      /* The sign counter moved; not saving it would switch off the clone
-       * detector, silently — `ports.ts`, PasskeyStore. The compartment is
-       * named rather than assumed: the wallet being opened is not necessarily
-       * the one this window had open a moment ago. */
-      savePasskey(result.passkey, owner.walletId);
-      openWallet(owner.walletId);
+    },
+    [challenges]
+  );
 
-      const held = await loadSecret(owner.walletId);
-      if (!held) {
-        throw new Error('this browser has no account stored.');
+  const unlock = useCallback(
+    async (options?: { onlyTheOpenWallet?: boolean; onlyThatWallet?: boolean }) => {
+      setBusy('Waiting for your passkey…');
+      setError(null);
+      setPasskeyRefused(null);
+      try {
+        /* Read before the first `await`, so the passkeys offered belong to the
+         * wallet the press switched to, not whichever one another window has
+         * turned to since. A damaged passkey record throws `StorageError` here,
+         * which lands on the broken screen below like every other read. */
+        const opening = openWalletId();
+        const allow = options?.onlyTheOpenWallet ? allPasskeys(opening).map((p) => p.credentialId) : undefined;
+        /* An empty list offered to the browser means ANY passkey for this site, which would open whichever wallet it
+         * belongs to - so an ask's window does not ask for a passkey for a wallet with none on record here. */
+        const wallet = walletNameOnRecord(opening) ?? sayNow.current('ask.wallet.this-one');
+        const named = options?.onlyThatWallet === true && allow !== undefined;
+        if (named && allow.length === 0) {
+          throw new NotThatWallet('none-here', sayNow.current('ask.passkey.none-here', { wallet }));
+        }
+        const challenge = await challenges.issue('sign-in');
+        const assertion = await usePasskey({ rpId: RP_ID, challenge, ...(allow ? { allow } : {}) });
+        if (!(await challenges.take(challenge, 'sign-in'))) {
+          throw new Error('that took too long and the challenge expired. Try again.');
+        }
+        /**
+         * **THE CHOSEN CREDENTIAL IS WHAT DECIDES WHICH WALLET OPENS.**
+         *
+         * The browser's chooser offers every credential for this ORIGIN, and
+         * this origin now holds several wallets, so `passkeyById` — which asks
+         * one compartment — could not answer. `walletOfCredential` asks all of
+         * them and returns the compartment the chosen credential belongs to.
+         * This is also what makes SWITCHING work with no second ceremony: the
+         * person picks a passkey and the wallet behind it opens.
+         */
+        const owner = walletOfCredential(assertion.credentialId);
+        if (!owner) {
+          /* THE PASSKEY-WITH-NO-WALLET STATE, ALREADY SEEN IN THE WILD. A
+           * password manager keeps offering a credential long after this
+           * browser's storage stopped knowing about it — a cleared profile, a
+           * wallet removed from here. The refusal has to say what this browser
+           * DOES hold, or the person is left pressing the same button. */
+          throw new Error(
+            'that passkey does not open any wallet in this browser. ' +
+              describeWhatIsHeld() +
+              ' If the wallet was made or kept somewhere else, this machine needs it ' +
+              'moved onto it first — from your recovery pieces, or from the device ' +
+              'that has it.'
+          );
+        }
+        /* THE WALLET AN ASK'S WINDOW NAMED IS THE ONE THAT OPENS. With `onlyThatWallet` the window named one wallet and
+         * offered only its passkeys; a passkey of another wallet coming back anyway (a browser that ignored the list)
+         * opens nothing, so an ask is never answered from a wallet the person did not choose. */
+        if (named && owner.walletId !== opening) {
+          throw new NotThatWallet('other-wallet', sayNow.current('ask.passkey.other-wallet', { wallet }));
+        }
+        const result = await verifyAssertion(assertion, owner.passkey, {
+          rpId: RP_ID,
+          origin: ORIGIN,
+          challenge,
+          allowFramedBy: FRAMED_BY
+        });
+        /* The sign counter moved; not saving it would switch off the clone
+         * detector, silently — `ports.ts`, PasskeyStore. The compartment is
+         * named rather than assumed: the wallet being opened is not necessarily
+         * the one this window had open a moment ago. */
+        savePasskey(result.passkey, owner.walletId);
+        openWallet(owner.walletId);
+
+        const held = await loadSecret(owner.walletId);
+        if (!held) {
+          throw new Error('this browser has no account stored.');
+        }
+        setPhase({ name: 'unlocked', identity: identityFromSecret(held), secret: held });
+      } catch (e) {
+        /* `storage.ts` throws a NAMED error for stored state nothing can open —
+         * a gone sealing key, a damaged record. That is not a retryable failure,
+         * it is a state, and it gets a screen rather than a red line. The check
+         * is the error's TYPE, never its sentence. */
+        if (e instanceof StorageError) {
+          setPhase({ name: 'broken', message: e.message });
+        } else {
+          if (e instanceof NotThatWallet) setPasskeyRefused(e.why);
+          setError(describeFailure(e));
+        }
+      } finally {
+        setBusy(null);
       }
-      setPhase({ name: 'unlocked', identity: identityFromSecret(held), secret: held });
-    } catch (e) {
-      /* `storage.ts` throws a NAMED error for stored state nothing can open —
-       * a gone sealing key, a damaged record. That is not a retryable failure,
-       * it is a state, and it gets a screen rather than a red line. The check
-       * is the error's TYPE, never its sentence. */
-      if (e instanceof StorageError) {
-        setPhase({ name: 'broken', message: e.message });
-      } else {
-        if (e instanceof NotThatWallet) setPasskeyRefused(e.why);
-        setError(describeFailure(e));
-      }
-    } finally {
-      setBusy(null);
-    }
-  }, [challenges]);
+    },
+    [challenges]
+  );
 
   /**
    * The replacement-passkey door — from `account-no-passkey` (record absent
@@ -752,8 +796,10 @@ export function SessionProvider({ children, challenges: injected }: {
       const held = await loadSecret(here);
       if (!held) {
         setPhase(derivePhase());
-        throw new Error('there is no stored account here after all — the state changed. '
-          + 'This screen has been refreshed; see what this browser now holds.');
+        throw new Error(
+          'there is no stored account here after all — the state changed. ' +
+            'This screen has been refreshed; see what this browser now holds.'
+        );
       }
 
       let existing: readonly string[] = [];
@@ -779,13 +825,15 @@ export function SessionProvider({ children, challenges: injected }: {
         rpName: RP_NAME,
         challenge,
         person: { id: handle, name, displayName: name },
-        existing,
+        existing
       });
       if (!(await challenges.take(challenge, 'register'))) {
         throw new Error('that took too long and the challenge expired. Try again.');
       }
       const verified = await verifyRegistration(registration, {
-        rpId: RP_ID, origin: ORIGIN, challenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        challenge
       });
       /* The promise on the screen has been kept — the account opened — so
        * now, and only now, the record is written. Replacing a damaged store
@@ -813,100 +861,111 @@ export function SessionProvider({ children, challenges: injected }: {
    * the fresh user handle cannot collide with it — not by deleting first.
    * The map, the only irreplaceable value in the stale state, goes last.
    */
-  const startFresh = useCallback(async (walletName?: string) => {
-    setBusy('Waiting for your passkey…');
-    setError(null);
-    try {
-      /* The same guard as `createAccount`, and it is not redundant: this
-       * screen says *these credentials have nothing behind them*, and this is
-       * the path that goes on to replace the passkey record and forget the
-       * piece map. If a wallet has arrived since that sentence was drawn, the
-       * sentence is false and the press is an answer to a stale question. */
-      const moved = theWorldMovedSince(drawnFor.current ?? []);
-      if (moved !== null) {
-        setPhase(derivePhase());
-        throw new Error(moved);
-      }
-      const challenge = await challenges.issue('register');
-      const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-      /* A NEW wallet, so the given name and nothing else — the record on disk
-       * belongs to the wallet this is replacing and would be its name. */
-      const name = credentialLabel(walletName ?? null, 'fresh start');
-      const registration = await createPasskey({
-        rpId: RP_ID,
-        rpName: RP_NAME,
-        challenge,
-        person: { id: handle, name, displayName: name },
-        existing: [],
-      });
-      if (!(await challenges.take(challenge, 'register'))) {
-        throw new Error('that took too long and the challenge expired. Try again.');
-      }
-      const verified = await verifyRegistration(registration, {
-        rpId: RP_ID, origin: ORIGIN, challenge,
-      });
+  const startFresh = useCallback(
+    async (walletName?: string) => {
+      setBusy('Waiting for your passkey…');
+      setError(null);
+      try {
+        /* The same guard as `createAccount`, and it is not redundant: this
+         * screen says *these credentials have nothing behind them*, and this is
+         * the path that goes on to replace the passkey record and forget the
+         * piece map. If a wallet has arrived since that sentence was drawn, the
+         * sentence is false and the press is an answer to a stale question. */
+        const moved = theWorldMovedSince(drawnFor.current ?? []);
+        if (moved !== null) {
+          setPhase(derivePhase());
+          throw new Error(moved);
+        }
+        const challenge = await challenges.issue('register');
+        const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+        /* A NEW wallet, so the given name and nothing else — the record on disk
+         * belongs to the wallet this is replacing and would be its name. */
+        const name = credentialLabel(walletName ?? null, 'fresh start');
+        const registration = await createPasskey({
+          rpId: RP_ID,
+          rpName: RP_NAME,
+          challenge,
+          person: { id: handle, name, displayName: name },
+          existing: []
+        });
+        if (!(await challenges.take(challenge, 'register'))) {
+          throw new Error('that took too long and the challenge expired. Try again.');
+        }
+        const verified = await verifyRegistration(registration, {
+          rpId: RP_ID,
+          origin: ORIGIN,
+          challenge
+        });
 
-      /* THE SECOND AND LAST PLACE A SECRET IS BORN. Same rule as
-       * `createAccount`: the stamp is on the value `newSecret()` returned, and
-       * it is written after the seal. */
-      const fresh = newSecret();
-      /* The compartment the seal chose, carried to everything after
-       * it. That order is what makes this the ONLY safe source: the stale
-       * records being replaced below are the ones in the compartment the new
-       * wallet just landed in, and nothing else's. */
-      const walletId = await saveSecret(fresh);
-      saveCreation(fresh);
-      /* Settled AFTER the seal, like the stamp — and this call is also what
-       * clears the REPLACED wallet's name when no new one was given. */
-      settleWalletName(fresh, walletName);
-      /* The new wallet exists. Only now are the stale records replaced, and
-       * the map — deliberately last — removed. */
-      resetPasskeyRecordTo(verified, walletId);
-      forgetSecuredSetup(walletId);
-      setPhase({ name: 'unlocked', identity: identityFromSecret(fresh), secret: fresh });
-    } catch (e) {
-      if (e instanceof StorageError) {
-        setPhase({ name: 'broken', message: e.message });
-      } else {
-        setError(describeFailure(e));
+        /* THE SECOND AND LAST PLACE A SECRET IS BORN. Same rule as
+         * `createAccount`: the stamp is on the value `newSecret()` returned, and
+         * it is written after the seal. */
+        const fresh = newSecret();
+        /* The compartment the seal chose, carried to everything after
+         * it. That order is what makes this the ONLY safe source: the stale
+         * records being replaced below are the ones in the compartment the new
+         * wallet just landed in, and nothing else's. */
+        const walletId = await saveSecret(fresh);
+        saveCreation(fresh);
+        /* Settled AFTER the seal, like the stamp — and this call is also what
+         * clears the REPLACED wallet's name when no new one was given. */
+        settleWalletName(fresh, walletName);
+        /* The new wallet exists. Only now are the stale records replaced, and
+         * the map — deliberately last — removed. */
+        resetPasskeyRecordTo(verified, walletId);
+        forgetSecuredSetup(walletId);
+        setPhase({ name: 'unlocked', identity: identityFromSecret(fresh), secret: fresh });
+      } catch (e) {
+        if (e instanceof StorageError) {
+          setPhase({ name: 'broken', message: e.message });
+        } else {
+          setError(describeFailure(e));
+        }
+      } finally {
+        setBusy(null);
       }
-    } finally {
-      setBusy(null);
-    }
-  }, [challenges]);
+    },
+    [challenges]
+  );
 
   const [recovery, setRecovery] = useState<RecoverySession | null>(null);
 
-  const offerRecoveryPiece = useCallback((text: string, holder: string) => {
-    setError(null);
-    try {
-      const bytes = fromBase64Url(text.replace(/\s+/g, ''));
-      const now = Date.now();
-      /* The same normalisation `offerPiece` replaces by — so "replaced" here
-       * is true exactly when the library replaced. */
-      const replaced = recovery?.gathered.find(
-        (p) => p.holder.trim().toLowerCase() === holder.trim().toLowerCase())?.holder ?? null;
-      /* The threshold given here is a floor; `offerPiece` reads the real one
-       * off the pieces themselves and holds them to agreeing — that is the
-       * door, not somebody's memory. */
-      const base = recovery ?? startRecovery({ id: 'this-browser', threshold: 2, now });
-      setRecovery(offerPiece(base, { holder, bytes }, now));
-      return { ok: true, replaced };
-    } catch (e) {
-      setError(describeFailure(e));
-      return { ok: false, replaced: null };
-    }
-  }, [recovery]);
+  const offerRecoveryPiece = useCallback(
+    (text: string, holder: string) => {
+      setError(null);
+      try {
+        const bytes = fromBase64Url(text.replace(/\s+/g, ''));
+        const now = Date.now();
+        /* The same normalisation `offerPiece` replaces by — so "replaced" here
+         * is true exactly when the library replaced. */
+        const replaced =
+          recovery?.gathered.find((p) => p.holder.trim().toLowerCase() === holder.trim().toLowerCase())?.holder ?? null;
+        /* The threshold given here is a floor; `offerPiece` reads the real one
+         * off the pieces themselves and holds them to agreeing — that is the
+         * door, not somebody's memory. */
+        const base = recovery ?? startRecovery({ id: 'this-browser', threshold: 2, now });
+        setRecovery(offerPiece(base, { holder, bytes }, now));
+        return { ok: true, replaced };
+      } catch (e) {
+        setError(describeFailure(e));
+        return { ok: false, replaced: null };
+      }
+    },
+    [recovery]
+  );
 
-  const withdrawRecoveryPiece = useCallback((holder: string) => {
-    if (!recovery) return;
-    setError(null);
-    try {
-      setRecovery(withdrawPiece(recovery, holder, Date.now()));
-    } catch (e) {
-      setError(describeFailure(e));
-    }
-  }, [recovery]);
+  const withdrawRecoveryPiece = useCallback(
+    (holder: string) => {
+      if (!recovery) return;
+      setError(null);
+      try {
+        setRecovery(withdrawPiece(recovery, holder, Date.now()));
+      } catch (e) {
+        setError(describeFailure(e));
+      }
+    },
+    [recovery]
+  );
 
   /**
    * Finish: rebuild, LAND THE ACCOUNT, then run the gate ceremony. The order
@@ -934,98 +993,105 @@ export function SessionProvider({ children, challenges: injected }: {
    * Only then the ceremony. On success the new credential is saved into the
    * now-empty record.
    */
-  const finishRecovery = useCallback(async (walletName?: string) => {
-    if (!recovery) return;
-    setBusy('Waiting for your passkey…');
-    setError(null);
-    try {
-      /* Captured BEFORE completing: the completed session has dropped its
-       * pieces, and the secured record needs to name what was used. */
-      const used = recovery.gathered;
-      const done = await completeRecovery(recovery, Date.now());
-      /* THE SESSION IS NOT MARKED COMPLETED UNTIL THE SECRET IS SAFELY DOWN
-       * Announcing completion first meant a browser that could not
-       * store showed "rebuilt and sealed on this machine" over nothing, and
-       * a retry met "this recovery is already completed". If `saveSecret`
-       * throws, the session stays ready, the failure lands on this screen's
-       * own error line, and the same press can be tried again. */
-      /* The compartment the recovered wallet landed in. The rule
-       * removes a passkey record, so naming the wrong one would retire the
-       * credentials of a wallet this recovery never touched. */
-      const walletId = await saveSecret(done.secret);
-      setRecovery(done.session);
-      forgetAllPasskeys(walletId);
-      /* The name is settled between the landing and the ceremony, because the
-       * ceremony is what carries it into the chooser and the landing is what
-       * makes it this browser's to keep. */
-      const named = settleWalletName(done.secret, walletName);
+  const finishRecovery = useCallback(
+    async (walletName?: string) => {
+      if (!recovery) return;
+      setBusy('Waiting for your passkey…');
+      setError(null);
       try {
-        const set: PieceSet = {
-          threshold: done.session.threshold,
-          fingerprint: readPieceHeader(used[0]!.bytes).fingerprint,
-          setId: readPieceHeader(used[0]!.bytes).setId,
-          pieces: used.map((piece) => ({
-            /* Holders exactly as the person named them — §7.15. */
-            placement: { label: piece.holder, holder: piece.holder },
-            bytes: piece.bytes,
-          })),
-        };
-        await saveSecuredSetup(
-          done.secret, set,
-          Object.fromEntries(used.map((piece) => [piece.holder, Date.now()])),
-          { partial: true });
-      } catch {
-        /* The writer refused to stand behind the record. The account is still
-         * safely landed; home shows the does-not-know state, not a false
-         * notice and not a false tick. */
-      }
-      try {
-        const challenge = await challenges.issue('register');
-        const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-        const name = credentialLabel(named, 'recovered');
-        const registration = await createPasskey({
-          rpId: RP_ID,
-          rpName: RP_NAME,
-          challenge,
-          person: { id: handle, name, displayName: name },
-          /* EMPTY, and safe ONLY because the handle is sixteen fresh random
-           * bytes — see `finishPairing`'s identical list. */
-          existing: [],
-        });
-        if (!(await challenges.take(challenge, 'register'))) {
-          throw new Error('that took too long and the challenge expired. Try again.');
+        /* Captured BEFORE completing: the completed session has dropped its
+         * pieces, and the secured record needs to name what was used. */
+        const used = recovery.gathered;
+        const done = await completeRecovery(recovery, Date.now());
+        /* THE SESSION IS NOT MARKED COMPLETED UNTIL THE SECRET IS SAFELY DOWN
+         * Announcing completion first meant a browser that could not
+         * store showed "rebuilt and sealed on this machine" over nothing, and
+         * a retry met "this recovery is already completed". If `saveSecret`
+         * throws, the session stays ready, the failure lands on this screen's
+         * own error line, and the same press can be tried again. */
+        /* The compartment the recovered wallet landed in. The rule
+         * removes a passkey record, so naming the wrong one would retire the
+         * credentials of a wallet this recovery never touched. */
+        const walletId = await saveSecret(done.secret);
+        setRecovery(done.session);
+        forgetAllPasskeys(walletId);
+        /* The name is settled between the landing and the ceremony, because the
+         * ceremony is what carries it into the chooser and the landing is what
+         * makes it this browser's to keep. */
+        const named = settleWalletName(done.secret, walletName);
+        try {
+          const set: PieceSet = {
+            threshold: done.session.threshold,
+            fingerprint: readPieceHeader(used[0]!.bytes).fingerprint,
+            setId: readPieceHeader(used[0]!.bytes).setId,
+            pieces: used.map((piece) => ({
+              /* Holders exactly as the person named them — §7.15. */
+              placement: { label: piece.holder, holder: piece.holder },
+              bytes: piece.bytes
+            }))
+          };
+          await saveSecuredSetup(
+            done.secret,
+            set,
+            Object.fromEntries(used.map((piece) => [piece.holder, Date.now()])),
+            { partial: true }
+          );
+        } catch {
+          /* The writer refused to stand behind the record. The account is still
+           * safely landed; home shows the does-not-know state, not a false
+           * notice and not a false tick. */
         }
-        const verified = await verifyRegistration(registration, {
-          rpId: RP_ID, origin: ORIGIN, challenge,
-        });
-        savePasskey(verified, walletId);
-        setPhase({ name: 'unlocked', identity: identityFromSecret(done.secret), secret: done.secret });
-      } catch (ceremonyFailure) {
-        /* The account landed and the old record is gone, so this is the
-         * account-no-passkey doorway in EVERY browser — and the
-         * completed screen states the ceremony's failure as its own fact,
-         * with this error shown verbatim. */
-        setPhase(derivePhase());
-        throw ceremonyFailure;
+        try {
+          const challenge = await challenges.issue('register');
+          const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+          const name = credentialLabel(named, 'recovered');
+          const registration = await createPasskey({
+            rpId: RP_ID,
+            rpName: RP_NAME,
+            challenge,
+            person: { id: handle, name, displayName: name },
+            /* EMPTY, and safe ONLY because the handle is sixteen fresh random
+             * bytes — see `finishPairing`'s identical list. */
+            existing: []
+          });
+          if (!(await challenges.take(challenge, 'register'))) {
+            throw new Error('that took too long and the challenge expired. Try again.');
+          }
+          const verified = await verifyRegistration(registration, {
+            rpId: RP_ID,
+            origin: ORIGIN,
+            challenge
+          });
+          savePasskey(verified, walletId);
+          setPhase({ name: 'unlocked', identity: identityFromSecret(done.secret), secret: done.secret });
+        } catch (ceremonyFailure) {
+          /* The account landed and the old record is gone, so this is the
+           * account-no-passkey doorway in EVERY browser — and the
+           * completed screen states the ceremony's failure as its own fact,
+           * with this error shown verbatim. */
+          setPhase(derivePhase());
+          throw ceremonyFailure;
+        }
+      } catch (e) {
+        if (e instanceof StorageError) {
+          /* The landing screen states its own failure. Flipping the
+           * whole window to `broken` was worthless here — the recovery and
+           * pairing routes are exactly the ones excluded from the broken
+           * redirect, so the one route that would show it never rendered it,
+           * and the person saw nothing at all. The message lands on THIS
+           * screen's error line, verbatim; the phase is re-derived from what
+           * storage actually holds. */
+          setError(e.message);
+          setPhase(derivePhase());
+        } else {
+          setError(describeFailure(e));
+        }
+      } finally {
+        setBusy(null);
       }
-    } catch (e) {
-      if (e instanceof StorageError) {
-        /* The landing screen states its own failure. Flipping the
-         * whole window to `broken` was worthless here — the recovery and
-         * pairing routes are exactly the ones excluded from the broken
-         * redirect, so the one route that would show it never rendered it,
-         * and the person saw nothing at all. The message lands on THIS
-         * screen's error line, verbatim; the phase is re-derived from what
-         * storage actually holds. */
-        setError(e.message);
-        setPhase(derivePhase());
-      } else {
-        setError(describeFailure(e));
-      }
-    } finally {
-      setBusy(null);
-    }
-  }, [recovery, challenges]);
+    },
+    [recovery, challenges]
+  );
 
   const abandonRecovery = useCallback(() => {
     if (!recovery) return;
@@ -1044,75 +1110,78 @@ export function SessionProvider({ children, challenges: injected }: {
 
   const [paired, setPaired] = useState(false);
 
-  const finishPairing = useCallback(async (
-    secret: Secret, walletName?: string,
-  ): Promise<boolean> => {
-    setBusy('Waiting for your passkey…');
-    setError(null);
-    let landed = false;
-    try {
-      /* As `finishRecovery`: the compartment the seal chose, carried
-       * to the record retirement and the ceremony below it. */
-      const walletId = await saveSecret(secret);
-      landed = true;
-      /* The landing retires the old record — same rule, same reason as the
-       * recovery landing — and writes the durable arrival fact
-       * (§7.15's third state): this account arrived from another device on
-       * this date. The pairing itself is that evidence at full strength; it
-       * says nothing about pieces, so it is never a tick. */
-      forgetAllPasskeys(walletId);
-      saveArrival(secret);
-      /* Same settlement as the recovery landing, and the same three cases:
-       * what was typed, else this browser's own record for THIS secret (a
-       * machine re-pairing a wallet it already had), else none. */
-      const named = settleWalletName(secret, walletName);
-      setPaired(true);
+  const finishPairing = useCallback(
+    async (secret: Secret, walletName?: string): Promise<boolean> => {
+      setBusy('Waiting for your passkey…');
+      setError(null);
+      let landed = false;
       try {
-        const challenge = await challenges.issue('register');
-        const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-        const name = credentialLabel(named, 'paired');
-        const registration = await createPasskey({
-          rpId: RP_ID,
-          rpName: RP_NAME,
-          challenge,
-          person: { id: handle, name, displayName: name },
-          /* EMPTY, and safe ONLY because the handle above is sixteen fresh
-           * random bytes: an authenticator asked for a second
-           * credential under a handle it already knows silently destroys
-           * the first, and the old record has just been retired, so nothing
-           * would even say what was lost. If the handle ever becomes
-           * deterministic, this list must name every known credential. */
-          existing: [],
-        });
-        if (!(await challenges.take(challenge, 'register'))) {
-          throw new Error('that took too long and the challenge expired. Try again.');
+        /* As `finishRecovery`: the compartment the seal chose, carried
+         * to the record retirement and the ceremony below it. */
+        const walletId = await saveSecret(secret);
+        landed = true;
+        /* The landing retires the old record — same rule, same reason as the
+         * recovery landing — and writes the durable arrival fact
+         * (§7.15's third state): this account arrived from another device on
+         * this date. The pairing itself is that evidence at full strength; it
+         * says nothing about pieces, so it is never a tick. */
+        forgetAllPasskeys(walletId);
+        saveArrival(secret);
+        /* Same settlement as the recovery landing, and the same three cases:
+         * what was typed, else this browser's own record for THIS secret (a
+         * machine re-pairing a wallet it already had), else none. */
+        const named = settleWalletName(secret, walletName);
+        setPaired(true);
+        try {
+          const challenge = await challenges.issue('register');
+          const handle = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+          const name = credentialLabel(named, 'paired');
+          const registration = await createPasskey({
+            rpId: RP_ID,
+            rpName: RP_NAME,
+            challenge,
+            person: { id: handle, name, displayName: name },
+            /* EMPTY, and safe ONLY because the handle above is sixteen fresh
+             * random bytes: an authenticator asked for a second
+             * credential under a handle it already knows silently destroys
+             * the first, and the old record has just been retired, so nothing
+             * would even say what was lost. If the handle ever becomes
+             * deterministic, this list must name every known credential. */
+            existing: []
+          });
+          if (!(await challenges.take(challenge, 'register'))) {
+            throw new Error('that took too long and the challenge expired. Try again.');
+          }
+          const verified = await verifyRegistration(registration, {
+            rpId: RP_ID,
+            origin: ORIGIN,
+            challenge
+          });
+          savePasskey(verified, walletId);
+          setPhase({ name: 'unlocked', identity: identityFromSecret(secret), secret });
+        } catch (ceremonyFailure) {
+          /* Landed, doorway, told — the pairing screen states the ceremony's
+           * outcome as its own fact, with this error verbatim. */
+          setPhase(derivePhase());
+          throw ceremonyFailure;
         }
-        const verified = await verifyRegistration(registration, {
-          rpId: RP_ID, origin: ORIGIN, challenge,
-        });
-        savePasskey(verified, walletId);
-        setPhase({ name: 'unlocked', identity: identityFromSecret(secret), secret });
-      } catch (ceremonyFailure) {
-        /* Landed, doorway, told — the pairing screen states the ceremony's
-         * outcome as its own fact, with this error verbatim. */
-        setPhase(derivePhase());
-        throw ceremonyFailure;
+      } catch (e) {
+        if (e instanceof StorageError) {
+          /* This screen states its own landing failure — the broken
+           * redirect excludes this route, so a phase flip here was silence.
+           * The storage's sentence lands on the error line, verbatim. */
+          setError(e.message);
+          setPhase(derivePhase());
+        } else {
+          setError(describeFailure(e));
+        }
+      } finally {
+        setBusy(null);
       }
-    } catch (e) {
-      if (e instanceof StorageError) {
-        /* This screen states its own landing failure — the broken
-         * redirect excludes this route, so a phase flip here was silence.
-         * The storage's sentence lands on the error line, verbatim. */
-        setError(e.message);
-        setPhase(derivePhase());
-      } else {
-        setError(describeFailure(e));
-      }
-    } finally {
-      setBusy(null);
-    }
-    return landed;
-  }, [challenges]);
+      return landed;
+    },
+    [challenges]
+  );
 
   const lock = useCallback(() => {
     setError(null);
@@ -1133,25 +1202,29 @@ export function SessionProvider({ children, challenges: injected }: {
    * a wallet costs its passkey first — you cannot destroy what you could not
    * open — and a mis-aimed press on a list of four names cannot exist.
    */
-  const removeWallet = useCallback((walletId: string) => {
-    setError(null);
-    /*
-     * **AND THE DETAILS THIS WALLET SAVED ABOUT ITS OWNER.** They are kept under
-     * a name worked out from this wallet's keys, so only an open wallet can find
-     * its own - which the wallet this window has open is, and which is the only
-     * wallet anything here removes. Another wallet's details are not touched.
-     * Clearing them waits on nothing below, and a failure to is said.
-     */
-    if (phase.name === 'unlocked' && walletId === openWalletId()) {
-      void forgetProfile(browserPort(), phase.identity).catch(() => {
-        setError('This wallet was removed, and the details it saved about you in this browser '
-          + 'could not be cleared.');
-      });
-    }
-    forgetEverything(walletId);
-    forgetSealingKey(walletId);
-    setPhase(derivePhase());
-  }, [phase]);
+  const removeWallet = useCallback(
+    (walletId: string) => {
+      setError(null);
+      /*
+       * **AND THE DETAILS THIS WALLET SAVED ABOUT ITS OWNER.** They are kept under
+       * a name worked out from this wallet's keys, so only an open wallet can find
+       * its own - which the wallet this window has open is, and which is the only
+       * wallet anything here removes. Another wallet's details are not touched.
+       * Clearing them waits on nothing below, and a failure to is said.
+       */
+      if (phase.name === 'unlocked' && walletId === openWalletId()) {
+        void forgetProfile(browserPort(), phase.identity).catch(() => {
+          setError(
+            'This wallet was removed, and the details it saved about you in this browser ' + 'could not be cleared.'
+          );
+        });
+      }
+      forgetEverything(walletId);
+      forgetSealingKey(walletId);
+      setPhase(derivePhase());
+    },
+    [phase]
+  );
 
   /**
    * FORGET THIS WALLET — the same act as `removeWallet`, on the wallet this
@@ -1199,7 +1272,7 @@ export function SessionProvider({ children, challenges: injected }: {
     return heldWallets().map((wallet) => ({
       id: wallet.id,
       name: walletNameOnRecord(wallet.id),
-      current: wallet.id === current,
+      current: wallet.id === current
     }));
   }, [phase]);
 
@@ -1227,9 +1300,11 @@ export function SessionProvider({ children, challenges: injected }: {
         if (!stale && e instanceof StorageError) {
           setPhase({ name: 'broken', message: e.message });
         }
-      },
+      }
     );
-    return () => { stale = true; };
+    return () => {
+      stale = true;
+    };
   }, [phase]);
 
   /* The old screenshot fixture is GONE, not merely gated: the securing
@@ -1259,12 +1334,32 @@ export function SessionProvider({ children, challenges: injected }: {
       wallets,
       walletId: openWalletId(),
       switchTo,
-      removeWallet,
+      removeWallet
     }),
-    [phase, busy, error, passkeyRefused, createAccount, unlock, adoptPasskey, startFresh, recovery,
-      offerRecoveryPiece, withdrawRecoveryPiece, finishRecovery, abandonRecovery,
-      resetRecovery, finishPairing, paired, lock, startOver, wallets, switchTo,
-      removeWallet]);
+    [
+      phase,
+      busy,
+      error,
+      passkeyRefused,
+      createAccount,
+      unlock,
+      adoptPasskey,
+      startFresh,
+      recovery,
+      offerRecoveryPiece,
+      withdrawRecoveryPiece,
+      finishRecovery,
+      abandonRecovery,
+      resetRecovery,
+      finishPairing,
+      paired,
+      lock,
+      startOver,
+      wallets,
+      switchTo,
+      removeWallet
+    ]
+  );
 
   return <SessionContext.Provider value={session}>{children}</SessionContext.Provider>;
 }

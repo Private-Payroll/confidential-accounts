@@ -50,22 +50,25 @@ export async function startingStateRefusal(
     /** This build's digests of every key, and how a key's digest is taken. */
     readonly build: ThisBuildsAccountKeys;
     readonly digest: (b: Uint8Array) => Uint8Array;
-  },
+  }
 ): Promise<string | null> {
   const L = deps.ledger;
-  let tx: { intents?: Map<unknown, { actions?: Array<{ address?: unknown; initialState?: { serialize(): Uint8Array } }> }> };
+  let tx: {
+    intents?: Map<unknown, { actions?: Array<{ address?: unknown; initialState?: { serialize(): Uint8Array } }> }>;
+  };
   try {
     tx = L.Transaction.deserialize('signature', 'proof', 'pre-binding', base64.decode(input.deploy));
   } catch {
     return 'What the page sent as the deploy is not a transaction this wallet can read.';
   }
-  const action = tx.intents instanceof Map && tx.intents.size === 1 ? [...tx.intents.values()][0]?.actions?.[0] : undefined;
+  const action =
+    tx.intents instanceof Map && tx.intents.size === 1 ? [...tx.intents.values()][0]?.actions?.[0] : undefined;
   const state = action?.initialState;
   let seats: readonly string[];
   try {
     seats = seatsInAccountState(state!.serialize()).seats;
   } catch {
-    return 'The account the deploy creates is not laid out as a company\'s account.';
+    return "The account the deploy creates is not laid out as a company's account.";
   }
   if (seats.length !== 1) return 'The account the deploy creates seats someone besides you.';
   const leaf = Uint8Array.from(seats[0]!.match(/../gu) ?? [], (x) => Number.parseInt(x, 16));
@@ -74,27 +77,43 @@ export async function startingStateRefusal(
   if (deployed.state !== 'read') return 'The circuits the deploy runs cannot be read.';
   const keys = new Map<string, Uint8Array>([
     ...deployed.operations.map((o) => [o.name, o.verifierKey] as [string, Uint8Array]),
-    ...input.insert.map((k) => [k.circuit, base64.decode(k.key)] as [string, Uint8Array]),
+    ...input.insert.map((k) => [k.circuit, base64.decode(k.key)] as [string, Uint8Array])
   ]);
-  const same = (a: Uint8Array, b: Uint8Array | undefined) => b !== undefined && a.length === b.length && a.every((x, i) => x === b[i]);
-  for (const [step, wanted] of [['first', input.build.first], ['second', input.build.second]] as const) {
+  const same = (a: Uint8Array, b: Uint8Array | undefined) =>
+    b !== undefined && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const [step, wanted] of [
+    ['first', input.build.first],
+    ['second', input.build.second]
+  ] as const) {
     for (const [circuit, digest] of wanted) {
       const key = keys.get(circuit);
-      if (key === undefined || !same(input.digest(key), digest)) return `The ${step} step's key for "${circuit}" is not this build's.`;
+      if (key === undefined || !same(input.digest(key), digest))
+        return `The ${step} step's key for "${circuit}" is not this build's.`;
     }
   }
-  const zkConfig = zkConfigOver({
-    artefact: async (kind: string, circuit: string) => {
-      const key = keys.get(circuit);
-      if (kind !== 'verifier' || key === undefined) throw new Error(`this wallet holds no checked ${kind} for "${circuit}".`);
-      return key;
-    },
-  } as never, (circuit) => circuit, runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account'));
+  const zkConfig = zkConfigOver(
+    {
+      artefact: async (kind: string, circuit: string) => {
+        const key = keys.get(circuit);
+        if (kind !== 'verifier' || key === undefined)
+          throw new Error(`this wallet holds no checked ${kind} for "${circuit}".`);
+        return key;
+      }
+    } as never,
+    (circuit) => circuit,
+    runtimeVersionOf(ACCOUNT_MANIFEST, 'the company account')
+  );
   let expected: Uint8Array;
   try {
     const made = await heldStateFromTheStart(deps, {
-      compiled: deps.compiled, zkConfig, args: [leaf, companyLabelBytes(input.label)], circuits: CREATION_STEPS.first,
-      holders: { committee: [{ tag: input.foundingKey.tag, value: input.foundingKey.value.toLowerCase() }], threshold: 1 },
+      compiled: deps.compiled,
+      zkConfig,
+      args: [leaf, companyLabelBytes(input.label)],
+      circuits: CREATION_STEPS.first,
+      holders: {
+        committee: [{ tag: input.foundingKey.tag, value: input.foundingKey.value.toLowerCase() }],
+        threshold: 1
+      }
     });
     expected = made.serialize();
   } catch (e) {
@@ -104,9 +123,11 @@ export async function startingStateRefusal(
     foundingKey: input.foundingKey,
     verifierKeys: new Map(CREATION_STEPS.first.map((c) => [c, keys.get(c)!] as [string, Uint8Array])),
     circuits: CREATION_STEPS.first,
-    expectedState: expected,
+    expectedState: expected
   });
-  return 'refusal' in verdict ? 'The account the deploy creates does not start as its own constructor makes it for you and this label.' : null;
+  return 'refusal' in verdict
+    ? 'The account the deploy creates does not start as its own constructor makes it for you and this label.'
+    : null;
 }
 
 /** What the constructor is run with in this wallet, loaded when the creation screen first needs it, built for this wallet's own network. */
@@ -119,6 +140,7 @@ export const liveConstruction = async (): Promise<ConstructionDeps> => {
     contracts,
     network: NETWORK,
     compiled: CompiledContract.make('ConfidentialAccount', (account as { Contract: unknown }).Contract).pipe(
-      CompiledContract.withWitnesses((accountWitnesses as { witnesses: unknown }).witnesses)),
+      CompiledContract.withWitnesses((accountWitnesses as { witnesses: unknown }).witnesses)
+    )
   };
 };

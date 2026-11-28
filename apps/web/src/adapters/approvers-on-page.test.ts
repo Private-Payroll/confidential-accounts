@@ -15,8 +15,13 @@ const WIDE = 'cc'.repeat(32);
 const SEATS = ['e1', 'e2'];
 const read = vi.hoisted(() => ({
   keys: { signingPublicKey: 'ab'.repeat(32) } as { signingPublicKey: string } | null,
-  notBelieved: [] as string[], seats: ['e1', 'e2'], approvals: 1, rights: [] as Array<{ seat: string; retired: null; rights?: unknown }>,
-  adopted: [] as string[], holdersFail: false, checkFault: false,
+  notBelieved: [] as string[],
+  seats: ['e1', 'e2'],
+  approvals: 1,
+  rights: [] as Array<{ seat: string; retired: null; rights?: unknown }>,
+  adopted: [] as string[],
+  holdersFail: false,
+  checkFault: false
 }));
 vi.mock('../../../../src/core/vault-approvers.js', async (real) => {
   const actual = await real<typeof import('../../../../src/core/vault-approvers.js')>();
@@ -25,30 +30,46 @@ vi.mock('../../../../src/core/vault-approvers.js', async (real) => {
     seatThresholdRefusal: (...args: Parameters<typeof actual.seatThresholdRefusal>) => {
       if (read.checkFault) throw new Error('a fault in the check');
       return actual.seatThresholdRefusal(...args);
-    },
+    }
   };
 });
-vi.mock('vaults-web-shared/service-transport.js', async (real) => (await import('./service-in-memory.test-support.js')).withTheView({
-  ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
-  api: async (path: string) => (path.endsWith('/directory') ? { filings: [] } : { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }),
-}));
+vi.mock('vaults-web-shared/service-transport.js', async (real) =>
+  (await import('./service-in-memory.test-support.js')).withTheView({
+    ...(await real<typeof import('vaults-web-shared/service-transport.js')>()),
+    api: async (path: string) =>
+      path.endsWith('/directory') ? { filings: [] } : { companyLabel: 'label-1', contractAddress: 'c0'.repeat(32) }
+  })
+);
 vi.mock('vaults-web-shared/wallet-asks.js', async (real) => ({
   ...(await real<typeof import('vaults-web-shared/wallet-asks.js')>()),
   holdersFromTheWallet: async () => {
     if (read.holdersFail) throw new Error('the wallet did not answer');
-    return { holders: { seats: read.seats, approvals: read.approvals, vaultThresholds: [], adoptedVaults: read.adopted, threshold: 1, committee: [], policyBar: null }, indexer: null };
-  },
+    return {
+      holders: {
+        seats: read.seats,
+        approvals: read.approvals,
+        vaultThresholds: [],
+        adoptedVaults: read.adopted,
+        threshold: 1,
+        committee: [],
+        policyBar: null
+      },
+      indexer: null
+    };
+  }
 }));
 vi.mock('./keyring-person.js', () => ({ keysOnTheWayIn: async () => read.keys }));
 vi.mock('./vault-builder.js', () => ({ theVaultBuilder: async () => ({ companyWide: async () => WIDE }) }));
 vi.mock('./filing-judge.js', async (real) => ({
   ...(await real<typeof import('./filing-judge.js')>()),
   openedQuietly: async () => ({
-    id: 'acc_1', name: 'Acme', notBelieved: read.notBelieved,
-    signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf })),
+    id: 'acc_1',
+    name: 'Acme',
+    notBelieved: read.notBelieved,
+    signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf }))
   }),
   companyKeysQuietlyFor: async () => ({}),
-  directoryHereFor: () => async () => ({ dir: { seats: read.rights } }),
+  directoryHereFor: () => async () => ({ dir: { seats: read.rights } })
 }));
 
 async function load() {
@@ -57,14 +78,24 @@ async function load() {
   return import('./approvers-on-page.js');
 }
 const believe = (...rights: Array<SeatRights | undefined>): void => {
-  read.rights = rights.flatMap((r, i) => (r === undefined ? [] : [{ seat: SEATS[i]!, retired: null as null, rights: r }]));
+  read.rights = rights.flatMap((r, i) =>
+    r === undefined ? [] : [{ seat: SEATS[i]!, retired: null as null, rights: r }]
+  );
 };
 const reset = (): void => {
-  Object.assign(read, { keys: { signingPublicKey: 'ab'.repeat(32) }, notBelieved: [], seats: ['e1', 'e2'], approvals: 1, adopted: [PAYROLL, TREASURY], holdersFail: false, checkFault: false });
+  Object.assign(read, {
+    keys: { signingPublicKey: 'ab'.repeat(32) },
+    notBelieved: [],
+    seats: ['e1', 'e2'],
+    approvals: 1,
+    adopted: [PAYROLL, TREASURY],
+    holdersFail: false,
+    checkFault: false
+  });
   believe(EVERY_RIGHT, EVERY_RIGHT);
 };
 
-describe('an invitation\'s threshold is checked on the page as the wallet checks it', () => {
+describe("an invitation's threshold is checked on the page as the wallet checks it", () => {
   /* RED WHEN: the page lets through an invitation whose new threshold leaves a vault with fewer approvers than its runs need, which the wallet refuses. */
   it('refuses a threshold an initiator cannot meet, naming each vault it leaves short', async () => {
     reset();
@@ -87,7 +118,10 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
   /* RED WHEN: each seat's rights are not read from the directory the page believes, so a seat scoped to one vault is counted on all. */
   it('counts a seat scoped to one vault on that vault only', async () => {
     reset();
-    believe(EVERY_RIGHT, invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never])));
+    believe(
+      EVERY_RIGHT,
+      invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never]))
+    );
     const m = await load();
     const said = (await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 }))!;
     expect(said).toContain(`${PAYROLL} (its runs need 3 approvals and 2 signers could give them)`);
@@ -99,47 +133,75 @@ describe('an invitation\'s threshold is checked on the page as the wallet checks
     reset();
     believe(EVERY_RIGHT, undefined);
     const m = await load();
-    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'approver', threshold: 3 })).toMatch(/\(its runs need 3 approvals and 2 signers could give them\)/u);
+    expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'approver', threshold: 3 })).toMatch(
+      /\(its runs need 3 approvals and 2 signers could give them\)/u
+    );
   });
 
   /* RED WHEN: a page that cannot read what the count needs refuses the invitation on a guess, or stops with an error instead of leaving it to the wallet. */
-  it('refuses nothing when it cannot read the keys, the roster, the chain or a seat\'s name, and leaves it to the wallet', async () => {
+  it("refuses nothing when it cannot read the keys, the roster, the chain or a seat's name, and leaves it to the wallet", async () => {
     const m = await load();
-    reset(); read.keys = null;
+    reset();
+    read.keys = null;
     expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
-    reset(); read.notBelieved = ['x'];
+    reset();
+    read.notBelieved = ['x'];
     expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
-    reset(); read.holdersFail = true;
+    reset();
+    read.holdersFail = true;
     expect(await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).toBeNull();
   });
 
   /* RED WHEN: a fault in the page's own check is passed over as a read it could not make, so the page silently refuses nothing. */
   it('lets a fault in the check itself surface: only the reads are passed over', async () => {
-    reset(); read.checkFault = true;
+    reset();
+    read.checkFault = true;
     const m = await load();
-    await expect(m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })).rejects.toThrow(/a fault in the check/u);
+    await expect(
+      m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 })
+    ).rejects.toThrow(/a fault in the check/u);
   });
 
   /* RED WHEN: the page and the wallet, given the same roster, directory and chain, refuse an invitation in different sentences. */
   it('refuses in the sentence the wallet refuses in, from the same roster, directory and chain', async () => {
     reset();
-    believe(EVERY_RIGHT, invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never])));
+    believe(
+      EVERY_RIGHT,
+      invitedSeatRightsOf({ role: 'approver', vaults: [PAYROLL as never] }, scopeOfRole('approver', [PAYROLL as never]))
+    );
     const m = await load();
     const page = await m.seatThresholdRefusedOnThePage(aViewOf('acc_1'), { role: 'initiator', threshold: 3 });
     /* The wallet's own check, from the wallet's source: named by a path the page's typecheck does not follow, since it builds the page alone. */
     const walletCheck = '../../../wallet/src/actions/invite.js';
-    const { refuseASeatThresholdInTheWallet } = await import(/* @vite-ignore */ walletCheck) as {
+    const { refuseASeatThresholdInTheWallet } = (await import(/* @vite-ignore */ walletCheck)) as {
       refuseASeatThresholdInTheWallet: (r: unknown, rights: SeatRights, threshold: number) => Promise<void>;
     };
     const reach = {
-      accountId: 'acc_1', label: 'label-1', account: 'c0'.repeat(32), companyKeys: {}, chain: { indexer: null },
-      roster: async () => ({ id: 'acc_1', name: 'Acme', notBelieved: [], signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf })) }),
-      holders: async () => ({ seats: read.seats, approvals: read.approvals, vaultThresholds: [], adoptedVaults: read.adopted }),
+      accountId: 'acc_1',
+      label: 'label-1',
+      account: 'c0'.repeat(32),
+      companyKeys: {},
+      chain: { indexer: null },
+      roster: async () => ({
+        id: 'acc_1',
+        name: 'Acme',
+        notBelieved: [],
+        signers: SEATS.map((leaf, i) => ({ id: `s${i}`, status: 'active', leafCommitment: leaf }))
+      }),
+      holders: async () => ({
+        seats: read.seats,
+        approvals: read.approvals,
+        vaultThresholds: [],
+        adoptedVaults: read.adopted
+      }),
       builder: { companyWide: async () => WIDE, runsOutrun: async () => ({}) },
-      judges: { directoryHereFor: () => async () => ({ dir: { seats: read.rights } }) },
+      judges: { directoryHereFor: () => async () => ({ dir: { seats: read.rights } }) }
     };
     const rights = invitedSeatRightsOf({ role: 'initiator' }, scopeOfRole('initiator'));
-    const wallet = await refuseASeatThresholdInTheWallet(reach, rights, 3).then(() => null, (e: { words?: { values?: { says?: unknown } } }) => e.words?.values?.says);
+    const wallet = await refuseASeatThresholdInTheWallet(reach, rights, 3).then(
+      () => null,
+      (e: { words?: { values?: { says?: unknown } } }) => e.words?.values?.says
+    );
     expect(page).not.toBeNull();
     expect(wallet).toBe(page);
   });

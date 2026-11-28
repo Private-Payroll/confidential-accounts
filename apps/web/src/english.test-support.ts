@@ -23,7 +23,9 @@ export function filesOf(tag: string): string[] {
 export function wordsOf(tag: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const file of filesOf(tag)) {
-    for (const [key, value] of Object.entries(JSON.parse(readFileSync(join(LOCALES, file), 'utf8')) as Record<string, string>)) {
+    for (const [key, value] of Object.entries(
+      JSON.parse(readFileSync(join(LOCALES, file), 'utf8')) as Record<string, string>
+    )) {
       if (key in out) throw new Error(`${key} is in ${file} and in another ${tag} file`);
       out[key] = value;
     }

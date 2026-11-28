@@ -22,9 +22,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  AccountSimulator, change, privateStateFor, type Change, payoutTreeOf, sumArgsOf,
-} from './simulator.js';
+import { AccountSimulator, change, privateStateFor, type Change, payoutTreeOf, sumArgsOf } from './simulator.js';
 import { Contract, pureCircuits } from '../managed/contract/index.js';
 import { witnesses } from '../src/witnesses.js';
 import { buildPayoutTree, type PayoutLeafInput } from '../../src/midnight/payout-tree.js';
@@ -54,32 +52,48 @@ const KEYS = join(import.meta.dirname, '..', 'managed', 'keys');
 
 /** Raises and approves a run of `payments` naming `vault`, with `approvers` voting; the first raises it, which counts as its approval. */
 const approvedRun = async (
-  sim: AccountSimulator, vault: Uint8Array, payments: PayoutLeafInput[], c: Change,
-  approvers: ReturnType<typeof privateStateFor>[] = [A, B],
+  sim: AccountSimulator,
+  vault: Uint8Array,
+  payments: PayoutLeafInput[],
+  c: Change,
+  approvers: ReturnType<typeof privateStateFor>[] = [A, B]
 ) => {
   const tree = payoutTreeOf(payments);
   const by = approvers[0]!;
   await sim.as(sim.applying(by, c)).proposeRun({
-    root: fromHex(tree.root), payees: tree.payees, from: OPENS, until: CLOSES, vault,
+    root: fromHex(tree.root),
+    payees: tree.payees,
+    from: OPENS,
+    until: CLOSES,
+    vault
   });
-  const id = sim.proposalId(
-    pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
+  const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, OPENS, CLOSES, 0n), c.salt, vault);
   for (const a of approvers.filter((d) => d !== by)) await sim.as(sim.applying(a, c)).approve(id);
   return { tree, id };
 };
 
 const claim = (
   run: { tree: ReturnType<typeof buildPayoutTree>; id: Uint8Array },
-  payments: PayoutLeafInput[], vault: Uint8Array, c: Change, i: number,
-  payingVault?: Uint8Array,
+  payments: PayoutLeafInput[],
+  vault: Uint8Array,
+  c: Change,
+  i: number,
+  payingVault?: Uint8Array
 ) => ({
-  proposal: run.id, vault, payingVault, root: fromHex(run.tree.root), payees: run.tree.payees,
-  from: OPENS, until: CLOSES, salt: c.salt,
-  details: fromHex(payments[i]!.details), nonce: fromHex(payments[i]!.nonce), ...sumArgsOf(run.tree, i),
+  proposal: run.id,
+  vault,
+  payingVault,
+  root: fromHex(run.tree.root),
+  payees: run.tree.payees,
+  from: OPENS,
+  until: CLOSES,
+  salt: c.salt,
+  details: fromHex(payments[i]!.details),
+  nonce: fromHex(payments[i]!.nonce),
+  ...sumArgsOf(run.tree, i)
 });
 
-const oneRun = (seed: number): PayoutLeafInput[] =>
-  [{ details: toHex(bytes(seed)), nonce: toHex(bytes(seed + 100)) }];
+const oneRun = (seed: number): PayoutLeafInput[] => [{ details: toHex(bytes(seed)), nonce: toHex(bytes(seed + 100)) }];
 
 const live = async (devices = [A, B], threshold = 2n) => {
   const sim = await AccountSimulator.liveAccount(devices, threshold);
@@ -88,14 +102,11 @@ const live = async (devices = [A, B], threshold = 2n) => {
 };
 
 /** The unshielded tokens an effects map records, as [raw token type, amount]. */
-const unshielded = (m: Map<any, bigint>) =>
-  [...m].map(([t, v]) => [typeof t === 'string' ? t : (t.raw ?? t), v]);
+const unshielded = (m: Map<any, bigint>) => [...m].map(([t, v]) => [typeof t === 'string' ? t : (t.raw ?? t), v]);
 
 /* ------------------------------------------------------------------ */
 
-const STAND_IN_KEY = existsSync(KEYS)
-  ? readdirSync(KEYS).find((f) => f.endsWith('.verifier'))
-  : undefined;
+const STAND_IN_KEY = existsSync(KEYS) ? readdirSync(KEYS).find((f) => f.endsWith('.verifier')) : undefined;
 /* Every circuit of the account and of the vault has its verifier key on disk, and each is the key this build compiled. */
 const ON_DISK = keysOnDisk();
 if (!ON_DISK.ok) {
@@ -105,112 +116,139 @@ if (!ON_DISK.ok) {
 /* Both: every key on disk and pinned, and the stand-in key the transaction is signed with. */
 const BUILDS_HERE = ON_DISK.ok && STAND_IN_KEY !== undefined;
 
-describe.skipIf(!BUILDS_HERE)("a direct call, built as the real transaction, leaves the vault's receipt unbalanced [needs every verifier key in contracts/managed/keys and contracts/managed-vault/keys, pinned by its module, and the stand-in signing key; `npm run compact` then `npm run compact:vault -- --full` build the keys]", () => {
-  /*
-   * The transaction is built by the product's own call builder over the SDK
-   * against this contract's compiled circuit, exactly as a caller holding every
-   * argument would build it, and nothing is minted in it. The ledger's own
-   * `imbalances` then says what the balancing check would find. No proof is made:
-   * a verifier key already on disk stands in for each operation's key, because an
-   * unproven transaction only needs one to name its key location.
-   */
-  const build = async (sim: AccountSimulator, args: unknown[], circuitId = 'recordPaymentFromVault') => {
-    const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
-    const rt: any = await import('@midnight-ntwrk/compact-runtime');
-    const { CompiledContract } = await import('@midnight-ntwrk/compact-js');
-    const { NodeZkConfigProvider } = await import('@midnight-ntwrk/midnight-js-node-zk-config-provider');
-    const built = new NodeZkConfigProvider(join(KEYS, '..'));
-    const key = new Uint8Array(readFileSync(join(KEYS, STAND_IN_KEY!)));
-    const state: any = sim.contractStateForCall;
-    for (const n of state.operations()) {
-      const op = new rt.ContractOperation();
-      op.verifierKey = key;
-      state.setOperation(n, op);
-    }
-    const compiled = CompiledContract.make('ConfidentialAccount', Contract as any).pipe(
-      CompiledContract.withWitnesses(witnesses as never));
-    const zk = {
-      getVerifierKey: async () => key,
-      getVerifierKeys: async (ns: string[]) => ns.map((n) => [n, key]),
-      getZKIR: async () => new Uint8Array(),
-      getProverKey: async () => new Uint8Array(),
-      /* Which compiler built these keys is read from the build itself, so the call is built for this ledger. */
-      getArtifactRuntimeVersion: () => built.getArtifactRuntimeVersion(),
-    };
-    const out = await callsTheProductBuilds().buildCall(zk, {
-      compiledContract: compiled,
-      circuitId,
-      contractAddress: sim.address,
-      coinPublicKey: hex(bytes(7)),
-      network: 'undeployed',
-      read: readFrom(state),
-      initialPrivateState: sim.currentPrivateState,
-      args,
-    }, hex(bytes(8)));
-    return { tx: out.private.transaction as any, L };
-  };
-
-  /* The SDK reads the wall clock for the block time, so this run's window is around it. */
-  const WALL = Math.floor(Date.now() / 1000);
-
-  it("THE HEADLINE: nothing minted, and the ledger finds the vault's receipt token one short", async () => {
-    const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    sim.at(WALL);
-    await sim.adoptVault(PAYROLL, [A, B]);
-    const payments = oneRun(1);
-    const tree = payoutTreeOf(payments);
-    const from = BigInt(WALL - 3_600);
-    const until = BigInt(WALL + 3_600);
-    const c = change(0n, 11);
-    await sim.as(sim.applying(A, c)).proposeRun({
-      root: fromHex(tree.root), payees: tree.payees, from, until, vault: PAYROLL,
-    });
-    const id = sim.proposalId(pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n), c.salt, PAYROLL);
-    await sim.as(sim.applying(B, c)).approve(id);
-
-    const { tx, L } = await build(sim, [
-      id, PAYROLL, PAYROLL, fromHex(tree.root), tree.payees, from, until, 0n, c.salt,
-      fromHex(payments[0]!.details), fromHex(payments[0]!.nonce), tree.amounts[0]!, fromHex(tree.asset),
-      tree.pathFor(0),
-    ]);
-    /* The ledger's own derivation of the vault's token, not the contract's. */
-    const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
-    const owed = new Map<string, bigint>();
-    for (const [token, amount] of tx.imbalances(0, 0n) as Map<{ tag: string; raw?: string }, bigint>) {
-      owed.set(`${token.tag}:${token.raw ?? ''}`, amount);
-    }
+describe.skipIf(!BUILDS_HERE)(
+  "a direct call, built as the real transaction, leaves the vault's receipt unbalanced [needs every verifier key in contracts/managed/keys and contracts/managed-vault/keys, pinned by its module, and the stand-in signing key; `npm run compact` then `npm run compact:vault -- --full` build the keys]",
+  () => {
     /*
-     * RED WHEN the account stops receiving the receipt (the `receiveUnshielded` line
-     * removed): nothing is owed, the transaction balances, and a payment is recorded
-     * with no vault's payment behind it. Also RED WHEN it receives a token keyed on
-     * anything but the paying vault's address, or more than one unit.
+     * The transaction is built by the product's own call builder over the SDK
+     * against this contract's compiled circuit, exactly as a caller holding every
+     * argument would build it, and nothing is minted in it. The ledger's own
+     * `imbalances` then says what the balancing check would find. No proof is made:
+     * a verifier key already on disk stands in for each operation's key, because an
+     * unproven transaction only needs one to name its key location.
      */
-    expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
-    /* And nothing else in it is short: the one missing unit is the whole refusal. */
-    expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
-  });
+    const build = async (sim: AccountSimulator, args: unknown[], circuitId = 'recordPaymentFromVault') => {
+      const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
+      const rt: any = await import('@midnight-ntwrk/compact-runtime');
+      const { CompiledContract } = await import('@midnight-ntwrk/compact-js');
+      const { NodeZkConfigProvider } = await import('@midnight-ntwrk/midnight-js-node-zk-config-provider');
+      const built = new NodeZkConfigProvider(join(KEYS, '..'));
+      const key = new Uint8Array(readFileSync(join(KEYS, STAND_IN_KEY!)));
+      const state: any = sim.contractStateForCall;
+      for (const n of state.operations()) {
+        const op = new rt.ContractOperation();
+        op.verifierKey = key;
+        state.setOperation(n, op);
+      }
+      const compiled = CompiledContract.make('ConfidentialAccount', Contract as any).pipe(
+        CompiledContract.withWitnesses(witnesses as never)
+      );
+      const zk = {
+        getVerifierKey: async () => key,
+        getVerifierKeys: async (ns: string[]) => ns.map((n) => [n, key]),
+        getZKIR: async () => new Uint8Array(),
+        getProverKey: async () => new Uint8Array(),
+        /* Which compiler built these keys is read from the build itself, so the call is built for this ledger. */
+        getArtifactRuntimeVersion: () => built.getArtifactRuntimeVersion()
+      };
+      const out = await callsTheProductBuilds().buildCall(
+        zk,
+        {
+          compiledContract: compiled,
+          circuitId,
+          contractAddress: sim.address,
+          coinPublicKey: hex(bytes(7)),
+          network: 'undeployed',
+          read: readFrom(state),
+          initialPrivateState: sim.currentPrivateState,
+          args
+        },
+        hex(bytes(8))
+      );
+      return { tx: out.private.transaction as any, L };
+    };
 
-  it("A DIRECT RETIREMENT, with the approved round and its salt but no vault, leaves the vault's retirement receipt one short", async () => {
-    const sim = await AccountSimulator.liveAccount([A, B], 2n);
-    sim.at(WALL);
-    await sim.adoptVault(PAYROLL, [A, B]);
-    const c = change(0n, 12);
-    const payload = pureCircuits.retireVaultPayload(PAYROLL);
-    await sim.as(sim.applying(A, c)).propose(payload);
-    const id = sim.proposalId(payload, c.salt);
-    await sim.as(sim.applying(B, c)).approve(id);
+    /* The SDK reads the wall clock for the block time, so this run's window is around it. */
+    const WALL = Math.floor(Date.now() / 1000);
 
-    const { tx, L } = await build(sim, [id, PAYROLL, c.salt], 'retireVault');
-    const receipt = L.rawTokenType(pureCircuits.retireReceiptTag(), hex(PAYROLL));
-    const owed = new Map<string, bigint>();
-    for (const [token, amount] of tx.imbalances(0, 0n) as Map<{ tag: string; raw?: string }, bigint>) {
-      owed.set(`${token.tag}:${token.raw ?? ''}`, amount);
-    }
-    /* RED WHEN `retireVault` stops receiving the vault's receipt: a vault would be left unmarked as retired, still taking deposits. */
-    expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
-    expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
-  });
-});
+    it("THE HEADLINE: nothing minted, and the ledger finds the vault's receipt token one short", async () => {
+      const sim = await AccountSimulator.liveAccount([A, B], 2n);
+      sim.at(WALL);
+      await sim.adoptVault(PAYROLL, [A, B]);
+      const payments = oneRun(1);
+      const tree = payoutTreeOf(payments);
+      const from = BigInt(WALL - 3_600);
+      const until = BigInt(WALL + 3_600);
+      const c = change(0n, 11);
+      await sim.as(sim.applying(A, c)).proposeRun({
+        root: fromHex(tree.root),
+        payees: tree.payees,
+        from,
+        until,
+        vault: PAYROLL
+      });
+      const id = sim.proposalId(
+        pureCircuits.runPayload(fromHex(tree.root), tree.payees, from, until, 0n),
+        c.salt,
+        PAYROLL
+      );
+      await sim.as(sim.applying(B, c)).approve(id);
+
+      const { tx, L } = await build(sim, [
+        id,
+        PAYROLL,
+        PAYROLL,
+        fromHex(tree.root),
+        tree.payees,
+        from,
+        until,
+        0n,
+        c.salt,
+        fromHex(payments[0]!.details),
+        fromHex(payments[0]!.nonce),
+        tree.amounts[0]!,
+        fromHex(tree.asset),
+        tree.pathFor(0)
+      ]);
+      /* The ledger's own derivation of the vault's token, not the contract's. */
+      const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
+      const owed = new Map<string, bigint>();
+      for (const [token, amount] of tx.imbalances(0, 0n) as Map<{ tag: string; raw?: string }, bigint>) {
+        owed.set(`${token.tag}:${token.raw ?? ''}`, amount);
+      }
+      /*
+       * RED WHEN the account stops receiving the receipt (the `receiveUnshielded` line
+       * removed): nothing is owed, the transaction balances, and a payment is recorded
+       * with no vault's payment behind it. Also RED WHEN it receives a token keyed on
+       * anything but the paying vault's address, or more than one unit.
+       */
+      expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
+      /* And nothing else in it is short: the one missing unit is the whole refusal. */
+      expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
+    });
+
+    it("A DIRECT RETIREMENT, with the approved round and its salt but no vault, leaves the vault's retirement receipt one short", async () => {
+      const sim = await AccountSimulator.liveAccount([A, B], 2n);
+      sim.at(WALL);
+      await sim.adoptVault(PAYROLL, [A, B]);
+      const c = change(0n, 12);
+      const payload = pureCircuits.retireVaultPayload(PAYROLL);
+      await sim.as(sim.applying(A, c)).propose(payload);
+      const id = sim.proposalId(payload, c.salt);
+      await sim.as(sim.applying(B, c)).approve(id);
+
+      const { tx, L } = await build(sim, [id, PAYROLL, c.salt], 'retireVault');
+      const receipt = L.rawTokenType(pureCircuits.retireReceiptTag(), hex(PAYROLL));
+      const owed = new Map<string, bigint>();
+      for (const [token, amount] of tx.imbalances(0, 0n) as Map<{ tag: string; raw?: string }, bigint>) {
+        owed.set(`${token.tag}:${token.raw ?? ''}`, amount);
+      }
+      /* RED WHEN `retireVault` stops receiving the vault's receipt: a vault would be left unmarked as retired, still taking deposits. */
+      expect(owed.get(`unshielded:${receipt}`)).toBe(-1n);
+      expect([...owed].filter(([k, v]) => v !== 0n && k !== `unshielded:${receipt}`)).toEqual([]);
+    });
+  }
+);
 
 /* ------------------------------------------------------------------ */
 
@@ -235,9 +273,9 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     await sim.as(sim.applying(B, c)).approve(id);
 
     /* RED WHEN the step stops refusing `noVault()` as the run's vault. */
-    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
-      claim({ tree, id }, payments, noVault, c, 0)))
-      .rejects.toThrow(/a governance proposal pays nobody/);
+    await expect(
+      sim.as(sim.applying(A, c)).recordPaymentFromVault(claim({ tree, id }, payments, noVault, c, 0))
+    ).rejects.toThrow(/a governance proposal pays nobody/);
   });
 
   it('A CONTRACT THE ACCOUNT NEVER ADOPTED: a run naming it is approved, and the payment is still refused', async () => {
@@ -252,9 +290,9 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     const run = await approvedRun(sim, STRANGER, payments, c);
 
     /* RED WHEN the step stops checking that the paying contract was ever adopted. */
-    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
-      claim(run, payments, STRANGER, c, 0)))
-      .rejects.toThrow(/not a vault this company has adopted/);
+    await expect(
+      sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, STRANGER, c, 0))
+    ).rejects.toThrow(/not a vault this company has adopted/);
     expect(sim.ledger.movements.size()).toBe(0n);
   });
 
@@ -264,12 +302,11 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     const c = change(0n, 41);
     const run = await approvedRun(sim, STRANGER, payments, c, [A]);
     /* RED WHEN the step stops checking adoption: one signer would mark a person paid alone. */
-    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
-      claim(run, payments, STRANGER, c, 0)))
-      .rejects.toThrow(/not a vault this company has adopted/);
+    await expect(
+      sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, STRANGER, c, 0))
+    ).rejects.toThrow(/not a vault this company has adopted/);
     /* And the person's month is untouched, so a real payment can still be made. */
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(false);
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(false);
   });
 
   it('THE OLD STEP IS GONE: the account compiles no `recordPayment`, only the step that takes a receipt', () => {
@@ -277,7 +314,9 @@ describe('the roads a payment could be recorded on without a vault paying, each 
     /* RED WHEN a `recordPayment` circuit is added back beside the new one. */
     expect(circuits).not.toContain('recordPayment');
     expect(circuits).toContain('recordPaymentFromVault');
-    expect(contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE)).not.toMatch(/circuit recordPayment\s*\(/);
+    expect(contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE)).not.toMatch(
+      /circuit recordPayment\s*\(/
+    );
   });
 });
 
@@ -292,8 +331,9 @@ describe('adopting and retiring a vault', () => {
     const id = sim.proposalId(adopt, c.salt);
     await sim.as(B).approve(id);
     /* RED WHEN `adopt` stops rebuilding its proposal from the vault it adopts. */
-    await expect(sim.as(sim.applying(A, c)).adopt(TREASURY, id))
-      .rejects.toThrow(/that proposal does not authorise adopting this vault/);
+    await expect(sim.as(sim.applying(A, c)).adopt(TREASURY, id)).rejects.toThrow(
+      /that proposal does not authorise adopting this vault/
+    );
     expect(sim.adopted(TREASURY)).toBe(false);
 
     await sim.adoptVault(PAYROLL, [A, B]);
@@ -304,10 +344,12 @@ describe('adopting and retiring a vault', () => {
     const rid = sim.proposalId(retire, rc.salt);
     await sim.as(B).approve(rid);
     /* RED WHEN `retireVault` stops rebuilding its proposal from the vault it retires and the salt it is given. */
-    await expect(sim.retireVault(rid, TREASURY, rc.salt))
-      .rejects.toThrow(/that proposal does not authorise retiring this vault/);
-    await expect(sim.retireVault(rid, PAYROLL, change(0n, 73).salt))
-      .rejects.toThrow(/that proposal does not authorise retiring this vault/);
+    await expect(sim.retireVault(rid, TREASURY, rc.salt)).rejects.toThrow(
+      /that proposal does not authorise retiring this vault/
+    );
+    await expect(sim.retireVault(rid, PAYROLL, change(0n, 73).salt)).rejects.toThrow(
+      /that proposal does not authorise retiring this vault/
+    );
     expect(sim.adopted(TREASURY)).toBe(true);
     expect(sim.adopted(PAYROLL)).toBe(true);
   });
@@ -336,8 +378,7 @@ describe('which vault may pay', () => {
 
     /* RED WHEN the step accepts only a vault adopted now (`retiredAt` no longer read). */
     await sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, PAYROLL, c, 0));
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
   });
 
   it('A RUN IS PAID BY THE VAULT IT NAMES: another adopted vault cannot pay it with its own receipt', async () => {
@@ -348,9 +389,9 @@ describe('which vault may pay', () => {
     const c = change(0n, 61);
     const run = await approvedRun(sim, PAYROLL, payments, c);
     /* RED WHEN the step stops requiring the paying vault to be the run's vault. */
-    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
-      claim(run, payments, PAYROLL, c, 0, TREASURY)))
-      .rejects.toThrow(/that run is for another vault/);
+    await expect(
+      sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, PAYROLL, c, 0, TREASURY))
+    ).rejects.toThrow(/that run is for another vault/);
   });
 
   it("returns the account's own address, which the vault mints the receipt to", async () => {
@@ -359,8 +400,7 @@ describe('which vault may pay', () => {
     const payments = oneRun(7);
     const c = change(0n, 71);
     const run = await approvedRun(sim, PAYROLL, payments, c);
-    const out: any = await sim.as(sim.applying(A, c)).recordPaymentFromVault(
-      claim(run, payments, PAYROLL, c, 0));
+    const out: any = await sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, PAYROLL, c, 0));
     /* RED WHEN the step returns any address but its own. */
     expect(hex(out.bytes)).toBe(String(sim.address));
   });
@@ -393,16 +433,18 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
   /** A company-wide run whose one leaf is bound to `boundTo`. */
   const companyRun = async (sim: AccountSimulator, boundTo: Uint8Array, seed: number) => {
     const inner = bytes(seed);
-    const payments: PayoutLeafInput[] = [{
-      details: toHex(pureCircuits.companyWideDetailsOf(inner, boundTo)),
-      nonce: toHex(bytes(seed + 100)),
-    }];
+    const payments: PayoutLeafInput[] = [
+      {
+        details: toHex(pureCircuits.companyWideDetailsOf(inner, boundTo)),
+        nonce: toHex(bytes(seed + 100))
+      }
+    ];
     const c = change(0n, seed);
     const run = await approvedRun(sim, pureCircuits.companyWide(), payments, c);
     /* What the vault hands over is the inner details; the account binds them itself. */
     const args = {
       ...claim(run, payments, pureCircuits.companyWide(), c, 0, boundTo),
-      details: inner,
+      details: inner
     };
     return { args, c, payments };
   };
@@ -421,15 +463,14 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     await sim.adoptVault(PAYROLL, [A, B]);
     const { args, c, payments } = await companyRun(sim, PAYROLL, 9);
     await sim.as(sim.applying(A, c)).recordPaymentFromVault(args);
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
     const L: any = await import('@midnight-ntwrk/midnight-js-protocol/v9');
     const receipt = L.rawTokenType(pureCircuits.paymentReceiptTag(), hex(PAYROLL));
     /* RED WHEN the receipt is keyed on the run's vault instead of the paying vault. */
     expect(unshielded(sim.lastEffects.unshieldedInputs)).toEqual([[receipt, 1n]]);
   });
 
-  it("A RETIRED VAULT STILL PAYS ITS OWN COMPANY-WIDE LEAF", async () => {
+  it('A RETIRED VAULT STILL PAYS ITS OWN COMPANY-WIDE LEAF', async () => {
     const sim = await live();
     await sim.adoptVault(PAYROLL, [A, B]);
     const { args, c, payments } = await companyRun(sim, PAYROLL, 13);
@@ -442,8 +483,7 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     expect(sim.adopted(PAYROLL)).toBe(false);
     /* RED WHEN "ever adopted" is read for anything but the paying vault on a company-wide run. */
     await sim.as(sim.applying(A, c)).recordPaymentFromVault(args);
-    expect(sim.ledger.movements.member(
-      pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
+    expect(sim.ledger.movements.member(pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)))).toBe(true);
   });
 
   it("THE STRICTER-VAULT REFUSAL: a vault whose own bar is above the company's is refused", async () => {
@@ -452,8 +492,9 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     await setBar(sim, TREASURY, 3n, 94);
     const { args, c } = await companyRun(sim, TREASURY, 10);
     /* RED WHEN the step stops comparing the paying vault's own bar with the company's. */
-    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(args))
-      .rejects.toThrow(/needs more approvals than the company's threshold/);
+    await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(args)).rejects.toThrow(
+      /needs more approvals than the company's threshold/
+    );
   });
 
   it("a vault whose own bar EQUALS the company's is not stricter, and is paid", async () => {
@@ -480,9 +521,9 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
     const run = await approvedRun(sim, pureCircuits.companyWide(), payments, c);
     for (const payer of [PAYROLL, TREASURY]) {
       /* RED WHEN the account stops binding a company-wide leaf to the vault paying it. */
-      await expect(sim.as(sim.applying(A, c)).recordPaymentFromVault(
-        claim(run, payments, pureCircuits.companyWide(), c, 0, payer)))
-        .rejects.toThrow(/that payee is not in the approved run/);
+      await expect(
+        sim.as(sim.applying(A, c)).recordPaymentFromVault(claim(run, payments, pureCircuits.companyWide(), c, 0, payer))
+      ).rejects.toThrow(/that payee is not in the approved run/);
     }
     expect(sim.ledger.movements.size()).toBe(0n);
   });
@@ -490,7 +531,7 @@ describe('a company-wide run: any vault ever adopted may pay its own leaf, never
 
 /* ------------------------------------------------------------------ */
 
-describe("what the payment step publishes", () => {
+describe('what the payment step publishes', () => {
   it("publishes the payee's leaf value and the person-month value, never the details or the nonce they are made from", async () => {
     const { Transcript } = await import('./transcript.js');
     const sim = await live();
@@ -508,12 +549,12 @@ describe("what the payment step publishes", () => {
     t.assertPublishes({
       'the leaf value': pureCircuits.paidMovementOf(leaf),
       'the person-month value': pureCircuits.paidOnceOf(fromHex(payments[0]!.nonce)),
-      'the paying vault': PAYROLL,
+      'the paying vault': PAYROLL
     });
     /* RED WHEN the step discloses the details or the nonce themselves. */
     t.assertAbsent({
       "the payee's details": fromHex(payments[0]!.details),
-      "the payee's nonce": fromHex(payments[0]!.nonce),
+      "the payee's nonce": fromHex(payments[0]!.nonce)
     });
   });
 });
@@ -524,12 +565,15 @@ describe('the account moves no money of its own', () => {
    * The vault mints it only inside its payment, straight to the account, and the
    * account must never send it on - or mint, claim or receive anything else.
    */
-  const MONEY = /\b(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|kernel\.(?:mint\w*|claim\w*|inc\w*))\b/g;
+  const MONEY =
+    /\b(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|kernel\.(?:mint\w*|claim\w*|inc\w*))\b/g;
 
   it('only the three vault steps touch money, and each only to receive one receipt', () => {
     const src = contractSourceText(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE);
     /* The text read is every file of the list: one module declaration for each file past the main one. */
-    expect(src.match(/^module \w+ \{/gm)?.length ?? 0).toBe(contractSources(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE).length - 1);
+    expect(src.match(/^module \w+ \{/gm)?.length ?? 0).toBe(
+      contractSources(join(import.meta.dirname, '..', '..'), CONTRACT_SOURCE).length - 1
+    );
     /* Every top-level block that runs: each circuit, and the constructor. */
     const starts = [...src.matchAll(/^(?:export )?(?:circuit (\w+)\s*\(|(constructor)\s*\()/gm)];
     const touched: Record<string, string[]> = {};
@@ -542,24 +586,35 @@ describe('the account moves no money of its own', () => {
        taking the retiring vault's receipt. The two payment steps, one payee and a batch, receive their
        receipt in the checks they share. */
     expect(touched).toEqual({
-      requirePayable: ['receiveUnshielded'], approveVaultChange: ['receiveUnshielded'], retireVault: ['receiveUnshielded'],
+      requirePayable: ['receiveUnshielded'],
+      approveVaultChange: ['receiveUnshielded'],
+      retireVault: ['receiveUnshielded']
     });
     /* RED WHEN the retirement takes a payment's or a change's receipt, or one from any contract but the vault it retires. */
     const retireBody = src.slice(src.search(/^export circuit retireVault\(/m));
-    expect(retireBody.match(/receiveUnshielded\(([^;]*)\);/)?.[1])
-      .toBe('tokenType(retireReceiptTag(), ContractAddress { bytes: forVault }), 1');
+    expect(retireBody.match(/receiveUnshielded\(([^;]*)\);/)?.[1]).toBe(
+      'tokenType(retireReceiptTag(), ContractAddress { bytes: forVault }), 1'
+    );
     /* The scan saw every circuit and the constructor, not a truncated file. */
     expect(starts.length).toBeGreaterThan(40);
     /* RED WHEN any circuit but the two payment steps reaches the shared checks, and with them the receive. */
-    const callers = starts.filter((m, i) => /\brequirePayable\(/.test(src.slice(m.index!, starts[i + 1]?.index ?? src.length))
-      && m[1] !== 'requirePayable').map((m) => m[1]);
+    const callers = starts
+      .filter(
+        (m, i) =>
+          /\brequirePayable\(/.test(src.slice(m.index!, starts[i + 1]?.index ?? src.length)) &&
+          m[1] !== 'requirePayable'
+      )
+      .map((m) => m[1]);
     expect(callers.sort()).toEqual(['recordBatchFromVault', 'recordPaymentFromVault']);
   });
 
   it('and the compiled contract agrees: one receive helper, called once by each of the three', () => {
     const js = readFileSync(join(import.meta.dirname, '..', 'managed', 'contract', 'index.js'), 'utf8');
     /* RED WHEN the compiled contract gains a send, a mint or a second receive. */
-    expect(js.match(/this\._(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|mintShieldedToken)_\d+\(/g))
-      .toEqual(['this._receiveUnshielded_0(', 'this._receiveUnshielded_0(', 'this._receiveUnshielded_0(']);
+    expect(
+      js.match(
+        /this\._(receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|mintShieldedToken)_\d+\(/g
+      )
+    ).toEqual(['this._receiveUnshielded_0(', 'this._receiveUnshielded_0(', 'this._receiveUnshielded_0(']);
   });
 });

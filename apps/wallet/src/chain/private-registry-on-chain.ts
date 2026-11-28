@@ -5,7 +5,11 @@ import { readAccountAddress, type AccountAddress, type CompanyLabel } from 'midn
 import { companyFingerprint } from 'midnight-identity/profile/fingerprint';
 import { openEntry, tagAt, type RegistryEntry } from 'midnight-identity/profile/private-registry';
 import { networkName, type NetworkName } from 'midnight-identity/network';
-import { RELEASED_VERSIONS, type ReleasedContract, type ReleasedVersion } from 'midnight-identity/wallet/released-versions';
+import {
+  RELEASED_VERSIONS,
+  type ReleasedContract,
+  type ReleasedVersion
+} from 'midnight-identity/wallet/released-versions';
 import type { Hex } from '../../../../src/core/crypto.js';
 import { networkRecord } from '../../../../src/core/networks.js';
 import type { LeafScheme } from '../../../../src/core/signer-leaf.js';
@@ -61,12 +65,12 @@ export interface LabelClash {
 export type RegistryFind =
   | { readonly of: 'no-registries'; readonly network: NetworkName }
   | {
-    readonly of: 'read';
-    readonly companies: readonly CompanyFound[];
-    readonly clashes: readonly LabelClash[];
-    /** Registries passed over, and accounts whose state or keys could not be read (named by the account's address, `unread`). */
-    readonly passedOver: readonly { readonly registry: string; readonly why: RegistryPassedOver }[];
-  };
+      readonly of: 'read';
+      readonly companies: readonly CompanyFound[];
+      readonly clashes: readonly LabelClash[];
+      /** Registries passed over, and accounts whose state or keys could not be read (named by the account's address, `unread`). */
+      readonly passedOver: readonly { readonly registry: string; readonly why: RegistryPassedOver }[];
+    };
 
 /** Finds and judges a person's entries: `registryEntriesFound` over the reads of one network. */
 export type RegistryFinder = (identity: Identity) => Promise<RegistryFind>;
@@ -97,7 +101,10 @@ interface Believed {
 const lower = (s: string): string => s.toLowerCase();
 
 /** The contract at `address` as the chain holds it, or null when it holds none, or the read or its reading failed. */
-async function stateAt(reads: RegistryReads, address: string): Promise<{ readonly hex: string; readonly state: ContractState } | null> {
+async function stateAt(
+  reads: RegistryReads,
+  address: string
+): Promise<{ readonly hex: string; readonly state: ContractState } | null> {
   try {
     const hex = await reads.state(address as AccountAddress);
     const state = hex === null ? null : contractStateOfHex(hex);
@@ -109,18 +116,25 @@ async function stateAt(reads: RegistryReads, address: string): Promise<{ readonl
 }
 
 /** Whether every verifier key of `state` is a released version's, slot by slot; `unchecked` when the keys cannot be read. */
-const buildOf = (state: ContractState, address: string, contract: ReleasedContract, reads: RegistryReads): PublishedBuild =>
-  publishedBuildOfState(state, address, contract, reads.versions ?? RELEASED_VERSIONS);
+const buildOf = (
+  state: ContractState,
+  address: string,
+  contract: ReleasedContract,
+  reads: RegistryReads
+): PublishedBuild => publishedBuildOfState(state, address, contract, reads.versions ?? RELEASED_VERSIONS);
 
 /**
  * Why a registry is passed over for its authority, or null when it is held by no keys at threshold exactly one. An
  * authority that could not be read is `unread`, never `held`: nothing is known of who holds it.
  */
 export const authorityPassedOver = (read: AuthorityRead): RegistryPassedOver | null =>
-  (read.state !== 'read' ? 'unread' : registryAuthorityRefusal(read) === null ? null : 'held');
+  read.state !== 'read' ? 'unread' : registryAuthorityRefusal(read) === null ? null : 'held';
 
 /** Why the registry at `address` is passed over, or its state as read when it is held by no one and released. */
-async function registryChecked(reads: RegistryReads, address: string): Promise<{ readonly hex: string } | { readonly why: RegistryPassedOver }> {
+async function registryChecked(
+  reads: RegistryReads,
+  address: string
+): Promise<{ readonly hex: string } | { readonly why: RegistryPassedOver }> {
   const at = await stateAt(reads, address);
   if (at === null) return { why: 'unread' };
   const held = authorityPassedOver(await readContractAuthority(async () => at.state, address));
@@ -131,12 +145,20 @@ async function registryChecked(reads: RegistryReads, address: string): Promise<{
 }
 
 /** Every entry of this person's in the registry in `hex`, by tag, until `ABSENT_IN_A_ROW` tags in a row are absent. */
-async function entriesIn(identity: Identity, network: NetworkName, reads: RegistryReads, hex: string): Promise<RegistryEntry[]> {
+async function entriesIn(
+  identity: Identity,
+  network: NetworkName,
+  reads: RegistryReads,
+  hex: string
+): Promise<RegistryEntry[]> {
   const found: RegistryEntry[] = [];
   let absent = 0;
   for (let from = 0; absent < ABSENT_IN_A_ROW; from += ABSENT_IN_A_ROW) {
     const indexes = Array.from({ length: ABSENT_IN_A_ROW }, (_, k) => from + k);
-    const values = await reads.values(hex, indexes.map((i) => tagAt(identity, network, i)));
+    const values = await reads.values(
+      hex,
+      indexes.map((i) => tagAt(identity, network, i))
+    );
     for (const [k, i] of indexes.entries()) {
       if (absent >= ABSENT_IN_A_ROW) break;
       const value = values[k] ?? null;
@@ -156,7 +178,12 @@ async function entriesIn(identity: Identity, network: NetworkName, reads: Regist
  * The entry with its account and that account's released version when the chain bears it out now; null when it does
  * not; `unread` when the account's state or keys could not be read, which is not the same as the chain saying no.
  */
-async function judged(identity: Identity, reads: RegistryReads, scheme: LeafScheme, entry: RegistryEntry): Promise<Believed | null | 'unread'> {
+async function judged(
+  identity: Identity,
+  reads: RegistryReads,
+  scheme: LeafScheme,
+  entry: RegistryEntry
+): Promise<Believed | null | 'unread'> {
   const account = readAccountAddress(entry.account);
   if (account === null) return null;
   const held = await reads.holders(account, entry.label);
@@ -173,7 +200,10 @@ async function judged(identity: Identity, reads: RegistryReads, scheme: LeafSche
 }
 
 /** The believed entries by label: one account under a label is a company found, more than one a clash. */
-function companiesOf(believed: readonly Believed[]): { readonly companies: readonly CompanyFound[]; readonly clashes: readonly LabelClash[] } {
+function companiesOf(believed: readonly Believed[]): {
+  readonly companies: readonly CompanyFound[];
+  readonly clashes: readonly LabelClash[];
+} {
   const byLabel = new Map<CompanyLabel, Map<AccountAddress, Believed[]>>();
   for (const b of believed) {
     const accounts = byLabel.get(b.entry.label) ?? new Map<AccountAddress, Believed[]>();
@@ -183,13 +213,30 @@ function companiesOf(believed: readonly Believed[]): { readonly companies: reado
   const companies: CompanyFound[] = [];
   const clashes: LabelClash[] = [];
   for (const [label, accounts] of byLabel) {
-    const named = [...accounts].map(([account, all]) => ({ account, all, fingerprint: companyFingerprint(label, account) }));
+    const named = [...accounts].map(([account, all]) => ({
+      account,
+      all,
+      fingerprint: companyFingerprint(label, account)
+    }));
     if (named.length > 1) {
-      clashes.push(Object.freeze({ label, accounts: Object.freeze(named.map(({ account, fingerprint }) => Object.freeze({ account, fingerprint }))) }));
+      clashes.push(
+        Object.freeze({
+          label,
+          accounts: Object.freeze(named.map(({ account, fingerprint }) => Object.freeze({ account, fingerprint })))
+        })
+      );
       continue;
     }
     const { account, all, fingerprint } = named[0]!;
-    companies.push(Object.freeze({ label, account, fingerprint, version: all[0]!.version, entries: Object.freeze(all.map((b) => b.entry)) }));
+    companies.push(
+      Object.freeze({
+        label,
+        account,
+        fingerprint,
+        version: all[0]!.version,
+        entries: Object.freeze(all.map((b) => b.entry))
+      })
+    );
   }
   return { companies: Object.freeze(companies), clashes: Object.freeze(clashes) };
 }
@@ -198,7 +245,11 @@ function companiesOf(believed: readonly Believed[]): { readonly companies: reado
  * The companies this person's entries in the network's private registries name and the chain bears out, the clashes
  * among them, and the registries passed over. A network whose record lists no registry answers so, and reads nothing.
  */
-export async function registryEntriesFound(identity: Identity, network: string, reads: RegistryReads): Promise<RegistryFind> {
+export async function registryEntriesFound(
+  identity: Identity,
+  network: string,
+  reads: RegistryReads
+): Promise<RegistryFind> {
   const named = networkName(network);
   if (reads.registries.length === 0) return Object.freeze({ of: 'no-registries', network: named });
   const passedOver: { readonly registry: string; readonly why: RegistryPassedOver }[] = [];
@@ -210,14 +261,17 @@ export async function registryEntriesFound(identity: Identity, network: string, 
       continue;
     }
     try {
-      entries.push(...await entriesIn(identity, named, reads, checked.hex));
+      entries.push(...(await entriesIn(identity, named, reads, checked.hex)));
     } catch {
       /* A walk the builder could not finish is a registry not read: it is named, and nothing in it is believed. */
       passedOver.push(Object.freeze({ registry, why: 'unread' }));
     }
   }
   const scheme = entries.length === 0 ? null : await reads.scheme();
-  const judgments = scheme === null ? [] : await Promise.all(entries.map(async (e) => ({ entry: e, judgment: await judged(identity, reads, scheme, e) })));
+  const judgments =
+    scheme === null
+      ? []
+      : await Promise.all(entries.map(async (e) => ({ entry: e, judgment: await judged(identity, reads, scheme, e) })));
   const believed: Believed[] = [];
   for (const { entry, judgment } of judgments) {
     /* An account that could not be read is named like an unread registry, so nothing is pinned while one is unread. */
@@ -243,9 +297,12 @@ export function liveRegistryReads(network: string, indexerUri: string, build: Ac
   return Object.freeze({
     registries: networkRecord(network).registries,
     state,
-    holders: (account: AccountAddress, label: CompanyLabel) => holdersOnChain(account, label, state, deployFromIndexerAt(indexerUri)),
-    values: async (hex: string, tags: readonly string[]) => (await build({ ask: 'registry-values', registryState: base64.encode(bytesOf(hex)), tags })).values
-      .map((v) => (v === null ? null : base64.decode(v))),
-    scheme: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments,
+    holders: (account: AccountAddress, label: CompanyLabel) =>
+      holdersOnChain(account, label, state, deployFromIndexerAt(indexerUri)),
+    values: async (hex: string, tags: readonly string[]) =>
+      (await build({ ask: 'registry-values', registryState: base64.encode(bytesOf(hex)), tags })).values.map((v) =>
+        v === null ? null : base64.decode(v)
+      ),
+    scheme: async () => (await import('../../../../src/midnight/commitments.js')).MidnightCommitments
   });
 }

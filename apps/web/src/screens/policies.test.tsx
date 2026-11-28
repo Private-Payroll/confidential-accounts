@@ -13,24 +13,43 @@ import { untilPageShown } from '../page-shown.test-support.js';
  * confirmation before the wallet is asked, and the words that follow each answer.
  */
 const st = vi.hoisted(() => ({
-  company: null as unknown, holders: null as unknown, policies: null as unknown, keysOpened: 0,
-  readFor: [] as string[][], policyAsks: [] as unknown[], barAsks: [] as unknown[], policyAnswer: null as unknown, barAnswer: null as unknown,
+  company: null as unknown,
+  holders: null as unknown,
+  policies: null as unknown,
+  keysOpened: 0,
+  readFor: [] as string[][],
+  policyAsks: [] as unknown[],
+  barAsks: [] as unknown[],
+  policyAnswer: null as unknown,
+  barAnswer: null as unknown
 }));
 vi.mock('../adapters/policy-acts.js', async (real) => ({
   ...(await real<typeof import('../adapters/policy-acts.js')>()),
-  readPolicies: async (_p: string, _c: string, vaults: string[]) => { st.readFor.push(vaults); return st.policies; },
+  readPolicies: async (_p: string, _c: string, vaults: string[]) => {
+    st.readFor.push(vaults);
+    return st.policies;
+  },
   readHolders: async () => st.holders,
-  raisePolicy: async (...ask: unknown[]) => { st.policyAsks.push(ask); return st.policyAnswer; },
-  raisePolicyBar: async (...ask: unknown[]) => { st.barAsks.push(ask); return st.barAnswer; },
+  raisePolicy: async (...ask: unknown[]) => {
+    st.policyAsks.push(ask);
+    return st.policyAnswer;
+  },
+  raisePolicyBar: async (...ask: unknown[]) => {
+    st.barAsks.push(ask);
+    return st.barAnswer;
+  }
 }));
 vi.mock('../adapters/company-records.js', async (real) => ({
   ...(await real<typeof import('../adapters/company-records.js')>()),
   readCompany: async () => st.company,
-  openWithYourAccount: async () => { st.keysOpened += 1; return { of: 'done' }; },
+  openWithYourAccount: async () => {
+    st.keysOpened += 1;
+    return { of: 'done' };
+  }
 }));
 vi.mock('../adapters/session.js', async (real) => ({
   ...(await real<typeof import('../adapters/session.js')>()),
-  companyNamesFor: async () => new Map(),
+  companyNamesFor: async () => new Map()
 }));
 
 const { Policies } = await import('./policies.js');
@@ -39,9 +58,15 @@ const { SessionProvider } = await import('../session.js');
 const { PanelProvider, RightPanel } = await import('../shell/right-panel.js');
 const { CompanyRecordsProvider } = await import('../records/company-records.js');
 
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 const EN = ENGLISH;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
 const read = (value: unknown) => ({ of: 'read', value });
@@ -49,33 +74,77 @@ const A = 'ab'.repeat(32);
 const B = 'cd'.repeat(32);
 const TOKEN = policyCurrencies()[0]!.code;
 const session = () => ({
-  person: { id: 'u1', name: 'Priya' }, companies: [], company: 'c-1', chooseCompany: vi.fn(), viewer: { signedIn: true, view: VIEWS.company, signs: true },
-  chooseView: vi.fn(), preferences: DEFAULT_PREFERENCES, choose: vi.fn(), signOut: vi.fn(), mac: true, companiesChanged: vi.fn(async () => {}),
+  person: { id: 'u1', name: 'Priya' },
+  companies: [],
+  company: 'c-1',
+  chooseCompany: vi.fn(),
+  viewer: { signedIn: true, view: VIEWS.company, signs: true },
+  chooseView: vi.fn(),
+  preferences: DEFAULT_PREFERENCES,
+  choose: vi.fn(),
+  signOut: vi.fn(),
+  mac: true,
+  companiesChanged: vi.fn(async () => {})
 });
-const holdersOf = (over: Record<string, unknown> = {}) => read({
-  approvals: 2, vaultThresholds: [], policyBar: null, seatBar: 2, seats: [], seated: 4, ...over,
-});
+const holdersOf = (over: Record<string, unknown> = {}) =>
+  read({
+    approvals: 2,
+    vaultThresholds: [],
+    policyBar: null,
+    seatBar: 2,
+    seats: [],
+    seated: 4,
+    ...over
+  });
 const turn = () => new Promise((r) => setTimeout(r, 5));
-const settle = async () => { await act(async () => { await turn(); await turn(); }); };
+const settle = async () => {
+  await act(async () => {
+    await turn();
+    await turn();
+  });
+};
 const q = (s: string): HTMLElement | null => document.body.querySelector(s);
-const press = async (selector: string) => { fireEvent.click(q(selector)!); await settle(); };
-const type = async (selector: string, value: string) => { fireEvent.change(q(selector)!, { target: { value } }); await settle(); };
+const press = async (selector: string) => {
+  fireEvent.click(q(selector)!);
+  await settle();
+};
+const type = async (selector: string, value: string) => {
+  fireEvent.change(q(selector)!, { target: { value } });
+  await settle();
+};
 const draw = async () => {
   const view = render(
     <KitProvider languages={LANGUAGES} pick="en">
-      <SessionProvider session={session()}><PanelProvider><CompanyRecordsProvider><Policies /><RightPanel /></CompanyRecordsProvider></PanelProvider></SessionProvider>
-    </KitProvider>,
+      <SessionProvider session={session()}>
+        <PanelProvider>
+          <CompanyRecordsProvider>
+            <Policies />
+            <RightPanel />
+          </CompanyRecordsProvider>
+        </PanelProvider>
+      </SessionProvider>
+    </KitProvider>
   );
   await untilPageShown(view.container);
   await settle();
 };
 const text = (): string => document.body.textContent ?? '';
 const held = (vault: string, periodLength: bigint) => ({
-  vault, token: TOKEN, of: 'set',
+  vault,
+  token: TOKEN,
+  of: 'set',
   terms: {
-    bands: [1, 2, 3, 4].map((n) => ({ ceiling: privateAmount(BigInt(n) * 1000000n, 6, 'X'), ceilingText: `${n}`, approvals: n })),
-    limit: privateAmount(9000000n, 6, 'X'), limitText: '9', periodStart: 5n, periodLength, version: 1,
-  },
+    bands: [1, 2, 3, 4].map((n) => ({
+      ceiling: privateAmount(BigInt(n) * 1000000n, 6, 'X'),
+      ceilingText: `${n}`,
+      approvals: n
+    })),
+    limit: privateAmount(9000000n, 6, 'X'),
+    limitText: '9',
+    periodStart: 5n,
+    periodLength,
+    version: 1
+  }
 });
 const open = async (approvals: number | undefined, over: Record<string, unknown> = {}) => {
   st.holders = holdersOf(over);
@@ -86,18 +155,32 @@ const open = async (approvals: number | undefined, over: Record<string, unknown>
     await type(where, `${band}`);
   }
   await type('[data-field="limit"]', '9');
-  if (approvals !== undefined) for (const band of [1, 2, 3, 4]) await press(`[data-approvals-band="${band}"][data-approvals="${approvals}"]`);
+  if (approvals !== undefined)
+    for (const band of [1, 2, 3, 4]) await press(`[data-approvals-band="${band}"][data-approvals="${approvals}"]`);
 };
-const asBands = async (approvals: number[]) => { for (const [i, n] of approvals.entries()) await press(`[data-approvals-band="${i + 1}"][data-approvals="${n}"]`); };
+const asBands = async (approvals: number[]) => {
+  for (const [i, n] of approvals.entries()) await press(`[data-approvals-band="${i + 1}"][data-approvals="${n}"]`);
+};
 
 beforeEach(() => {
   st.company = {
-    of: 'open', id: 'c-1', name: 'Northwind', signers: [], approvalsNeeded: read(2), proposals: read([]),
-    vaults: read([{ vault: A, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true }, { vault: B, createdAt: '2026-09-02T00:00:00.000Z', standing: 'held-by-committee', adopted: false }]),
+    of: 'open',
+    id: 'c-1',
+    name: 'Northwind',
+    signers: [],
+    approvalsNeeded: read(2),
+    proposals: read([]),
+    vaults: read([
+      { vault: A, createdAt: '2026-09-01T00:00:00.000Z', standing: 'held-by-committee', adopted: true },
+      { vault: B, createdAt: '2026-09-02T00:00:00.000Z', standing: 'held-by-committee', adopted: false }
+    ])
   };
   st.holders = holdersOf();
   st.policies = { of: 'read', held: [{ vault: A, token: TOKEN, of: 'none' }] };
-  st.keysOpened = 0; st.readFor = []; st.policyAsks = []; st.barAsks = [];
+  st.keysOpened = 0;
+  st.readFor = [];
+  st.policyAsks = [];
+  st.barAsks = [];
   st.policyAnswer = { of: 'done', state: 'waiting-for-approvals', proposal: 'p', approvals: 1, needed: 2 };
   st.barAnswer = st.policyAnswer;
 });
@@ -156,8 +239,7 @@ describe('the warnings', () => {
     expect(q('[data-warning="bar-stays"]')).not.toBeNull();
     expect(q('[data-warning="bar-raised"]')).toBeNull();
   });
-
-})
+});
 
 describe('the review', () => {
   /* RED WHEN: the approvals and what sets them are not shown. */
@@ -175,7 +257,9 @@ describe('the review', () => {
     await open(1);
     await asBands([1, 1, 2, 3]);
     await press('[data-action="review-policy"]');
-    const facts = [...document.body.querySelectorAll('[data-public-fact]')].map((e) => e.getAttribute('data-public-fact'));
+    const facts = [...document.body.querySelectorAll('[data-public-fact]')].map((e) =>
+      e.getAttribute('data-public-fact')
+    );
     expect(facts).toContain('vault-has-a-policy');
     expect(q('[data-hidden]')?.textContent).toBe(EN['policies.review.hidden']);
     expect(q('[data-review]')?.textContent).not.toMatch(/private/iu);
@@ -204,7 +288,7 @@ describe('the review', () => {
   });
 
   /* RED WHEN: the wallet's refusal is shown in a word of the wallet's that this page has no key for. */
-  it('says what a stop means in this page\'s words', async () => {
+  it("says what a stop means in this page's words", async () => {
     st.policyAnswer = { of: 'stopped', why: 'may-not-set', partial: false, handedOver: false };
     await open(1);
     await press('[data-action="review-policy"]');
@@ -238,7 +322,9 @@ describe('the policy bar', () => {
     await draw();
     await press('[data-action="bar-more"]');
     expect(q('[data-review="bar"] [data-warning="every-signer"]')).not.toBeNull();
-    expect(q('[data-review="bar"] [data-warning="every-signer"]')?.textContent).not.toContain(EN['policies.warn.every-signer.runs']);
+    expect(q('[data-review="bar"] [data-warning="every-signer"]')?.textContent).not.toContain(
+      EN['policies.warn.every-signer.runs']
+    );
     expect(q('[data-review="bar"] [data-reset-confirmation]')).toBeNull();
     expect(st.barAsks).toEqual([]);
     await press('[data-action="confirm-bar"]');

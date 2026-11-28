@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  holdsAnyOther, otherTokenLines, otherTokensFromStored, otherTokensToStored, shortColour,
-  smallestUnits, splitShielded,
+  holdsAnyOther,
+  otherTokenLines,
+  otherTokensFromStored,
+  otherTokensToStored,
+  shortColour,
+  smallestUnits,
+  splitShielded
 } from './shielded-tokens.js';
 
 /* Colours invented for the test: hex of the length the chain uses, named by
@@ -37,8 +42,7 @@ describe('the whole private balance map, not one key of it', () => {
 
   it('lists the tokens in one fixed order, by colour', () => {
     /* RED WHEN the order follows insertion, so two screens could disagree. */
-    expect(otherTokenLines({ [TOKEN_B]: 1n, [TOKEN_A]: 2n }).map(([c]) => c))
-      .toEqual([TOKEN_A, TOKEN_B]);
+    expect(otherTokenLines({ [TOKEN_B]: 1n, [TOKEN_A]: 2n }).map(([c]) => c)).toEqual([TOKEN_A, TOKEN_B]);
   });
 
   it('absent is not none: an unrecorded map holds nothing we know of, and is not a zero', () => {

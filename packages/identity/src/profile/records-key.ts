@@ -128,7 +128,9 @@ export interface VaultHolders {
 /** The public half of the records key a company key opens, as the company's records are sealed to it. */
 export function recordsPublicKeyOf(companyKey: Uint8Array): string {
   if (!(companyKey instanceof Uint8Array) || companyKey.length !== KEY_BYTES || companyKey.every((b) => b === 0)) {
-    throw new Error(`a records key is derived from a ${KEY_BYTES}-byte company key, and this is not one. Nothing was derived.`);
+    throw new Error(
+      `a records key is derived from a ${KEY_BYTES}-byte company key, and this is not one. Nothing was derived.`
+    );
   }
   const secret = hkdf(sha256, companyKey, RECORDS_WRAPPING_SALT, new Uint8Array(0), KEY_BYTES);
   const publicKey = x25519.getPublicKey(secret);
@@ -143,11 +145,23 @@ export function recordsPublicKeyOf(companyKey: Uint8Array): string {
  * thirty-two bytes. One format for every seat, the founding signer's and every
  * signer who joins.
  */
-export function recordsKeyStatementBytes(company: CompanyLabel, account: AccountAddress, recordsKey: string, seat: string): Uint8Array | null {
+export function recordsKeyStatementBytes(
+  company: CompanyLabel,
+  account: AccountAddress,
+  recordsKey: string,
+  seat: string
+): Uint8Array | null {
   const label = readCompanyLabel(company);
   const where = readAccountAddress(account);
-  if (label === null || where === null || typeof recordsKey !== 'string' || !HEX64.test(recordsKey)
-    || typeof seat !== 'string' || !HEX64.test(seat)) return null;
+  if (
+    label === null ||
+    where === null ||
+    typeof recordsKey !== 'string' ||
+    !HEX64.test(recordsKey) ||
+    typeof seat !== 'string' ||
+    !HEX64.test(seat)
+  )
+    return null;
   return taggedBytes(RECORDS_KEY_STATEMENT_TAG, label, [fromHex(where), fromHex(recordsKey), fromHex(seat)]);
 }
 
@@ -169,11 +183,16 @@ const taggedBytes = (tagText: string, label: string, parts: readonly Uint8Array[
  * being signed for this company and this seat.
  */
 export function signRecordsKey(
-  identity: Identity, company: CompanyLabel, account: AccountAddress, companyKey: Uint8Array, seat: string,
+  identity: Identity,
+  company: CompanyLabel,
+  account: AccountAddress,
+  companyKey: Uint8Array,
+  seat: string
 ): RecordsKeyStatement {
   const recordsKey = recordsPublicKeyOf(companyKey);
   const message = recordsKeyStatementBytes(company, account, recordsKey, seat);
-  if (message === null) throw new Error('that is not a company\'s label, its account and a seat on it, so no records key was signed.');
+  if (message === null)
+    throw new Error("that is not a company's label, its account and a seat on it, so no records key was signed.");
   const secret = fromHex(committeeSigningKeyFor(identity, company).value);
   try {
     return Object.freeze({ recordsKey, seat, signature: toHex(schnorr.sign(message, secret)) });
@@ -189,12 +208,26 @@ export function signRecordsKey(
  * is not a statement, a schnorr committee key, a label or an account is `false`.
  */
 export function recordsKeySignedBy(
-  company: CompanyLabel, account: AccountAddress, committeeKey: { readonly tag: string; readonly value: string }, statement: RecordsKeyStatement,
+  company: CompanyLabel,
+  account: AccountAddress,
+  committeeKey: { readonly tag: string; readonly value: string },
+  statement: RecordsKeyStatement
 ): boolean {
-  if (typeof committeeKey !== 'object' || committeeKey === null || committeeKey.tag !== 'schnorr'
-    || typeof committeeKey.value !== 'string' || !HEX64.test(committeeKey.value)) return false;
-  if (typeof statement !== 'object' || statement === null || typeof statement.signature !== 'string'
-    || !HEX128.test(statement.signature)) return false;
+  if (
+    typeof committeeKey !== 'object' ||
+    committeeKey === null ||
+    committeeKey.tag !== 'schnorr' ||
+    typeof committeeKey.value !== 'string' ||
+    !HEX64.test(committeeKey.value)
+  )
+    return false;
+  if (
+    typeof statement !== 'object' ||
+    statement === null ||
+    typeof statement.signature !== 'string' ||
+    !HEX128.test(statement.signature)
+  )
+    return false;
   const message = recordsKeyStatementBytes(company, account, statement.recordsKey, statement.seat);
   if (message === null) return false;
   try {
@@ -249,24 +282,52 @@ export interface DirectoryEntryStatement {
  * signing key's, the wrapping key's and the seat's thirty-two bytes each.
  */
 export function directoryEntryStatementBytes(
-  company: CompanyLabel, account: AccountAddress, signingKey: string, wrappingKey: string, seat: string,
+  company: CompanyLabel,
+  account: AccountAddress,
+  signingKey: string,
+  wrappingKey: string,
+  seat: string
 ): Uint8Array | null {
   const label = readCompanyLabel(company);
   const where = readAccountAddress(account);
-  if (label === null || where === null || [signingKey, wrappingKey, seat].some((k) => typeof k !== 'string' || !HEX64.test(k))) return null;
-  return taggedBytes(DIRECTORY_ENTRY_STATEMENT_TAG, label, [fromHex(where), fromHex(signingKey), fromHex(wrappingKey), fromHex(seat)]);
+  if (
+    label === null ||
+    where === null ||
+    [signingKey, wrappingKey, seat].some((k) => typeof k !== 'string' || !HEX64.test(k))
+  )
+    return null;
+  return taggedBytes(DIRECTORY_ENTRY_STATEMENT_TAG, label, [
+    fromHex(where),
+    fromHex(signingKey),
+    fromHex(wrappingKey),
+    fromHex(seat)
+  ]);
 }
 
 /** **THE ENTRY, SIGNED. Used inside the wallet only**, at the press that signs the records key. */
 export function signDirectoryEntry(
-  identity: Identity, company: CompanyLabel, account: AccountAddress, companyKey: Uint8Array, signingKey: string, seat: string,
+  identity: Identity,
+  company: CompanyLabel,
+  account: AccountAddress,
+  companyKey: Uint8Array,
+  signingKey: string,
+  seat: string
 ): DirectoryEntryStatement {
   const wrappingKey = recordsPublicKeyOf(companyKey);
   const message = directoryEntryStatementBytes(company, account, signingKey, wrappingKey, seat);
-  if (message === null) throw new Error('that is not a company\'s label, its account, a filing key and a seat on it, so no entry was signed.');
+  if (message === null)
+    throw new Error(
+      "that is not a company's label, its account, a filing key and a seat on it, so no entry was signed."
+    );
   const secret = fromHex(committeeSigningKeyFor(identity, company).value);
   try {
-    return Object.freeze({ account: readAccountAddress(account)!, signingKey, wrappingKey, seat, signature: toHex(schnorr.sign(message, secret)) });
+    return Object.freeze({
+      account: readAccountAddress(account)!,
+      signingKey,
+      wrappingKey,
+      seat,
+      signature: toHex(schnorr.sign(message, secret))
+    });
   } finally {
     secret.fill(0);
   }
@@ -280,12 +341,26 @@ export function signDirectoryEntry(
  * is `false`.
  */
 export function directoryEntrySignedBy(
-  company: CompanyLabel, account: AccountAddress, committeeKey: { readonly tag: string; readonly value: string }, entry: DirectoryEntryStatement,
+  company: CompanyLabel,
+  account: AccountAddress,
+  committeeKey: { readonly tag: string; readonly value: string },
+  entry: DirectoryEntryStatement
 ): boolean {
-  if (typeof committeeKey !== 'object' || committeeKey === null || committeeKey.tag !== 'schnorr'
-    || typeof committeeKey.value !== 'string' || !HEX64.test(committeeKey.value)) return false;
-  if (typeof entry !== 'object' || entry === null || typeof entry.signature !== 'string'
-    || !HEX128.test(entry.signature)) return false;
+  if (
+    typeof committeeKey !== 'object' ||
+    committeeKey === null ||
+    committeeKey.tag !== 'schnorr' ||
+    typeof committeeKey.value !== 'string' ||
+    !HEX64.test(committeeKey.value)
+  )
+    return false;
+  if (
+    typeof entry !== 'object' ||
+    entry === null ||
+    typeof entry.signature !== 'string' ||
+    !HEX128.test(entry.signature)
+  )
+    return false;
   const message = directoryEntryStatementBytes(company, account, entry.signingKey, entry.wrappingKey, entry.seat);
   if (message === null) return false;
   try {
@@ -304,7 +379,10 @@ export function directoryEntrySignedBy(
 export const SEAT_BLINDING_DOMAIN = 'confidential-accounts/seat-blinding/v1';
 
 /** A person's wallet key for one company, as the company's account lists such keys: a schnorr key's 32 bytes. */
-export interface WalletKey { readonly tag: string; readonly value: string }
+export interface WalletKey {
+  readonly tag: string;
+  readonly value: string;
+}
 
 /**
  * **A SEAT'S OPENING OF ITS OWN LEAF**: the leaf is the account's own
@@ -330,8 +408,12 @@ export interface SeatOpening {
  */
 export type LeafOf = (opening: SeatOpening) => string | null;
 
-const schnorrKey = (k: unknown): k is WalletKey => typeof k === 'object' && k !== null
-  && (k as WalletKey).tag === 'schnorr' && typeof (k as WalletKey).value === 'string' && HEX64.test((k as WalletKey).value);
+const schnorrKey = (k: unknown): k is WalletKey =>
+  typeof k === 'object' &&
+  k !== null &&
+  (k as WalletKey).tag === 'schnorr' &&
+  typeof (k as WalletKey).value === 'string' &&
+  HEX64.test((k as WalletKey).value);
 
 /**
  * **A SEAT'S BLINDING: THE HASH OF ITS WALLET KEY UNDER A FRESH SALT.** The one
@@ -343,7 +425,9 @@ const schnorrKey = (k: unknown): k is WalletKey => typeof k === 'object' && k !=
  */
 export function seatBlinding(walletKey: WalletKey, salt: string): string {
   if (!schnorrKey(walletKey) || typeof salt !== 'string' || !HEX64.test(salt)) {
-    throw new Error('a seat\'s blinding is made from a schnorr wallet key and a 32-byte salt, and this is not both. Nothing was made.');
+    throw new Error(
+      "a seat's blinding is made from a schnorr wallet key and a 32-byte salt, and this is not both. Nothing was made."
+    );
   }
   const enc = new TextEncoder();
   const domain = enc.encode(SEAT_BLINDING_DOMAIN);
@@ -369,16 +453,24 @@ export function seatBlinding(walletKey: WalletKey, salt: string): string {
 export function walletKeyProvedBy(opening: unknown, seat: string, leafOf: LeafOf | null | undefined): WalletKey | null {
   const o = opening as Partial<SeatOpening> | null | undefined;
   if (typeof leafOf !== 'function' || typeof seat !== 'string' || typeof o !== 'object' || o === null) return null;
-  if (![o.publicKey, o.scope, o.blinding, o.salt].every((x) => typeof x === 'string' && HEX64.test(x)) || !schnorrKey(o.walletKey)) return null;
+  if (
+    ![o.publicKey, o.scope, o.blinding, o.salt].every((x) => typeof x === 'string' && HEX64.test(x)) ||
+    !schnorrKey(o.walletKey)
+  )
+    return null;
   const opened: SeatOpening = {
-    publicKey: o.publicKey!, scope: o.scope!, blinding: o.blinding!, salt: o.salt!,
-    walletKey: { tag: 'schnorr', value: o.walletKey.value },
+    publicKey: o.publicKey!,
+    scope: o.scope!,
+    blinding: o.blinding!,
+    salt: o.salt!,
+    walletKey: { tag: 'schnorr', value: o.walletKey.value }
   };
   try {
     if (seatBlinding(opened.walletKey, opened.salt) !== opened.blinding) return null;
     const leaf = leafOf(opened);
     return typeof leaf === 'string' && leaf.toLowerCase() === seat.toLowerCase()
-      ? Object.freeze({ tag: 'schnorr', value: opened.walletKey.value }) : null;
+      ? Object.freeze({ tag: 'schnorr', value: opened.walletKey.value })
+      : null;
   } catch {
     return null;
   }
@@ -441,17 +533,22 @@ const frozenKeys = (keys: readonly { readonly tag: string; readonly value: strin
  * this wallet has not read it, or when the vault is pinned to another account.
  */
 export function recordsKeyAnswerFor(
-  identity: Identity, request: RecordsKeyRequest, seats: AccountSeats, at: number, vault?: VaultHolders,
+  identity: Identity,
+  request: RecordsKeyRequest,
+  seats: AccountSeats,
+  at: number,
+  vault?: VaultHolders,
   /** The account this wallet's saved keys pin for the company, or null when none is pinned or none can be read. */
-  pinned: AccountAddress | null = null,
+  pinned: AccountAddress | null = null
 ): RecordsKeyAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been signed.');
   }
   if (pinned !== null && pinned !== request.account) {
     throw new RecordsKeyRefused(
-      'The page names an account for this company other than the one this wallet kept as its account, '
-      + 'so nothing has been signed.');
+      'The page names an account for this company other than the one this wallet kept as its account, ' +
+        'so nothing has been signed.'
+    );
   }
   /*
    * **A WALLET THAT HAS KEPT NO ACCOUNT FOR THE COMPANY SIGNS NOTHING.** The
@@ -461,22 +558,26 @@ export function recordsKeyAnswerFor(
    */
   if (pinned === null) {
     throw new RecordsKeyRefused(
-      'This wallet has not kept an account for this company, so nothing has been signed. Open the company from the '
-      + 'page and take or give your vault keys there.');
+      'This wallet has not kept an account for this company, so nothing has been signed. Open the company from the ' +
+        'page and take or give your vault keys there.'
+    );
   }
   if (request.vault !== undefined && (vault === undefined || vault.vault !== request.vault)) {
     throw new RecordsKeyRefused(
-      'This wallet has not read the vault the page names from the network, so nothing has been signed. Open this again in a minute.');
+      'This wallet has not read the vault the page names from the network, so nothing has been signed. Open this again in a minute.'
+    );
   }
   if (request.vault !== undefined && vault !== undefined && vault.account !== request.account) {
     throw new RecordsKeyRefused(
-      'The vault the page names belongs to a different company account from this one, as this wallet read it from the '
-      + 'network. Nothing has been signed.');
+      'The vault the page names belongs to a different company account from this one, as this wallet read it from the ' +
+        'network. Nothing has been signed.'
+    );
   }
   if (!seats.seats.includes(request.seat)) {
     throw new RecordsKeyRefused(
-      'The seat the page names is not one this company\'s account holds now, as this wallet read it from the network. '
-      + 'Nothing has been signed. If you have just been seated, wait a minute and try again.');
+      "The seat the page names is not one this company's account holds now, as this wallet read it from the network. " +
+        'Nothing has been signed. If you have just been seated, wait a minute and try again.'
+    );
   }
   const companyKey = unlockKeyFor(identity, { ...request, kind: 'unlock' } as unknown as UnlockRequest);
   let statement: RecordsKeyStatement;
@@ -484,7 +585,14 @@ export function recordsKeyAnswerFor(
   try {
     statement = signRecordsKey(identity, request.company, request.account, companyKey, request.seat);
     if (request.signingKey !== undefined) {
-      entry = signDirectoryEntry(identity, request.company, request.account, companyKey, request.signingKey, request.seat);
+      entry = signDirectoryEntry(
+        identity,
+        request.company,
+        request.account,
+        companyKey,
+        request.signingKey,
+        request.seat
+      );
     }
   } finally {
     companyKey.fill(0);
@@ -501,57 +609,94 @@ export function recordsKeyAnswerFor(
     seats: Object.freeze({
       committee: frozenKeys(seats.committee),
       threshold: seats.threshold,
-      seats: Object.freeze([...seats.seats]),
+      seats: Object.freeze([...seats.seats])
     }),
-    ...(request.vault === undefined || vault === undefined ? {} : {
-      vault: Object.freeze({ vault: vault.vault, account: vault.account, committee: frozenKeys(vault.committee), threshold: vault.threshold }),
-    }),
-    ...(entry === undefined ? {} : { entry }),
+    ...(request.vault === undefined || vault === undefined
+      ? {}
+      : {
+          vault: Object.freeze({
+            vault: vault.vault,
+            account: vault.account,
+            committee: frozenKeys(vault.committee),
+            threshold: vault.threshold
+          })
+        }),
+    ...(entry === undefined ? {} : { entry })
   });
 }
 
 export type RecordsKeyRead =
   | {
-    readonly ok: true;
-    readonly committeeKey: { readonly tag: string; readonly value: string };
-    readonly statement: RecordsKeyStatement;
-    readonly seats: AccountSeats;
-    /** Who holds the vault the ask named, as the wallet read it; null when the ask named none. */
-    readonly vault: VaultHolders | null;
-    /** This signer's directory entry, signed in the same press; null when the ask named no filing key. */
-    readonly entry: DirectoryEntryStatement | null;
-    readonly at: number;
-  }
-  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company' | 'not-signed'; readonly says: string };
+      readonly ok: true;
+      readonly committeeKey: { readonly tag: string; readonly value: string };
+      readonly statement: RecordsKeyStatement;
+      readonly seats: AccountSeats;
+      /** Who holds the vault the ask named, as the wallet read it; null when the ask named none. */
+      readonly vault: VaultHolders | null;
+      /** This signer's directory entry, signed in the same press; null when the ask named no filing key. */
+      readonly entry: DirectoryEntryStatement | null;
+      readonly at: number;
+    }
+  | {
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company' | 'not-signed';
+      readonly says: string;
+    };
 
 /** Who holds the account, as an answer carries it, or null for a shape no wallet writes. */
 const readSeats = (value: unknown): AccountSeats | null => {
   const v = value as Partial<AccountSeats> | null;
-  if (typeof v !== 'object' || v === null || !Array.isArray(v.committee) || !Array.isArray(v.seats)
-    || !Number.isSafeInteger(v.threshold) || (v.threshold as number) < 0) return null;
+  if (
+    typeof v !== 'object' ||
+    v === null ||
+    !Array.isArray(v.committee) ||
+    !Array.isArray(v.seats) ||
+    !Number.isSafeInteger(v.threshold) ||
+    (v.threshold as number) < 0
+  )
+    return null;
   const committee: { tag: string; value: string }[] = [];
   for (const k of v.committee) {
     const key = readCommitteeKey(k);
     if (key === null) return null;
     committee.push({ tag: key.tag, value: key.value });
   }
-  if (!v.seats.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.seats).size !== v.seats.length) return null;
-  return Object.freeze({ committee: Object.freeze(committee), threshold: v.threshold as number, seats: Object.freeze([...v.seats as string[]]) });
+  if (!v.seats.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.seats).size !== v.seats.length)
+    return null;
+  return Object.freeze({
+    committee: Object.freeze(committee),
+    threshold: v.threshold as number,
+    seats: Object.freeze([...(v.seats as string[])])
+  });
 };
 
 /** Who holds a vault, as an answer carries it, or null for a shape no wallet writes. */
 const readVaultHolders = (value: unknown): VaultHolders | null => {
   const v = value as Partial<VaultHolders> | null;
-  if (typeof v !== 'object' || v === null || typeof v.vault !== 'string' || !HEX64.test(v.vault)
-    || typeof v.account !== 'string' || !HEX64.test(v.account) || !Array.isArray(v.committee)
-    || !Number.isSafeInteger(v.threshold) || (v.threshold as number) < 0) return null;
+  if (
+    typeof v !== 'object' ||
+    v === null ||
+    typeof v.vault !== 'string' ||
+    !HEX64.test(v.vault) ||
+    typeof v.account !== 'string' ||
+    !HEX64.test(v.account) ||
+    !Array.isArray(v.committee) ||
+    !Number.isSafeInteger(v.threshold) ||
+    (v.threshold as number) < 0
+  )
+    return null;
   const committee: { tag: string; value: string }[] = [];
   for (const k of v.committee) {
     const key = readCommitteeKey(k);
     if (key === null) return null;
     committee.push({ tag: key.tag, value: key.value });
   }
-  return Object.freeze({ vault: v.vault, account: v.account, committee: Object.freeze(committee), threshold: v.threshold as number });
+  return Object.freeze({
+    vault: v.vault,
+    account: v.account,
+    committee: Object.freeze(committee),
+    threshold: v.threshold as number
+  });
 };
 
 /**
@@ -564,64 +709,106 @@ const readVaultHolders = (value: unknown): VaultHolders | null => {
 export function readRecordsKeyAnswer(
   message: unknown,
   expecting: {
-    readonly atOrigin: string; readonly expectingNonce: string;
-    readonly company: CompanyLabel; readonly account: AccountAddress; readonly seat: string;
+    readonly atOrigin: string;
+    readonly expectingNonce: string;
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
+    readonly seat: string;
     /** The vault the ask named, when it named one: the answer must carry who holds exactly that vault. */
     readonly vault?: string;
     /** The filing key the ask named, when it named one: the answer must carry the entry signed for exactly it. */
     readonly signingKey?: string;
-  },
+  }
 ): RecordsKeyRead {
   const body = message as Partial<RecordsKeyAnswer> | null;
   if (typeof body !== 'object' || body === null || body.schema !== RECORDS_KEY_ANSWER_SCHEMA) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed records key.' };
   }
   if (body.origin !== expecting.atOrigin) {
-    return { ok: false, code: 'origin-mismatch', says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was signed for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
+    };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
   if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
-    return { ok: false, code: 'other-company', says: 'this signs a records key for a different company from the one asked about. It is refused.' };
+    return {
+      ok: false,
+      code: 'other-company',
+      says: 'this signs a records key for a different company from the one asked about. It is refused.'
+    };
   }
   const committeeKey = readCommitteeKey(body.committeeKey);
   const statement = body.statement;
   const seats = readSeats(body.seats);
   const vault = expecting.vault === undefined ? null : readVaultHolders(body.vault);
   if (expecting.vault !== undefined && (vault === null || vault.vault !== expecting.vault)) {
-    return { ok: false, code: 'not-an-answer', says: 'that answer does not say who holds the vault that was asked about.' };
+    return {
+      ok: false,
+      code: 'not-an-answer',
+      says: 'that answer does not say who holds the vault that was asked about.'
+    };
   }
-  if (committeeKey === null || seats === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)
-    || typeof statement !== 'object' || statement === null) {
+  if (
+    committeeKey === null ||
+    seats === null ||
+    typeof body.at !== 'number' ||
+    !Number.isSafeInteger(body.at) ||
+    typeof statement !== 'object' ||
+    statement === null
+  ) {
     return { ok: false, code: 'not-an-answer', says: 'that is not a signed records key.' };
   }
-  if (statement.seat !== expecting.seat || !recordsKeySignedBy(expecting.company, expecting.account, committeeKey, statement)) {
+  if (
+    statement.seat !== expecting.seat ||
+    !recordsKeySignedBy(expecting.company, expecting.account, committeeKey, statement)
+  ) {
     return {
-      ok: false, code: 'not-signed',
-      says: 'this answer does not carry your records key signed by your wallet for this company and your seat. It is refused.',
+      ok: false,
+      code: 'not-signed',
+      says: 'this answer does not carry your records key signed by your wallet for this company and your seat. It is refused.'
     };
   }
   let entry: DirectoryEntryStatement | null = null;
   if (expecting.signingKey !== undefined) {
     const e = body.entry;
-    if (typeof e !== 'object' || e === null || e.signingKey !== expecting.signingKey || e.seat !== expecting.seat
-      || e.wrappingKey !== statement.recordsKey || !directoryEntrySignedBy(expecting.company, expecting.account, committeeKey, e)) {
+    if (
+      typeof e !== 'object' ||
+      e === null ||
+      e.signingKey !== expecting.signingKey ||
+      e.seat !== expecting.seat ||
+      e.wrappingKey !== statement.recordsKey ||
+      !directoryEntrySignedBy(expecting.company, expecting.account, committeeKey, e)
+    ) {
       return {
-        ok: false, code: 'not-signed',
-        says: 'this answer does not carry your directory entry signed by your wallet for this company, your filing key and your seat. It is refused.',
+        ok: false,
+        code: 'not-signed',
+        says: 'this answer does not carry your directory entry signed by your wallet for this company, your filing key and your seat. It is refused.'
       };
     }
-    entry = Object.freeze({ account: e.account, signingKey: e.signingKey, wrappingKey: e.wrappingKey, seat: e.seat, signature: e.signature });
+    entry = Object.freeze({
+      account: e.account,
+      signingKey: e.signingKey,
+      wrappingKey: e.wrappingKey,
+      seat: e.seat,
+      signature: e.signature
+    });
   }
   return {
     ok: true,
     committeeKey: { tag: committeeKey.tag, value: committeeKey.value },
-    statement: Object.freeze({ recordsKey: statement.recordsKey, seat: statement.seat, signature: statement.signature }),
+    statement: Object.freeze({
+      recordsKey: statement.recordsKey,
+      seat: statement.seat,
+      signature: statement.signature
+    }),
     seats,
     vault,
     entry,
-    at: body.at,
+    at: body.at
   };
 }
 
@@ -735,9 +922,20 @@ export interface HoldersAnswer {
 const readHolders = (value: unknown): AccountHolders | null => {
   const seats = readSeats(value);
   const v = value as Partial<AccountHolders> | null;
-  if (seats === null || v === null || typeof v !== 'object' || !Number.isSafeInteger(v.approvals)
-    || (v.approvals as number) < 1 || !Array.isArray(v.adoptedVaults)) return null;
-  if (!v.adoptedVaults.every((x) => typeof x === 'string' && HEX64.test(x)) || new Set(v.adoptedVaults).size !== v.adoptedVaults.length) return null;
+  if (
+    seats === null ||
+    v === null ||
+    typeof v !== 'object' ||
+    !Number.isSafeInteger(v.approvals) ||
+    (v.approvals as number) < 1 ||
+    !Array.isArray(v.adoptedVaults)
+  )
+    return null;
+  if (
+    !v.adoptedVaults.every((x) => typeof x === 'string' && HEX64.test(x)) ||
+    new Set(v.adoptedVaults).size !== v.adoptedVaults.length
+  )
+    return null;
   const governance = readGovernance(v);
   if (governance === null) return null;
   if (typeof v.founding !== 'string' || !HEX64.test(v.founding)) return null;
@@ -749,8 +947,11 @@ const readHolders = (value: unknown): AccountHolders | null => {
     foundingCommittee.push({ tag: key.tag, value: key.value });
   }
   return Object.freeze({
-    ...seats, ...governance, adoptedVaults: Object.freeze([...v.adoptedVaults as string[]]), founding: v.founding,
-    foundingCommittee: Object.freeze(foundingCommittee),
+    ...seats,
+    ...governance,
+    adoptedVaults: Object.freeze([...(v.adoptedVaults as string[])]),
+    founding: v.founding,
+    foundingCommittee: Object.freeze(foundingCommittee)
   });
 };
 
@@ -765,8 +966,15 @@ const readGovernance = (v: Partial<AccountGovernance>): AccountGovernance | null
   const rows: { vault: string; threshold: number }[] = [];
   for (const r of v.vaultThresholds as unknown[]) {
     const row = r as Partial<{ vault: unknown; threshold: unknown }> | null;
-    if (row === null || typeof row !== 'object' || typeof row.vault !== 'string' || !HEX64.test(row.vault)
-      || !Number.isSafeInteger(row.threshold) || (row.threshold as number) < 0) return null;
+    if (
+      row === null ||
+      typeof row !== 'object' ||
+      typeof row.vault !== 'string' ||
+      !HEX64.test(row.vault) ||
+      !Number.isSafeInteger(row.threshold) ||
+      (row.threshold as number) < 0
+    )
+      return null;
     rows.push(Object.freeze({ vault: row.vault, threshold: row.threshold as number }));
   }
   if (new Set(rows.map((r) => r.vault)).size !== rows.length) return null;
@@ -774,7 +982,12 @@ const readGovernance = (v: Partial<AccountGovernance>): AccountGovernance | null
   if (policyBar !== null && (!Number.isSafeInteger(policyBar) || (policyBar as number) < 0)) return null;
   const seatBar = seatBarOf(approvals as number, policyBar as number | null);
   if (v.seatBar !== seatBar) return null;
-  return { approvals: approvals as number, vaultThresholds: Object.freeze(rows), policyBar: policyBar as number | null, seatBar };
+  return {
+    approvals: approvals as number,
+    vaultThresholds: Object.freeze(rows),
+    policyBar: policyBar as number | null,
+    seatBar
+  };
 };
 
 /**
@@ -782,24 +995,38 @@ const readGovernance = (v: Partial<AccountGovernance>): AccountGovernance | null
  * asked.
  */
 export function holdersAnswerFor(
-  request: HoldersRequest, holders: AccountHolders, at: number, payments?: AccountPaymentFacts, indexer?: WalletIndexer,
-  roles?: readonly AccountRoleEntry[],
+  request: HoldersRequest,
+  holders: AccountHolders,
+  at: number,
+  payments?: AccountPaymentFacts,
+  indexer?: WalletIndexer,
+  roles?: readonly AccountRoleEntry[]
 ): HoldersAnswer {
   if (!usableOrigin(request.requester.origin)) {
     throw new RecordsKeyRefused('This wallet could not tell who asked, so nothing has been handed back.');
   }
   const asked = request.movements;
-  if ((asked === undefined) !== (payments === undefined)
-    || (payments !== undefined && readPayments(payments, asked!) === null)) {
-    throw new RecordsKeyRefused('This wallet did not read the payments the page asked about, so nothing has been handed back.');
+  if (
+    (asked === undefined) !== (payments === undefined) ||
+    (payments !== undefined && readPayments(payments, asked!) === null)
+  ) {
+    throw new RecordsKeyRefused(
+      'This wallet did not read the payments the page asked about, so nothing has been handed back.'
+    );
   }
   if (readGovernance(holders) === null) {
-    throw new RecordsKeyRefused('This wallet did not read the approvals the account asks for, so nothing has been handed back.');
+    throw new RecordsKeyRefused(
+      'This wallet did not read the approvals the account asks for, so nothing has been handed back.'
+    );
   }
   const rolesAsked = request.roles;
-  if ((rolesAsked === undefined) !== (roles === undefined)
-    || (roles !== undefined && readRoles(roles, rolesAsked!) === null)) {
-    throw new RecordsKeyRefused('This wallet did not read the entries of the account the page asked about, so nothing has been handed back.');
+  if (
+    (rolesAsked === undefined) !== (roles === undefined) ||
+    (roles !== undefined && readRoles(roles, rolesAsked!) === null)
+  ) {
+    throw new RecordsKeyRefused(
+      'This wallet did not read the entries of the account the page asked about, so nothing has been handed back.'
+    );
   }
   return Object.freeze({
     schema: HOLDERS_ANSWER_SCHEMA,
@@ -809,15 +1036,22 @@ export function holdersAnswerFor(
     nonce: request.nonce,
     at,
     holders: Object.freeze({
-      committee: frozenKeys(holders.committee), threshold: holders.threshold, seats: Object.freeze([...holders.seats]),
-      approvals: holders.approvals, vaultThresholds: Object.freeze(holders.vaultThresholds.map((r) => Object.freeze({ vault: r.vault, threshold: r.threshold }))),
-      policyBar: holders.policyBar, seatBar: holders.seatBar,
-      adoptedVaults: Object.freeze([...holders.adoptedVaults]), founding: holders.founding,
-      foundingCommittee: frozenKeys(holders.foundingCommittee),
+      committee: frozenKeys(holders.committee),
+      threshold: holders.threshold,
+      seats: Object.freeze([...holders.seats]),
+      approvals: holders.approvals,
+      vaultThresholds: Object.freeze(
+        holders.vaultThresholds.map((r) => Object.freeze({ vault: r.vault, threshold: r.threshold }))
+      ),
+      policyBar: holders.policyBar,
+      seatBar: holders.seatBar,
+      adoptedVaults: Object.freeze([...holders.adoptedVaults]),
+      founding: holders.founding,
+      foundingCommittee: frozenKeys(holders.foundingCommittee)
     }),
     ...(payments === undefined ? {} : { payments: readPayments(payments, asked!)! }),
     ...(roles === undefined ? {} : { roles: readRoles(roles, rolesAsked!)! }),
-    ...(indexer === undefined || walletIndexerOf(indexer) === null ? {} : { indexer: walletIndexerOf(indexer)! }),
+    ...(indexer === undefined || walletIndexerOf(indexer) === null ? {} : { indexer: walletIndexerOf(indexer)! })
   });
 }
 
@@ -825,7 +1059,8 @@ export function holdersAnswerFor(
 const readPayments = (value: unknown, asked: readonly string[]): AccountPaymentFacts | null => {
   const v = value as Partial<AccountPaymentFacts> | null;
   if (v === null || typeof v !== 'object' || !Array.isArray(v.held) || !Array.isArray(v.openRounds)) return null;
-  if (v.payKeyCommitment !== null && (typeof v.payKeyCommitment !== 'string' || !HEX64.test(v.payKeyCommitment))) return null;
+  if (v.payKeyCommitment !== null && (typeof v.payKeyCommitment !== 'string' || !HEX64.test(v.payKeyCommitment)))
+    return null;
   const held = v.held as unknown[];
   const askedSet = new Set(asked);
   if (!held.every((e) => typeof e === 'string' && askedSet.has(e)) || new Set(held).size !== held.length) return null;
@@ -834,10 +1069,12 @@ const readPayments = (value: unknown, asked: readonly string[]): AccountPaymentF
   /* Every entry held of those asked is one of the entries the record holds, so there are at least as many. */
   if (!Number.isSafeInteger(v.entries) || (v.entries as number) < held.length) return null;
   const order = new Map(asked.map((e, i) => [e, i]));
-  const sorted = [...held as string[]].sort((a, b) => order.get(a)! - order.get(b)!);
+  const sorted = [...(held as string[])].sort((a, b) => order.get(a)! - order.get(b)!);
   return Object.freeze({
-    payKeyCommitment: v.payKeyCommitment as string | null, held: Object.freeze(sorted),
-    openRounds: Object.freeze([...open as string[]].sort()), entries: v.entries as number,
+    payKeyCommitment: v.payKeyCommitment as string | null,
+    held: Object.freeze(sorted),
+    openRounds: Object.freeze([...(open as string[])].sort()),
+    entries: v.entries as number
   });
 };
 
@@ -865,13 +1102,20 @@ export interface AccountHoldersRead extends AccountHolders {
 
 export type HoldersRead =
   | {
-    readonly ok: true; readonly holders: AccountHoldersRead; readonly at: number; readonly payments?: AccountPaymentFacts;
-    /** What the account holds under each entry of its map of roles the page asked about, in the order asked. */
-    readonly roles?: readonly AccountRoleEntry[];
-    /** The indexer the wallet said it read through, or null when it said none. */
-    readonly indexer: WalletIndexer | null;
-  }
-  | { readonly ok: false; readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company'; readonly says: string };
+      readonly ok: true;
+      readonly holders: AccountHoldersRead;
+      readonly at: number;
+      readonly payments?: AccountPaymentFacts;
+      /** What the account holds under each entry of its map of roles the page asked about, in the order asked. */
+      readonly roles?: readonly AccountRoleEntry[];
+      /** The indexer the wallet said it read through, or null when it said none. */
+      readonly indexer: WalletIndexer | null;
+    }
+  | {
+      readonly ok: false;
+      readonly code: 'not-an-answer' | 'origin-mismatch' | 'nonce-mismatch' | 'other-company';
+      readonly says: string;
+    };
 
 /**
  * **THE PAGE'S SIDE OF A HOLDERS ANSWER.** Every expectation is the page's own:
@@ -881,26 +1125,36 @@ export type HoldersRead =
 export function readHoldersAnswer(
   message: unknown,
   expecting: {
-    readonly atOrigin: string; readonly expectingNonce: string;
-    readonly company: CompanyLabel; readonly account: AccountAddress;
+    readonly atOrigin: string;
+    readonly expectingNonce: string;
+    readonly company: CompanyLabel;
+    readonly account: AccountAddress;
     /** The entries of the account's record of payments the page asked about, when it asked. */
     readonly movements?: readonly string[];
     /** The entries of the account's map of roles the page asked about, when it asked. */
     readonly roles?: readonly string[];
-  },
+  }
 ): HoldersRead {
   const body = message as Partial<HoldersAnswer> | null;
   if (typeof body !== 'object' || body === null || body.schema !== HOLDERS_ANSWER_SCHEMA) {
     return { ok: false, code: 'not-an-answer', says: 'that is not an answer saying who holds the company.' };
   }
   if (body.origin !== expecting.atOrigin) {
-    return { ok: false, code: 'origin-mismatch', says: `this was read for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.` };
+    return {
+      ok: false,
+      code: 'origin-mismatch',
+      says: `this was read for ${String(body.origin)} and arrived at ${expecting.atOrigin}. It is refused.`
+    };
   }
   if (body.nonce !== expecting.expectingNonce) {
     return { ok: false, code: 'nonce-mismatch', says: 'this answers a different request from the one that was sent.' };
   }
   if (readCompanyLabel(body.company) !== expecting.company || readAccountAddress(body.account) !== expecting.account) {
-    return { ok: false, code: 'other-company', says: 'this says who holds a different company from the one asked about. It is refused.' };
+    return {
+      ok: false,
+      code: 'other-company',
+      says: 'this says who holds a different company from the one asked about. It is refused.'
+    };
   }
   const holders = readHolders(body.holders);
   if (holders === null || typeof body.at !== 'number' || !Number.isSafeInteger(body.at)) {
@@ -921,18 +1175,29 @@ export function readHoldersAnswer(
   let roles: readonly AccountRoleEntry[] | undefined;
   if (expecting.roles === undefined) {
     if (body.roles !== undefined) {
-      return { ok: false, code: 'not-an-answer', says: 'that answer says what the account holds under its roles when nobody asked.' };
+      return {
+        ok: false,
+        code: 'not-an-answer',
+        says: 'that answer says what the account holds under its roles when nobody asked.'
+      };
     }
   } else {
     const read = readRoles(body.roles, expecting.roles);
     if (read === null) {
-      return { ok: false, code: 'not-an-answer', says: 'that answer does not say what the account holds under each of the entries asked about.' };
+      return {
+        ok: false,
+        code: 'not-an-answer',
+        says: 'that answer does not say what the account holds under each of the entries asked about.'
+      };
     }
     roles = read;
   }
   return {
-    ok: true, holders: Object.freeze({ ...holders, account: expecting.account }), at: body.at,
-    ...(payments === undefined ? {} : { payments }), ...(roles === undefined ? {} : { roles }),
-    indexer: walletIndexerOf(body.indexer),
+    ok: true,
+    holders: Object.freeze({ ...holders, account: expecting.account }),
+    at: body.at,
+    ...(payments === undefined ? {} : { payments }),
+    ...(roles === undefined ? {} : { roles }),
+    indexer: walletIndexerOf(body.indexer)
   };
 }

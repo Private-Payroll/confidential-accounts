@@ -31,23 +31,32 @@ export function removalsWhenTheSecretWasSet(
     readonly removalCountKey?: () => Uint8Array;
   },
   steps: { readonly vault: readonly ContractHistoryEntry[]; readonly account: readonly ContractHistoryEntry[] },
-  commitment: string,
+  commitment: string
 ): number {
   const key = read.removalCountKey;
-  if (typeof key !== 'function') throw new Error('this device was not given the account\'s function for where it keeps its removal count. Reload the page.');
+  if (typeof key !== 'function')
+    throw new Error(
+      "this device was not given the account's function for where it keeps its removal count. Reload the page."
+    );
   const wanted = commitment.toLowerCase();
   const set = steps.vault.find((s) => s.succeeded && hex(read.vault(s.state).nonceCommitment) === wanted);
   if (set === undefined) {
-    throw new Error('the vault\'s history at the indexer your wallet names does not yet show its secret being set. Try again shortly.');
+    throw new Error(
+      "the vault's history at the indexer your wallet names does not yet show its secret being set. Try again shortly."
+    );
   }
   const before = steps.account.filter((s) => s.succeeded && s.block.height < set.block.height).at(-1);
   if (before === undefined) {
-    throw new Error('the account\'s history at the indexer your wallet names does not reach back to when the vault\'s secret was set. Try again shortly.');
+    throw new Error(
+      "the account's history at the indexer your wallet names does not reach back to when the vault's secret was set. Try again shortly."
+    );
   }
   const was = read.account(before.state);
   const after = steps.account.filter((s) => s.succeeded && s.block.height === set.block.height).at(-1);
   if (after === undefined) {
-    throw new Error('the account\'s history at the indexer your wallet names does not show the block the vault\'s secret was set in, so who was seated then was not read. Try again shortly.');
+    throw new Error(
+      "the account's history at the indexer your wallet names does not show the block the vault's secret was set in, so who was seated then was not read. Try again shortly."
+    );
   }
   const still = new Set([...read.account(after.state).proposalHolds].map(([k]) => hex(k)));
   const closed = [...was.proposalHolds].filter(([k]) => !still.has(hex(k))).map(([, h]) => h.removals);

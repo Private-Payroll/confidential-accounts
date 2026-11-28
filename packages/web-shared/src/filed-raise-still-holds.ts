@@ -13,8 +13,11 @@ type DirectoryRead = Awaited<ReturnType<CompanyRecordsHere['directory']>>;
 
 /** The signing keys of the seats the directory names, not retired, whose seat the chain holds now. */
 export const sittingSigningKeysIn = (here: DirectoryRead, onTheChain: ReadonlySet<string>): ReadonlySet<string> =>
-  new Set(here.dir.seats.filter((x) => x.retired === null && onTheChain.has(String(x.seat).toLowerCase()))
-    .map((x) => String(x.signingKey).toLowerCase()));
+  new Set(
+    here.dir.seats
+      .filter((x) => x.retired === null && onTheChain.has(String(x.seat).toLowerCase()))
+      .map((x) => String(x.signingKey).toLowerCase())
+  );
 
 /**
  * The records of `filed` whose raise still holds by the chain's time, as `holdsAt` judges it (one raise window of when
@@ -22,15 +25,19 @@ export const sittingSigningKeysIn = (here: DirectoryRead, onTheChain: ReadonlySe
  * with a deadline is waiting: the caller refuses then, never lets the record pass as gone.
  */
 export const raisesStillHolding = async <T extends { readonly raiseBy?: string }>(
-  filed: readonly T[], chainTime: (() => Promise<number>) | undefined,
-  holdsAt: (raiseBy: string, atMs: number) => boolean = raiseHoldsWhatItNamesAt,
+  filed: readonly T[],
+  chainTime: (() => Promise<number>) | undefined,
+  holdsAt: (raiseBy: string, atMs: number) => boolean = raiseHoldsWhatItNamesAt
 ): Promise<readonly T[] | 'time-not-read'> => {
   const dated = filed.filter((x) => x.raiseBy !== undefined);
   if (dated.length === 0) return [];
-  const at = chainTime === undefined ? undefined : await chainTime().catch(() => {
-    /* A chain time not read is refused by the caller with words to try again, never let through. */
-    return undefined;
-  });
+  const at =
+    chainTime === undefined
+      ? undefined
+      : await chainTime().catch(() => {
+          /* A chain time not read is refused by the caller with words to try again, never let through. */
+          return undefined;
+        });
   if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0) return 'time-not-read';
   return dated.filter((x) => holdsAt(x.raiseBy!, at));
 };

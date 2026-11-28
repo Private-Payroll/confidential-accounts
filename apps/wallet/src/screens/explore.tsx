@@ -88,56 +88,56 @@ const SIX: readonly Coming[] = [
     /* The document you would otherwise have handed over. */
     glyph: GLYPH.details,
     name: 'ZK KYC',
-    says: 'Prove you passed a check without handing over the documents you passed it with.',
+    says: 'Prove you passed a check without handing over the documents you passed it with.'
   },
   {
     /* Checked, and still covered. */
     glyph: GLYPH.secured,
     name: 'Proof of Personhood',
-    says: 'Prove there is one person behind this wallet, without proving which person.',
+    says: 'Prove there is one person behind this wallet, without proving which person.'
   },
   {
     /* Money arriving, which is the whole of what winning is. */
     glyph: GLYPH.receive,
     name: 'Private Lottery',
-    says: 'Buy a ticket and be paid if you win, without a list of who played.',
+    says: 'Buy a ticket and be paid if you win, without a list of who played.'
   },
   {
     /* Something delivered to an organisation. */
     glyph: GLYPH.inbox,
     name: 'Whistleblow',
-    says: 'Say something to an organisation that cannot work out who said it.',
+    says: 'Say something to an organisation that cannot work out who said it.'
   },
   {
     glyph: GLYPH.earn,
     name: 'Earn',
-    says: 'Put NIGHT to work without handing it to anybody.',
+    says: 'Put NIGHT to work without handing it to anybody.'
   },
   {
     /* The mark a ballot carries. */
     glyph: GLYPH.chosen,
     name: 'Vote',
-    says: 'Cast a vote that counts once and names nobody.',
-  },
+    says: 'Cast a vote that counts once and names nobody.'
+  }
 ];
 
 export function Explore(): ReactNode {
   return (
     <div className="flex flex-col gap-8">
       {/* THE HEADING STAYS, AND IT IS NOT AN EXCEPTION TO *nothing else*.
-        * `app.tsx` moves focus to `main` on every navigation so a screen
-        * reader announces the room from its heading, and `screens/notbuilt.tsx`
-        * printed `Explore` here before this screen existed. Removing it would
-        * take the room's name away from the one person who cannot see the rail
-        * highlighting it. It is the place's name and no sentence follows it. */}
+       * `app.tsx` moves focus to `main` on every navigation so a screen
+       * reader announces the room from its heading, and `screens/notbuilt.tsx`
+       * printed `Explore` here before this screen existed. Removing it would
+       * take the room's name away from the one person who cannot see the rail
+       * highlighting it. It is the place's name and no sentence follows it. */}
       <h1 className="m-0">Explore</h1>
 
       {/* THREE ACROSS ABOVE THE LAYOUT SWITCH, NOT FOUR. `ShortcutTiles` is
-        * built for Home's set of four (`components/rows.tsx`); six tiles in a
-        * four-wide grid is a row of four and an orphaned pair. The override
-        * goes through `cn`, which is `tailwind-merge` and REPLACES rather than
-        * appends — measured. Two across on a phone is
-        * the kit's own default and is untouched. */}
+       * built for Home's set of four (`components/rows.tsx`); six tiles in a
+       * four-wide grid is a row of four and an orphaned pair. The override
+       * goes through `cn`, which is `tailwind-merge` and REPLACES rather than
+       * appends — measured. Two across on a phone is
+       * the kit's own default and is untouched. */}
       <ShortcutTiles className="md:grid-cols-3">
         {SIX.map((one) => (
           <ShortcutTile

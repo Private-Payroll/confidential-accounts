@@ -143,7 +143,7 @@ export function companyLabelBytes(label: CompanyLabel): Uint8Array {
  * the service could choose.
  */
 export function drawCompanyLabel(
-  random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n)),
+  random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))
 ): CompanyLabel {
   const bytes = random(LABEL_BYTES);
   return companyLabelOf(bytes);

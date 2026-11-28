@@ -24,17 +24,18 @@ export interface SuperAdminReach {
 
 /** The headers a call carries: a signer reads as a member; anyone acting, or reading with their key, carries the signed request. */
 const headersFor = async (reach: SuperAdminReach, acting: boolean): Promise<Record<string, string>> =>
-  (reach.asSuperAdmin || acting ? (await superAdminSigned(reach.company, ACCOUNT_ORIGIN)).headers : {});
+  reach.asSuperAdmin || acting ? (await superAdminSigned(reach.company, ACCOUNT_ORIGIN)).headers : {};
 
 /** The super admins' asks of the company, over the page's service transport (each carries the headers it is given) and the person's wallet. */
 const asksOf = (reach: SuperAdminReach): SuperAdminAsks => superAdminOnPage(reach.company.accountId, ACCOUNT_ORIGIN);
 
 /** The signatures the service keeps for the company's change, read with the headers a read carries. */
 const keptFor = async (reach: SuperAdminReach): Promise<{ changes?: unknown; signatures?: unknown }> =>
-  await asksOf(reach).kept(await headersFor(reach, false)) as { changes?: unknown; signatures?: unknown };
+  (await asksOf(reach).kept(await headersFor(reach, false))) as { changes?: unknown; signatures?: unknown };
 
 /** One contract's update sent, with the signed request. */
-const sendUpdate = async (reach: SuperAdminReach, update: unknown): Promise<unknown> => asksOf(reach).send(update, await headersFor(reach, true));
+const sendUpdate = async (reach: SuperAdminReach, update: unknown): Promise<unknown> =>
+  asksOf(reach).send(update, await headersFor(reach, true));
 
 /** The service as a super admin's device reaches it for a change it keeps. */
 export const superAdminService = (reach: SuperAdminReach): SuperAdminService => ({
@@ -45,12 +46,21 @@ export const superAdminService = (reach: SuperAdminReach): SuperAdminService => 
   },
   kept: async () => {
     const got = await keptFor(reach);
-    return Array.isArray(got.changes) ? got.changes as KeptChange[] : [];
+    return Array.isArray(got.changes) ? (got.changes as KeptChange[]) : [];
   },
-  keepSignatures: async (body) => asksOf(reach).keep({
-    to: { committee: body.to.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: body.to.threshold },
-    signatures: body.signatures.map((s) => ({ address: s.address, counter: s.counter, index: s.index, signature: { tag: s.signature.tag, value: s.signature.value } })),
-  }, await headersFor(reach, true)),
+  keepSignatures: async (body) =>
+    asksOf(reach).keep(
+      {
+        to: { committee: body.to.committee.map((k) => ({ tag: k.tag, value: k.value })), threshold: body.to.threshold },
+        signatures: body.signatures.map((s) => ({
+          address: s.address,
+          counter: s.counter,
+          index: s.index,
+          signature: { tag: s.signature.tag, value: s.signature.value }
+        }))
+      },
+      await headersFor(reach, true)
+    )
 });
 
 /**
@@ -75,8 +85,8 @@ export async function superAdminDoorsFor(reach: SuperAdminReach): Promise<SuperA
       send: async (update) => sendUpdate(reach, update),
       collected: async () => {
         const got = await keptFor(reach);
-        return Array.isArray(got.signatures) ? got.signatures as SuperAdminSignature[] : [];
-      },
-    },
+        return Array.isArray(got.signatures) ? (got.signatures as SuperAdminSignature[]) : [];
+      }
+    }
   };
 }

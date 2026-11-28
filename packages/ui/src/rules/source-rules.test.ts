@@ -1,9 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LOADS_BY_ADDRESS, WALLET_GLOBALS, amountsOutsideTheComponent, arbitraryValues, classWordsOf, colourValues, declaredBy, englishSentences, gapsOf, gapsThatDiffer,
-  hasPhrase, inlineStyles, keysAskedFor, missingPhrases, paletteClasses, pathsIntoTheKit, physicalClasses, pluralOf, secondCn,
-  stateVariantsOf, statesNothingSets, bracketedStatesOf, undeclaredImports, utilityOf, waysIntoSharedCode, wordingCensus, wordingInCode, WORDING_POSITIONS, amountsMadeOutsideTheAdapters, type Source,
-  namedOutside, stylesReachingIntoComponents, variantsOf,
+  LOADS_BY_ADDRESS,
+  WALLET_GLOBALS,
+  amountsOutsideTheComponent,
+  arbitraryValues,
+  classWordsOf,
+  colourValues,
+  declaredBy,
+  englishSentences,
+  gapsOf,
+  gapsThatDiffer,
+  hasPhrase,
+  inlineStyles,
+  keysAskedFor,
+  missingPhrases,
+  paletteClasses,
+  pathsIntoTheKit,
+  physicalClasses,
+  pluralOf,
+  secondCn,
+  stateVariantsOf,
+  statesNothingSets,
+  bracketedStatesOf,
+  undeclaredImports,
+  utilityOf,
+  waysIntoSharedCode,
+  wordingCensus,
+  wordingInCode,
+  WORDING_POSITIONS,
+  amountsMadeOutsideTheAdapters,
+  type Source,
+  namedOutside,
+  stylesReachingIntoComponents,
+  variantsOf
 } from './source-rules.test-support.js';
 
 /*
@@ -16,11 +45,15 @@ const whats = (b: { what: string }[]) => b.map((x) => x.what);
 
 describe('imports', () => {
   /* `path` is declared, so a built-in is refused for being one and not only for being undeclared. */
-  const declared = declaredBy(JSON.stringify({ name: 'kit', dependencies: { 'radix-ui': '1', path: '1' }, peerDependencies: { react: '1' } }));
+  const declared = declaredBy(
+    JSON.stringify({ name: 'kit', dependencies: { 'radix-ui': '1', path: '1' }, peerDependencies: { react: '1' } })
+  );
 
   /* RED WHEN: a package the file's own package does not declare, a Node built-in, or a module worked out at run time is let through. */
   it('names every package imported and not declared', async () => {
-    const f = src('a.tsx', `import * as React from 'react';
+    const f = src(
+      'a.tsx',
+      `import * as React from 'react';
       import { Slot } from 'radix-ui';
       import { cva } from 'class-variance-authority';
       import { x } from 'kit/lib/utils';
@@ -30,22 +63,35 @@ describe('imports', () => {
       import { readFileSync } from 'node:fs';
       import path from 'path';
       const n = await import(name);
-      console.log(React, Slot, cva, x, y, m, n, readFileSync, path);`);
-    expect(whats(await undeclaredImports([f], declared))).toEqual(['class-variance-authority', 'node:fs', 'path', '@scope/pkg/sub', 'i18next', 'name']);
+      console.log(React, Slot, cva, x, y, m, n, readFileSync, path);`
+    );
+    expect(whats(await undeclaredImports([f], declared))).toEqual([
+      'class-variance-authority',
+      'node:fs',
+      'path',
+      '@scope/pkg/sub',
+      'i18next',
+      'name'
+    ]);
   });
 
   /* RED WHEN: the rules read imports themselves again, so they and the walk that finds what a page reaches answer differently about a type-only import. */
   it('reads imports as the browser is served them: a type-only import is not one', async () => {
-    const f = src('a.ts', `import type { A } from 'undeclared-types';
+    const f = src(
+      'a.ts',
+      `import type { A } from 'undeclared-types';
       import { type B } from 'also-types';
       import { C } from 'kit';
-      export const c: A | B = C;`);
+      export const c: A | B = C;`
+    );
     expect(whats(await undeclaredImports([f], declared))).toEqual([]);
   });
 
   /* RED WHEN: a path into the kit's folder, however spelled, or a module inside the kit named through the package, is let through, or the package name or its stylesheet is refused. */
   it('names every path into the kit', async () => {
-    const f = src('apps/web/src/main.ts', `import 'vaults-ui/styles.css';
+    const f = src(
+      'apps/web/src/main.ts',
+      `import 'vaults-ui/styles.css';
       import * as formatter from 'vaults-ui/format/token-amount';
       import { Amount } from 'vaults-ui';
       import { DataTable } from 'vaults-ui/data-table';
@@ -55,19 +101,34 @@ describe('imports', () => {
       import { c } from '/packages/ui/src/lib/utils';
       import { e } from '../../../packages/UI/src/x.js';
       import { d } from './own.js';
-      console.log(a, b, c, d, e, formatter, Amount, DataTable, Table);`);
-    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['vaults-ui/format/token-amount', 'vaults-ui/components/table', '../../../packages/ui/src/index.js', '/packages/ui/src/lib/utils', '../../../packages/UI/src/x.js']);
+      console.log(a, b, c, d, e, formatter, Amount, DataTable, Table);`
+    );
+    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual([
+      'vaults-ui/format/token-amount',
+      'vaults-ui/components/table',
+      '../../../packages/ui/src/index.js',
+      '/packages/ui/src/lib/utils',
+      '../../../packages/UI/src/x.js'
+    ]);
   });
 
   /* RED WHEN: a path into the kit used only for a type is let through because the browser is never served it. */
   it('names a path into the kit that is used only for a type', async () => {
-    const f = src('apps/web/src/main.ts', `import type { X } from '../../../packages/ui/src/a.js';
+    const f = src(
+      'apps/web/src/main.ts',
+      `import type { X } from '../../../packages/ui/src/a.js';
       import { type Y } from '../../../packages/ui/src/b.js';
       export type { Z } from '../../../packages/ui/src/c.js';
       type W = typeof import('../../../packages/ui/src/d.js');
       import type { V } from 'vaults-ui';
-      export const v: X | Y | W | V = 1;`);
-    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual(['../../../packages/ui/src/a.js', '../../../packages/ui/src/b.js', '../../../packages/ui/src/c.js', '../../../packages/ui/src/d.js']);
+      export const v: X | Y | W | V = 1;`
+    );
+    expect(whats(await pathsIntoTheKit([f], '/repo', 'packages/ui'))).toEqual([
+      '../../../packages/ui/src/a.js',
+      '../../../packages/ui/src/b.js',
+      '../../../packages/ui/src/c.js',
+      '../../../packages/ui/src/d.js'
+    ]);
   });
 });
 
@@ -77,7 +138,9 @@ describe('the one way into shared code', () => {
 
   /* RED WHEN: a screen reaches the shared package, the product's code, the network or the wallet by any of these routes, however it is written, and the route is not named. */
   it('names every way a file outside the adapters reaches shared code, the service or the wallet', async () => {
-    const screen = src('apps/web/src/screens/vault.tsx', `import { read } from 'vaults-web-shared/device-vault-holdings.js';
+    const screen = src(
+      'apps/web/src/screens/vault.tsx',
+      `import { read } from 'vaults-web-shared/device-vault-holdings.js';
       import type { Answer } from 'vaults-web-shared/public-payment.js';
       import { assets } from '../../../../src/core/assets.js';
       import { pay } from '../../../../packages/web-shared/src/public-payment.js';
@@ -92,84 +155,222 @@ describe('the one way into shared code', () => {
       window[pick()]; addEventListener(\`message\`, h); const mod = await import(\`vaults-web-shared/\${n}.js\`); navigator.serviceWorker.register('/sw.js'); eval(code);
       new RTCPeerConnection(); new WebTransport(u); window.window.fetch('/a'); const t0 = window.top; const { window: w2 } = globalThis; const { ...rest } = window;
       const v = document.defaultView; new Function('x')(); setTimeout('go()', 1);
-      console.log(read, assets, pay, later, w, f, g, wallet, mods);`);
+      console.log(read, assets, pay, later, w, f, g, wallet, mods);`
+    );
     expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([
-      'imports vaults-web-shared/keyring.js', 'reaches ../../../../packages/web-shared/src/vault-worker-entry.ts', 'imports vaults-web-shared/device-vault-holdings.js', 'imports vaults-web-shared/public-payment.js', 'reaches ../../../../src/core/assets.js', 'reaches ../../../../packages/web-shared/src/public-payment.js',
-      'Worker', 'fetch', 'globalThis.fetch', 'window.fetch', 'window.fetch', 'window handed on',
-      'XMLHttpRequest', 'WebSocket', 'EventSource', '.sendBeacon', '.postMessage', '.contentWindow',
-      'window.open', 'window.midnight', 'postMessage', "addEventListener('message')", 'self.onmessage', 'import.meta.glob ../../../../packages/web-shared/src/*.ts',
-      'window.fetch', 'globalThis.open', 'globalThis handed on', 'midnight', 'window handed on', 'globalThis handed on',
-      'window.fetch', 'window.fetch', 'a global reached by a built name', "addEventListener('message')", 'import() of a module worked out at run time', '.serviceWorker',
-      'eval', 'RTCPeerConnection', 'WebTransport', 'window.fetch', 'top handed on', 'globalThis handed on',
-      'window handed on', 'defaultView handed on', 'Function', 'setTimeout given code as text',
+      'imports vaults-web-shared/keyring.js',
+      'reaches ../../../../packages/web-shared/src/vault-worker-entry.ts',
+      'imports vaults-web-shared/device-vault-holdings.js',
+      'imports vaults-web-shared/public-payment.js',
+      'reaches ../../../../src/core/assets.js',
+      'reaches ../../../../packages/web-shared/src/public-payment.js',
+      'Worker',
+      'fetch',
+      'globalThis.fetch',
+      'window.fetch',
+      'window.fetch',
+      'window handed on',
+      'XMLHttpRequest',
+      'WebSocket',
+      'EventSource',
+      '.sendBeacon',
+      '.postMessage',
+      '.contentWindow',
+      'window.open',
+      'window.midnight',
+      'postMessage',
+      "addEventListener('message')",
+      'self.onmessage',
+      'import.meta.glob ../../../../packages/web-shared/src/*.ts',
+      'window.fetch',
+      'globalThis.open',
+      'globalThis handed on',
+      'midnight',
+      'window handed on',
+      'globalThis handed on',
+      'window.fetch',
+      'window.fetch',
+      'a global reached by a built name',
+      "addEventListener('message')",
+      'import() of a module worked out at run time',
+      '.serviceWorker',
+      'eval',
+      'RTCPeerConnection',
+      'WebTransport',
+      'window.fetch',
+      'top handed on',
+      'globalThis handed on',
+      'window handed on',
+      'defaultView handed on',
+      'Function',
+      'setTimeout given code as text'
     ]);
   });
 
   /* RED WHEN: the adapters are refused, the application's own files are, or an ordinary name that is also a browser's (a dialog's open state, a property named fetch) is taken for one. */
   it('lets the adapters through, and the application reach its own files and the kit', async () => {
-    const adapter = src('apps/web/src/adapters/vault.ts', `import { readPublicHoldings } from 'vaults-web-shared/device-vault-holdings.js';
-      import { assets } from '../../../../src/core/assets.js'; fetch('/api');`);
-    const screen = src('apps/web/src/screens/vault.tsx', `import { vaultPublicMoney } from '../adapters/vault.js';
+    const adapter = src(
+      'apps/web/src/adapters/vault.ts',
+      `import { readPublicHoldings } from 'vaults-web-shared/device-vault-holdings.js';
+      import { assets } from '../../../../src/core/assets.js'; fetch('/api');`
+    );
+    const screen = src(
+      'apps/web/src/screens/vault.tsx',
+      `import { vaultPublicMoney } from '../adapters/vault.js';
       import { Amount } from 'vaults-ui'; import './vault.css'; import type { Props } from './props.js';
       const [open, setOpen] = useState(false); const o = { fetch: 1, open: 2 }; o.fetch; menu.open(); type T = typeof fetch;
       if (typeof window !== 'undefined') window.scrollTo(0, 0); type W = typeof window; const page = await import('./page.js');
       if (event.source === window) go(); const touch = 'ontouchstart' in window; const midnight = new Date(); midnight.setHours(0);
       const { innerWidth } = window; setTimeout(() => go(), 1);
-      el.addEventListener('click', h); console.log(vaultPublicMoney, Amount, open, setOpen);`);
+      el.addEventListener('click', h); console.log(vaultPublicMoney, Amount, open, setOpen);`
+    );
     expect(whats(await waysIntoSharedCode([adapter, screen], '/repo', OWN, LAYER))).toEqual([]);
     /* With no adapters, the adapter's own routes are named: the rule is not passing for want of reading them. */
-    expect(whats(await waysIntoSharedCode([adapter], '/repo', OWN, null))).toEqual(['imports vaults-web-shared/device-vault-holdings.js', 'reaches ../../../../src/core/assets.js', 'fetch']);
+    expect(whats(await waysIntoSharedCode([adapter], '/repo', OWN, null))).toEqual([
+      'imports vaults-web-shared/device-vault-holdings.js',
+      'reaches ../../../../src/core/assets.js',
+      'fetch'
+    ]);
   });
 
   /* RED WHEN: an amount, public or private, is made outside the adapters, by the name, through a namespace or taken apart from one, where its decimals would be typed rather than read from the token's record, or its visibility said by a screen; or the adapters, or a key of the file's own object that happens to share the name, are refused. */
   it('names every amount made outside the adapters', () => {
-    const screen = src('apps/web/src/screens/x.tsx', "import { publicAmount, privateAmount } from 'vaults-ui'; const a = publicAmount(1n, 2, 'NIGHT'); const b = kit.privateAmount; const c = { publicAmount: 1 }; kit['publicAmount']; const { privateAmount: m } = kit;");
-    const adapter = src('apps/web/src/adapters/x.ts', "import { publicAmount } from 'vaults-ui'; export const a = publicAmount(1n, asset.decimals, asset.symbol);");
-    expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual(['publicAmount', 'privateAmount', 'publicAmount', 'privateAmount', 'publicAmount', 'privateAmount']);
+    const screen = src(
+      'apps/web/src/screens/x.tsx',
+      "import { publicAmount, privateAmount } from 'vaults-ui'; const a = publicAmount(1n, 2, 'NIGHT'); const b = kit.privateAmount; const c = { publicAmount: 1 }; kit['publicAmount']; const { privateAmount: m } = kit;"
+    );
+    const adapter = src(
+      'apps/web/src/adapters/x.ts',
+      "import { publicAmount } from 'vaults-ui'; export const a = publicAmount(1n, asset.decimals, asset.symbol);"
+    );
+    expect(whats(amountsMadeOutsideTheAdapters([screen, adapter], '/repo', LAYER))).toEqual([
+      'publicAmount',
+      'privateAmount',
+      'publicAmount',
+      'privateAmount',
+      'publicAmount',
+      'privateAmount'
+    ]);
     expect(amountsMadeOutsideTheAdapters([screen], '/repo', LAYER).map((b) => b.line)).toEqual([1, 1, 1, 1, 1, 1]);
     expect(whats(amountsMadeOutsideTheAdapters([adapter], '/repo', null))).toEqual(['publicAmount', 'publicAmount']);
   });
 
   /* RED WHEN: two imports of one module are reported as one, or at the line of a comment that mentions it rather than at their own. */
   it('names each import at its own line', async () => {
-    const f = src('apps/web/src/x.ts', `// was: import type { A } from 'vaults-web-shared/a.js'
+    const f = src(
+      'apps/web/src/x.ts',
+      `// was: import type { A } from 'vaults-web-shared/a.js'
       const x = 1;
       import type { A } from 'vaults-web-shared/a.js';
       import { b } from 'vaults-web-shared/a.js';
-      export const y: A | typeof b | number = x;`);
-    expect((await waysIntoSharedCode([f], '/repo', OWN, LAYER)).map((b) => [b.line, b.what])).toEqual([[3, 'imports vaults-web-shared/a.js'], [4, 'imports vaults-web-shared/a.js']]);
+      export const y: A | typeof b | number = x;`
+    );
+    expect((await waysIntoSharedCode([f], '/repo', OWN, LAYER)).map((b) => [b.line, b.what])).toEqual([
+      [3, 'imports vaults-web-shared/a.js'],
+      [4, 'imports vaults-web-shared/a.js']
+    ]);
   });
 
   /* RED WHEN: a screen loads a page or a file by an element's address, moves the page by `location`, imports a module from another server, or reaches a wallet other than through the adapters, and the route is not named. */
   it('names a page loaded by an address, the page moved, a module from another server, and every wallet on the page', async () => {
-    const screen = src('apps/web/src/screens/x.tsx', `const a = <iframe src={u} />; const b = <img src="/logo.svg" />; const c = <script src={s} />; const d = <form action={to} />;
+    const screen = src(
+      'apps/web/src/screens/x.tsx',
+      `const a = <iframe src={u} />; const b = <img src="/logo.svg" />; const c = <script src={s} />; const d = <form action={to} />;
       const e = <object data={x} />; const g = <link href={h} />; const h2 = <button formAction={to} />; const i = document.createElement('script');
       const j = new Image(); location.href = u; window.location = u; document.location.assign(u); location.replace(u); window.location.reload();
       const k = await import('https://example.com/m.js'); const l = await import('//cdn.example.com/m.js');
       const m = window.ethereum; const n = window.cardano; const o = (globalThis as any).solana; const p = ethereum.request({});
-      console.log(a, b, c, d, e, g, h2, i, j, k, l, m, n, o, p);`);
+      console.log(a, b, c, d, e, g, h2, i, j, k, l, m, n, o, p);`
+    );
     expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([
-      'imports https://example.com/m.js from another server', 'imports //cdn.example.com/m.js from another server',
-      '<iframe src>', '<img src>', '<script src>', '<form action>', '<object data>', '<link href>', '<button formAction>', "createElement('script')",
-      'Image', 'location written to', 'location written to', 'location.assign', 'location.replace', 'location.reload',
-      'import() of https://example.com/m.js from another server', 'import() of //cdn.example.com/m.js from another server',
-      'window.ethereum', 'window.cardano', 'globalThis.solana', 'ethereum',
+      'imports https://example.com/m.js from another server',
+      'imports //cdn.example.com/m.js from another server',
+      '<iframe src>',
+      '<img src>',
+      '<script src>',
+      '<form action>',
+      '<object data>',
+      '<link href>',
+      '<button formAction>',
+      "createElement('script')",
+      'Image',
+      'location written to',
+      'location written to',
+      'location.assign',
+      'location.replace',
+      'location.reload',
+      'import() of https://example.com/m.js from another server',
+      'import() of //cdn.example.com/m.js from another server',
+      'window.ethereum',
+      'window.cardano',
+      'globalThis.solana',
+      'ethereum'
     ]);
     const statics = src('apps/web/src/screens/y.ts', "import { x } from 'https://example.com/m.js'; console.log(x);");
-    expect(whats(await waysIntoSharedCode([statics], '/repo', OWN, LAYER))).toEqual(['imports https://example.com/m.js from another server']);
+    expect(whats(await waysIntoSharedCode([statics], '/repo', OWN, LAYER))).toEqual([
+      'imports https://example.com/m.js from another server'
+    ]);
   });
 
   /* RED WHEN: any element and attribute that loads by its address, or any wallet's name on the page, is dropped from the rule's lists or not read. Written out by hand, so a name dropped from a list is seen. */
   it('names every element address and every wallet in its lists', async () => {
-    const pairs: [string, string][] = [['iframe', 'src'], ['iframe', 'srcDoc'], ['frame', 'src'], ['img', 'src'], ['img', 'srcSet'], ['script', 'src'], ['embed', 'src'], ['object', 'data'],
-      ['source', 'src'], ['source', 'srcSet'], ['video', 'src'], ['video', 'poster'], ['audio', 'src'], ['track', 'src'], ['link', 'href'], ['form', 'action'], ['button', 'formAction'], ['input', 'formAction'], ['input', 'src']];
-    expect(Object.entries(LOADS_BY_ADDRESS).flatMap(([e, as]) => as.map((a) => [e, a])).sort()).toEqual([...pairs].sort());
-    const tags = src('apps/web/src/screens/t.tsx', pairs.map(([e, a], i) => `const x${i} = <${e} ${a}={u} />;`).join('\n'));
+    const pairs: [string, string][] = [
+      ['iframe', 'src'],
+      ['iframe', 'srcDoc'],
+      ['frame', 'src'],
+      ['img', 'src'],
+      ['img', 'srcSet'],
+      ['script', 'src'],
+      ['embed', 'src'],
+      ['object', 'data'],
+      ['source', 'src'],
+      ['source', 'srcSet'],
+      ['video', 'src'],
+      ['video', 'poster'],
+      ['audio', 'src'],
+      ['track', 'src'],
+      ['link', 'href'],
+      ['form', 'action'],
+      ['button', 'formAction'],
+      ['input', 'formAction'],
+      ['input', 'src']
+    ];
+    expect(
+      Object.entries(LOADS_BY_ADDRESS)
+        .flatMap(([e, as]) => as.map((a) => [e, a]))
+        .sort()
+    ).toEqual([...pairs].sort());
+    const tags = src(
+      'apps/web/src/screens/t.tsx',
+      pairs.map(([e, a], i) => `const x${i} = <${e} ${a}={u} />;`).join('\n')
+    );
     expect(whats(await waysIntoSharedCode([tags], '/repo', OWN, LAYER))).toEqual(pairs.map(([e, a]) => `<${e} ${a}>`));
-    const wallets = ['midnight', 'cardano', 'ethereum', 'solana', 'phantom', 'keplr', 'bitcoin', 'unisat', 'tronWeb', 'aptos', 'sui', 'starknet', 'okxwallet', 'coinbaseWalletExtension', 'web3'];
+    const wallets = [
+      'midnight',
+      'cardano',
+      'ethereum',
+      'solana',
+      'phantom',
+      'keplr',
+      'bitcoin',
+      'unisat',
+      'tronWeb',
+      'aptos',
+      'sui',
+      'starknet',
+      'okxwallet',
+      'coinbaseWalletExtension',
+      'web3'
+    ];
     expect([...WALLET_GLOBALS].sort()).toEqual([...wallets].sort());
-    const onWindow = src('apps/web/src/screens/w.ts', wallets.map((w, i) => `const w${i} = window.${w};`).join('\n') + '\nconst a = new Audio(u);');
-    expect(whats(await waysIntoSharedCode([onWindow], '/repo', OWN, LAYER))).toEqual([...wallets.map((w) => `window.${w}`), 'Audio']);
+    const onWindow = src(
+      'apps/web/src/screens/w.ts',
+      wallets.map((w, i) => `const w${i} = window.${w};`).join('\n') + '\nconst a = new Audio(u);'
+    );
+    expect(whats(await waysIntoSharedCode([onWindow], '/repo', OWN, LAYER))).toEqual([
+      ...wallets.map((w) => `window.${w}`),
+      'Audio'
+    ]);
   });
 
   /*
@@ -180,17 +381,29 @@ describe('the one way into shared code', () => {
    * refused.
    */
   it('reads an address spread onto an element that loads by it', async () => {
-    const screen = src('apps/web/src/screens/s.tsx', `const a = <iframe {...{ src: u }} />; const b = <img {...{ 'srcSet': u }} />; const c = <script {...props} />;
+    const screen = src(
+      'apps/web/src/screens/s.tsx',
+      `const a = <iframe {...{ src: u }} />; const b = <img {...{ 'srcSet': u }} />; const c = <script {...props} />;
       const d = <link {...{ [k]: u }} />; const e = <form {...make()} />;
-      const f = <iframe {...{ title: 'x' }} />; const g = <span {...marks} />; const h = <div {...{ src: u }} />; console.log(a, b, c, d, e, f, g, h);`);
-    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual(['<iframe {...src}>', '<img {...srcSet}>', '<script {...}>', '<link {...}>', '<form {...}>']);
+      const f = <iframe {...{ title: 'x' }} />; const g = <span {...marks} />; const h = <div {...{ src: u }} />; console.log(a, b, c, d, e, f, g, h);`
+    );
+    expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([
+      '<iframe {...src}>',
+      '<img {...srcSet}>',
+      '<script {...}>',
+      '<link {...}>',
+      '<form {...}>'
+    ]);
   });
 
   /* RED WHEN: reading where the page is, a link to a page of the application, or the application's own history is refused as moving the page; or a name the file binds itself is taken for the browser's. */
   it('lets a screen read where the page is and link within the application', async () => {
-    const screen = src('apps/web/src/screens/z.tsx', `const at = window.location.pathname; const q = location.search; window.history.pushState(null, '', to);
+    const screen = src(
+      'apps/web/src/screens/z.tsx',
+      `const at = window.location.pathname; const q = location.search; window.history.pushState(null, '', to);
       const link = <a href={to} />; const pic = <HugeiconsIcon icon={i} />; const div = document.createElement('div');
-      const ethereum = 1; const location2 = { href: '' }; location2.href = 'x'; const place = { location: { href: '' } }; place.location.href = 'x'; console.log(at, q, link, pic, div, ethereum);`);
+      const ethereum = 1; const location2 = { href: '' }; location2.href = 'x'; const place = { location: { href: '' } }; place.location.href = 'x'; console.log(at, q, link, pic, div, ethereum);`
+    );
     expect(whats(await waysIntoSharedCode([screen], '/repo', OWN, LAYER))).toEqual([]);
   });
 
@@ -205,79 +418,181 @@ describe('one cn', () => {
   /* RED WHEN: the cn package, clsx or tailwind-merge is imported outside the kit's own cn, or a second cn is declared. */
   it('names every second cn', async () => {
     const home = src('lib/utils.ts', "import { clsx } from 'clsx'; export function cn() { return clsx(); }");
-    const other = src('components/x.tsx', `import { cn as c } from 'cn';
+    const other = src(
+      'components/x.tsx',
+      `import { cn as c } from 'cn';
       import { twMerge } from 'tailwind-merge';
       import { cn } from 'vaults-ui/lib/utils';
       import { cva, cx } from 'class-variance-authority';
       console.log(c, twMerge, cn, cva, cx);
-      const cn2 = 1; function cn() {} const f = () => { const cn = 2; };`);
-    expect(whats(await secondCn([home, other], 'lib/utils.ts'))).toEqual(['imports cn', 'imports tailwind-merge', 'imports cx', 'declares cn', 'declares cn']);
+      const cn2 = 1; function cn() {} const f = () => { const cn = 2; };`
+    );
+    expect(whats(await secondCn([home, other], 'lib/utils.ts'))).toEqual([
+      'imports cn',
+      'imports tailwind-merge',
+      'imports cx',
+      'declares cn',
+      'declares cn'
+    ]);
   });
 });
 
 describe('colours', () => {
   /* RED WHEN: a colour value in any of these spellings is let through, or a token or a colour-space name is taken for one. */
   it('names every colour value', () => {
-    const f = src('x.tsx', `const a = '#fff'; const b = "#A1B2C3"; const c = 'rgb(0 0 0)'; const d = 'hsl(1 2% 3%)';
+    const f = src(
+      'x.tsx',
+      `const a = '#fff'; const b = "#A1B2C3"; const c = 'rgb(0 0 0)'; const d = 'hsl(1 2% 3%)';
       const e = 'oklch(0.5 0 0)'; const g = "bg-[#123456]"; const h = 'rgba(0,0,0,.5)';
-      const ok = 'bg-primary hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] #main';`);
+      const ok = 'bg-primary hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] #main';`
+    );
     expect(whats(colourValues([f]))).toEqual(['#fff', '#A1B2C3', 'rgb(', 'hsl(', 'oklch(', '#123456', 'rgba(']);
   });
 
   /* RED WHEN: a palette colour in a class is let through behind a variant, an opacity or an arbitrary variant, or a token is refused. */
   it('names every palette colour in a class', () => {
-    const f = src('x.tsx', `const a = cn('bg-red-500 hover:text-white dark:border-zinc-200/50 ring-black', x && 'fill-sky-100');
+    const f = src(
+      'x.tsx',
+      `const a = cn('bg-red-500 hover:text-white dark:border-zinc-200/50 ring-black', x && 'fill-sky-100');
       const b = <div className="text-muted-foreground bg-primary text-sm border-transparent shadow-md" />;
-      const c = cva('[&>svg]:text-slate-400', { variants: { v: { a: 'bg-background' } } });`);
-    expect(whats(paletteClasses([f]))).toEqual(['bg-red-500', 'hover:text-white', 'dark:border-zinc-200/50', 'ring-black', 'fill-sky-100', '[&>svg]:text-slate-400']);
+      const c = cva('[&>svg]:text-slate-400', { variants: { v: { a: 'bg-background' } } });`
+    );
+    expect(whats(paletteClasses([f]))).toEqual([
+      'bg-red-500',
+      'hover:text-white',
+      'dark:border-zinc-200/50',
+      'ring-black',
+      'fill-sky-100',
+      '[&>svg]:text-slate-400'
+    ]);
   });
 
   /* RED WHEN: a palette colour held anywhere but in className, cn or cva is let through: a variable, a map, a return value, a stylesheet's @apply, a page's class. */
   it('names a palette colour wherever a string holds it', () => {
-    const f = src('x.tsx', `const held = 'bg-red-500'; const tones = { bad: 'text-white' }; function tone() { return 'border-zinc-300'; }
-      const d = <div className={held} />;`);
+    const f = src(
+      'x.tsx',
+      `const held = 'bg-red-500'; const tones = { bad: 'text-white' }; function tone() { return 'border-zinc-300'; }
+      const d = <div className={held} />;`
+    );
     const sheet = src('x.css', '.a { @apply bg-background text-rose-600; }');
     const page = src('x.html', '<div class="bg-primary text-black"></div>');
-    expect(whats(paletteClasses([f, sheet, page]))).toEqual(['bg-red-500', 'text-white', 'border-zinc-300', 'text-rose-600', 'text-black']);
+    expect(whats(paletteClasses([f, sheet, page]))).toEqual([
+      'bg-red-500',
+      'text-white',
+      'border-zinc-300',
+      'text-rose-600',
+      'text-black'
+    ]);
   });
 
   /* RED WHEN: any colour of the palette is let through as a class; every name the rule knows is written out here, so a name dropped from it goes red. */
   it('names a class in every colour of the palette', () => {
-    const names = ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose',
-      'slate', 'gray', 'zinc', 'neutral', 'stone', 'mauve', 'olive', 'mist', 'taupe'];
+    const names = [
+      'red',
+      'orange',
+      'amber',
+      'yellow',
+      'lime',
+      'green',
+      'emerald',
+      'teal',
+      'cyan',
+      'sky',
+      'blue',
+      'indigo',
+      'violet',
+      'purple',
+      'fuchsia',
+      'pink',
+      'rose',
+      'slate',
+      'gray',
+      'zinc',
+      'neutral',
+      'stone',
+      'mauve',
+      'olive',
+      'mist',
+      'taupe'
+    ];
     const f = src('x.tsx', `const a = '${names.map((n) => `bg-${n}-500`).join(' ')} text-black border-white';`);
     expect(whats(paletteClasses([f]))).toEqual([...names.map((n) => `bg-${n}-500`), 'text-black', 'border-white']);
   });
 
   /* RED WHEN: a page attribute in single quotes or in none is not read: a class, a style, or words. */
   it('reads a page attribute however its value is quoted', () => {
-    const page = src('apps/web/index.html', `<div class='text-black ml-2'></div><div class=bg-red-500></div>
-      <p style='color: red'></p><p style=color:red></p><p title='Hello'></p><p title=Hello></p><meta name=viewport content=width=device-width>`);
+    const page = src(
+      'apps/web/index.html',
+      `<div class='text-black ml-2'></div><div class=bg-red-500></div>
+      <p style='color: red'></p><p style=color:red></p><p title='Hello'></p><p title=Hello></p><meta name=viewport content=width=device-width>`
+    );
     expect(whats(paletteClasses([page]))).toEqual(['text-black', 'bg-red-500']);
     expect(whats(physicalClasses([page]))).toEqual(['ml-2']);
     expect(whats(inlineStyles([page]))).toEqual(['color: red', 'color: red']);
     /* `style` is not on the wording rule's list of attributes whose value never reaches the screen, so the wording rule names it too, as well as the inline-style rule. */
-    expect(whats(wordingInCode([page], new Set()))).toEqual(['style="color: red"', 'style="color:red"', 'title="Hello"', 'title="Hello"']);
+    expect(whats(wordingInCode([page], new Set()))).toEqual([
+      'style="color: red"',
+      'style="color:red"',
+      'title="Hello"',
+      'title="Hello"'
+    ]);
   });
 
   /* RED WHEN: an arbitrary value that is not a token, a size or a blend of tokens is let through, behind an opacity too, or one the kit writes is refused. */
   it('names every arbitrary value made of anything but tokens and sizes, and every arbitrary property', () => {
-    const f = src('x.tsx', `const a = cn('bg-[red] text-[rebeccapurple] hover:fill-[currentColor] [margin-left:4px] [color:var(--x)] bg-[red]/50 [COLOR:red]/50');
+    const f = src(
+      'x.tsx',
+      `const a = cn('bg-[red] text-[rebeccapurple] hover:fill-[currentColor] [margin-left:4px] [color:var(--x)] bg-[red]/50 [COLOR:red]/50');
       const ok = cn('hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] rounded-[min(var(--radius-md),10px)]',
         'text-[0.8rem] ring-[3px] translate-y-[calc(-50%_-_2px)] grid-cols-[auto_1fr] origin-(--radix-tooltip-content-transform-origin)',
-        '[&_svg:not([class*=size-])]:size-4 has-data-[icon=inline-end]:pe-1.5 data-[side=left]:slide-in-from-right-2');`);
-    expect(whats(arbitraryValues([f]))).toEqual(['bg-[red]', 'text-[rebeccapurple]', 'hover:fill-[currentColor]', '[margin-left:4px]', '[color:var(--x)]', 'bg-[red]/50', '[COLOR:red]/50']);
+        '[&_svg:not([class*=size-])]:size-4 has-data-[icon=inline-end]:pe-1.5 data-[side=left]:slide-in-from-right-2');`
+    );
+    expect(whats(arbitraryValues([f]))).toEqual([
+      'bg-[red]',
+      'text-[rebeccapurple]',
+      'hover:fill-[currentColor]',
+      '[margin-left:4px]',
+      '[color:var(--x)]',
+      'bg-[red]/50',
+      '[COLOR:red]/50'
+    ]);
   });
 
   /* RED WHEN: an inline style that sets anything, however it reaches the element, or one that cannot be read, is let through, or a stylesheet colour given as a token is refused. */
   it('names every inline style and every stylesheet colour that is not a token', () => {
-    const f = src('x.tsx', `const a = <div style={{ color: 'red', marginLeft: 4 }} />; const b = <p style={s} />;
+    const f = src(
+      'x.tsx',
+      `const a = <div style={{ color: 'red', marginLeft: 4 }} />; const b = <p style={s} />;
       createElement('div', { style: { background: 'red' } }); el.style.color = 'red'; el.setAttribute('style', 'left: 0');
       const c = <div {...{ style: { left: 0 } }} />; cloneElement(e, { style: s }); el['style'].left = '0';
-      new Intl.NumberFormat(tag, { style: 'percent' }); rule.cssText = 'color: red';`);
-    const sheet = src('x.css', ':root { --brand: red; } .a { color: red; background-color: var(--primary); border-color: transparent; font-variant-numeric: tabular-nums; } .c { border: 1px solid red; box-shadow: 0 0 0 1px var(--ring); outline: 2px solid var(--ring); outline-color: red; }');
-    const page = src('x.html', '<p style="color: var(--x)"></p><p style="--brand: red"></p><style>.b { fill: blue }</style>');
-    expect(whats(inlineStyles([f, sheet, page]))).toEqual(['style color', 'style marginLeft', 'style', 'style background', '.style', "setAttribute('style')", 'style left', 'style', '.style', '.cssText', 'color: red', 'border: 1px solid red', 'outline-color: red', 'fill: blue', 'color: var(--x)', '--brand: red']);
+      new Intl.NumberFormat(tag, { style: 'percent' }); rule.cssText = 'color: red';`
+    );
+    const sheet = src(
+      'x.css',
+      ':root { --brand: red; } .a { color: red; background-color: var(--primary); border-color: transparent; font-variant-numeric: tabular-nums; } .c { border: 1px solid red; box-shadow: 0 0 0 1px var(--ring); outline: 2px solid var(--ring); outline-color: red; }'
+    );
+    const page = src(
+      'x.html',
+      '<p style="color: var(--x)"></p><p style="--brand: red"></p><style>.b { fill: blue }</style>'
+    );
+    expect(whats(inlineStyles([f, sheet, page]))).toEqual([
+      'style color',
+      'style marginLeft',
+      'style',
+      'style background',
+      '.style',
+      "setAttribute('style')",
+      'style left',
+      'style',
+      '.style',
+      '.cssText',
+      'color: red',
+      'border: 1px solid red',
+      'outline-color: red',
+      'fill: blue',
+      'color: var(--x)',
+      '--brand: red'
+    ]);
     expect(inlineStyles([f]).map((b) => b.line)).toEqual([1, 1, 1, 2, 2, 2, 3, 3, 3, 4]);
   });
 });
@@ -285,19 +600,51 @@ describe('colours', () => {
 describe('start and end, not left and right', () => {
   /* RED WHEN: a physical class is let through behind any variant or as a negative, or a logical one is refused. */
   it('names every left or right class', () => {
-    const f = src('x.tsx', `const a = cn('ml-2 hover:pr-1.5 -mr-px has-data-[icon=inline-start]:pl-2', 'text-left rounded-tl-lg left-0 border-r');
+    const f = src(
+      'x.tsx',
+      `const a = cn('ml-2 hover:pr-1.5 -mr-px has-data-[icon=inline-start]:pl-2', 'text-left rounded-tl-lg left-0 border-r');
       const b = <div className={\`ms-2 pe-1 text-start rounded-lg rounded-s-md start-0 border-e \${x} float-right\`} />;
-      const c = cn('data-[side=left]:slide-in-from-right-2 placeholder:text-muted-foreground prose');`);
-    expect(whats(physicalClasses([f]))).toEqual(['ml-2', 'hover:pr-1.5', '-mr-px', 'has-data-[icon=inline-start]:pl-2', 'text-left', 'rounded-tl-lg', 'left-0', 'border-r', 'float-right']);
+      const c = cn('data-[side=left]:slide-in-from-right-2 placeholder:text-muted-foreground prose');`
+    );
+    expect(whats(physicalClasses([f]))).toEqual([
+      'ml-2',
+      'hover:pr-1.5',
+      '-mr-px',
+      'has-data-[icon=inline-start]:pl-2',
+      'text-left',
+      'rounded-tl-lg',
+      'left-0',
+      'border-r',
+      'float-right'
+    ]);
   });
 
   /* RED WHEN: left or right held anywhere but in a class is let through: a prop, a variable, a stylesheet's property or value, a page's inline style. */
   it('names left and right wherever they are written', () => {
-    const f = src('x.tsx', `const a = <Popover side="left" />; const s = 'ml-2'; const o = { className: 'mr-1' };
-      const t = <Toaster position="bottom-right" className="bg-left origin-top-right object-right scroll-ml-2 clear-left" />;`);
-    const sheet = src('x.css', '/* margin-left in a comment */ .a { margin-left: 4px; float: right; margin-inline-start: 4px; }');
+    const f = src(
+      'x.tsx',
+      `const a = <Popover side="left" />; const s = 'ml-2'; const o = { className: 'mr-1' };
+      const t = <Toaster position="bottom-right" className="bg-left origin-top-right object-right scroll-ml-2 clear-left" />;`
+    );
+    const sheet = src(
+      'x.css',
+      '/* margin-left in a comment */ .a { margin-left: 4px; float: right; margin-inline-start: 4px; }'
+    );
     const page = src('x.html', '<p style="text-align: left"></p>');
-    expect(whats(physicalClasses([f, sheet, page]))).toEqual(['left', 'ml-2', 'mr-1', 'bottom-right', 'bg-left', 'origin-top-right', 'object-right', 'scroll-ml-2', 'clear-left', 'margin-left: 4px', 'float: right', 'text-align: left']);
+    expect(whats(physicalClasses([f, sheet, page]))).toEqual([
+      'left',
+      'ml-2',
+      'mr-1',
+      'bottom-right',
+      'bg-left',
+      'origin-top-right',
+      'object-right',
+      'scroll-ml-2',
+      'clear-left',
+      'margin-left: 4px',
+      'float: right',
+      'text-align: left'
+    ]);
     expect(physicalClasses([f]).map((b) => b.line)).toEqual([1, 1, 1, 2, 2, 2, 2, 2, 2]);
   });
 
@@ -310,7 +657,10 @@ describe('start and end, not left and right', () => {
 
   /* RED WHEN: a string that is not a class, a key of a variants object, is read as one where a stylesheet must define every class's variants. */
   it('reads classes only where classes are written, for the state variants', () => {
-    const f = src('x.tsx', "const v = cva('a', { variants: { 'pl-9': { x: 'b' } } }); const s = 'ml-2'; const o = { className: 'mr-1' };");
+    const f = src(
+      'x.tsx',
+      "const v = cva('a', { variants: { 'pl-9': { x: 'b' } } }); const s = 'ml-2'; const o = { className: 'mr-1' };"
+    );
     expect(classWordsOf(f).map((w) => w.word)).toEqual(['a', 'b']);
   });
 });
@@ -318,7 +668,10 @@ describe('start and end, not left and right', () => {
 describe('left and right named on purpose', () => {
   /* RED WHEN: the one declaration allowed to name left and right lets another declaration, or the same name in another file, through. */
   it('lets left and right stand only in the declaration named for them', () => {
-    const named = src('packages/ui/src/lib/direction.ts', "const POPUP_SIDE = { ltr: { end: 'right' } } as const; const OTHER = 'left';");
+    const named = src(
+      'packages/ui/src/lib/direction.ts',
+      "const POPUP_SIDE = { ltr: { end: 'right' } } as const; const OTHER = 'left';"
+    );
     const elsewhere = src('packages/ui/src/components/x.tsx', "const POPUP_SIDE = { ltr: { end: 'right' } } as const;");
     expect(whats(physicalClasses([named, elsewhere]))).toEqual(['left', 'right']);
     expect(physicalClasses([named]).map((b) => b.line)).toEqual([1]);
@@ -334,43 +687,71 @@ describe('an application styles only what it writes', () => {
    * selector, an `@apply`, a variant or a custom property.
    */
   it('names every part named, every class that can reach another element, and every stylesheet line but its own two', () => {
-    const screen = src('apps/web/src/screens/x.tsx', `const a = <div className="**:hidden *:*:last:hidden [&_[data-slot=public-pill]]:hidden" />;
+    const screen = src(
+      'apps/web/src/screens/x.tsx',
+      `const a = <div className="**:hidden *:*:last:hidden [&_[data-slot=public-pill]]:hidden" />;
       const b = cn('[&>span]:truncate', 'md:[:is(&)>*>*:last-child]:hidden', '[:where(&)_button]:hidden');
       const held = '*:nth-3:hidden'; const spread = { className: '*:last:hidden' };
-      document.querySelector('[DATA-SLOT=amount]');`);
-    const sheet = src('apps/web/src/app.css', `/* the kit's */
+      document.querySelector('[DATA-SLOT=amount]');`
+    );
+    const sheet = src(
+      'apps/web/src/app.css',
+      `/* the kit's */
       @import "vaults-ui/styles.css";
       @source "./";
       .quiet [data-visibility] > * + * { display: none; }
       .money { @apply *:last:hidden; }
       @custom-variant tail (& > * > :last-child);
-      :root { --foreground: transparent; }`);
+      :root { --foreground: transparent; }`
+    );
     const page = src('apps/web/index.html', '<div id="root" class="**:last:hidden"></div>');
     expect(whats(stylesReachingIntoComponents([screen, sheet, page]))).toEqual([
-      'data-slot', 'DATA-SLOT', '**:hidden', '*:*:last:hidden', '[&_[data-slot=public-pill]]:hidden', '[&>span]:truncate',
-      'md:[:is(&)>*>*:last-child]:hidden', '[:where(&)_button]:hidden', '*:nth-3:hidden', '*:last:hidden',
-      '.quiet [data-visibility] > * + * { display: none; }', '.money { @apply *:last:hidden; }', '@custom-variant tail (& > * > :last-child);',
-      ':root { --foreground: transparent; }', '**:last:hidden',
+      'data-slot',
+      'DATA-SLOT',
+      '**:hidden',
+      '*:*:last:hidden',
+      '[&_[data-slot=public-pill]]:hidden',
+      '[&>span]:truncate',
+      'md:[:is(&)>*>*:last-child]:hidden',
+      '[:where(&)_button]:hidden',
+      '*:nth-3:hidden',
+      '*:last:hidden',
+      '.quiet [data-visibility] > * + * { display: none; }',
+      '.money { @apply *:last:hidden; }',
+      '@custom-variant tail (& > * > :last-child);',
+      ':root { --foreground: transparent; }',
+      '**:last:hidden'
     ]);
   });
 
   /* RED WHEN: a class that styles only the element it is written on, by its own state or an ancestor's, is refused, or the stylesheet's own kinds of line (a comment, an import, a source named or left out) are. */
-  it('lets an element style itself, by its own state or an ancestor\'s', () => {
-    const screen = src('apps/web/src/screens/x.tsx', `const a = <label className="hover:bg-accent md:w-72 has-[[data-state=checked]]:ring-2 aria-[current=page]:bg-accent group-data-[collapsible=icon]:hidden data-vertical:h-4 whitespace-normal!" />;`);
-    const sheet = src('apps/web/src/app.css', `/*
+  it("lets an element style itself, by its own state or an ancestor's", () => {
+    const screen = src(
+      'apps/web/src/screens/x.tsx',
+      `const a = <label className="hover:bg-accent md:w-72 has-[[data-state=checked]]:ring-2 aria-[current=page]:bg-accent group-data-[collapsible=icon]:hidden data-vertical:h-4 whitespace-normal!" />;`
+    );
+    const sheet = src(
+      'apps/web/src/app.css',
+      `/*
  * a comment
  */
 @import "vaults-ui/styles.css";
 @source not "./**/*.test.*";
 
 @source "./";
-`);
+`
+    );
     expect(whats(stylesReachingIntoComponents([screen, sheet]))).toEqual([]);
   });
 
   /* RED WHEN: a class's variants are split inside brackets or parentheses, or the utility is taken for a variant. */
-  it('reads a class word\'s variants, whole', () => {
-    expect(variantsOf('md:*:[&_p:first-child]:has-[a:b]:hidden')).toEqual(['md', '*', '[&_p:first-child]', 'has-[a:b]']);
+  it("reads a class word's variants, whole", () => {
+    expect(variantsOf('md:*:[&_p:first-child]:has-[a:b]:hidden')).toEqual([
+      'md',
+      '*',
+      '[&_p:first-child]',
+      'has-[a:b]'
+    ]);
     expect(variantsOf('hidden')).toEqual([]);
   });
 
@@ -378,9 +759,16 @@ describe('an application styles only what it writes', () => {
   it('names a name used outside the files allowed it', () => {
     const own = src('packages/ui/src/components/amount.tsx', 'export function AmountFigure() { return null; }');
     const allowed = src('packages/ui/src/components/balance.tsx', 'const x = <AmountFigure value={v} />;');
-    const other = src('packages/ui/src/components/row.tsx', "import { AmountFigure } from 'vaults-ui/components/amount'; const x = <AmountFigure value={v} />;");
-    expect(namedOutside([own, allowed, other], 'AmountFigure', [own.path, allowed.path]).map((b) => [b.path, b.what])).toEqual([
-      [other.path, 'AmountFigure'], [other.path, 'AmountFigure'], [other.path, 'AmountFigure'],
+    const other = src(
+      'packages/ui/src/components/row.tsx',
+      "import { AmountFigure } from 'vaults-ui/components/amount'; const x = <AmountFigure value={v} />;"
+    );
+    expect(
+      namedOutside([own, allowed, other], 'AmountFigure', [own.path, allowed.path]).map((b) => [b.path, b.what])
+    ).toEqual([
+      [other.path, 'AmountFigure'],
+      [other.path, 'AmountFigure'],
+      [other.path, 'AmountFigure']
     ]);
   });
 });
@@ -388,27 +776,42 @@ describe('an application styles only what it writes', () => {
 describe('state variants', () => {
   /* RED WHEN: a bare data- variant, grouped, named or multi-word, is missed, or a bracketed one is returned. */
   it('finds every bare data- variant a class uses', () => {
-    const f = src('x.tsx', "cn('data-open:a group-data-foo/button:bg-muted peer-data-checked:b data-state-open:c data-[side=top]:d has-data-[icon=x]:e')");
+    const f = src(
+      'x.tsx',
+      "cn('data-open:a group-data-foo/button:bg-muted peer-data-checked:b data-state-open:c data-[side=top]:d has-data-[icon=x]:e')"
+    );
     expect(stateVariantsOf(f)).toEqual(['data-checked', 'data-foo', 'data-open', 'data-state-open']);
   });
 
   /* RED WHEN: a bracketed state, grouped, named or after another variant, is missed, or an attribute that is not the state is read as one. */
   it('finds every bracketed state a class uses', () => {
-    const f = src('x.tsx', "cn('data-[state=on]:a group-data-[state=open]/button:b md:peer-data-[state=collapsed]:c data-[side=top]:d data-open:e has-data-[state=checked]:f')");
+    const f = src(
+      'x.tsx',
+      "cn('data-[state=on]:a group-data-[state=open]/button:b md:peer-data-[state=collapsed]:c data-[side=top]:d data-open:e has-data-[state=checked]:f')"
+    );
     expect(bracketedStatesOf(f)).toEqual(['on', 'open', 'collapsed', 'checked']);
   });
 
   /* RED WHEN: a bracketed state no primitive the file imports sets is let through, or one the primitive or the file itself sets is refused. */
   it('refuses a bracketed state nothing the file draws sets', () => {
-    const tabs = src('packages/ui/src/components/x.tsx', `import { Tabs as TabsPrimitive } from "radix-ui"
-      const a = <TabsPrimitive.Trigger className="data-[state=active]:a data-[state=on]:b data-[state=open]:c" />`);
+    const tabs = src(
+      'packages/ui/src/components/x.tsx',
+      `import { Tabs as TabsPrimitive } from "radix-ui"
+      const a = <TabsPrimitive.Trigger className="data-[state=active]:a data-[state=on]:b data-[state=open]:c" />`
+    );
     expect(statesNothingSets(tabs)).toEqual(['on', 'open']);
-    const tooltip = src('packages/ui/src/components/y.tsx', `import { Slot, Tooltip as TooltipPrimitive } from "radix-ui"
-      const a = <TooltipPrimitive.Content className="data-[state=delayed-open]:a data-[state=closed]:b" />`);
+    const tooltip = src(
+      'packages/ui/src/components/y.tsx',
+      `import { Slot, Tooltip as TooltipPrimitive } from "radix-ui"
+      const a = <TooltipPrimitive.Content className="data-[state=delayed-open]:a data-[state=closed]:b" />`
+    );
     expect(statesNothingSets(tooltip)).toEqual([]);
     const none = src('packages/ui/src/components/z.tsx', `const a = <div className="data-[state=open]:a" />`);
     expect(statesNothingSets(none)).toEqual(['open']);
-    const own = src('packages/ui/src/components/sidebar.tsx', `const a = <div data-state="collapsed" className="peer-data-[state=collapsed]:a" />`);
+    const own = src(
+      'packages/ui/src/components/sidebar.tsx',
+      `const a = <div data-state="collapsed" className="peer-data-[state=collapsed]:a" />`
+    );
     expect(statesNothingSets(own)).toEqual([]);
   });
 });
@@ -418,31 +821,75 @@ describe('wording', () => {
 
   /* RED WHEN: a word held in a variable, given to any prop, or put on a screen any other way is let through: the rule lists what it allows, not what it refuses. */
   it('names every string with a letter that stands anywhere not named as a position', () => {
-    const f = src('apps/web/src/x.tsx', `const label = 'Send';
+    const f = src(
+      'apps/web/src/x.tsx',
+      `const label = 'Send';
       const a = <input value="Send now" title="Hello" aria-label={'Close'} />;
       const b = <div>Pay now {'Cancel'} {ok ? 'Yes' : t('kit.no')} {\`Sent \${n}\`} tUSD {' '} {'—'} 42</div>;
       const c = { label: 'Save' }; const d = ['First', 'Second']; function e() { return 'Done'; }
       throw new Error('Could not send');
-      createElement('p', null, 'Payroll is coming'); const g = <ComingSoon explanation="Export arrives in May" />;`);
-    expect(whats(wordingInCode([f], codes))).toEqual(['Send', 'Send now', 'Hello', 'Close', 'Pay now', 'Cancel', 'Yes', 'Sent', 'Save', 'First', 'Second', 'Done', 'Could not send', 'Payroll is coming', 'Export arrives in May']);
-    expect(wordingInCode([f], codes).map((b) => b.line).slice(0, 5)).toEqual([1, 2, 2, 2, 3]);
+      createElement('p', null, 'Payroll is coming'); const g = <ComingSoon explanation="Export arrives in May" />;`
+    );
+    expect(whats(wordingInCode([f], codes))).toEqual([
+      'Send',
+      'Send now',
+      'Hello',
+      'Close',
+      'Pay now',
+      'Cancel',
+      'Yes',
+      'Sent',
+      'Save',
+      'First',
+      'Second',
+      'Done',
+      'Could not send',
+      'Payroll is coming',
+      'Export arrives in May'
+    ]);
+    expect(
+      wordingInCode([f], codes)
+        .map((b) => b.line)
+        .slice(0, 5)
+    ).toEqual([1, 2, 2, 2, 3]);
   });
 
   /* RED WHEN: a position is widened past what it names: each string below stands just outside one. */
   it('refuses a string that stands just outside a named position', () => {
-    const f = src('apps/web/src/x.tsx', `const a = 'Send' as const; enum Say { Go = 'Send now' }
+    const f = src(
+      'apps/web/src/x.tsx',
+      `const a = 'Send' as const; enum Say { Go = 'Send now' }
       const b = { variant: 'Pay' }; new Foo.Bar('Paid'); x.querySelector('Payee'); const c = label + 'Owed';
       const label = 'Label'; const d = <label>{label}</label>;
       const Inner = () => { const x = 'Inside'; return <p>{x}</p>; }; const e = <Inner />;
       const Tag = ok ? 'h1' : 'Heading'; const g = <Tag />; const Other = f('Called'); const h = <Other />;
       const i = <Tooltip content="Hold to send" name="Alice" kind="Pay" visibility="Seen" />; const j = <Amount kind="balance" />;
-      const k = 'Отправить';`);
-    expect(whats(wordingInCode([f], codes))).toEqual(['Send', 'Send now', 'Pay', 'Paid', 'Payee', 'Owed', 'Label', 'Inside', 'Heading', 'Called', 'Hold to send', 'Alice', 'Pay', 'Seen', 'Отправить']);
+      const k = 'Отправить';`
+    );
+    expect(whats(wordingInCode([f], codes))).toEqual([
+      'Send',
+      'Send now',
+      'Pay',
+      'Paid',
+      'Payee',
+      'Owed',
+      'Label',
+      'Inside',
+      'Heading',
+      'Called',
+      'Hold to send',
+      'Alice',
+      'Pay',
+      'Seen',
+      'Отправить'
+    ]);
   });
 
   /* RED WHEN: a string in a named position is refused, or a position in WORDING_POSITIONS is one nothing can reach. */
   it('lets a string stand in every named position, and each position is reached', () => {
-    const kit = src('packages/ui/src/x.tsx', `"use client"
+    const kit = src(
+      'packages/ui/src/x.tsx',
+      `"use client"
       import { thing } from 'some-package';
       export * from './other.js';
       const g = import.meta.glob('./locales/*.json', { eager: true, import: 'default' });
@@ -456,10 +903,15 @@ describe('wording', () => {
       }
       createElement('section', { variant: 'quiet' });
       new Intl.DateTimeFormat(tag, { dateStyle: 'medium' });
-      document.getElementById('root');`);
+      document.getElementById('root');`
+    );
     expect(whats(wordingInCode([kit], codes))).toEqual([]);
     const census = wordingCensus([kit], codes);
-    expect(Object.keys(census.byPosition).sort()).toEqual(Object.keys(WORDING_POSITIONS).filter((p) => p !== 'code').sort());
+    expect(Object.keys(census.byPosition).sort()).toEqual(
+      Object.keys(WORDING_POSITIONS)
+        .filter((p) => p !== 'code')
+        .sort()
+    );
   });
 
   /* RED WHEN: a declaration named in CODES lets its strings through in another file, or under another name. */
@@ -473,42 +925,88 @@ describe('wording', () => {
 
   /* RED WHEN: a declaration named in CODES lets a string through inside a function written within it, where words are asked for by key. */
   it('lets a named declaration hold codes but not words inside a function within it', () => {
-    const pages = src('apps/web/src/pages.ts', "export const PAGES = { a: { path: '/a', name: (t) => t('page.a.name'), soon: (t) => (t('page.a.soon') || 'Soon') } };");
+    const pages = src(
+      'apps/web/src/pages.ts',
+      "export const PAGES = { a: { path: '/a', name: (t) => t('page.a.name'), soon: (t) => (t('page.a.soon') || 'Soon') } };"
+    );
     expect(whats(wordingInCode([pages], codes))).toEqual(['Soon']);
   });
 
   /* RED WHEN: an attribute with a fixed vocabulary (role, aria-current) lets any value through, so English written there passes; or a word of the vocabulary is refused. */
   it('lets role and aria-current carry only words of their vocabularies', () => {
-    const f = src('apps/web/src/a.tsx', `const a = <nav role="navigation" aria-current="page" />; const b = <div role="Send money" />; const c = <a aria-current="Current page" />;
-      const d = <li role="none presentation" />; const e = createElement('div', { role: 'Pay now' });`);
+    const f = src(
+      'apps/web/src/a.tsx',
+      `const a = <nav role="navigation" aria-current="page" />; const b = <div role="Send money" />; const c = <a aria-current="Current page" />;
+      const d = <li role="none presentation" />; const e = createElement('div', { role: 'Pay now' });`
+    );
     expect(whats(wordingInCode([f], codes))).toEqual(['Send money', 'Current page', 'Pay now']);
-    const page = src('apps/web/index.html', '<main role="main"></main><div role="Loading your pay"></div><a aria-current="step"></a>');
+    const page = src(
+      'apps/web/index.html',
+      '<main role="main"></main><div role="Loading your pay"></div><a aria-current="step"></a>'
+    );
     expect(whats(wordingInCode([page], codes))).toEqual(['role="Loading your pay"']);
   });
 
   /* RED WHEN: a position meant for the kit alone lets the application through. */
   it('lets only the kit throw an error with a message of its own', () => {
-    expect(whats(wordingInCode([src('packages/ui/src/a.ts', "throw new Error('a token amount is never below zero');")], codes))).toEqual([]);
-    expect(whats(wordingInCode([src('apps/web/src/a.ts', "throw new Error('a token amount is never below zero');")], codes))).toEqual(['a token amount is never below zero']);
+    expect(
+      whats(
+        wordingInCode([src('packages/ui/src/a.ts', "throw new Error('a token amount is never below zero');")], codes)
+      )
+    ).toEqual([]);
+    expect(
+      whats(wordingInCode([src('apps/web/src/a.ts', "throw new Error('a token amount is never below zero');")], codes))
+    ).toEqual(['a token amount is never below zero']);
   });
 
   /* RED WHEN: a page's title or text, a meta description, or a stylesheet's content is let through, or the viewport's settings or an id is refused. */
   it('reads a page and a stylesheet', () => {
-    const page = src('apps/web/index.html', `<!DOCTYPE html>
+    const page = src(
+      'apps/web/index.html',
+      `<!DOCTYPE html>
       <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <meta name="description" content="Private payroll"><title>Private Vaults</title></head>
-      <body><div id="root">Loading</div><script type="module" src="./src/main.ts"></script></body></html>`);
-    const sheet = src('apps/web/src/app.css', '.a::after { content: "Sent"; } .b::before { content: ""; } .c::before { content: var(--x); }');
-    expect(whats(wordingInCode([page, sheet], codes))).toEqual(['Private Vaults', 'Loading', 'content="Private payroll"', 'content: "Sent"']);
-    expect(whats(wordingInCode([src('apps/web/index.html', page.text.replace('<meta name="description" content="Private payroll"><title>Private Vaults</title>', '<title></title>').replace('Loading', ''))], codes))).toEqual([]);
+      <body><div id="root">Loading</div><script type="module" src="./src/main.ts"></script></body></html>`
+    );
+    const sheet = src(
+      'apps/web/src/app.css',
+      '.a::after { content: "Sent"; } .b::before { content: ""; } .c::before { content: var(--x); }'
+    );
+    expect(whats(wordingInCode([page, sheet], codes))).toEqual([
+      'Private Vaults',
+      'Loading',
+      'content="Private payroll"',
+      'content: "Sent"'
+    ]);
+    expect(
+      whats(
+        wordingInCode(
+          [
+            src(
+              'apps/web/index.html',
+              page.text
+                .replace(
+                  '<meta name="description" content="Private payroll"><title>Private Vaults</title>',
+                  '<title></title>'
+                )
+                .replace('Loading', '')
+            )
+          ],
+          codes
+        )
+      )
+    ).toEqual([]);
   });
 
   /* RED WHEN: a sentence in a shared module is missed, or a code or a key is taken for one. */
   it('names every English sentence in a module', () => {
-    const f = src('shared.ts', `export const a = 'The vault has no signers.';
+    const f = src(
+      'shared.ts',
+      `export const a = 'The vault has no signers.';
       throw new Error(\`Could not reach \${x}\`);
       const k = 'kit.public.label'; const c = 'tUSD'; const w = 'word'; const i = 'Content-Type';
-      // A comment is not code`);
+      // A comment is not code`
+    );
     const lower = src('lower.ts', "throw new Error('a vault is pinned to its company'); const two = 'two words';");
     expect(whats(englishSentences([f]))).toEqual(['The vault has no signers.', 'Could not reach  ']);
     expect(whats(englishSentences([lower]))).toEqual(['a vault is pinned to its company']);
@@ -518,7 +1016,10 @@ describe('wording', () => {
   it('finds every key asked for', () => {
     const f = src('x.tsx', "t('kit.a'); i18n.t(\"kit.b\"); t(`kit.c`); t(`kit.${x}`); t(key); other('kit.z');");
     expect(keysAskedFor(f).map((k) => k.key)).toEqual(['kit.a', 'kit.b', 'kit.c', null, null]);
-    const renamed = src('y.tsx', "const say = useText(); say('kit.d'); const { t: tr } = useTranslation(); tr('kit.e'); const again = say; again('kit.f');");
+    const renamed = src(
+      'y.tsx',
+      "const say = useText(); say('kit.d'); const { t: tr } = useTranslation(); tr('kit.e'); const again = say; again('kit.f');"
+    );
     expect(keysAskedFor(renamed).map((k) => k.key)).toEqual(['kit.d', 'kit.e', 'kit.f']);
   });
 
@@ -532,52 +1033,111 @@ describe('wording', () => {
 
 describe('amounts', () => {
   /* RED WHEN: any way a value becomes text or a number outside the amount's homes is let through, or the homes are refused. */
-  it('names every conversion it lists, outside the amount\'s homes', () => {
-    const home = src('packages/ui/src/components/amount.tsx', "formatTokenAmount(1n, 2, 'en'); String(amount); `${amount}`;");
-    const helper = src('packages/ui/src/format/token-amount.ts', "new Intl.NumberFormat(tag).format(amount); (amount % unit).toString();");
-    const other = src('apps/web/src/x.tsx', `import { formatTokenAmount } from 'vaults-ui/format/token-amount';
+  it("names every conversion it lists, outside the amount's homes", () => {
+    const home = src(
+      'packages/ui/src/components/amount.tsx',
+      "formatTokenAmount(1n, 2, 'en'); String(amount); `${amount}`;"
+    );
+    const helper = src(
+      'packages/ui/src/format/token-amount.ts',
+      'new Intl.NumberFormat(tag).format(amount); (amount % unit).toString();'
+    );
+    const other = src(
+      'apps/web/src/x.tsx',
+      `import { formatTokenAmount } from 'vaults-ui/format/token-amount';
       String(amount); amount.toString(); Number(amount); formatNumber(Number(amount), 'en');
       parseFloat(a); parseInt(a, 10); Number.parseInt(a); \`\${amount} tUSD\`; '' + amount; +amount; JSON.stringify({ amount });
       new Intl.NumberFormat('en').format(5n); (5n).toLocaleString(); n.toFixed(2); n.toPrecision(3);
       const c = new Intl['NumberFormat']('en'); const { NumberFormat } = Intl; new String(amount); n.toExponential(1);
       xs.map(String); [amount].join(''); ''.concat(amount); globalThis.String(amount); encodeURIComponent(amount);
-      el.textContent = amount; s += 'x';`);
+      el.textContent = amount; s += 'x';`
+    );
     expect(whats(amountsOutsideTheComponent([home, helper, other]))).toEqual([
-      'formatTokenAmount', 'String(...)', 'toString', 'Number(...)', 'Number(...)', 'parseFloat(...)', 'parseInt(...)', 'parseInt',
-      'template with a value', '+ with a string', 'unary +', 'stringify', 'NumberFormat', 'toLocaleString', 'toFixed', 'toPrecision',
-      'NumberFormat', 'NumberFormat', 'String(...)', 'toExponential',
-      'String as a value', 'join', 'concat', 'String', 'encodeURIComponent(...)', 'textContent', '+= with a string',
+      'formatTokenAmount',
+      'String(...)',
+      'toString',
+      'Number(...)',
+      'Number(...)',
+      'parseFloat(...)',
+      'parseInt(...)',
+      'parseInt',
+      'template with a value',
+      '+ with a string',
+      'unary +',
+      'stringify',
+      'NumberFormat',
+      'toLocaleString',
+      'toFixed',
+      'toPrecision',
+      'NumberFormat',
+      'NumberFormat',
+      'String(...)',
+      'toExponential',
+      'String as a value',
+      'join',
+      'concat',
+      'String',
+      'encodeURIComponent(...)',
+      'textContent',
+      '+= with a string'
     ]);
-    expect(amountsOutsideTheComponent([other]).map((b) => b.line).slice(0, 3)).toEqual([1, 2, 2]);
+    expect(
+      amountsOutsideTheComponent([other])
+        .map((b) => b.line)
+        .slice(0, 3)
+    ).toEqual([1, 2, 2]);
   });
 
   /* RED WHEN: a + beside a name the file gives a string, a template or a phrase, a + beside a phrase asked for in place, or a global reached by a name built at run time is let through; or a sum of two counts is refused. */
   it('names a + beside a string held in a name, and a global reached by a built name', () => {
-    const f = src('apps/web/src/x.tsx', `const label = t('run.paid'); const tpl = \`x\`; const say = useText(); const heading = say('run.title');
+    const f = src(
+      'apps/web/src/x.tsx',
+      `const label = t('run.paid'); const tpl = \`x\`; const say = useText(); const heading = say('run.title');
       label + amount; amount + tpl; s += label; t('run.total') + amount; heading + amount;
       globalThis[name](amount); window[k]; self[pick()]; (globalThis as any)[k]; (window!)[k];
-      const count = a + b; i += 1; const n = rows.length + 1; window['localStorage']; globalThis.crypto;`);
+      const count = a + b; i += 1; const n = rows.length + 1; window['localStorage']; globalThis.crypto;`
+    );
     expect(whats(amountsOutsideTheComponent([f]))).toEqual([
-      '+ with a string held in a name', '+ with a string held in a name', '+= with a string held in a name', '+ with a phrase', '+ with a string held in a name',
-      'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name', 'a global reached by a built name',
+      '+ with a string held in a name',
+      '+ with a string held in a name',
+      '+= with a string held in a name',
+      '+ with a phrase',
+      '+ with a string held in a name',
+      'a global reached by a built name',
+      'a global reached by a built name',
+      'a global reached by a built name',
+      'a global reached by a built name',
+      'a global reached by a built name'
     ]);
   });
 
   /* RED WHEN: the plain-number formatter may do more than reach the browser's number formatter, or a kit error may not carry a value. */
   /* RED WHEN: a request body written with JSON.stringify is refused in the adapters, or let through anywhere else, or a way of reaching it other than by its name is let through there. */
   it('lets the adapters write a request body, and nothing else', () => {
-    const adapter = src('apps/web/src/adapters/x.ts', "const a = JSON.stringify(body); const b = JSON['stringify'](body); const c = other.stringify(body);");
+    const adapter = src(
+      'apps/web/src/adapters/x.ts',
+      "const a = JSON.stringify(body); const b = JSON['stringify'](body); const c = other.stringify(body);"
+    );
     const screen = src('apps/web/src/screens/x.tsx', 'const a = JSON.stringify(body);');
-    expect(whats(amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters'))).toEqual(['stringify', 'stringify', 'stringify']);
-    expect(amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters').map((b) => b.path)).toEqual([adapter.path, adapter.path, screen.path]);
+    expect(whats(amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters'))).toEqual([
+      'stringify',
+      'stringify',
+      'stringify'
+    ]);
+    expect(
+      amountsOutsideTheComponent([adapter, screen], undefined, 'apps/web/src/adapters').map((b) => b.path)
+    ).toEqual([adapter.path, adapter.path, screen.path]);
     expect(whats(amountsOutsideTheComponent([adapter]))).toEqual(['stringify', 'stringify', 'stringify']);
     /* A conversion taken out of an object by name is the conversion, outside the adapters. */
     const taken = src('apps/web/src/screens/y.tsx', 'const { stringify } = JSON; const { join: j } = parts;');
-    expect(whats(amountsOutsideTheComponent([taken], undefined, 'apps/web/src/adapters'))).toEqual(['stringify taken out', 'join taken out']);
+    expect(whats(amountsOutsideTheComponent([taken], undefined, 'apps/web/src/adapters'))).toEqual([
+      'stringify taken out',
+      'join taken out'
+    ]);
   });
 
   it('lets the plain-number formatter reach only the number formatter, and a kit error carry a value', () => {
-    const intl = src('packages/ui/src/format/intl.ts', "new Intl.NumberFormat(tag).format(v); String(v);");
+    const intl = src('packages/ui/src/format/intl.ts', 'new Intl.NumberFormat(tag).format(v); String(v);');
     const kit = src('packages/ui/src/i18n/languages.ts', 'throw new Error(`${path} is not a language file`);');
     expect(whats(amountsOutsideTheComponent([intl, kit]))).toEqual(['String(...)']);
   });
@@ -589,18 +1149,44 @@ describe('language files', () => {
   /* RED WHEN: a missing phrase, a missing plural form, a form the language does not have, or a stray key is let through. */
   it('names what a language file lacks or has too much of', () => {
     expect(missingPhrases(en, 'en', en)).toEqual([]);
-    expect(missingPhrases(en, 'fr', { 'kit.a': 'A {name}', 'x.count_one': '', 'x.count_other': '' })).toEqual(['fr: x.count_many is missing']);
-    expect(missingPhrases(en, 'ar', { 'x.count_one': '', 'x.count_other': '', 'x.count_few': '', 'x.count_many': '', 'x.count_two': '', 'x.count_zero': '', 'old': '' }))
-      .toEqual(['ar: kit.a is missing', 'ar: old is not in the English file']);
-    expect(missingPhrases(en, 'ja', { 'kit.a': '', 'x.count_other': '', 'x.count_one': '' })).toEqual(['ja: x.count_one is a plural form ja does not have']);
-    expect(missingPhrases(en, 'de', { 'kit.a': '', 'x.count': '', 'x.count_one': '', 'x.count_other': '' })).toEqual(['de: x.count is plural in English and has no plural forms here']);
+    expect(missingPhrases(en, 'fr', { 'kit.a': 'A {name}', 'x.count_one': '', 'x.count_other': '' })).toEqual([
+      'fr: x.count_many is missing'
+    ]);
+    expect(
+      missingPhrases(en, 'ar', {
+        'x.count_one': '',
+        'x.count_other': '',
+        'x.count_few': '',
+        'x.count_many': '',
+        'x.count_two': '',
+        'x.count_zero': '',
+        old: ''
+      })
+    ).toEqual(['ar: kit.a is missing', 'ar: old is not in the English file']);
+    expect(missingPhrases(en, 'ja', { 'kit.a': '', 'x.count_other': '', 'x.count_one': '' })).toEqual([
+      'ja: x.count_one is a plural form ja does not have'
+    ]);
+    expect(missingPhrases(en, 'de', { 'kit.a': '', 'x.count': '', 'x.count_one': '', 'x.count_other': '' })).toEqual([
+      'de: x.count is plural in English and has no plural forms here'
+    ]);
   });
 
   /* RED WHEN: a phrase whose gaps differ from English, in any plural form, is let through. */
   it('names every phrase whose gaps differ', () => {
-    expect(gapsThatDiffer(en, 'de', { 'kit.a': 'B {name}', 'x.count_one': '{count} Person', 'x.count_other': '{count} Leute' })).toEqual([]);
-    expect(gapsThatDiffer(en, 'de', { 'kit.a': 'B {nom}', 'x.count_one': 'eine Person', 'x.count_other': '{count} Leute' }).length).toBe(2);
-    expect(gapsThatDiffer({ 'y_one': '{a}', 'y_other': '{b}' }, 'de', {})).toEqual(['en: the plural forms of y have different gaps']);
+    expect(
+      gapsThatDiffer(en, 'de', {
+        'kit.a': 'B {name}',
+        'x.count_one': '{count} Person',
+        'x.count_other': '{count} Leute'
+      })
+    ).toEqual([]);
+    expect(
+      gapsThatDiffer(en, 'de', { 'kit.a': 'B {nom}', 'x.count_one': 'eine Person', 'x.count_other': '{count} Leute' })
+        .length
+    ).toBe(2);
+    expect(gapsThatDiffer({ y_one: '{a}', y_other: '{b}' }, 'de', {})).toEqual([
+      'en: the plural forms of y have different gaps'
+    ]);
   });
 
   it('reads plural keys and gaps', () => {

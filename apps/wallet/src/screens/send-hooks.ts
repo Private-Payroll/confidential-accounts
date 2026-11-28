@@ -25,8 +25,12 @@ import type { Recipient } from '../chain/send.js';
  * implemented. They read the same to a person, who can do nothing different
  * about either, so they say the same thing.
  */
-interface WakeSentinel { readonly release: () => Promise<void> }
-interface WakeLockApi { readonly request: (kind: 'screen') => Promise<WakeSentinel> }
+interface WakeSentinel {
+  readonly release: () => Promise<void>;
+}
+interface WakeLockApi {
+  readonly request: (kind: 'screen') => Promise<WakeSentinel>;
+}
 const wakeLockApi = (): WakeLockApi | null => {
   const holder = navigator as Navigator & { wakeLock?: WakeLockApi };
   return holder.wakeLock ?? null;
@@ -57,26 +61,35 @@ export function useWakeLock(proving: boolean): WakeState {
     void api.request('screen').then(
       (granted) => {
         if (gone) {
-          void granted.release().catch(() => { /* releasing twice is fine */ });
+          void granted.release().catch(() => {
+            /* releasing twice is fine */
+          });
           return;
         }
         sentinel = granted;
         setWake('held');
       },
-      () => { setWake('unheld'); },
+      () => {
+        setWake('unheld');
+      }
     );
     /* Released when proving ends, however it ends — a terminal state, a
      * failure, or the screen going away under it. */
     return () => {
       gone = true;
-      void sentinel?.release().catch(() => { /* the browser took it back */ });
+      void sentinel?.release().catch(() => {
+        /* the browser took it back */
+      });
     };
   }, [proving]);
   return wake;
 }
 
 /** The wallet this screen pays from: the account last used on the home screen, and the address it owns. */
-export function usePayingWallet(identity: Identity, secret: Secret): {
+export function usePayingWallet(
+  identity: Identity,
+  secret: Secret
+): {
   readonly account: number;
   readonly owned: ReturnType<typeof ownedAddressFor>;
 } {
@@ -87,37 +100,42 @@ export function usePayingWallet(identity: Identity, secret: Secret): {
     const stored = loadSubwallets(secret);
     return {
       names: stored.names,
-      account: isWalletAccount(stored.lastUsed) ? stored.lastUsed : MAIN_ACCOUNT,
+      account: isWalletAccount(stored.lastUsed) ? stored.lastUsed : MAIN_ACCOUNT
     };
   });
-  const owned = useMemo(
-    () => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
+  const owned = useMemo(() => ownedAddressFor(identity, account, names, NETWORK), [identity, account, names]);
   return { account, owned };
 }
 
 /** The doors this send runs through: the real chain, or the pretend one for the chosen scenario. */
 export function useSendDoors(
-  wiring: SendWiring, mode: 'live' | 'rehearsal', identity: Identity, secret: Secret,
-  account: number, scenario: RehearsalScenario,
+  wiring: SendWiring,
+  mode: 'live' | 'rehearsal',
+  identity: Identity,
+  secret: Secret,
+  account: number,
+  scenario: RehearsalScenario
 ) {
   const doors = useMemo(
-    () => (mode === 'live' && wiring.live
-      /* The LIVE doors gain the two pending doors here, where the secret is:
-       * the written-down middle (pending.ts, this account's store) and the
-       * chain-by-identifier question the engine watches with. The rehearsal
-       * doors carry their own throwaway versions. */
-      ? {
-        ...wiring.live.doorsFor(identity, account),
-        pending: pendingGuardFor(secret, account),
-        transactionStatus: transactionStatusOnChain,
-      }
-      : wiring.rehearsalDoorsFor(identity, account, scenario)),
-    [wiring, mode, identity, secret, account, scenario]);
+    () =>
+      mode === 'live' && wiring.live
+        ? /* The LIVE doors gain the two pending doors here, where the secret is:
+           * the written-down middle (pending.ts, this account's store) and the
+           * chain-by-identifier question the engine watches with. The rehearsal
+           * doors carry their own throwaway versions. */
+          {
+            ...wiring.live.doorsFor(identity, account),
+            pending: pendingGuardFor(secret, account),
+            transactionStatus: transactionStatusOnChain
+          }
+        : wiring.rehearsalDoorsFor(identity, account, scenario),
+    [wiring, mode, identity, secret, account, scenario]
+  );
   return doors;
 }
 
 export type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string };
-const tryParse = <T,>(parse: () => T): Parsed<T> => {
+const tryParse = <T>(parse: () => T): Parsed<T> => {
   try {
     return { ok: true, value: parse() };
   } catch (e) {
@@ -135,13 +153,21 @@ export function useSendForm() {
    * verbatim the moment either fails. */
   const recipientInfo: Parsed<Recipient> | null = useMemo(
     () => (recipientText.trim() ? tryParse(() => parseRecipient(recipientText, NETWORK)) : null),
-    [recipientText]);
+    [recipientText]
+  );
   const amountInfo: Parsed<bigint> | null = useMemo(
     () => (amountText.trim() ? tryParse(() => starsFromNight(amountText)) : null),
-    [amountText]);
+    [amountText]
+  );
 
   const ready = recipientInfo?.ok === true && amountInfo?.ok === true;
   return {
-    recipientText, setRecipientText, amountText, setAmountText, recipientInfo, amountInfo, ready,
+    recipientText,
+    setRecipientText,
+    amountText,
+    setAmountText,
+    recipientInfo,
+    amountInfo,
+    ready
   };
 }

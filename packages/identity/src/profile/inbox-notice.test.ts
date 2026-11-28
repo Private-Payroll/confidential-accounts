@@ -5,9 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { identityFromSecret } from '../keys/derivation.js';
 import type { Identity } from '../keys/derivation.js';
-import {
-  INBOX_INDEX, NOTICE_KINDS, NOTICE_SCHEMA, inboxKeyOf, inboxKeypair, openAll, openFromInbox,
-} from './inbox.js';
+import { INBOX_INDEX, NOTICE_KINDS, NOTICE_SCHEMA, inboxKeyOf, inboxKeypair, openAll, openFromInbox } from './inbox.js';
 import type { InboxAnswer, InboxAsk, InboxHost, SealedItem } from './inbox.js';
 import { startInboxPolling } from './inbox-poll.js';
 import type { InboxState, Timers } from './inbox-poll.js';
@@ -57,19 +55,20 @@ function sealNotice(plaintext: string, inboxPublicKey: string, id = 'host-ref-1'
     ephemeral: bytesToHex(ephemeral.publicKey),
     iv: bytesToHex(iv),
     tag: '',
-    body: bytesToHex(body),
+    body: bytesToHex(body)
   };
 }
 
-const aNotice = (over: Record<string, unknown> = {}): string => JSON.stringify({
-  schema: NOTICE_SCHEMA,
-  kind: 'invitation',
-  at: 1_756_000_000_000,
-  from: { name: 'Bright Coffee Ltd', rdns: 'com.brightcoffee.payroll' },
-  where: 'https://payroll.brightcoffee.example',
-  says: 'Your start date is the fourth.',
-  ...over,
-});
+const aNotice = (over: Record<string, unknown> = {}): string =>
+  JSON.stringify({
+    schema: NOTICE_SCHEMA,
+    kind: 'invitation',
+    at: 1_756_000_000_000,
+    from: { name: 'Bright Coffee Ltd', rdns: 'com.brightcoffee.payroll' },
+    where: 'https://payroll.brightcoffee.example',
+    says: 'Your start date is the fourth.',
+    ...over
+  });
 
 describe('the inbox key', () => {
   it('is an X25519 public key in lowercase hex, which is the wire this repository already has', () => {
@@ -128,8 +127,7 @@ describe('a notice, sealed and opened', () => {
   it('refuses an item sealed to somebody else, and says which fact that is', () => {
     const mine = inboxKeypair(someone(1));
     const theirs = inboxKeypair(someone(2));
-    expect(() => openFromInbox(sealNotice(aNotice(), theirs.publicKey), mine))
-      .toThrowError(/cannot open that item/u);
+    expect(() => openFromInbox(sealNotice(aNotice(), theirs.publicKey), mine)).toThrowError(/cannot open that item/u);
   });
 
   it('names the `tag` field rather than leaving a person with "could not open"', () => {
@@ -142,7 +140,11 @@ describe('a notice, sealed and opened', () => {
     const keys = inboxKeypair(someone());
     const rubbish = sealNotice('not json at all', keys.publicKey);
     let code = '';
-    try { openFromInbox(rubbish, keys); } catch (e) { code = (e as { code: string }).code; }
+    try {
+      openFromInbox(rubbish, keys);
+    } catch (e) {
+      code = (e as { code: string }).code;
+    }
     expect(code).toBe('not-a-notice');
   });
 
@@ -152,19 +154,19 @@ describe('a notice, sealed and opened', () => {
       'https://payroll.example/join?token=1',
       'http://payroll.example',
       'payroll.example',
-      'javascript:alert(1)',
+      'javascript:alert(1)'
     ]) {
-      expect(
-        () => openFromInbox(sealNotice(aNotice({ where }), keys.publicKey), keys),
-        where,
-      ).toThrowError(/not an `https:` origin|not a place written down/u);
+      expect(() => openFromInbox(sealNotice(aNotice({ where }), keys.publicKey), keys), where).toThrowError(
+        /not an `https:` origin|not a place written down/u
+      );
     }
   });
 
   it('refuses a kind it has no words for rather than rendering a blank', () => {
     const keys = inboxKeypair(someone());
-    expect(() => openFromInbox(sealNotice(aNotice({ kind: 'payslip' }), keys.publicKey), keys))
-      .toThrowError(/has no words for/u);
+    expect(() => openFromInbox(sealNotice(aNotice({ kind: 'payslip' }), keys.publicKey), keys)).toThrowError(
+      /has no words for/u
+    );
   });
 
   it('reads the three kinds the agreement names, and nothing else', () => {
@@ -184,7 +186,7 @@ describe('an unopenable item is reported rather than dropped', () => {
     const items = [
       sealNotice(aNotice(), mine.publicKey, 'a'),
       sealNotice(aNotice(), theirs.publicKey, 'b'),
-      { id: 'c', ephemeral: 'nonsense', iv: '', tag: '', body: '' },
+      { id: 'c', ephemeral: 'nonsense', iv: '', tag: '', body: '' }
     ];
     const openings = openAll(items, mine);
     expect(openings).toHaveLength(3);
@@ -205,21 +207,36 @@ describe('an unopenable item is reported rather than dropped', () => {
 function fakeTimers(): Timers & { tick(): void; pending(): number } {
   let queued: (() => void)[] = [];
   return {
-    after: (_ms: number, fn: () => void) => { queued.push(fn); return queued.length; },
-    cancel: () => { queued = []; },
-    tick: () => { const due = queued; queued = []; for (const fn of due) fn(); },
-    pending: () => queued.length,
+    after: (_ms: number, fn: () => void) => {
+      queued.push(fn);
+      return queued.length;
+    },
+    cancel: () => {
+      queued = [];
+    },
+    tick: () => {
+      const due = queued;
+      queued = [];
+      for (const fn of due) fn();
+    },
+    pending: () => queued.length
   };
 }
 
-function countingHost(answer: InboxAnswer = {
-  schema: 'midnight-identity/inbox-answer/v1', items: [],
-}): InboxHost & { asks: InboxAsk[] } {
+function countingHost(
+  answer: InboxAnswer = {
+    schema: 'midnight-identity/inbox-answer/v1',
+    items: []
+  }
+): InboxHost & { asks: InboxAsk[] } {
   const asks: InboxAsk[] = [];
   return {
     describes: 'inbox.example',
     asks,
-    items: (ask: InboxAsk) => { asks.push(ask); return Promise.resolve(answer); },
+    items: (ask: InboxAsk) => {
+      asks.push(ask);
+      return Promise.resolve(answer);
+    }
   };
 }
 
@@ -235,8 +252,12 @@ describe('nothing polls without an unlocked wallet', () => {
     const timers = fakeTimers();
     let unlocked = true;
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => unlocked,
-      onState: () => {}, timers, everyMs: 1,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => unlocked,
+      onState: () => {},
+      timers,
+      everyMs: 1
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -261,26 +282,35 @@ describe('nothing polls without an unlocked wallet', () => {
     let release: (answer: InboxAnswer) => void = () => {};
     const host: InboxHost = {
       describes: 'inbox.example',
-      items: () => new Promise<InboxAnswer>((resolve) => { release = resolve; }),
+      items: () =>
+        new Promise<InboxAnswer>((resolve) => {
+          release = resolve;
+        })
     };
     const seen: InboxState[] = [];
     let unlocked = true;
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => unlocked,
-      onState: (s) => seen.push(s), timers: fakeTimers(), everyMs: 1,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => unlocked,
+      onState: (s) => seen.push(s),
+      timers: fakeTimers(),
+      everyMs: 1
     });
     await Promise.resolve();
     unlocked = false;
     release({
       schema: 'midnight-identity/inbox-answer/v1',
-      items: [sealNotice(aNotice(), inboxKeyOf(someone()))],
+      items: [sealNotice(aNotice(), inboxKeyOf(someone()))]
     });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(seen.map((s) => s.of), 'an answer was delivered into a locked phase')
-      .not.toContain('answered');
+    expect(
+      seen.map((s) => s.of),
+      'an answer was delivered into a locked phase'
+    ).not.toContain('answered');
     expect(poll.stopped()).toBe(true);
   });
 
@@ -293,8 +323,12 @@ describe('nothing polls without an unlocked wallet', () => {
     const host = countingHost();
     const timers = fakeTimers();
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => true,
-      onState: () => {}, timers, everyMs: 1,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => true,
+      onState: () => {},
+      timers,
+      everyMs: 1
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -309,8 +343,12 @@ describe('nothing polls without an unlocked wallet', () => {
   it('asks on purpose when refreshed, which is the control the agreement requires', async () => {
     const host = countingHost();
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => true,
-      onState: () => {}, timers: fakeTimers(), everyMs: 60_000,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => true,
+      onState: () => {},
+      timers: fakeTimers(),
+      everyMs: 60_000
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -325,12 +363,16 @@ describe('nothing polls without an unlocked wallet', () => {
   it('a host that did not answer is not an empty inbox', async () => {
     const host: InboxHost = {
       describes: 'inbox.example',
-      items: () => Promise.reject(new Error('the network refused')),
+      items: () => Promise.reject(new Error('the network refused'))
     };
     const seen: InboxState[] = [];
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => true,
-      onState: (s) => seen.push(s), timers: fakeTimers(), everyMs: 1,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => true,
+      onState: (s) => seen.push(s),
+      timers: fakeTimers(),
+      everyMs: 1
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -342,11 +384,17 @@ describe('nothing polls without an unlocked wallet', () => {
 
   it('never reads the cursor it echoes back', async () => {
     const host = countingHost({
-      schema: 'midnight-identity/inbox-answer/v1', items: [], cursor: 'opaque-42',
+      schema: 'midnight-identity/inbox-answer/v1',
+      items: [],
+      cursor: 'opaque-42'
     });
     const poll = startInboxPolling({
-      host, keys: inboxKeypair(someone()), unlocked: () => true,
-      onState: () => {}, timers: fakeTimers(), everyMs: 1,
+      host,
+      keys: inboxKeypair(someone()),
+      unlocked: () => true,
+      onState: () => {},
+      timers: fakeTimers(),
+      everyMs: 1
     });
     await Promise.resolve();
     await Promise.resolve();

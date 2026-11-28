@@ -26,10 +26,10 @@ export const asClock = (forMs: number): string => {
   return minutes > 0 ? `${minutes}m ${String(seconds % 60).padStart(2, '0')}s` : `${seconds}s`;
 };
 
-export const kindWords = (recipient: Recipient): string => (recipient.kind === 'shielded'
-  ? 'a SHIELDED address — a private payment; the amount and the parties stay '
-    + 'hidden on the chain'
-  : 'an UNSHIELDED address — an ordinary NIGHT transfer, visible on the chain');
+export const kindWords = (recipient: Recipient): string =>
+  recipient.kind === 'shielded'
+    ? 'a SHIELDED address — a private payment; the amount and the parties stay ' + 'hidden on the chain'
+    : 'an UNSHIELDED address — an ordinary NIGHT transfer, visible on the chain';
 
 /**
  * A REFUSAL, VERBATIM. `role="alert"` is the fact and the colour follows it —
@@ -47,7 +47,7 @@ export function Refusal({ children }: { readonly children: ReactNode }): ReactNo
       role="alert"
       className={[
         'mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2',
-        'text-sm break-words text-destructive',
+        'text-sm break-words text-destructive'
       ].join(' ')}
     >
       {children}
@@ -65,7 +65,7 @@ export function Bytes({ children }: { readonly children: ReactNode }): ReactNode
     <div
       className={[
         'my-2 rounded-md border border-border bg-muted px-3 py-2',
-        'font-mono text-xs leading-relaxed break-all text-muted-foreground select-all',
+        'font-mono text-xs leading-relaxed break-all text-muted-foreground select-all'
       ].join(' ')}
     >
       {children}

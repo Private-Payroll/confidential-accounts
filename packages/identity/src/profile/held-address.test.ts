@@ -5,7 +5,11 @@ import { addressFor } from '../wallet/address.js';
 import { parseAsk } from './request.js';
 import type { UnlockRequest } from './request.js';
 import {
-  HELD_ADDRESS_SLOTS, heldAddressDigest, heldAddressList, listHolds, readHeldAddressList,
+  HELD_ADDRESS_SLOTS,
+  heldAddressDigest,
+  heldAddressList,
+  listHolds,
+  readHeldAddressList
 } from './held-address.js';
 import { readRelease, releaseFor } from './unlock.js';
 import { checkShieldedAddress } from '../wallet/address-shape.js';
@@ -25,8 +29,9 @@ const COMPANY = 'co_dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af
 const OTHER_COMPANY = 'co_54ef954a25aefff8e1675af10a852ef29d5de5c63a51b64b978bf7bd0eaeca4e' as CompanyLabel;
 const mine = identityFromWords(TEST_MNEMONIC);
 const theirs = identityFromWords(
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon '
-  + 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art');
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon ' +
+    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art'
+);
 const MY_MAIN = addressFor(mine.moneyAt(0).zswap, NETWORK).bech32;
 const MY_SUB = addressFor(mine.moneyAt(2).zswap, NETWORK).bech32;
 const COLLEAGUE = addressFor(theirs.moneyAt(0).zswap, NETWORK).bech32;
@@ -35,24 +40,30 @@ const swapEncryptionKey = (address: string): string => {
   const mineChecked = checkShieldedAddress(address, NETWORK);
   const theirsChecked = checkShieldedAddress(COLLEAGUE, NETWORK);
   const bytes = Uint8Array.from(
-    (mineChecked.coinPublicKey + theirsChecked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16)));
+    (mineChecked.coinPublicKey + theirsChecked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16))
+  );
   return bech32m.encode(`mn_shield-addr_${NETWORK}`, bech32m.toWords(bytes), false);
 };
 
 /** The ask a list answers, as the page holds it: its own nonce, its own origin, the company it asked about. */
 const S = (nonce: string, origin = ORIGIN, company: CompanyLabel = COMPANY) => ({ nonce, origin, company });
 
-const ask = (nonce: string): UnlockRequest => parseAsk({
-  schema: 'midnight-identity/disclosure-request/v1',
-  kind: 'unlock',
-  requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
-  purpose: 'So we can show you your payslips.',
-  company: COMPANY,
-  nonce,
-  expiresAt: NOW + 60_000,
-}, ORIGIN, NOW) as UnlockRequest;
+const ask = (nonce: string): UnlockRequest =>
+  parseAsk(
+    {
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'unlock',
+      requester: { name: 'Payroll A', rdns: 'example.payroll-a' },
+      purpose: 'So we can show you your payslips.',
+      company: COMPANY,
+      nonce,
+      expiresAt: NOW + 60_000
+    },
+    ORIGIN,
+    NOW
+  ) as UnlockRequest;
 
-describe('ONE DIGEST, OVER THE ADDRESS AND THE ASK\'S NONCE', () => {
+describe("ONE DIGEST, OVER THE ADDRESS AND THE ASK'S NONCE", () => {
   it('is the same for two spellings of one address and differs by nonce, by address and by network', () => {
     const d = heldAddressDigest(S('n1'), MY_MAIN);
     expect(d).toMatch(/^[0-9a-f]{64}$/u);
@@ -73,14 +84,31 @@ describe('ONE DIGEST, OVER THE ADDRESS AND THE ASK\'S NONCE', () => {
     expect(heldAddressDigest(S('n1', 'https://other-payroll.example'), MY_MAIN)).not.toBe(d);
     expect(heldAddressDigest(S('n1', ORIGIN, OTHER_COMPANY), MY_MAIN)).not.toBe(d);
     /* RED WHEN the domain is left at `v1` or the label goes in as anything but written. */
-    const lp = (b: Uint8Array): Uint8Array => { const o = new Uint8Array(4 + b.length); new DataView(o.buffer).setUint32(0, b.length); o.set(b, 4); return o; };
+    const lp = (b: Uint8Array): Uint8Array => {
+      const o = new Uint8Array(4 + b.length);
+      new DataView(o.buffer).setUint32(0, b.length);
+      o.set(b, 4);
+      return o;
+    };
     const t = (x: string): Uint8Array => lp(new TextEncoder().encode(x));
     const checked = checkShieldedAddress(MY_MAIN, NETWORK);
-    const keys = Uint8Array.from((checked.coinPublicKey + checked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16)));
-    const parts = [new TextEncoder().encode('midnight-identity/held-address/v2'), t('n1'), t(ORIGIN), t(COMPANY), t(checked.network), keys];
+    const keys = Uint8Array.from(
+      (checked.coinPublicKey + checked.encryptionPublicKey).match(/../gu)!.map((b) => parseInt(b, 16))
+    );
+    const parts = [
+      new TextEncoder().encode('midnight-identity/held-address/v2'),
+      t('n1'),
+      t(ORIGIN),
+      t(COMPANY),
+      t(checked.network),
+      keys
+    ];
     const whole = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
     let at = 0;
-    for (const p of parts) { whole.set(p, at); at += p.length; }
+    for (const p of parts) {
+      whole.set(p, at);
+      at += p.length;
+    }
     expect(d).toBe(Buffer.from(sha256(whole)).toString('hex'));
     /* RED WHEN only the coin key is digested: an address differing in its encryption key alone is another address. */
     expect(heldAddressDigest(S('n1'), swapEncryptionKey(MY_MAIN))).not.toBe(d);
@@ -94,7 +122,7 @@ describe('ONE DIGEST, OVER THE ADDRESS AND THE ASK\'S NONCE', () => {
   });
 });
 
-describe('THE WALLET\'S LIST', () => {
+describe("THE WALLET'S LIST", () => {
   it('is always the same length, sorted, and holds exactly the digests of what it was given', () => {
     const list = heldAddressList(S('n1'), [MY_MAIN, MY_SUB]);
     /* RED WHEN the filler is dropped: the length would tell how many accounts the wallet has. */
@@ -110,20 +138,26 @@ describe('THE WALLET\'S LIST', () => {
 
   it('fills with fresh randomness, so a digest cannot be told from filler and two lists share only what is real', () => {
     const asked: number[] = [];
-    const counting = (n: number) => { asked.push(n); return crypto.getRandomValues(new Uint8Array(n)); };
+    const counting = (n: number) => {
+      asked.push(n);
+      return crypto.getRandomValues(new Uint8Array(n));
+    };
     heldAddressList(S('n1'), [MY_MAIN, MY_SUB], counting);
     /* RED WHEN the filler is not one fresh 32-byte draw per empty slot. */
     expect(asked).toEqual(Array.from({ length: HELD_ADDRESS_SLOTS - 2 }, () => 32));
     const a = heldAddressList(S('n1'), [MY_MAIN, MY_SUB]);
     const b = heldAddressList(S('n1'), [MY_MAIN, MY_SUB]);
     /* RED WHEN the filler is constant: it would then be told apart from the digests, and so would the count. */
-    expect(a.filter((d) => b.includes(d)).sort())
-      .toEqual([heldAddressDigest(S('n1'), MY_MAIN), heldAddressDigest(S('n1'), MY_SUB)].sort());
+    expect(a.filter((d) => b.includes(d)).sort()).toEqual(
+      [heldAddressDigest(S('n1'), MY_MAIN), heldAddressDigest(S('n1'), MY_SUB)].sort()
+    );
   });
 
   it('refuses to answer for more addresses than it has room for', () => {
-    const many = Array.from({ length: HELD_ADDRESS_SLOTS + 1 }, (_, i) =>
-      addressFor(mine.moneyAt(i === 1 ? 40 : i).zswap, NETWORK).bech32);
+    const many = Array.from(
+      { length: HELD_ADDRESS_SLOTS + 1 },
+      (_, i) => addressFor(mine.moneyAt(i === 1 ? 40 : i).zswap, NETWORK).bech32
+    );
     /* RED WHEN a longer list is sent: its length would say how many accounts there are. */
     expect(() => heldAddressList(S('n1'), many)).toThrow(/at most/u);
   });
@@ -139,9 +173,14 @@ describe('THE WALLET\'S LIST', () => {
 });
 
 describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
-  it('a slip paid to one of the wallet\'s own addresses is confirmed; a colleague\'s is not', () => {
+  it("a slip paid to one of the wallet's own addresses is confirmed; a colleague's is not", () => {
     const released = releaseFor(mine, ask('page-nonce'), NOW, undefined, [MY_MAIN, MY_SUB]);
-    const read = readRelease(released, { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY, forAccount: null });
+    const read = readRelease(released, {
+      atOrigin: ORIGIN,
+      expectingNonce: 'page-nonce',
+      forCompany: COMPANY,
+      forAccount: null
+    });
     expect(read.ok).toBe(true);
     const held = read.ok ? read.held : null;
     expect(held).not.toBeNull();
@@ -155,14 +194,26 @@ describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
   });
 
   it('TWO SITES THAT SEND THE SAME NONCE GET LISTS THAT SHARE NOTHING, SO THEY CANNOT TELL THEY SERVE ONE WALLET', () => {
-    const at = (origin: string, company: CompanyLabel) => parseAsk({
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'unlock',
-      requester: { name: 'A payroll', rdns: 'example.payroll' }, purpose: 'Payslips.',
-      company, nonce: 'the-same-nonce', expiresAt: NOW + 60_000,
-    }, origin, NOW) as UnlockRequest;
+    const at = (origin: string, company: CompanyLabel) =>
+      parseAsk(
+        {
+          schema: 'midnight-identity/disclosure-request/v1',
+          kind: 'unlock',
+          requester: { name: 'A payroll', rdns: 'example.payroll' },
+          purpose: 'Payslips.',
+          company,
+          nonce: 'the-same-nonce',
+          expiresAt: NOW + 60_000
+        },
+        origin,
+        NOW
+      ) as UnlockRequest;
     const OTHER_CO = OTHER_COMPANY;
     const first = releaseFor(mine, at(ORIGIN, COMPANY), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
-    const otherSite = releaseFor(mine, at('https://other-payroll.example', COMPANY), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
+    const otherSite = releaseFor(mine, at('https://other-payroll.example', COMPANY), NOW, undefined, [
+      MY_MAIN,
+      MY_SUB
+    ]).held!;
     const otherCompany = releaseFor(mine, at(ORIGIN, OTHER_CO), NOW, undefined, [MY_MAIN, MY_SUB]).held!;
     /* RED WHEN the wallet leaves the observed origin or the company out of the digest. */
     expect(first.filter((d) => otherSite.includes(d))).toEqual([]);
@@ -186,8 +237,12 @@ describe('THE RELEASE CARRIES IT, AND THE PAGE TESTS ONLY WHAT IT HAS', () => {
   });
 
   it('a wallet that says nothing reads as nothing, and still releases', () => {
-    const read = readRelease(releaseFor(mine, ask('page-nonce'), NOW),
-      { atOrigin: ORIGIN, expectingNonce: 'page-nonce', forCompany: COMPANY, forAccount: null });
+    const read = readRelease(releaseFor(mine, ask('page-nonce'), NOW), {
+      atOrigin: ORIGIN,
+      expectingNonce: 'page-nonce',
+      forCompany: COMPANY,
+      forAccount: null
+    });
     expect(read.ok).toBe(true);
     /* RED WHEN an absent list reads as an empty list that could be tested. */
     expect(read.ok && read.held).toBeNull();

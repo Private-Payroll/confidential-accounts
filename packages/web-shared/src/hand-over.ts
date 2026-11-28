@@ -103,13 +103,18 @@ export class ServiceNotReached extends Error {
 }
 
 /** Whether an error says the service could not be reached; read by its mark, so it holds across the page and the wallet. */
-export const serviceNotReached = (e: unknown): e is { readonly unreached: true; readonly nothingWasSent: boolean; readonly message: string } =>
+export const serviceNotReached = (
+  e: unknown
+): e is { readonly unreached: true; readonly nothingWasSent: boolean; readonly message: string } =>
   e !== null && typeof e === 'object' && (e as { unreached?: unknown }).unreached === true;
 
 /** Refused before anything was paid or sent. */
 export class NotHandedOver extends Error {
   readonly nothingWasSent = true as const;
-  constructor(message: string) { super(message); this.name = 'NotHandedOver'; }
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotHandedOver';
+  }
 }
 
 interface HandOverStep<T> {
@@ -143,7 +148,7 @@ export async function handedOver<T>(over: HandOver | undefined, step: HandOverSt
       return await step.viaService();
     } catch (e) {
       if (ourServiceTookNothing(e)) {
-        const why = serviceNotReached(e) ? 'unreached' as const : undefined;
+        const why = serviceNotReached(e) ? ('unreached' as const) : undefined;
         return sentAnotherWay(fallback.toChain, 'chain', step, () => fallback.fellBack(why));
       }
       if (!serviceNotReached(e) || fallback.landed === undefined) throw e;
@@ -151,14 +156,16 @@ export async function handedOver<T>(over: HandOver | undefined, step: HandOverSt
     }
   }
   if (over.toChain === undefined) {
-    throw new NotHandedOver(over.path === 'chain'
-      ? 'this device reaches no wallet to send the call straight to the chain. Nothing was sent.'
-      : 'this device cannot send the call to the company\'s own service. Nothing was sent.');
+    throw new NotHandedOver(
+      over.path === 'chain'
+        ? 'this device reaches no wallet to send the call straight to the chain. Nothing was sent.'
+        : "this device cannot send the call to the company's own service. Nothing was sent."
+    );
   }
   return sentAnotherWay(over.toChain, over.path === 'chain' ? 'chain' : 'company-service', step);
 }
 
-const MAY_HAVE_REACHED = 'the call may have reached the company\'s service, which did not answer';
+const MAY_HAVE_REACHED = "the call may have reached the company's service, which did not answer";
 
 /*
  * A call that went out to our service with no answer back: read from the chain whether it is there. There, it is
@@ -166,31 +173,42 @@ const MAY_HAVE_REACHED = 'the call may have reached the company\'s service, whic
  * fail, the chain is read once more, since the first may have landed meanwhile and the ledger then refuses the second.
  */
 async function sentUnlessLanded<T>(
-  fallback: NonNullable<HandOver['fallback']>, unanswered: { readonly message: string }, step: HandOverStep<T>,
+  fallback: NonNullable<HandOver['fallback']>,
+  unanswered: { readonly message: string },
+  step: HandOverStep<T>
 ): Promise<T> {
   const landed = fallback.landed!;
   const onChain = async (): Promise<boolean> => {
     try {
       return await landed(step.tx, step.call);
     } catch (e) {
-      throw new SentStraightNotRecorded(`${MAY_HAVE_REACHED}, and this wallet could not read the chain to see whether it is there: `
-        + `${(e as Error)?.message ?? String(e)}`, 'unclear');
+      throw new SentStraightNotRecorded(
+        `${MAY_HAVE_REACHED}, and this wallet could not read the chain to see whether it is there: ` +
+          `${(e as Error)?.message ?? String(e)}`,
+        'unclear'
+      );
     }
   };
   if (await onChain()) return recordedOnChain(step);
   try {
     if (step.before !== undefined) await step.before();
   } catch (e) {
-    throw new SentStraightNotRecorded(`${MAY_HAVE_REACHED}, and the record it keeps could not be filed, so this wallet sent `
-      + `nothing more: ${(e as Error)?.message ?? String(e)}`, 'unclear');
+    throw new SentStraightNotRecorded(
+      `${MAY_HAVE_REACHED}, and the record it keeps could not be filed, so this wallet sent ` +
+        `nothing more: ${(e as Error)?.message ?? String(e)}`,
+      'unclear'
+    );
   }
   try {
     await fallback.toChain(step.tx, step.call);
   } catch (e) {
     if (await onChain().catch(() => false)) return recordedOnChain(step);
     if ((e as { nothingWasSent?: unknown } | null)?.nothingWasSent === true) {
-      throw new SentStraightNotRecorded(`${MAY_HAVE_REACHED} (${unanswered.message}), and this wallet could not send it straight `
-        + `to the chain: ${(e as Error)?.message ?? String(e)}`, 'unclear');
+      throw new SentStraightNotRecorded(
+        `${MAY_HAVE_REACHED} (${unanswered.message}), and this wallet could not send it straight ` +
+          `to the chain: ${(e as Error)?.message ?? String(e)}`,
+        'unclear'
+      );
     }
     throw e;
   }
@@ -216,8 +234,10 @@ async function recordedOnChain<T>(step: HandOverStep<T>): Promise<T> {
  * `sent` is told only once the call has gone, so the window never says a call went a way it did not.
  */
 async function sentAnotherWay<T>(
-  toChain: (tx: string, call: ChainCall) => Promise<void>, how: 'chain' | 'company-service', step: HandOverStep<T>,
-  sent?: () => void,
+  toChain: (tx: string, call: ChainCall) => Promise<void>,
+  how: 'chain' | 'company-service',
+  step: HandOverStep<T>,
+  sent?: () => void
 ): Promise<T> {
   if (step.before !== undefined) await step.before();
   await toChain(step.tx, step.call);
@@ -238,13 +258,19 @@ export class SentStraightNotRecorded extends Error {
   readonly nothingWasSent = false as const;
   constructor(said: string, how: 'chain' | 'company-service' | 'on-chain' | 'unclear' = 'chain') {
     const why = said.replace(/\s*Nothing was [a-z ]+\.?/giu, '').replace(/\.\s*$/u, '');
-    super(`${how === 'unclear' ? `${why}. ` : `${how === 'chain'
-      ? 'the call was sent straight to the chain, and the company\'s service'
-      : how === 'on-chain'
-        ? 'the call is on the chain, and the company\'s service'
-        : 'the call was handed to the company\'s own service, and the service that keeps the company\'s records'} `
-      + `could not say where it stands (${why}). `}`
-      + 'Do not send it again: open it later, and it will say where it stands on the chain.');
+    super(
+      `${
+        how === 'unclear'
+          ? `${why}. `
+          : `${
+              how === 'chain'
+                ? "the call was sent straight to the chain, and the company's service"
+                : how === 'on-chain'
+                  ? "the call is on the chain, and the company's service"
+                  : "the call was handed to the company's own service, and the service that keeps the company's records"
+            } ` + `could not say where it stands (${why}). `
+      }` + 'Do not send it again: open it later, and it will say where it stands on the chain.'
+    );
     this.name = 'SentStraightNotRecorded';
   }
 }

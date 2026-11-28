@@ -21,69 +21,89 @@ const standIns = () => {
   const ledger = {
     ZswapSecretKeys: { fromSeed: () => ({ coinPublicKey: 'cpk', encryptionPublicKey: 'epk' }) },
     LedgerParameters: {
-      initialParameters: () => { throw new Error('the ledger\'s starting parameters were asked for'); },
-    },
+      initialParameters: () => {
+        throw new Error("the ledger's starting parameters were asked for");
+      }
+    }
   };
   const deps: VaultBuilderDeps = {
     ledger,
     runtimeState: { deserialize: () => ({ state: true }) },
     contracts: {
-      buildDeploy: async () => { throw new Error('no deploy here'); },
+      buildDeploy: async () => {
+        throw new Error('no deploy here');
+      },
       buildCall: async (_zk, call) => {
         asked.push({ circuitId: call.circuitId, parameters: call.read.parameters, network: call.network });
         return { private: { unprovenTx: 'unproven' as never, transaction: null, nextZswapLocalState: null } };
-      },
+      }
     },
     compiled: {},
     zkConfig: {},
     prove: async () => ({ serialize: () => new Uint8Array([1]) }),
     network: 'undeployed',
-    random: (n) => new Uint8Array(n).fill(4),
+    random: (n) => new Uint8Array(n).fill(4)
   };
   return { deps, asked };
 };
 
 describe('the ledger parameters a deposit is built with', () => {
-  it('ARE THE CHAIN\'S, AS HANDED OVER, AND NEVER THE LEDGER\'S STARTING ONES', async () => {
+  it("ARE THE CHAIN'S, AS HANDED OVER, AND NEVER THE LEDGER'S STARTING ONES", async () => {
     const { deps, asked } = standIns();
     await buildDeposit(deps, { vault: VAULT, coin: COIN, state: new Uint8Array([1]), parameters: CHAIN_PARAMETERS });
     /* RED WHEN: the deposit is built with `LedgerParameters.initialParameters()` - the stand-in throws. */
-    expect(asked, 'RED WHEN: the call is built with anything but the parameters the chain served, or for another network').toEqual([
-      { circuitId: 'deposit', parameters: CHAIN_PARAMETERS, network: 'undeployed' },
-    ]);
+    expect(
+      asked,
+      'RED WHEN: the call is built with anything but the parameters the chain served, or for another network'
+    ).toEqual([{ circuitId: 'deposit', parameters: CHAIN_PARAMETERS, network: 'undeployed' }]);
   });
 
   it('REFUSES TO BUILD WITH NO PARAMETERS, AND BUILDS NOTHING', async () => {
     const { deps, asked } = standIns();
     for (const parameters of [new Uint8Array(0), undefined as unknown as Uint8Array]) {
       /* RED WHEN: a deposit with no parameters falls back to some others instead of refusing. */
-      await expect(buildDeposit(deps, { vault: VAULT, coin: COIN, state: new Uint8Array([1]), parameters }))
-        .rejects.toThrow(/current ledger parameters were not handed over, so nothing was built or sent/);
+      await expect(
+        buildDeposit(deps, { vault: VAULT, coin: COIN, state: new Uint8Array([1]), parameters })
+      ).rejects.toThrow(/current ledger parameters were not handed over, so nothing was built or sent/);
     }
     expect(asked).toEqual([]);
   });
 
-  it('REACH THE BUILDER FROM THE PAGE\'S ASK, THROUGH THE WORKER, AS THE SAME BYTES', async () => {
+  it("REACH THE BUILDER FROM THE PAGE'S ASK, THROUGH THE WORKER, AS THE SAME BYTES", async () => {
     const { deps, asked } = standIns();
     const answer = await answerVaultAsk(async () => deps as never, {
-      id: 7, network: 'undeployed', ask: 'deposit', vault: VAULT,
-      coin: { nonce: COIN.nonce, token: COIN.token, value: '5' }, state: base64(new Uint8Array([1])), parameters: base64(CHAIN_PARAMETERS),
+      id: 7,
+      network: 'undeployed',
+      ask: 'deposit',
+      vault: VAULT,
+      coin: { nonce: COIN.nonce, token: COIN.token, value: '5' },
+      state: base64(new Uint8Array([1])),
+      parameters: base64(CHAIN_PARAMETERS)
     });
     expect(answer).toMatchObject({ id: 7, ok: true, ask: 'deposit' });
     /* RED WHEN: the worker drops the ask's parameters or hands the builder other bytes. */
     expect(asked.map((a) => Array.from(a.parameters))).toEqual([Array.from(CHAIN_PARAMETERS)]);
     /* An ask that names none is refused by the builder, not built with some. */
-    await expect(answerVaultAsk(async () => deps as never, {
-      id: 8, network: 'undeployed', ask: 'deposit', vault: VAULT,
-      coin: { nonce: COIN.nonce, token: COIN.token, value: '5' }, state: base64(new Uint8Array([1])),
-    } as never)).rejects.toThrow(/parameters were not handed over/);
+    await expect(
+      answerVaultAsk(async () => deps as never, {
+        id: 8,
+        network: 'undeployed',
+        ask: 'deposit',
+        vault: VAULT,
+        coin: { nonce: COIN.nonce, token: COIN.token, value: '5' },
+        state: base64(new Uint8Array([1]))
+      } as never)
+    ).rejects.toThrow(/parameters were not handed over/);
     expect(asked).toHaveLength(1);
   });
 
   it('THE VERSION THE PAGE ACCEPTS IS THE ONE THE INSTALLED LEDGER WRITES, AND THE LEDGER READS NO OTHER', () => {
     const written = Buffer.from(L.LedgerParameters.initialParameters().serialize());
     /* RED WHEN: the ledger is upgraded to write another version and the page still accepts only the old one. */
-    expect(written.toString('latin1').startsWith(LEDGER_PARAMETERS_HEADER), 'the page refuses what this ledger writes').toBe(true);
+    expect(
+      written.toString('latin1').startsWith(LEDGER_PARAMETERS_HEADER),
+      'the page refuses what this ledger writes'
+    ).toBe(true);
     const asWritten = written.toString('latin1');
     const version = /\[v(\d+)\]/u.exec(asWritten)![1]!;
     for (const other of [String(Number(version) - 1), String(Number(version) + 1)]) {

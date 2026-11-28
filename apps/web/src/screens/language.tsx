@@ -21,17 +21,25 @@ export function LanguageSettings() {
         aria-label={t('language.title')}
         value={preferences.language ?? FOLLOW_BROWSER}
         onValueChange={(v) => choose({ language: v === FOLLOW_BROWSER ? null : v })}
-        className="flex flex-col gap-2" data-choice="language"
+        className="flex flex-col gap-2"
+        data-choice="language"
       >
         <Label className="flex cursor-pointer items-center gap-3 rounded-lg border p-3" data-language="">
           <RadioGroupItem value={FOLLOW_BROWSER} />
           <span className="flex flex-col">
             <span>{t('language.followBrowser')}</span>
-            <span className="text-xs text-muted-foreground">{t('language.nowShown', { language: languageName(shown) })}</span>
+            <span className="text-xs text-muted-foreground">
+              {t('language.nowShown', { language: languageName(shown) })}
+            </span>
           </span>
         </Label>
         {LANGUAGES.map((l) => (
-          <Label key={l.tag} className="flex cursor-pointer items-center gap-3 rounded-lg border p-3" lang={l.tag} data-language={l.tag}>
+          <Label
+            key={l.tag}
+            className="flex cursor-pointer items-center gap-3 rounded-lg border p-3"
+            lang={l.tag}
+            data-language={l.tag}
+          >
             <RadioGroupItem value={l.tag} />
             <span>{languageName(l.tag)}</span>
           </Label>

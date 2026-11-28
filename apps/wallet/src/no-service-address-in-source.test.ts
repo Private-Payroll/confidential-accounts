@@ -23,9 +23,12 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   /* A name keys are made under for a wallet made from words; nothing is fetched from it. */
   'src/core/payroll.ts': ['https://payroll.example'],
   /* The public hosts the proving parameters are fetched from. */
-  'src/server/proving-parameters.ts': ['https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com', 'https://srs.midnight.network'],
+  'src/server/proving-parameters.ts': [
+    'https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com',
+    'https://srs.midnight.network'
+  ],
   /* Where a development build's errors go; a build for anyone else carries none. */
-  'packages/web-shared/src/error-sink.ts': ['http://localhost:8787'],
+  'packages/web-shared/src/error-sink.ts': ['http://localhost:8787']
 };
 
 /** Every address written as a string in `source`, comments left out. */
@@ -34,11 +37,12 @@ export const addressesIn = (source: string): string[] => {
   return [...code.matchAll(/['"`]((?:https?|wss?):\/\/[^'"`\s]*)/gu)].map((m) => m[1]!.replace(/\$\{.*$/u, ''));
 };
 
-const filesUnder = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
-  const at = join(dir, name);
-  if (statSync(at).isDirectory()) return name === 'node_modules' ? [] : filesUnder(at);
-  return /\.tsx?$/u.test(name) ? [at] : [];
-});
+const filesUnder = (dir: string): string[] =>
+  readdirSync(dir).flatMap((name) => {
+    const at = join(dir, name);
+    if (statSync(at).isDirectory()) return name === 'node_modules' ? [] : filesUnder(at);
+    return /\.tsx?$/u.test(name) ? [at] : [];
+  });
 
 describe('NO SHIPPING SOURCE NAMES THE ADDRESS OF A SERVICE', () => {
   it('every address written in shipping source is one listed here, and none is a service', () => {
@@ -57,7 +61,9 @@ describe('NO SHIPPING SOURCE NAMES THE ADDRESS OF A SERVICE', () => {
 
   it('an address written anywhere in code is found, and one written in a comment is not', () => {
     /* RED WHEN: the scan misses an address a source writes, so a service's address could pass unseen. */
-    expect(addressesIn("const SERVICE = 'https://payroll-service.example:8443/api';")).toEqual(['https://payroll-service.example:8443/api']);
+    expect(addressesIn("const SERVICE = 'https://payroll-service.example:8443/api';")).toEqual([
+      'https://payroll-service.example:8443/api'
+    ]);
     expect(addressesIn('const at = `https://${host}/api`;')).toEqual(['https://']);
     expect(addressesIn('/* https://not-code.example */ // "https://nor-this.example"')).toEqual([]);
   });

@@ -2,19 +2,36 @@ import { describe, expect, it } from 'vitest';
 import { identityFromSecret } from '../keys/derivation.js';
 import { companyLabelOf } from './company-label.js';
 import {
-  ENTRY_BYTES, entrySealingKey, neverZero, openEntry, registryKey, RegistryEntryError, sealEntry, tagAt, type RegistryEntry,
+  ENTRY_BYTES,
+  entrySealingKey,
+  neverZero,
+  openEntry,
+  registryKey,
+  RegistryEntryError,
+  sealEntry,
+  tagAt,
+  type RegistryEntry
 } from './private-registry.js';
 
 const person = identityFromSecret(new Uint8Array(32).fill(7));
 const other = identityFromSecret(new Uint8Array(32).fill(8));
 const LABEL = companyLabelOf(new Uint8Array(32).fill(0xc1));
 const entry: RegistryEntry = {
-  label: LABEL, account: 'a1'.repeat(32), n: 3, scope: 'b2'.repeat(32),
-  rights: { mayRaise: true, mayApprove: false, mayHold: true, everyVault: false, vaults: ['d4'.repeat(32), 'e5'.repeat(32)] },
+  label: LABEL,
+  account: 'a1'.repeat(32),
+  n: 3,
+  scope: 'b2'.repeat(32),
+  rights: {
+    mayRaise: true,
+    mayApprove: false,
+    mayHold: true,
+    everyVault: false,
+    vaults: ['d4'.repeat(32), 'e5'.repeat(32)]
+  }
 };
 
-describe('A SIGNER SEAT\'S ENTRY IN A PRIVATE REGISTRY', () => {
-  it('is sealed to exactly the registry\'s value size and opens to what was sealed', () => {
+describe("A SIGNER SEAT'S ENTRY IN A PRIVATE REGISTRY", () => {
+  it("is sealed to exactly the registry's value size and opens to what was sealed", () => {
     const sealed = sealEntry(person, 'preprod', 0, entry);
     /* RED WHEN: the sealed value is not the contract's Bytes<288>. */
     expect(sealed.length).toBe(ENTRY_BYTES);
@@ -70,12 +87,16 @@ describe('A SIGNER SEAT\'S ENTRY IN A PRIVATE REGISTRY', () => {
     expect(neverZero(some)).toBe(some);
   });
 
-  it('refuses to seal what is not a seat\'s entry', () => {
+  it("refuses to seal what is not a seat's entry", () => {
     /* RED WHEN: an account that is not 32 bytes is sealed. */
     expect(() => sealEntry(person, 'preprod', 0, { ...entry, account: 'a1' })).toThrow(RegistryEntryError);
     /* RED WHEN: rights naming more vaults than a seat's rights hold are sealed. */
-    expect(() => sealEntry(person, 'preprod', 0, { ...entry, rights: { ...entry.rights!, vaults: Array(5).fill('d4'.repeat(32)) } }))
-      .toThrow(RegistryEntryError);
+    expect(() =>
+      sealEntry(person, 'preprod', 0, {
+        ...entry,
+        rights: { ...entry.rights!, vaults: Array(5).fill('d4'.repeat(32)) }
+      })
+    ).toThrow(RegistryEntryError);
     /* RED WHEN: a negative index makes a tag. */
     expect(() => tagAt(person, 'preprod', -1)).toThrow(RegistryEntryError);
   });

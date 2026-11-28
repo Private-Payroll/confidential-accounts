@@ -17,9 +17,7 @@
  * `app/probe.ts` still CALL it, and a called function cannot be tree-shaken.
  * This import fixes only the two sites below. */
 import { Buffer } from 'buffer';
-import {
-  addressFromKey, signData, signatureVerifyingKey, verifySignature,
-} from '@midnightntwrk/ledger-v9';
+import { addressFromKey, signData, signatureVerifyingKey, verifySignature } from '@midnightntwrk/ledger-v9';
 import type { Signature, SignatureVerifyingKey, SigningKey } from '@midnightntwrk/ledger-v9';
 import { UnshieldedAddress } from '@midnightntwrk/wallet-sdk-address-format';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
@@ -117,7 +115,7 @@ export interface DisclosureResponse {
 
 const signingKeyFor = (identity: Identity, subwallet: number): SigningKey => ({
   tag: KIND,
-  value: Buffer.from(identity.moneyAt(subwallet).night).toString('hex'),
+  value: Buffer.from(identity.moneyAt(subwallet).night).toString('hex')
 });
 
 /**
@@ -153,7 +151,8 @@ export interface Minted {
  * `preimage`** — the whole value of §5.5's field is that nothing rebuilds it.
  */
 export function mint(
-  identity: Identity, subwallet: number,
+  identity: Identity,
+  subwallet: number,
   parts: {
     readonly origin: string;
     readonly nonce: string;
@@ -162,7 +161,7 @@ export function mint(
     readonly disclosed: readonly Sent[];
     readonly declined: readonly AttributeName[];
     readonly requesterSaidItWas: { readonly name: string; readonly rdns: string };
-  },
+  }
 ): Minted {
   const payload: DisclosurePayload = Object.freeze({
     schema: RESPONSE_SCHEMA,
@@ -171,7 +170,7 @@ export function mint(
     address: parts.address,
     at: parts.at,
     disclosed: Object.freeze([...parts.disclosed]),
-    declined: Object.freeze([...parts.declined]),
+    declined: Object.freeze([...parts.declined])
   });
   const key = signingKeyFor(identity, subwallet);
   /* ONE CALL, ONE BUFFER. What is signed and what is kept are the same bytes,
@@ -186,9 +185,9 @@ export function mint(
       scheme: KIND,
       signature: signature.value,
       verifyingKey: verifying.value,
-      requesterSaidItWas: Object.freeze({ ...parts.requesterSaidItWas }),
+      requesterSaidItWas: Object.freeze({ ...parts.requesterSaidItWas })
     }),
-    signedBytes: toBase64Url(bytes),
+    signedBytes: toBase64Url(bytes)
   });
 }
 
@@ -204,25 +203,18 @@ export function mint(
  * the same two steps from a bare verifying key, which is all a recipient has.
  */
 export function addressOfVerifyingKey(
-  verifyingKey: string, networkId: Parameters<typeof UnshieldedAddress.codec.encode>[0],
+  verifyingKey: string,
+  networkId: Parameters<typeof UnshieldedAddress.codec.encode>[0]
 ): string {
   const hex = addressFromKey({ tag: KIND, value: verifyingKey });
-  return UnshieldedAddress.codec
-    .encode(networkId, new UnshieldedAddress(Buffer.from(hex, 'hex')))
-    .asString();
+  return UnshieldedAddress.codec.encode(networkId, new UnshieldedAddress(Buffer.from(hex, 'hex'))).asString();
 }
 
 export type VerdictFailure =
-  | 'wrong-schema'
-  | 'origin-mismatch'
-  | 'nonce-mismatch'
-  | 'address-mismatch'
-  | 'signature-invalid'
-  | 'expired-claim';
+  'wrong-schema' | 'origin-mismatch' | 'nonce-mismatch' | 'address-mismatch' | 'signature-invalid' | 'expired-claim';
 
 export type Verdict =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly code: VerdictFailure; readonly says: string };
+  { readonly ok: true } | { readonly ok: false; readonly code: VerdictFailure; readonly says: string };
 
 /**
  * **THE CHECK THAT MAKES A REPLAY IMPOSSIBLE, AND IT BELONGS TO THE RECIPIENT.**
@@ -247,7 +239,7 @@ export function verify(
     readonly networkId: Parameters<typeof UnshieldedAddress.codec.encode>[0];
     /** Now, so an issued claim's expiry can be judged. */
     readonly now: number;
-  },
+  }
 ): Verdict {
   const { payload } = response;
   if (payload?.schema !== RESPONSE_SCHEMA) {
@@ -257,15 +249,16 @@ export function verify(
     return {
       ok: false,
       code: 'origin-mismatch',
-      says: `this disclosure was made for ${payload.origin} and was received at `
-        + `${expecting.atOrigin}. It belongs to somebody else and is refused.`,
+      says:
+        `this disclosure was made for ${payload.origin} and was received at ` +
+        `${expecting.atOrigin}. It belongs to somebody else and is refused.`
     };
   }
   if (payload.nonce !== expecting.expectingNonce) {
     return {
       ok: false,
       code: 'nonce-mismatch',
-      says: 'this disclosure answers a different request from the one that is open.',
+      says: 'this disclosure answers a different request from the one that is open.'
     };
   }
   let derived: string;
@@ -273,23 +266,26 @@ export function verify(
     derived = addressOfVerifyingKey(response.verifyingKey, expecting.networkId);
   } catch {
     return {
-      ok: false, code: 'signature-invalid', says: 'the verifying key is not a usable one.',
+      ok: false,
+      code: 'signature-invalid',
+      says: 'the verifying key is not a usable one.'
     };
   }
   if (derived !== expecting.payingAddress) {
     return {
       ok: false,
       code: 'address-mismatch',
-      says: `this disclosure was signed by the owner of ${derived}, and the address about `
-        + `to be paid is ${expecting.payingAddress}. They are not the same person.`,
+      says:
+        `this disclosure was signed by the owner of ${derived}, and the address about ` +
+        `to be paid is ${expecting.payingAddress}. They are not the same person.`
     };
   }
   let good = false;
   try {
-    good = verifySignature(
-      { tag: KIND, value: response.verifyingKey },
-      preimage(payload) as Uint8Array<ArrayBuffer>,
-      { tag: KIND, value: response.signature });
+    good = verifySignature({ tag: KIND, value: response.verifyingKey }, preimage(payload) as Uint8Array<ArrayBuffer>, {
+      tag: KIND,
+      value: response.signature
+    });
   } catch {
     good = false;
   }
@@ -297,18 +293,18 @@ export function verify(
     return {
       ok: false,
       code: 'signature-invalid',
-      says: 'the signature does not match what was sent. Something changed on the way.',
+      says: 'the signature does not match what was sent. Something changed on the way.'
     };
   }
   for (const sent of payload.disclosed) {
-    if (sent.asserted.by === 'issuer' && sent.asserted.expiresAt !== null
-      && expecting.now >= sent.asserted.expiresAt) {
+    if (sent.asserted.by === 'issuer' && sent.asserted.expiresAt !== null && expecting.now >= sent.asserted.expiresAt) {
       return {
         ok: false,
         code: 'expired-claim',
-        says: `the proof about ${sent.about} expired on `
-          + `${new Date(sent.asserted.expiresAt).toISOString().slice(0, 10)}. It is not `
-          + 'evidence today.',
+        says:
+          `the proof about ${sent.about} expired on ` +
+          `${new Date(sent.asserted.expiresAt).toISOString().slice(0, 10)}. It is not ` +
+          'evidence today.'
       };
     }
   }
@@ -317,11 +313,7 @@ export function verify(
 
 /* ---------------------- reading a recorded one back ---------------------- */
 
-export type RecheckFailure =
-  | 'no-bytes-recorded'
-  | 'bytes-unreadable'
-  | 'signature-invalid'
-  | 'fields-disagree';
+export type RecheckFailure = 'no-bytes-recorded' | 'bytes-unreadable' | 'signature-invalid' | 'fields-disagree';
 
 export type Recheck =
   | { readonly ok: true; readonly payload: DisclosurePayload }
@@ -355,9 +347,10 @@ export function recheck(entry: Disclosure): Recheck {
     return {
       ok: false,
       code: 'no-bytes-recorded',
-      says: 'this disclosure was recorded by a version of this wallet that did not keep '
-        + 'the bytes it signed. It really happened and it really was signed; there is '
-        + 'simply nothing here to re-check.',
+      says:
+        'this disclosure was recorded by a version of this wallet that did not keep ' +
+        'the bytes it signed. It really happened and it really was signed; there is ' +
+        'simply nothing here to re-check.'
     };
   }
   let bytes: Uint8Array;
@@ -371,15 +364,15 @@ export function recheck(entry: Disclosure): Recheck {
     return {
       ok: false,
       code: 'bytes-unreadable',
-      says: 'the recorded bytes are not a disclosure this wallet could have signed.',
+      says: 'the recorded bytes are not a disclosure this wallet could have signed.'
     };
   }
   let good = false;
   try {
-    good = verifySignature(
-      { tag: signed.scheme, value: signed.verifyingKey },
-      bytes as Uint8Array<ArrayBuffer>,
-      { tag: signed.scheme, value: signed.signature });
+    good = verifySignature({ tag: signed.scheme, value: signed.verifyingKey }, bytes as Uint8Array<ArrayBuffer>, {
+      tag: signed.scheme,
+      value: signed.signature
+    });
   } catch {
     good = false;
   }
@@ -387,7 +380,7 @@ export function recheck(entry: Disclosure): Recheck {
     return {
       ok: false,
       code: 'signature-invalid',
-      says: 'the recorded signature does not match the recorded bytes.',
+      says: 'the recorded signature does not match the recorded bytes.'
     };
   }
   const disagreement = (() => {
@@ -410,8 +403,9 @@ export function recheck(entry: Disclosure): Recheck {
     return {
       ok: false,
       code: 'fields-disagree',
-      says: `the bytes that were signed and the record beside them disagree about `
-        + `${disagreement}. The record is not a true account of what was sent.`,
+      says:
+        `the bytes that were signed and the record beside them disagree about ` +
+        `${disagreement}. The record is not a true account of what was sent.`
     };
   }
   return { ok: true, payload };

@@ -26,13 +26,26 @@ import { StatTile, StatTileLoading } from './stat-tile.js';
  * filters, pages and chosen rows; and each layout sets the page's width.
  */
 afterEach(cleanup);
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-Element.prototype.hasPointerCapture ??= function hasPointerCapture() { return false; };
+Element.prototype.hasPointerCapture ??= function hasPointerCapture() {
+  return false;
+};
 
-const EN = JSON.parse(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/web/src/locales/en.json'), 'utf8')) as Record<string, string>;
+const EN = JSON.parse(
+  readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../../../apps/web/src/locales/en.json'), 'utf8')
+) as Record<string, string>;
 const LANGUAGES = languagesFrom({ './locales/en.json': EN });
-const inKit = (ui: React.ReactNode) => render(<KitProvider languages={LANGUAGES} pick="en">{ui}</KitProvider>);
+const inKit = (ui: React.ReactNode) =>
+  render(
+    <KitProvider languages={LANGUAGES} pick="en">
+      {ui}
+    </KitProvider>
+  );
 const q = (c: ParentNode, sel: string) => c.querySelector(sel) as HTMLElement | null;
 const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTMLElement[];
 
@@ -40,9 +53,18 @@ const all = (c: ParentNode, sel: string) => [...c.querySelectorAll(sel)] as HTML
 const WEIGHTS = { normal: 400, medium: 500, semibold: 600, bold: 700 } as const;
 function weightOf(className: string): { height: number | null; weight: number } {
   const plain = className.split(/\s+/).filter((c) => c !== '' && !c.includes(':'));
-  const h = plain.map((c) => /^(?:h|size)-(\d+(?:\.\d+)?)$/.exec(c)?.[1]).filter((x): x is string => x !== undefined).map(Number);
-  const w = plain.map((c) => /^font-(normal|medium|semibold|bold)$/.exec(c)?.[1]).filter((x): x is keyof typeof WEIGHTS => x !== undefined).map((k) => WEIGHTS[k]);
-  return { height: h.length === 0 ? null : h[h.length - 1]!, weight: w.length === 0 ? WEIGHTS.normal : w[w.length - 1]! };
+  const h = plain
+    .map((c) => /^(?:h|size)-(\d+(?:\.\d+)?)$/.exec(c)?.[1])
+    .filter((x): x is string => x !== undefined)
+    .map(Number);
+  const w = plain
+    .map((c) => /^font-(normal|medium|semibold|bold)$/.exec(c)?.[1])
+    .filter((x): x is keyof typeof WEIGHTS => x !== undefined)
+    .map((k) => WEIGHTS[k]);
+  return {
+    height: h.length === 0 ? null : h[h.length - 1]!,
+    weight: w.length === 0 ? WEIGHTS.normal : w[w.length - 1]!
+  };
 }
 
 describe('an action outweighs Coming soon', () => {
@@ -59,7 +81,15 @@ describe('an action outweighs Coming soon', () => {
    * (any background at rest but none); or loses the muted colour at rest.
    */
   it('draws the pill shorter, lighter and quieter than any action beside it', () => {
-    const { container } = inKit(<><Button data-t="default">A</Button><Button size="sm" data-t="sm">B</Button><ComingSoon explanation="x" /></>);
+    const { container } = inKit(
+      <>
+        <Button data-t="default">A</Button>
+        <Button size="sm" data-t="sm">
+          B
+        </Button>
+        <ComingSoon explanation="x" />
+      </>
+    );
     const pill = q(container, '[data-slot=coming-soon]')!;
     const p = weightOf(pill.className);
     for (const size of ['default', 'sm']) {
@@ -75,8 +105,18 @@ describe('an action outweighs Coming soon', () => {
   });
 
   /* RED WHEN: an action not built yet can be pressed, loses its pill, or is drawn in another size or variant than the same action will be once built. */
-  it.each([['default', 'default'], ['outline', 'sm']] as const)('draws an action not built yet as it will be (%s, %s), disabled, with its pill', (variant, size) => {
-    const { container } = inKit(<><SoonAction variant={variant} size={size} label="Create" soon="later" data-t="soon" /><Button variant={variant} size={size} data-t="built">Create</Button></>);
+  it.each([
+    ['default', 'default'],
+    ['outline', 'sm']
+  ] as const)('draws an action not built yet as it will be (%s, %s), disabled, with its pill', (variant, size) => {
+    const { container } = inKit(
+      <>
+        <SoonAction variant={variant} size={size} label="Create" soon="later" data-t="soon" />
+        <Button variant={variant} size={size} data-t="built">
+          Create
+        </Button>
+      </>
+    );
     const soon = q(container, '[data-t=soon] button:not([data-slot=coming-soon])')!;
     expect(soon.hasAttribute('disabled')).toBe(true);
     expect(q(container, '[data-t=soon] [data-slot=coming-soon]')).not.toBeNull();
@@ -88,10 +128,22 @@ describe('a section', () => {
   /* RED WHEN: a section loses its title, its count pill, its actions at the end, its rows, or its box. */
   it('has a title with a count, actions at the end, one row per item, in a box', () => {
     const { container } = inKit(
-      <Section title="Proposals" count={2} actions={<button type="button" data-t="act">+</button>} empty={<span data-t="empty" />} data-part="p">
-        <SectionRow data-t="r1" actions={<button type="button">a</button>}>One</SectionRow>
+      <Section
+        title="Proposals"
+        count={2}
+        actions={
+          <button type="button" data-t="act">
+            +
+          </button>
+        }
+        empty={<span data-t="empty" />}
+        data-part="p"
+      >
+        <SectionRow data-t="r1" actions={<button type="button">a</button>}>
+          One
+        </SectionRow>
         <SectionRow data-t="r2">Two</SectionRow>
-      </Section>,
+      </Section>
     );
     const s = q(container, '[data-part=p]')!;
     expect(q(s, 'h2')!.textContent).toBe('Proposals');
@@ -104,7 +156,26 @@ describe('a section', () => {
 
   /* RED WHEN: a section with no rows shows an empty list instead of its empty state, or its count disappears at none. */
   it('shows its empty state when there are no rows, and a count of none', () => {
-    const { container } = inKit(<Section title="People" count={0} empty={<EmptyState icon={InboxIcon} action={<button type="button" data-t="next">Invite</button>}>Nobody yet.</EmptyState>}>{[]}</Section>);
+    const { container } = inKit(
+      <Section
+        title="People"
+        count={0}
+        empty={
+          <EmptyState
+            icon={InboxIcon}
+            action={
+              <button type="button" data-t="next">
+                Invite
+              </button>
+            }
+          >
+            Nobody yet.
+          </EmptyState>
+        }
+      >
+        {[]}
+      </Section>
+    );
     expect(q(container, '[data-slot=section-rows]')).toBeNull();
     expect(q(container, '[data-slot=empty-state] [data-slot=empty-state-line]')!.textContent).toBe('Nobody yet.');
     expect(q(container, '[data-slot=empty-state] svg')).not.toBeNull();
@@ -114,7 +185,11 @@ describe('a section', () => {
 
   /* RED WHEN: a section holding something other than rows, such as a table, loses its box. */
   it('keeps its box when it holds something other than rows', () => {
-    const { container } = inKit(<Section title="Recently passed" list={false}><p>table</p></Section>);
+    const { container } = inKit(
+      <Section title="Recently passed" list={false}>
+        <p>table</p>
+      </Section>
+    );
     const s = q(container, '[data-slot=section]')!;
     expect(s.getAttribute('data-box')).toBe('true');
     expect(s.className).toContain('bg-card');
@@ -122,7 +197,11 @@ describe('a section', () => {
 
   /* RED WHEN: a section of tiles is drawn in a box, so the tiles, which are boxes themselves, no longer stand a shade apart from what they sit on. */
   it('draws a section of tiles on the page, with no box', () => {
-    const { container } = inKit(<Section title="Vaults" list={false} box={false}><StatTile title="Vault 1" /></Section>);
+    const { container } = inKit(
+      <Section title="Vaults" list={false} box={false}>
+        <StatTile title="Vault 1" />
+      </Section>
+    );
     const s = q(container, '[data-slot=section]')!;
     expect(s.getAttribute('data-box')).toBe('false');
     expect(s.className).not.toContain('bg-card');
@@ -133,7 +212,9 @@ describe('a section', () => {
 describe('a stat tile', () => {
   /* RED WHEN: the tile loses its title, figure, tagline or subtext, or shows a change it was not given. */
   it('shows its title, figure, tagline and subtext, and no change unless given one', () => {
-    const { container } = inKit(<StatTile title="Held" figure="12" tagline="Held by your signers" subtext="Created Sep 1" />);
+    const { container } = inKit(
+      <StatTile title="Held" figure="12" tagline="Held by your signers" subtext="Created Sep 1" />
+    );
     expect(q(container, '[data-slot=stat-tile-title]')!.textContent).toBe('Held');
     expect(q(container, '[data-slot=stat-tile-figure]')!.textContent).toBe('12');
     expect(q(container, '[data-slot=stat-tile-tagline]')!.textContent).toBe('Held by your signers');
@@ -143,8 +224,16 @@ describe('a stat tile', () => {
 
   /* RED WHEN: a change given is not shown, or does not say which way it went. */
   it('shows a change given, up or down, with its label', () => {
-    const { container } = inKit(<><StatTile title="a" change={{ direction: 'up', label: '+4%' }} /><StatTile title="b" change={{ direction: 'down', label: '-2%' }} /></>);
-    expect(all(container, '[data-slot=stat-tile-change]').map((e) => [e.dataset.direction, e.textContent])).toEqual([['up', '+4%'], ['down', '-2%']]);
+    const { container } = inKit(
+      <>
+        <StatTile title="a" change={{ direction: 'up', label: '+4%' }} />
+        <StatTile title="b" change={{ direction: 'down', label: '-2%' }} />
+      </>
+    );
+    expect(all(container, '[data-slot=stat-tile-change]').map((e) => [e.dataset.direction, e.textContent])).toEqual([
+      ['up', '+4%'],
+      ['down', '-2%']
+    ]);
   });
 
   /* RED WHEN: a tile given a link is not that link, or loses what it shows inside it. */
@@ -159,14 +248,29 @@ describe('a stat tile', () => {
 describe('the layouts', () => {
   /* RED WHEN: the page layout loses its maximum width or its centring, so a page on a wide monitor runs edge to edge. */
   it('holds a page to a maximum width, centred', () => {
-    const { container } = inKit(<PageLayout><p>x</p></PageLayout>);
+    const { container } = inKit(
+      <PageLayout>
+        <p>x</p>
+      </PageLayout>
+    );
     const l = q(container, '[data-slot=page-layout]')!.className.split(/\s+/);
     expect(l).toEqual(expect.arrayContaining(['max-w-7xl', 'mx-auto', 'w-full']));
   });
 
   /* RED WHEN: the focused layout loses its way out, its title, its inset page on the frame's shade, or its width. */
   it('draws a focused page on the frame, with its title and way out across the top', () => {
-    const { container } = inKit(<FocusedLayout title="Set up" exit={<button type="button" data-t="exit">Exit</button>}><p data-t="body">x</p></FocusedLayout>);
+    const { container } = inKit(
+      <FocusedLayout
+        title="Set up"
+        exit={
+          <button type="button" data-t="exit">
+            Exit
+          </button>
+        }
+      >
+        <p data-t="body">x</p>
+      </FocusedLayout>
+    );
     const l = q(container, '[data-slot=focused-layout]')!;
     expect(l.className).toContain('bg-sidebar');
     expect(q(l, '[data-slot=focused-title]')!.textContent).toBe('Set up');
@@ -180,23 +284,72 @@ describe('the layouts', () => {
 describe('progress', () => {
   /* RED WHEN: a mark is filled for a step not done, or not for one done, whatever order they were done in; or the bar says a different number done. */
   it('fills the mark of each step done, and says how many', () => {
-    const { container } = inKit(<Progress steps={[{ id: 'a', done: true }, { id: 'b', done: false }, { id: 'c', done: true }]} getValueLabel={() => '2 of 3'} />);
-    expect(all(container, '[data-slot=progress-mark]').map((m) => [m.dataset.mark, m.dataset.filled])).toEqual([['a', 'true'], ['b', 'false'], ['c', 'true']]);
+    const { container } = inKit(
+      <Progress
+        steps={[
+          { id: 'a', done: true },
+          { id: 'b', done: false },
+          { id: 'c', done: true }
+        ]}
+        getValueLabel={() => '2 of 3'}
+      />
+    );
+    expect(all(container, '[data-slot=progress-mark]').map((m) => [m.dataset.mark, m.dataset.filled])).toEqual([
+      ['a', 'true'],
+      ['b', 'false'],
+      ['c', 'true']
+    ]);
     const bar = q(container, '[data-slot=progress]')!;
-    expect([bar.getAttribute('aria-valuenow'), bar.getAttribute('aria-valuemax'), bar.getAttribute('aria-valuetext')]).toEqual(['2', '3', '2 of 3']);
+    expect([
+      bar.getAttribute('aria-valuenow'),
+      bar.getAttribute('aria-valuemax'),
+      bar.getAttribute('aria-valuetext')
+    ]).toEqual(['2', '3', '2 of 3']);
   });
 });
 
 describe('the table', () => {
-  interface Row { id: string; name: string; done: boolean }
-  const rows: Row[] = Array.from({ length: 12 }, (_, i) => ({ id: `r${i + 1}`, name: `Row ${i + 1}`, done: i % 3 === 0 }));
-  const columns = [{ id: 'name', header: 'Name', cell: (r: Row) => r.name }, { id: 'state', header: 'State', cell: (r: Row) => (r.done ? 'done' : 'open'), end: true }];
-  const filters = [{ id: 'all', label: 'All', keeps: () => true }, { id: 'done', label: 'Done', keeps: (r: Row) => r.done }];
-  const table = (over: Partial<React.ComponentProps<typeof DataTable<Row>>> = {}) => inKit(
-    <DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} filters={filters} pageSize={5}
-      actions={<button type="button" data-t="add">Add</button>} rowActions={(r) => <button type="button" data-t={`open-${r.id}`}>Open</button>}
-      empty={<span data-t="empty" />} {...over} />,
-  );
+  interface Row {
+    id: string;
+    name: string;
+    done: boolean;
+  }
+  const rows: Row[] = Array.from({ length: 12 }, (_, i) => ({
+    id: `r${i + 1}`,
+    name: `Row ${i + 1}`,
+    done: i % 3 === 0
+  }));
+  const columns = [
+    { id: 'name', header: 'Name', cell: (r: Row) => r.name },
+    { id: 'state', header: 'State', cell: (r: Row) => (r.done ? 'done' : 'open'), end: true }
+  ];
+  const filters = [
+    { id: 'all', label: 'All', keeps: () => true },
+    { id: 'done', label: 'Done', keeps: (r: Row) => r.done }
+  ];
+  const table = (over: Partial<React.ComponentProps<typeof DataTable<Row>>> = {}) =>
+    inKit(
+      <DataTable<Row>
+        label="Things"
+        rows={rows}
+        rowId={(r) => r.id}
+        columns={columns}
+        filters={filters}
+        pageSize={5}
+        actions={
+          <button type="button" data-t="add">
+            Add
+          </button>
+        }
+        rowActions={(r) => (
+          <button type="button" data-t={`open-${r.id}`}>
+            Open
+          </button>
+        )}
+        empty={<span data-t="empty" />}
+        {...over}
+      />
+    );
 
   /* RED WHEN: the table loses its headings, its rows' order, a row's own actions at its end, or its actions above it. */
   it('draws its columns, a page of rows with their actions at the end, and its actions above', () => {
@@ -209,29 +362,46 @@ describe('the table', () => {
   });
 
   /* RED WHEN: the filters are not the kit's tabs, lose their counts, or choosing one does not keep only its rows. */
-  it('filters by the kit\'s tabs, each with its count', async () => {
+  it("filters by the kit's tabs, each with its count", async () => {
     const { container } = table();
     const tabs = all(container, '[data-slot=tabs-list] [data-filter]');
-    expect(tabs.map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')!.textContent])).toEqual([['all', '12'], ['done', '4']]);
-    await act(async () => { fireEvent.mouseDown(tabs[1]!, { button: 0 }); });
+    expect(tabs.map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')!.textContent])).toEqual([
+      ['all', '12'],
+      ['done', '4']
+    ]);
+    await act(async () => {
+      fireEvent.mouseDown(tabs[1]!, { button: 0 });
+    });
     expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r4', 'r7', 'r10']);
   });
 
   /* RED WHEN: a filter marked as not counted still shows a count (a number of the rows that were read said as the number of all of them), or the others lose theirs. */
   it('leaves the count off a filter marked as not counted, and keeps it on the others', () => {
-    const { container } = table({ filters: [{ id: 'all', label: 'All', keeps: () => true, counted: false }, { id: 'done', label: 'Done', keeps: (r) => r.done }] });
+    const { container } = table({
+      filters: [
+        { id: 'all', label: 'All', keeps: () => true, counted: false },
+        { id: 'done', label: 'Done', keeps: (r) => r.done }
+      ]
+    });
     const tabs = all(container, '[data-slot=tabs-list] [data-filter]');
-    expect(tabs.map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')?.textContent ?? null])).toEqual([['all', null], ['done', '4']]);
+    expect(tabs.map((t) => [t.dataset.filter, q(t, '[data-slot=count-pill]')?.textContent ?? null])).toEqual([
+      ['all', null],
+      ['done', '4']
+    ]);
   });
 
   /* RED WHEN: the table shows every row at once past a page, or its pages do not move forward and back. */
   it('shows its rows a page at a time', async () => {
     const { container } = table();
     expect(q(container, '[data-page]')!.textContent).toBe('Page 1 of 3');
-    await act(async () => { fireEvent.click(q(container, '[data-action=next-page]')!); });
+    await act(async () => {
+      fireEvent.click(q(container, '[data-action=next-page]')!);
+    });
     expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r6', 'r7', 'r8', 'r9', 'r10']);
     expect(q(container, '[data-page]')!.textContent).toBe('Page 2 of 3');
-    await act(async () => { fireEvent.click(q(container, '[data-action=previous-page]')!); });
+    await act(async () => {
+      fireEvent.click(q(container, '[data-action=previous-page]')!);
+    });
     expect(all(container, 'tbody tr')[0]!.dataset.row).toBe('r1');
   });
 
@@ -243,10 +413,14 @@ describe('the table', () => {
     const { container } = table({ onChosen: chosen });
     const boxes = all(container, 'tbody [role=checkbox]');
     expect(boxes.length).toBe(5);
-    await act(async () => { fireEvent.click(boxes[1]!); });
+    await act(async () => {
+      fireEvent.click(boxes[1]!);
+    });
     expect(chosen).toHaveBeenLastCalledWith(['r2']);
     expect(q(container, 'tbody tr[data-row=r2]')!.getAttribute('data-selected')).toBe('true');
-    await act(async () => { fireEvent.click(q(container, 'thead [role=checkbox]')!); });
+    await act(async () => {
+      fireEvent.click(q(container, 'thead [role=checkbox]')!);
+    });
     expect(chosen).toHaveBeenLastCalledWith(['r1', 'r2', 'r3', 'r4', 'r5']);
     expect(q(container, '[data-chosen]')!.textContent).toBe('5 of 12 rows selected');
   });
@@ -254,10 +428,27 @@ describe('the table', () => {
   /* RED WHEN: a wide column does not take half the table from a tablet up, a narrow one an eighth, the others an equal share of the rest; a centred column's heading and entries are not both centred; or a table given no size is laid out that way. */
   it('sizes its columns and centres them where asked, heading and entries alike', () => {
     const third = { id: 'more', header: 'More', cell: () => 'x', centred: true, size: COLUMN_SIZE.narrow };
-    const wide = table({ columns: [{ ...columns[0]!, size: COLUMN_SIZE.wide }, columns[1]!, third], rowActions: undefined });
+    const wide = table({
+      columns: [{ ...columns[0]!, size: COLUMN_SIZE.wide }, columns[1]!, third],
+      rowActions: undefined
+    });
     expect(q(wide.container, 'table')!.className).toContain('md:table-fixed');
-    expect(all(wide.container, 'thead th').map((h) => [h.className.includes('md:w-1/2'), h.className.includes('md:w-1/8'), h.className.includes('text-center')])).toEqual([[true, false, false], [false, false, false], [false, true, true]]);
-    expect(all(wide.container, 'tbody tr[data-row=r1] td').map((d) => d.className.includes('text-center'))).toEqual([false, false, true]);
+    expect(
+      all(wide.container, 'thead th').map((h) => [
+        h.className.includes('md:w-1/2'),
+        h.className.includes('md:w-1/8'),
+        h.className.includes('text-center')
+      ])
+    ).toEqual([
+      [true, false, false],
+      [false, false, false],
+      [false, true, true]
+    ]);
+    expect(all(wide.container, 'tbody tr[data-row=r1] td').map((d) => d.className.includes('text-center'))).toEqual([
+      false,
+      false,
+      true
+    ]);
     cleanup();
     const plain = table();
     expect(q(plain.container, 'table')!.className).not.toContain('table-fixed');
@@ -272,15 +463,24 @@ describe('the table', () => {
     cleanup();
     const kept = table({ filters: [...filters, { id: 'none', label: 'None', keeps: () => false }] });
     expect(q(kept.container, 'table')).not.toBeNull();
-    await act(async () => { fireEvent.mouseDown(q(kept.container, '[data-filter=none]')!, { button: 0 }); });
+    await act(async () => {
+      fireEvent.mouseDown(q(kept.container, '[data-filter=none]')!, { button: 0 });
+    });
     expect(q(kept.container, '[data-t=empty]')).not.toBeNull();
     expect(q(kept.container, 'table')).toBeNull();
   });
 });
 
 describe('the table, what it adds for a page', () => {
-  interface Row { id: string; name: string; done: boolean }
-  const rows: Row[] = [{ id: 'r1', name: 'One', done: true }, { id: 'r2', name: 'Two', done: false }];
+  interface Row {
+    id: string;
+    name: string;
+    done: boolean;
+  }
+  const rows: Row[] = [
+    { id: 'r1', name: 'One', done: true },
+    { id: 'r2', name: 'Two', done: false }
+  ];
   const columns = [{ id: 'name', header: 'Name', cell: (r: Row) => r.name }];
 
   /*
@@ -292,24 +492,47 @@ describe('the table, what it adds for a page', () => {
    */
   it('shows a filter not built yet as a disabled tab with its Coming soon pill, never chosen', async () => {
     const { container } = inKit(
-      <DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} empty={<span data-t="empty" />}
-        filters={[{ id: 'later', label: 'Later', soon: 'What later will be' }, { id: 'all', label: 'All', keeps: () => true }, { id: 'done', label: 'Done', keeps: (r) => r.done }]} />,
+      <DataTable<Row>
+        label="Things"
+        rows={rows}
+        rowId={(r) => r.id}
+        columns={columns}
+        empty={<span data-t="empty" />}
+        filters={[
+          { id: 'later', label: 'Later', soon: 'What later will be' },
+          { id: 'all', label: 'All', keeps: () => true },
+          { id: 'done', label: 'Done', keeps: (r) => r.done }
+        ]}
+      />
     );
     const tabs = all(container, '[data-slot=tabs-list] [data-filter]');
     expect(tabs.map((t) => t.dataset.filter)).toEqual(['later', 'all', 'done']);
     const later = tabs[0]!;
-    expect([later.dataset.slot, later.getAttribute('role'), later.hasAttribute('data-disabled'), later.tagName]).toEqual(['tabs-trigger', 'tab', true, 'SPAN']);
+    expect([
+      later.dataset.slot,
+      later.getAttribute('role'),
+      later.hasAttribute('data-disabled'),
+      later.tagName
+    ]).toEqual(['tabs-trigger', 'tab', true, 'SPAN']);
     expect(later.textContent).toBe('Later');
     expect(later.className.split(/\s+/)).toContain('opacity-50');
     expect(q(later, 'button, [data-slot=coming-soon], [data-slot=count-pill]')).toBeNull();
     expect(q(container, '[data-filter-soon=later] [data-slot=count-pill]')).toBeNull();
     const pill = q(container, '[data-filter-soon=later] > [data-slot=coming-soon]')!;
-    expect([pill.tagName, pill.textContent, pill.previousElementSibling === later]).toEqual(['BUTTON', EN['kit.comingSoon.label'], true]);
-    await act(async () => { fireEvent.click(pill); });
+    expect([pill.tagName, pill.textContent, pill.previousElementSibling === later]).toEqual([
+      'BUTTON',
+      EN['kit.comingSoon.label'],
+      true
+    ]);
+    await act(async () => {
+      fireEvent.click(pill);
+    });
     expect(document.body.textContent).toContain('What later will be');
     expect(q(container, '[data-filter=all]')!.getAttribute('aria-selected')).toBe('true');
     expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r2']);
-    await act(async () => { fireEvent.mouseDown(later, { button: 0 }); });
+    await act(async () => {
+      fireEvent.mouseDown(later, { button: 0 });
+    });
     expect(later.getAttribute('aria-selected')).toBe('false');
     expect(all(container, 'tbody tr').map((r) => r.dataset.row)).toEqual(['r1', 'r2']);
     expect(q(container, '[data-t=empty]')).toBeNull();
@@ -323,18 +546,50 @@ describe('the table, what it adds for a page', () => {
    */
   it('opens a row pressed, or chosen with the keyboard, only where the page asks', async () => {
     const opened = vi.fn();
-    const { container } = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={[...columns, { id: 'go', header: 'Go', cell: () => <button type="button" data-t="inside">x</button> }]} empty={null} onRowOpen={opened} />);
+    const { container } = inKit(
+      <DataTable<Row>
+        label="Things"
+        rows={rows}
+        rowId={(r) => r.id}
+        columns={[
+          ...columns,
+          {
+            id: 'go',
+            header: 'Go',
+            cell: () => (
+              <button type="button" data-t="inside">
+                x
+              </button>
+            )
+          }
+        ]}
+        empty={null}
+        onRowOpen={opened}
+      />
+    );
     const row = q(container, 'tbody tr[data-row=r2]')!;
-    await act(async () => { fireEvent.click(q(row, 'td')!); });
+    await act(async () => {
+      fireEvent.click(q(row, 'td')!);
+    });
     expect(opened.mock.calls).toEqual([[rows[1]]]);
     expect([row.className.includes('cursor-pointer'), row.getAttribute('tabindex')]).toEqual([true, '0']);
     /* A row reached with the keyboard shows it is the one reached. */
-    expect(row.className.split(/\s+/)).toEqual(expect.arrayContaining(['focus-visible:ring-[3px]', 'focus-visible:ring-ring/50']));
-    await act(async () => { fireEvent.keyDown(row, { key: 'Enter' }); fireEvent.keyDown(row, { key: ' ' }); fireEvent.keyDown(row, { key: 'a' }); });
-    await act(async () => { fireEvent.keyDown(q(row, '[data-t=inside]')!, { key: 'Enter' }); });
+    expect(row.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['focus-visible:ring-[3px]', 'focus-visible:ring-ring/50'])
+    );
+    await act(async () => {
+      fireEvent.keyDown(row, { key: 'Enter' });
+      fireEvent.keyDown(row, { key: ' ' });
+      fireEvent.keyDown(row, { key: 'a' });
+    });
+    await act(async () => {
+      fireEvent.keyDown(q(row, '[data-t=inside]')!, { key: 'Enter' });
+    });
     expect(opened.mock.calls).toEqual([[rows[1]], [rows[1]], [rows[1]]]);
     cleanup();
-    const plain = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} empty={null} />);
+    const plain = inKit(
+      <DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={columns} empty={null} />
+    );
     const still = q(plain.container, 'tbody tr[data-row=r2]')!;
     expect([still.className.includes('cursor-pointer'), still.hasAttribute('tabindex')]).toEqual([false, false]);
   });
@@ -342,9 +597,22 @@ describe('the table, what it adds for a page', () => {
   /* RED WHEN: a table given no filters goes back to its first page whenever the page around it is drawn again, as it is when a panel opens. */
   it('keeps its page when drawn again with the same rows', async () => {
     const many: Row[] = Array.from({ length: 12 }, (_, i) => ({ id: `m${i + 1}`, name: `M ${i + 1}`, done: false }));
-    const draw = () => <KitProvider languages={LANGUAGES} pick="en"><DataTable<Row> label="Things" rows={many} rowId={(r) => r.id} columns={[...columns]} empty={null} pageSize={5} /></KitProvider>;
+    const draw = () => (
+      <KitProvider languages={LANGUAGES} pick="en">
+        <DataTable<Row>
+          label="Things"
+          rows={many}
+          rowId={(r) => r.id}
+          columns={[...columns]}
+          empty={null}
+          pageSize={5}
+        />
+      </KitProvider>
+    );
     const view = render(draw());
-    await act(async () => { fireEvent.click(q(view.container, '[data-action=next-page]')!); });
+    await act(async () => {
+      fireEvent.click(q(view.container, '[data-action=next-page]')!);
+    });
     expect(q(view.container, '[data-page]')!.textContent).toBe('Page 2 of 3');
     view.rerender(draw());
     expect(q(view.container, '[data-page]')!.textContent).toBe('Page 2 of 3');
@@ -359,28 +627,53 @@ describe('the table, what it adds for a page', () => {
    * tablet up the table is not drawn as a table with its words on one line.
    */
   it('stacks each row on a phone, a line to a column with its heading, and is a table from a tablet up', () => {
-    const { container } = inKit(<DataTable<Row> label="Things" rows={rows} rowId={(r) => r.id} columns={[...columns, { id: 'more', header: <b>More</b>, cell: () => 'x' }]} empty={null} />);
+    const { container } = inKit(
+      <DataTable<Row>
+        label="Things"
+        rows={rows}
+        rowId={(r) => r.id}
+        columns={[...columns, { id: 'more', header: <b>More</b>, cell: () => 'x' }]}
+        empty={null}
+      />
+    );
     const classes = (e: Element) => e.className.split(/\s+/);
     expect(classes(q(container, 'table')!)).toContain('max-md:block');
     expect(classes(q(container, 'thead')!)).toEqual(expect.arrayContaining(['max-md:sr-only']));
     expect(classes(q(container, 'thead')!)).not.toContain('sr-only');
     expect(classes(q(container, 'tbody')!)).toContain('max-md:block');
-    for (const row of all(container, 'tbody tr')) expect(classes(row), row.dataset.row).toEqual(expect.arrayContaining(['max-md:flex', 'max-md:flex-col']));
-    expect(all(container, 'tbody tr[data-row=r1] td').map((d) => [q(d, ':scope > [data-slot=data-table-label]')?.innerHTML, q(d, ':scope > [data-slot=data-table-value]')?.textContent])).toEqual([['Name', 'One'], ['<b>More</b>', 'x']]);
+    for (const row of all(container, 'tbody tr'))
+      expect(classes(row), row.dataset.row).toEqual(expect.arrayContaining(['max-md:flex', 'max-md:flex-col']));
+    expect(
+      all(container, 'tbody tr[data-row=r1] td').map((d) => [
+        q(d, ':scope > [data-slot=data-table-label]')?.innerHTML,
+        q(d, ':scope > [data-slot=data-table-value]')?.textContent
+      ])
+    ).toEqual([
+      ['Name', 'One'],
+      ['<b>More</b>', 'x']
+    ]);
     for (const label of all(container, '[data-slot=data-table-label]')) {
-      expect([label.getAttribute('aria-hidden'), classes(label).includes('md:hidden'), classes(label).includes('hidden')]).toEqual(['true', true, false]);
+      expect([
+        label.getAttribute('aria-hidden'),
+        classes(label).includes('md:hidden'),
+        classes(label).includes('hidden')
+      ]).toEqual(['true', true, false]);
     }
     for (const cell of all(container, 'tbody td')) {
       expect(classes(cell)).toEqual(expect.arrayContaining(['max-md:flex', 'max-md:justify-between']));
     }
     for (const cell of all(container, 'th, td')) {
-      expect(classes(cell), cell.textContent ?? '').toEqual(expect.arrayContaining(['whitespace-normal', 'md:whitespace-nowrap']));
+      expect(classes(cell), cell.textContent ?? '').toEqual(
+        expect.arrayContaining(['whitespace-normal', 'md:whitespace-nowrap'])
+      );
       expect(classes(cell), cell.textContent ?? '').not.toContain('whitespace-nowrap');
-      expect(classes(cell).filter((c) => !c.startsWith('max-md:') && /^(?:block|flex|hidden|sr-only)$/.test(c)), cell.textContent ?? '').toEqual([]);
+      expect(
+        classes(cell).filter((c) => !c.startsWith('max-md:') && /^(?:block|flex|hidden|sr-only)$/.test(c)),
+        cell.textContent ?? ''
+      ).toEqual([]);
     }
   });
 });
-
 
 describe('loading states', () => {
   /**
@@ -402,10 +695,12 @@ describe('loading states', () => {
     'dialog.tsx': 'an overlay; what it holds has its own loading state',
     'dropdown-menu.tsx': 'a menu of choices the page already has',
     'empty-state.tsx': 'shown once a read has finished with nothing in it',
-    'field.tsx': 'the label, hint and error around a field the person types into; what the field holds loads in the part that fills it',
+    'field.tsx':
+      'the label, hint and error around a field the person types into; what the field holds loads in the part that fills it',
     'input-group.tsx': 'a field the person types into, with the buttons beside it',
     'input.tsx': 'a field the person types into',
-    'item.tsx': 'one row of something the page already holds; a list still being read shows its section\'s loading state',
+    'item.tsx':
+      "one row of something the page already holds; a list still being read shows its section's loading state",
     'kbd.tsx': 'the keys of a shortcut, fixed',
     'label.tsx': 'the name of a field, fixed',
     'popover.tsx': 'an overlay; what it holds has its own loading state',
@@ -419,14 +714,17 @@ describe('loading states', () => {
     'skeleton.tsx': 'the bar every loading state is made of',
     'spinner.tsx': 'the mark inside a button that a press has been taken, drawn while the press waits',
     'soon-action.tsx': 'an action not built yet; nothing is read to draw it',
-    'table.tsx': 'the rows of the kit\'s table, which has its own loading state',
-    'tabs.tsx': 'a page\'s own tabs, from what the page already holds',
+    'table.tsx': "the rows of the kit's table, which has its own loading state",
+    'tabs.tsx': "a page's own tabs, from what the page already holds",
     'textarea.tsx': 'a field the person types into, over several lines',
-    'tooltip.tsx': 'an overlay of words the page already has',
+    'tooltip.tsx': 'an overlay of words the page already has'
   };
   const HERE = dirname(fileURLToPath(import.meta.url));
-  const FILES = readdirSync(HERE).filter((n) => n.endsWith('.tsx') && !/\.test(-support)?\./.test(n)).sort();
-  const loadingsOf = (name: string): string[] => [...readFileSync(`${HERE}/${name}`, 'utf8').matchAll(/export function (\w+Loading)\b/g)].map((m) => m[1]!);
+  const FILES = readdirSync(HERE)
+    .filter((n) => n.endsWith('.tsx') && !/\.test(-support)?\./.test(n))
+    .sort();
+  const loadingsOf = (name: string): string[] =>
+    [...readFileSync(`${HERE}/${name}`, 'utf8').matchAll(/export function (\w+Loading)\b/g)].map((m) => m[1]!);
 
   /*
    * RED WHEN: a kit component that draws something a page waits to read has
@@ -438,13 +736,21 @@ describe('loading states', () => {
   it('gives every part that draws what loads a loading state of its own', () => {
     expect(FILES.length).toBeGreaterThan(30);
     /* The rule reads this folder alone; a part in a folder under it would not be read. */
-    expect(readdirSync(HERE, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)).toEqual([]);
+    expect(
+      readdirSync(HERE, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+    ).toEqual([]);
     expect(FILES.filter((n) => !(n in DRAWN_WITHOUT_LOADING) && loadingsOf(n).length === 0)).toEqual([]);
     expect(Object.keys(DRAWN_WITHOUT_LOADING).filter((n) => !FILES.includes(n))).toEqual([]);
     for (const why of Object.values(DRAWN_WITHOUT_LOADING)) expect(why.length).toBeGreaterThan(10);
     expect(Object.fromEntries(FILES.filter((n) => loadingsOf(n).length > 0).map((n) => [n, loadingsOf(n)]))).toEqual({
-      'amount.tsx': ['AmountLoading'], 'balance.tsx': ['BalanceLoading'], 'data-table.tsx': ['DataTableLoading'],
-      'page-layout.tsx': ['PageLoading'], 'section.tsx': ['SectionLoading'], 'stat-tile.tsx': ['StatTileLoading'],
+      'amount.tsx': ['AmountLoading'],
+      'balance.tsx': ['BalanceLoading'],
+      'data-table.tsx': ['DataTableLoading'],
+      'page-layout.tsx': ['PageLoading'],
+      'section.tsx': ['SectionLoading'],
+      'stat-tile.tsx': ['StatTileLoading']
     });
   });
 
@@ -452,13 +758,27 @@ describe('loading states', () => {
    * Each loading state, drawn, and the bars it must have, by the mark each
    * carries, so a bar left out is found and not only a bar that is there.
    */
-  const SHAPES: Readonly<Record<string, { drawn: React.ReactNode; slot: string; bars: Readonly<Record<string, number>> }>> = {
+  const SHAPES: Readonly<
+    Record<string, { drawn: React.ReactNode; slot: string; bars: Readonly<Record<string, number>> }>
+  > = {
     PageLoading: { drawn: <PageLoading />, slot: 'page-loading', bars: { heading: 1, title: 2, count: 2, row: 5 } },
-    SectionLoading: { drawn: <SectionLoading rows={4} />, slot: 'section-loading', bars: { title: 1, count: 1, row: 4 } },
-    StatTileLoading: { drawn: <StatTileLoading />, slot: 'stat-tile-loading', bars: { title: 1, figure: 1, tagline: 1, subtext: 1 } },
-    DataTableLoading: { drawn: <DataTableLoading rows={3} columns={5} />, slot: 'data-table-loading', bars: { filters: 1, 'head-row': 1, row: 3 } },
+    SectionLoading: {
+      drawn: <SectionLoading rows={4} />,
+      slot: 'section-loading',
+      bars: { title: 1, count: 1, row: 4 }
+    },
+    StatTileLoading: {
+      drawn: <StatTileLoading />,
+      slot: 'stat-tile-loading',
+      bars: { title: 1, figure: 1, tagline: 1, subtext: 1 }
+    },
+    DataTableLoading: {
+      drawn: <DataTableLoading rows={3} columns={5} />,
+      slot: 'data-table-loading',
+      bars: { filters: 1, 'head-row': 1, row: 3 }
+    },
     AmountLoading: { drawn: <AmountLoading />, slot: 'amount-loading', bars: { figure: 1 } },
-    BalanceLoading: { drawn: <BalanceLoading />, slot: 'balance-loading', bars: { label: 2, figure: 2 } },
+    BalanceLoading: { drawn: <BalanceLoading />, slot: 'balance-loading', bars: { label: 2, figure: 2 } }
   };
 
   /*
@@ -492,13 +812,33 @@ describe('loading states', () => {
   });
 
   /* RED WHEN: a table's loading state has fewer or more columns than the table (its box to choose a row and its row actions counted), or draws a filter bar for a table with no filters. */
-  it('draws a table\'s loading state with the table\'s own columns, and filters only where it has them', () => {
-    const columns = [{ id: 'x', header: 'X', cell: (r: { id: string }) => r.id }, { id: 'y', header: 'Y', cell: () => 'y' }];
-    const { container } = inKit(<>
-      <div data-t="plain"><DataTable label="t" rows={[{ id: 'a' }]} rowId={(r) => r.id} columns={columns} empty={null} loading /></div>
-      <div data-t="full"><DataTable label="t" rows={[{ id: 'a' }]} rowId={(r) => r.id} columns={columns} filters={[{ id: 'f', label: 'F', keeps: () => true }]} onChosen={() => {}} rowActions={() => null} empty={null} loading /></div>
-    </>);
-    const cellsIn = (t: string) => q(container, `[data-t=${t}] [data-bar=row]`)!.querySelectorAll('[data-slot=skeleton]').length;
+  it("draws a table's loading state with the table's own columns, and filters only where it has them", () => {
+    const columns = [
+      { id: 'x', header: 'X', cell: (r: { id: string }) => r.id },
+      { id: 'y', header: 'Y', cell: () => 'y' }
+    ];
+    const { container } = inKit(
+      <>
+        <div data-t="plain">
+          <DataTable label="t" rows={[{ id: 'a' }]} rowId={(r) => r.id} columns={columns} empty={null} loading />
+        </div>
+        <div data-t="full">
+          <DataTable
+            label="t"
+            rows={[{ id: 'a' }]}
+            rowId={(r) => r.id}
+            columns={columns}
+            filters={[{ id: 'f', label: 'F', keeps: () => true }]}
+            onChosen={() => {}}
+            rowActions={() => null}
+            empty={null}
+            loading
+          />
+        </div>
+      </>
+    );
+    const cellsIn = (t: string) =>
+      q(container, `[data-t=${t}] [data-bar=row]`)!.querySelectorAll('[data-slot=skeleton]').length;
     expect(cellsIn('plain')).toBe(2);
     expect(cellsIn('full')).toBe(4);
     expect(q(container, '[data-t=plain] [data-bar=filters]')).toBeNull();
@@ -508,11 +848,17 @@ describe('loading states', () => {
 
   /* RED WHEN: a part told its data is loading draws its content, or anything but its own loading state, or loses its box or the marks a page finds it by. */
   it('draws a part whose data is loading as its loading state', () => {
-    const { container } = inKit(<>
-      <Section title="Proposals" count={2} empty={null} loading data-part="p"><SectionRow>One</SectionRow></Section>
-      <Section title="Vaults" list={false} box={false} loading data-part="v"><p>tiles</p></Section>
-      <StatTile title="Vault 1" figure="12" loading />
-    </>);
+    const { container } = inKit(
+      <>
+        <Section title="Proposals" count={2} empty={null} loading data-part="p">
+          <SectionRow>One</SectionRow>
+        </Section>
+        <Section title="Vaults" list={false} box={false} loading data-part="v">
+          <p>tiles</p>
+        </Section>
+        <StatTile title="Vault 1" figure="12" loading />
+      </>
+    );
     expect(q(container, '[data-part=p]')!.getAttribute('data-slot')).toBe('section-loading');
     expect(q(container, '[data-part=p]')!.className).toContain('bg-card');
     expect(q(container, '[data-part=v]')!.getAttribute('data-slot')).toBe('section-loading');

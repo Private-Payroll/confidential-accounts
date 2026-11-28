@@ -28,7 +28,7 @@ import {
   branchProblem,
   messageProblem,
   squashedSubject,
-  subjectProblem,
+  subjectProblem
 } from './commit.mjs';
 
 /** Refuses, and says something. A rule that refuses with silence is unusable. */
@@ -46,7 +46,7 @@ test('THE POSITIVE CONTROL: the shapes this repository actually writes are accep
     'feat(vault): refuse a payout the ledger cannot settle',
     'fix(build): put the compiled artefact back before the suite reads it',
     'docs(readme): say what a clone needs before it can build',
-    'chore(deps): move the pinned compiler forward',
+    'chore(deps): move the pinned compiler forward'
   ]) {
     accepted(subjectProblem(ok), `subject ${JSON.stringify(ok)}`);
   }
@@ -55,11 +55,11 @@ test('THE POSITIVE CONTROL: the shapes this repository actually writes are accep
   }
   accepted(
     messageProblem('fix(build): put the compiled artefact back\n\nThe suite reads it before any worker starts.\n'),
-    'a whole message',
+    'a whole message'
   );
 });
 
-test('the dependency bot\'s own branch shape is admitted, and nothing else gains by it', () => {
+test("the dependency bot's own branch shape is admitted, and nothing else gains by it", () => {
   // THE BOT CANNOT BE ASKED TO NAME ITS BRANCHES DIFFERENTLY. Without this the
   // branch check refuses every pull request it will ever open, so the
   // dependency policy is a file that can never do anything.
@@ -97,8 +97,10 @@ test('the dependency bot\'s own branch shape is admitted, and nothing else gains
   // is the must-not-publish read finding a home-directory path. An em dash would
   // not do - the bot shape rejects it first, so the case would pass for the
   // wrong reason and go green with the reading deleted.
-  refused(branchProblem('dependabot/npm_and_yarn/home/kc/thing'),
-    'a bot branch carrying a path inside a home directory');
+  refused(
+    branchProblem('dependabot/npm_and_yarn/home/kc/thing'),
+    'a bot branch carrying a path inside a home directory'
+  );
 });
 
 test('a subject line says what changed, so an empty one is refused', () => {
@@ -151,8 +153,14 @@ test('a title is words after the colon, with no punctuation', () => {
   accepted(subjectProblem('feat(network): move to ledger 9.1.0.1 and preprod'), 'a version number');
   accepted(subjectProblem('chore(deps): bump actions/checkout from 4 to 5'), 'a package name');
   accepted(subjectProblem('chore(deps): bump @types/node from 22 to 24'), 'a scoped package name');
-  accepted(subjectProblem(squashedSubject('feat(vault): refuse a payout the ledger cannot settle', 16)), 'the number a merge appends');
-  refused(subjectProblem(squashedSubject('feat(vault): refuse a payout, then settle', 16)), 'a comma before the number a merge appends');
+  accepted(
+    subjectProblem(squashedSubject('feat(vault): refuse a payout the ledger cannot settle', 16)),
+    'the number a merge appends'
+  );
+  refused(
+    subjectProblem(squashedSubject('feat(vault): refuse a payout, then settle', 16)),
+    'a comma before the number a merge appends'
+  );
 });
 
 test('a scope is lower case, digits, and . _ - / only', () => {
@@ -172,7 +180,10 @@ test('a subject line is not capitalised after the colon', () => {
 
 test('a blank line separates the subject from the body', () => {
   refused(messageProblem('fix(build): put the artefact back\nthe suite reads it first'), 'a body with no blank line');
-  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite reads it first'), 'a body after a blank line');
+  accepted(
+    messageProblem('fix(build): put the artefact back\n\nthe suite reads it first'),
+    'a body after a blank line'
+  );
 });
 
 test('an attribution trailer is refused however it is indented or quoted', () => {
@@ -184,7 +195,7 @@ test('an attribution trailer is refused however it is indented or quoted', () =>
     '> Signed-off-by: somebody',
     '| Reviewed-by: somebody',
     '  Generated with a thing that writes code',
-    '> Authored by a thing that writes code',
+    '> Authored by a thing that writes code'
   ]) {
     refused(messageProblem(`fix(build): put the artefact back\n\n${line}`), JSON.stringify(line));
   }
@@ -197,7 +208,7 @@ test('a path inside a home directory is refused wherever it appears in the line'
     'built from file:///Users/somebody/repo/thing.ts',
     'see `/Users/somebody/repo`',
     'it was at /home/somebody/work',
-    'it was at C:\\Users\\somebody\\work',
+    'it was at C:\\Users\\somebody\\work'
   ]) {
     refused(messageProblem(`fix(build): put the artefact back\n\n${line}`), JSON.stringify(line));
   }
@@ -224,38 +235,41 @@ test('a subject too long BECAUSE of the number appended at merge says so', () =>
   refused(problem, 'a 72-character title as the subject it becomes');
   assert.ok(
     /appended when this is merged/.test(problem) && /the title itself has 66/.test(problem),
-    `it did not say where the characters went: ${problem}`,
+    `it did not say where the characters went: ${problem}`
   );
 });
 
 test('an attribution trailer is refused wherever in the message it appears', () => {
   refused(
     messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nSigned-off-by: someone'),
-    'a sign-off trailer',
+    'a sign-off trailer'
   );
   refused(
     messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nCo-authored-by: someone'),
-    'a co-authorship trailer',
+    'a co-authorship trailer'
   );
   refused(
     messageProblem('fix(build): put the artefact back\n\nwhy it matters\n\nReviewed-by: someone'),
-    'a trailer this check has never been shown',
+    'a trailer this check has never been shown'
   );
 });
 
 test('a line saying what produced the change is refused', () => {
   refused(
     messageProblem('fix(build): put the artefact back\n\nGenerated with a thing that writes code'),
-    'a line naming what wrote it',
+    'a line naming what wrote it'
   );
   refused(
     messageProblem('fix(build): put the artefact back\n\nAuthored by a thing that writes code'),
-    'a line naming what authored it',
+    'a line naming what authored it'
   );
 });
 
 test('the mark a tool leaves is refused', () => {
-  refused(messageProblem('fix(build): put the artefact back\n\n\u{1F916} and a line'), 'a message carrying a tool mark');
+  refused(
+    messageProblem('fix(build): put the artefact back\n\n\u{1F916} and a line'),
+    'a message carrying a tool mark'
+  );
 });
 
 test('an address is refused, in a subject and in a body', () => {
@@ -264,31 +278,40 @@ test('an address is refused, in a subject and in a body', () => {
 });
 
 test('a path inside a home directory is refused', () => {
-  refused(
-    messageProblem('fix(build): put the artefact back\n\nit was at /Users/somebody/work/thing'),
-    'a home path',
-  );
+  refused(messageProblem('fix(build): put the artefact back\n\nit was at /Users/somebody/work/thing'), 'a home path');
   refused(
     messageProblem('fix(build): put the artefact back\n\nit was at /home/somebody/work/thing'),
-    'a home path on another system',
+    'a home path on another system'
   );
   // AND AN ORDINARY REPOSITORY PATH IS NOT ONE, which is what makes the rule
   // usable at all.
   accepted(
     messageProblem('fix(build): put the artefact back\n\nit is read from contracts/managed/contract/index.js'),
-    'a path inside the repository',
+    'a path inside the repository'
   );
 });
 
 test('a dash that is not a hyphen is refused, including the minus sign', () => {
   refused(subjectProblem('fix(build): put the artefact back \u2014 the suite reads it'), 'an em dash in a subject');
-  refused(messageProblem('fix(build): put the artefact back\n\nthe suite \u2013 which reads it \u2013 starts first'), 'an en dash in a body');
+  refused(
+    messageProblem('fix(build): put the artefact back\n\nthe suite \u2013 which reads it \u2013 starts first'),
+    'an en dash in a body'
+  );
   // NOT IN THE DASH BLOCK, and what a spreadsheet and several keyboards give
   // somebody who meant to type a hyphen.
   refused(subjectProblem('fix(build): put the artefact back \u2212 the suite reads it'), 'a minus sign in a subject');
-  refused(messageProblem('fix(build): put the artefact back\n\nthe suite \u2212 which reads it'), 'a minus sign in a body');
-  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite, which reads it, starts first'), 'a body with no dash at all');
-  accepted(messageProblem('fix(build): put the artefact back\n\nthe suite - which reads it - starts first'), 'a body with a plain hyphen');
+  refused(
+    messageProblem('fix(build): put the artefact back\n\nthe suite \u2212 which reads it'),
+    'a minus sign in a body'
+  );
+  accepted(
+    messageProblem('fix(build): put the artefact back\n\nthe suite, which reads it, starts first'),
+    'a body with no dash at all'
+  );
+  accepted(
+    messageProblem('fix(build): put the artefact back\n\nthe suite - which reads it - starts first'),
+    'a body with a plain hyphen'
+  );
 });
 
 test('a branch name says what changed, so an empty one is refused', () => {
@@ -300,10 +323,7 @@ test('the branch changes are merged INTO is refused, and named rather than resha
   for (const name of ['main', 'master', 'HEAD']) {
     const problem = branchProblem(name);
     refused(problem, `the branch ${name}`);
-    assert.ok(
-      /merged INTO/.test(problem),
-      `refusing ${name} should say what it is, and it said: ${problem}`,
-    );
+    assert.ok(/merged INTO/.test(problem), `refusing ${name} should say what it is, and it said: ${problem}`);
   }
 });
 
@@ -337,10 +357,7 @@ test('a branch name is read for what must not be published, and read for it FIRS
   // address is dead code that no case can reach.
   const problem = branchProblem('feat/fix-for-someone@example.com');
   refused(problem, 'an address in a branch name');
-  assert.ok(
-    /an address/.test(problem),
-    `the address is what is wrong with that name, and it said: ${problem}`,
-  );
+  assert.ok(/an address/.test(problem), `the address is what is wrong with that name, and it said: ${problem}`);
   // And a name whose only fault is its shape still says so.
   assert.ok(/kind\/what-changed/.test(branchProblem('feat/Stale-Artefact') ?? ''));
 });

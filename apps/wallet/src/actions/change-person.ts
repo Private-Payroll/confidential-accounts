@@ -8,16 +8,44 @@ import type { SealedRun } from '../../../../src/core/types.js';
 import type { VendorTerms } from '../../../../src/core/vendor-record.js';
 import type { NetworkName } from '../../../../src/midnight/network.js';
 import { InvitationRefused } from '../../../../packages/web-shared/src/invitation-on-device.js';
-import { changePersonHere, PersonNotChanged, setStatusHere, type PeopleDevice } from '../../../../packages/web-shared/src/people-on-device.js';
-import { changeVendorHere, VendorNotChanged, type VendorChange } from '../../../../packages/web-shared/src/vendors-on-device.js';
+import {
+  changePersonHere,
+  PersonNotChanged,
+  setStatusHere,
+  type PeopleDevice
+} from '../../../../packages/web-shared/src/people-on-device.js';
+import {
+  changeVendorHere,
+  VendorNotChanged,
+  type VendorChange
+} from '../../../../packages/web-shared/src/vendors-on-device.js';
 import { periodsPastDraftHere, type RoundIdentity } from '../../../../packages/web-shared/src/run-rebuilt-here.js';
 import { FiledNotEntered } from '../../../../packages/web-shared/src/record-entered-here.js';
 import type { VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
-import { companyReachFor, keptReach, proposalsInTheView, type CompanyChain, type CompanyReach } from './company-reach.js';
-import { StepRefused, type ActionDefinition, type ActionStep, type ShownLine, type StepContext, type Words } from './definition.js';
+import {
+  companyReachFor,
+  keptReach,
+  proposalsInTheView,
+  type CompanyChain,
+  type CompanyReach
+} from './company-reach.js';
+import {
+  StepRefused,
+  type ActionDefinition,
+  type ActionStep,
+  type ShownLine,
+  type StepContext,
+  type Words
+} from './definition.js';
 import { ActionStopped } from './run.js';
 import { UPKEEP_CHECK, upkeepShown, upkeepSteps } from './upkeep.js';
-import { enteredUntilTaken, peopleDeviceFor, personNamedHere, upkeepThenEntered, type HeldUntilEntered } from './admit-person.js';
+import {
+  enteredUntilTaken,
+  peopleDeviceFor,
+  personNamedHere,
+  upkeepThenEntered,
+  type HeldUntilEntered
+} from './admit-person.js';
 import { enteredFor } from './company-reach.js';
 
 /*
@@ -42,15 +70,30 @@ export interface ChangePersonReach {
 }
 
 const why = (key: string, values?: Readonly<Record<string, string | number>>): Words => ({
-  key: `act.change-person.why.${key}`, ...(values === undefined ? {} : { values }),
+  key: `act.change-person.why.${key}`,
+  ...(values === undefined ? {} : { values })
 });
 const said = (e: unknown): string => String((e as Error)?.message ?? e);
 const HEX64 = /^[0-9a-f]{64}$/u;
-const PERSON_FIELDS = ['payAmount', 'asset', 'payFrom', 'classification', 'classificationFrom', 'endDate', 'leavingDate', 'status'] as const;
+const PERSON_FIELDS = [
+  'payAmount',
+  'asset',
+  'payFrom',
+  'classification',
+  'classificationFrom',
+  'endDate',
+  'leavingDate',
+  'status'
+] as const;
 const VENDOR_FIELDS = ['terms', 'termsAsset', 'termsAmount', 'endDate', 'status'] as const;
 
 type Asked =
-  | { readonly kind: 'employee'; readonly status: { readonly to: 'active' | 'leaver'; readonly leavingDate?: string } | null; readonly change: PersonChange; readonly asset: string | null }
+  | {
+      readonly kind: 'employee';
+      readonly status: { readonly to: 'active' | 'leaver'; readonly leavingDate?: string } | null;
+      readonly change: PersonChange;
+      readonly asset: string | null;
+    }
   | { readonly kind: 'vendor'; readonly change: VendorChange };
 
 /**
@@ -61,7 +104,8 @@ export function changeAskedOf(intent: ActIntent, registry: AssetRegistry = theAs
   const f = intent.fields;
   const given = (k: string): boolean => f[k] !== undefined;
   const kind = f['kind'];
-  if ((kind !== 'employee' && kind !== 'vendor') || (f['person'] ?? '') === '' || (f['personName'] ?? '') === '') return why('not-a-person');
+  if ((kind !== 'employee' && kind !== 'vendor') || (f['person'] ?? '') === '' || (f['personName'] ?? '') === '')
+    return why('not-a-person');
   const allowed: readonly string[] = kind === 'employee' ? PERSON_FIELDS : VENDOR_FIELDS;
   const clear = given('clear') ? f['clear']!.split(',').map((c) => c.trim()) : [];
   const clearable = kind === 'employee' ? ['endDate', 'leavingDate'] : ['endDate'];
@@ -76,22 +120,31 @@ export function changeAskedOf(intent: ActIntent, registry: AssetRegistry = theAs
     if (f['terms'] === 'one-off') terms = { kind: 'one-off' };
     else if (f['terms'] === 'monthly') {
       const asset = f['termsAsset'];
-      if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null) return why('not-an-asset');
+      if (asset === undefined || !HEX64.test(asset) || registry.find(asset as AssetId) === null)
+        return why('not-an-asset');
       if (f['termsAmount'] === undefined || BigInt(f['termsAmount']) <= 0n) return why('no-pay');
       terms = { kind: 'monthly', asset: asset as AssetId, amount: BigInt(f['termsAmount']) };
     } else if (given('terms') || given('termsAsset') || given('termsAmount')) return why('not-terms');
     const change: VendorChange = {
       ...(terms === undefined ? {} : { terms }),
       ...(given('endDate') ? { endDate: f['endDate']! } : clear.includes('endDate') ? { endDate: null } : {}),
-      ...(status === undefined ? {} : { status }),
+      ...(status === undefined ? {} : { status })
     };
     return Object.keys(change).length === 0 ? why('nothing') : { kind, change };
   }
-  const details = ['payAmount', 'asset', 'payFrom', 'classification', 'classificationFrom', 'endDate'].some(given) || clear.length > 0
-    || (given('leavingDate') && status === undefined);
-  if (status !== undefined && (details || (status === 'active' && given('leavingDate')))) return why('status-and-details');
+  const details =
+    ['payAmount', 'asset', 'payFrom', 'classification', 'classificationFrom', 'endDate'].some(given) ||
+    clear.length > 0 ||
+    (given('leavingDate') && status === undefined);
+  if (status !== undefined && (details || (status === 'active' && given('leavingDate'))))
+    return why('status-and-details');
   if (status !== undefined) {
-    return { kind, status: { to: status, ...(given('leavingDate') ? { leavingDate: f['leavingDate']! } : {}) }, change: {}, asset: null };
+    return {
+      kind,
+      status: { to: status, ...(given('leavingDate') ? { leavingDate: f['leavingDate']! } : {}) },
+      change: {},
+      asset: null
+    };
   }
   let change: PersonChange = {};
   if (given('payAmount') || given('asset') || given('payFrom')) {
@@ -101,7 +154,8 @@ export function changeAskedOf(intent: ActIntent, registry: AssetRegistry = theAs
   }
   if (given('classification') || given('classificationFrom')) {
     const c = f['classification'] as EmployeeClassification | undefined;
-    if (c === undefined || !EMPLOYEE_CLASSIFICATIONS.includes(c) || !given('classificationFrom')) return why('no-classification');
+    if (c === undefined || !EMPLOYEE_CLASSIFICATIONS.includes(c) || !given('classificationFrom'))
+      return why('no-classification');
     change = { ...change, classification: { classification: c, from: f['classificationFrom']! } };
   }
   for (const k of ['endDate', 'leavingDate'] as const) {
@@ -115,54 +169,82 @@ export function changeAskedOf(intent: ActIntent, registry: AssetRegistry = theAs
 export function changePersonAction(reach: ChangePersonReach): ActionDefinition {
   const network = reach.network ?? (NETWORK as NetworkName);
   const registry = reach.assets ?? theAssets;
-  const refuse = (key: string): never => { throw new StepRefused(why(key)); };
+  const refuse = (key: string): never => {
+    throw new StepRefused(why(key));
+  };
   return Object.freeze({
     headline: 'act.change-person.headline',
     shown: async (intent: ActIntent): Promise<readonly ShownLine[]> => {
       const f = intent.fields;
-      const page = (key: string, values: Readonly<Record<string, string>>): ShownLine => ({ key: `act.change-person.shown.${key}`, values, from: 'page' });
+      const page = (key: string, values: Readonly<Record<string, string>>): ShownLine => ({
+        key: `act.change-person.shown.${key}`,
+        values,
+        from: 'page'
+      });
       const clear = f['clear'] === undefined ? [] : f['clear'].split(',').map((c) => c.trim());
-      const amountLine = (key: string, amount: string | undefined, code: string | undefined, more: Readonly<Record<string, string>>): ShownLine => {
+      const amountLine = (
+        key: string,
+        amount: string | undefined,
+        code: string | undefined,
+        more: Readonly<Record<string, string>>
+      ): ShownLine => {
         const asset = code === undefined || !HEX64.test(code) ? null : registry.find(code as AssetId);
         const raw = { amount: amount ?? '', asset: code ?? '', ...more };
         return asset === null || !/^[0-9]+$/u.test(raw.amount)
           ? page(`${key}-raw`, raw)
-          : page(key, { ...raw, shown: formatAmount(BigInt(raw.amount), asset), symbol: asset.symbol, name: asset.name });
+          : page(key, {
+              ...raw,
+              shown: formatAmount(BigInt(raw.amount), asset),
+              symbol: asset.symbol,
+              name: asset.name
+            });
       };
       return [
         page('kind', { kind: f['kind'] ?? '' }),
         page('name', { name: f['personName'] ?? '' }),
-        ...(f['payAmount'] === undefined ? [] : [amountLine('pay', f['payAmount'], f['asset'], { from: f['payFrom'] ?? '' })]),
-        ...(f['classification'] === undefined ? [] : [page('classification', { classification: f['classification'], from: f['classificationFrom'] ?? '' })]),
+        ...(f['payAmount'] === undefined
+          ? []
+          : [amountLine('pay', f['payAmount'], f['asset'], { from: f['payFrom'] ?? '' })]),
+        ...(f['classification'] === undefined
+          ? []
+          : [page('classification', { classification: f['classification'], from: f['classificationFrom'] ?? '' })]),
         ...(['endDate', 'leavingDate'] as const).flatMap((k) => [
           ...(f[k] === undefined ? [] : [page(k === 'endDate' ? 'end-date' : 'leaving-date', { day: f[k]! })]),
-          ...(clear.includes(k) ? [page(k === 'endDate' ? 'end-date-cleared' : 'leaving-date-cleared', {})] : []),
+          ...(clear.includes(k) ? [page(k === 'endDate' ? 'end-date-cleared' : 'leaving-date-cleared', {})] : [])
         ]),
-        ...(f['terms'] === undefined ? [] : [f['terms'] === 'monthly'
-          ? amountLine('terms-monthly', f['termsAmount'], f['termsAsset'], {})
-          : page('terms', { terms: f['terms'] })]),
+        ...(f['terms'] === undefined
+          ? []
+          : [
+              f['terms'] === 'monthly'
+                ? amountLine('terms-monthly', f['termsAmount'], f['termsAsset'], {})
+                : page('terms', { terms: f['terms'] })
+            ]),
         ...(f['status'] === undefined ? [] : [page('status', { status: f['status'] })]),
         { key: 'act.change-person.shown.raised', from: 'action' },
         { key: 'act.change-person.shown.filed', from: 'action' },
         ...upkeepShown(),
-        { key: 'act.change-person.shown.nothing-else', from: 'action' },
+        { key: 'act.change-person.shown.nothing-else', from: 'action' }
       ];
     },
     checks: [
       { key: 'act.change-person.check.seat' },
       { key: 'act.change-person.check.record' },
       { key: 'act.change-person.check.raised' },
-      UPKEEP_CHECK,
+      UPKEEP_CHECK
     ],
     check: async (intent) => {
       const asked = changeAskedOf(intent, registry);
       return 'key' in asked ? asked : null;
     },
     steps: (intent) => {
-      const read = keptReach(reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k))));
+      const read = keptReach(
+        reach.reachFor ?? ((c: StepContext) => companyReachFor(c, reach.chain(), reach.builder(), (k) => why(k)))
+      );
       const seat: ActionStep = {
         title: { key: 'act.change-person.step.seat' },
-        run: async (ctx) => { await read.at(ctx); },
+        run: async (ctx) => {
+          await read.at(ctx);
+        }
       };
       const upkeep = upkeepSteps({ reach: read.at, renew: read.renew }, {});
       let held: HeldUntilEntered | null = null;
@@ -188,11 +270,20 @@ export function changePersonAction(reach: ChangePersonReach): ActionDefinition {
               }
             }
             if (found.kind === 'employee' && asked.kind === 'employee') {
-              if (asked.asset !== null && asked.asset.toLowerCase() !== String(found.here.person.asset).toLowerCase()) refuse('not-as-shown');
+              if (asked.asset !== null && asked.asset.toLowerCase() !== String(found.here.person.asset).toLowerCase())
+                refuse('not-as-shown');
               if (asked.status !== null) {
-                await setStatusHere(d, found.here, asked.status.to, asked.status.to === 'leaver'
-                  ? { ...(asked.status.leavingDate === undefined ? {} : { leavingDate: asked.status.leavingDate }), pastDraft }
-                  : undefined);
+                await setStatusHere(
+                  d,
+                  found.here,
+                  asked.status.to,
+                  asked.status.to === 'leaver'
+                    ? {
+                        ...(asked.status.leavingDate === undefined ? {} : { leavingDate: asked.status.leavingDate }),
+                        pastDraft
+                      }
+                    : undefined
+                );
               } else {
                 await changePersonHere(d, found.here, asked.change, pastDraft);
               }
@@ -202,7 +293,8 @@ export function changePersonAction(reach: ChangePersonReach): ActionDefinition {
           } catch (e) {
             if (e instanceof StepRefused || e instanceof ActionStopped) throw e;
             if (e instanceof FiledNotEntered) throw new StepRefused(why('filed-not-entered', { says: said(e) }));
-            if (e instanceof PersonNotChanged || e instanceof VendorNotChanged) throw new StepRefused(why('not-changed', { says: said(e) }));
+            if (e instanceof PersonNotChanged || e instanceof VendorNotChanged)
+              throw new StepRefused(why('not-changed', { says: said(e) }));
             if (e instanceof InvitationRefused) throw new StepRefused(why('not-filed', { says: said(e) }));
             throw new StepRefused(why('not-changed', { says: said(e) }));
           }
@@ -212,15 +304,17 @@ export function changePersonAction(reach: ChangePersonReach): ActionDefinition {
             return;
           }
           ctx.tell({ state: 'changed' });
-        },
+        }
       };
       const last: ActionStep = {
         ...upkeep.last,
-        run: (ctx) => upkeepThenEntered(ctx, upkeep.last, held, (anchored, says) => (anchored
-          ? why('filed-not-entered', { says }) : why('filed-not-entered-nor-anchored', { says }))),
+        run: (ctx) =>
+          upkeepThenEntered(ctx, upkeep.last, held, (anchored, says) =>
+            anchored ? why('filed-not-entered', { says }) : why('filed-not-entered-nor-anchored', { says })
+          )
       };
       return [upkeep.first, seat, change, last];
-    },
+    }
   } satisfies ActionDefinition);
 }
 
@@ -241,14 +335,20 @@ function firstDayNotRaised(raised: readonly string[]): string | null {
  * the leaving date a leaver is made on. A date the change leaves alone is not listed.
  */
 function stopsAsked(
-  asked: Asked, was: { readonly endDate?: string | null; readonly leavingDate?: string | null },
+  asked: Asked,
+  was: { readonly endDate?: string | null; readonly leavingDate?: string | null }
 ): (readonly [string | null, string | null])[] {
   const out: (readonly [string | null, string | null])[] = [];
-  const set: { readonly endDate?: string | null; readonly leavingDate?: string | null } = asked.kind === 'vendor'
-    ? (asked.change.endDate === undefined ? {} : { endDate: asked.change.endDate })
-    : asked.status !== null
-      ? (asked.status.leavingDate === undefined ? {} : { leavingDate: asked.status.leavingDate })
-      : asked.change;
+  const set: { readonly endDate?: string | null; readonly leavingDate?: string | null } =
+    asked.kind === 'vendor'
+      ? asked.change.endDate === undefined
+        ? {}
+        : { endDate: asked.change.endDate }
+      : asked.status !== null
+        ? asked.status.leavingDate === undefined
+          ? {}
+          : { leavingDate: asked.status.leavingDate }
+        : asked.change;
   for (const k of ['endDate', 'leavingDate'] as const) {
     const day = set[k];
     if (day !== undefined) out.push([day, was[k] ?? null]);
@@ -261,13 +361,29 @@ function stopsAsked(
  * live payroll proposals, each believed only as a seat this device believes filed it, read through the wallet.
  */
 function pastDraftFor(
-  r: CompanyReach, d: PeopleDevice, reach: ChangePersonReach, list: 'employees' | 'vendors',
+  r: CompanyReach,
+  d: PeopleDevice,
+  reach: ChangePersonReach,
+  list: 'employees' | 'vendors'
 ): () => Promise<readonly string[]> {
-  return async () => periodsPastDraftHere({
-    runs: async () => await r.stepView.current().list('runs') as readonly SealedRun[],
-    proposals: proposalsInTheView(r),
-    roundsOnChain: (chainIds) => r.builder.roundsOnChain({ account: r.account, indexer: r.chain.indexer, chainIds, seat: r.seat.signingSecret }),
-    directory: d.directory,
-    roundIdentity: await reach.roundIdentity(),
-  }, r.accountId, r.companyKeys, new Date(reach.now()), list);
+  return async () =>
+    periodsPastDraftHere(
+      {
+        runs: async () => (await r.stepView.current().list('runs')) as readonly SealedRun[],
+        proposals: proposalsInTheView(r),
+        roundsOnChain: (chainIds) =>
+          r.builder.roundsOnChain({
+            account: r.account,
+            indexer: r.chain.indexer,
+            chainIds,
+            seat: r.seat.signingSecret
+          }),
+        directory: d.directory,
+        roundIdentity: await reach.roundIdentity()
+      },
+      r.accountId,
+      r.companyKeys,
+      new Date(reach.now()),
+      list
+    );
 }

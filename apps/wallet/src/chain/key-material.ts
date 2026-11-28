@@ -116,13 +116,14 @@ export const idbArtefactCache = (): ArtefactCache => ({
     try {
       const db = await keysDb();
       await new Promise<void>((resolve) => {
-        const request = db.transaction(KEYS_STORE, 'readwrite').objectStore(KEYS_STORE)
-          .delete(path);
+        const request = db.transaction(KEYS_STORE, 'readwrite').objectStore(KEYS_STORE).delete(path);
         request.onsuccess = () => resolve();
         request.onerror = () => resolve();
       });
-    } catch { /* gone is gone */ }
-  },
+    } catch {
+      /* gone is gone */
+    }
+  }
 });
 
 const hex = (buffer: ArrayBuffer): string =>
@@ -191,12 +192,16 @@ export const REGISTRY_KEYS_FOLDER = 'registry';
  * prover and the circuit of the vault's `mergeNotes`, both pinned. A wallet whose keys were vendored before it proved
  * merges answers no, and a run whose plan merges is then refused before it is charged.
  */
-export const walletHoldsTheMergeKey = async (fetchFn: typeof fetch = fetch.bind(globalThis), base = '/keys'): Promise<boolean> => {
+export const walletHoldsTheMergeKey = async (
+  fetchFn: typeof fetch = fetch.bind(globalThis),
+  base = '/keys'
+): Promise<boolean> => {
   try {
     const response = await fetchFn(`${base}/manifest.json`);
     if (!response.ok) return false;
     const pins = (await response.json()) as { artefacts?: Record<string, unknown> };
-    const held = (name: string): boolean => Object.prototype.hasOwnProperty.call(pins.artefacts ?? {}, `${VAULT_KEYS_FOLDER}/${name}`);
+    const held = (name: string): boolean =>
+      Object.prototype.hasOwnProperty.call(pins.artefacts ?? {}, `${VAULT_KEYS_FOLDER}/${name}`);
     return held('mergeNotes.prover') && held('mergeNotes.bzkir');
   } catch {
     /* A manifest this wallet cannot fetch or read names no key, so the merge key is not one it holds: said as false. */
@@ -218,9 +223,7 @@ class KeyMaterialError extends Error {
  * its pins mean that convenience is never trusted. It keeps nothing in
  * memory: every ask is read from the cache or the origin and verified again.
  */
-export function makePinnedKeyMaterialProvider(
-  options: PinnedKeyMaterialOptions = {},
-): PinnedKeyMaterial {
+export function makePinnedKeyMaterialProvider(options: PinnedKeyMaterialOptions = {}): PinnedKeyMaterial {
   const base = options.baseUrl ?? '/keys';
   const fetchFn = options.fetchFn ?? fetch.bind(globalThis);
   const cache = options.cache ?? idbArtefactCache();
@@ -228,21 +231,28 @@ export function makePinnedKeyMaterialProvider(
   const compiled = options.compiledVerifierKeys ?? {};
   const vaultCircuits = new Set(options.vaultCircuits ?? []);
   const vaultVerifiers = new Set([...(options.vaultVerifiers ?? []), ...vaultCircuits]);
-  const calledByTheVault = new Set([...vaultCircuits].flatMap((c) => (
-    Object.hasOwn(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, c) ? ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c]! : [])));
+  const calledByTheVault = new Set(
+    [...vaultCircuits].flatMap((c) =>
+      Object.hasOwn(ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS, c) ? ACCOUNT_CIRCUITS_EACH_VAULT_CIRCUIT_CALLS[c]! : []
+    )
+  );
   const compiledVault = options.compiledVaultVerifierKeys ?? {};
   const registryCircuits = new Set(options.registryCircuits ?? []);
 
   /** Refuses an account verifier key that is not the one this build compiled. */
-  const thisBuildsIn = (of: Readonly<Record<string, string>>, contract: string) => async (circuit: string, verifierKey: Uint8Array): Promise<void> => {
-    const wanted = Object.hasOwn(of, circuit) ? of[circuit] : undefined;
-    const held = await sha256Hex(verifierKey);
-    if (typeof wanted !== 'string' || held !== wanted.toLowerCase()) {
-      throw new KeyMaterialError(`REFUSING TO PROVE: the verifier key this wallet holds for "${circuit}" hashes to ${held}, `
-        + `and this build's ${contract} was compiled with ${wanted ?? 'no key for it'}. The keys and the wallet come `
-        + `from different compiles, so nothing was proved. Re-vendor the ${contract}'s keys from the same compile.`);
-    }
-  };
+  const thisBuildsIn =
+    (of: Readonly<Record<string, string>>, contract: string) =>
+    async (circuit: string, verifierKey: Uint8Array): Promise<void> => {
+      const wanted = Object.hasOwn(of, circuit) ? of[circuit] : undefined;
+      const held = await sha256Hex(verifierKey);
+      if (typeof wanted !== 'string' || held !== wanted.toLowerCase()) {
+        throw new KeyMaterialError(
+          `REFUSING TO PROVE: the verifier key this wallet holds for "${circuit}" hashes to ${held}, ` +
+            `and this build's ${contract} was compiled with ${wanted ?? 'no key for it'}. The keys and the wallet come ` +
+            `from different compiles, so nothing was proved. Re-vendor the ${contract}'s keys from the same compile.`
+        );
+      }
+    };
   const thisBuilds = thisBuildsIn(compiled, 'company account');
   const thisBuildsVault = thisBuildsIn(compiledVault, 'vault');
   const thisBuildsRegistry = thisBuildsIn(options.compiledRegistryVerifierKeys ?? {}, 'registry');
@@ -254,17 +264,21 @@ export function makePinnedKeyMaterialProvider(
       try {
         response = await fetchFn(`${base}/manifest.json`);
       } catch (e) {
-        throw new KeyMaterialError('the key-material manifest could not be read from '
-          + `${base}/manifest.json (${describeFailure(e)}). `
-          + 'Without it nothing can be verified, so nothing will be proved. '
-          + 'Run `npm run vendor-keys` to vendor and pin the key material.');
+        throw new KeyMaterialError(
+          'the key-material manifest could not be read from ' +
+            `${base}/manifest.json (${describeFailure(e)}). ` +
+            'Without it nothing can be verified, so nothing will be proved. ' +
+            'Run `npm run vendor-keys` to vendor and pin the key material.'
+        );
       }
       if (!response.ok) {
-        throw new KeyMaterialError(`there is no key material vendored at ${base} `
-          + `(the manifest answered ${response.status}). Proving needs the circuit `
-          + 'keys and their pinned hashes on this wallet\'s own origin — run '
-          + '`npm run vendor-keys` once, then try again. This wallet never falls '
-          + 'back to the Foundation\'s bucket.');
+        throw new KeyMaterialError(
+          `there is no key material vendored at ${base} ` +
+            `(the manifest answered ${response.status}). Proving needs the circuit ` +
+            "keys and their pinned hashes on this wallet's own origin — run " +
+            '`npm run vendor-keys` once, then try again. This wallet never falls ' +
+            "back to the Foundation's bucket."
+        );
       }
       /* A dev server answers a MISSING file with the app page itself (the
        * SPA fallback, status 200) — measured: the un-vendored state arrived
@@ -272,24 +286,34 @@ export function makePinnedKeyMaterialProvider(
        * not-vendored, and it must say so in the remedy's name. */
       let parsed: KeyManifest;
       try {
-        parsed = await response.json() as KeyManifest;
+        parsed = (await response.json()) as KeyManifest;
       } catch {
-        throw new KeyMaterialError(`there is no key material vendored at ${base} — `
-          + 'the server answered something that is not the manifest (typically the '
-          + 'app page itself, which is what a dev server serves for a missing '
-          + 'file). Run `npm run vendor-keys` once, then try again. This wallet '
-          + 'never falls back to the Foundation\'s bucket.');
+        throw new KeyMaterialError(
+          `there is no key material vendored at ${base} — ` +
+            'the server answered something that is not the manifest (typically the ' +
+            'app page itself, which is what a dev server serves for a missing ' +
+            'file). Run `npm run vendor-keys` once, then try again. This wallet ' +
+            "never falls back to the Foundation's bucket."
+        );
       }
-      if (typeof parsed !== 'object' || parsed === null
-        || typeof parsed.artefacts !== 'object' || parsed.artefacts === null) {
-        throw new KeyMaterialError(`the manifest at ${base}/manifest.json is damaged — `
-          + 'it carries no artefact pins. Re-run `npm run vendor-keys`.');
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        typeof parsed.artefacts !== 'object' ||
+        parsed.artefacts === null
+      ) {
+        throw new KeyMaterialError(
+          `the manifest at ${base}/manifest.json is damaged — ` +
+            'it carries no artefact pins. Re-run `npm run vendor-keys`.'
+        );
       }
       return parsed;
     })();
     /* A failed manifest read must not be cached as failure for ever — the
      * person may vendor the keys and press again without reloading. */
-    manifestPromise.catch(() => { manifestPromise = null; });
+    manifestPromise.catch(() => {
+      manifestPromise = null;
+    });
     return manifestPromise;
   };
 
@@ -298,17 +322,20 @@ export function makePinnedKeyMaterialProvider(
     const pins = await manifest();
     const pin = pins.artefacts[path];
     const remedy = [ACCOUNT_KEYS_FOLDER, VAULT_KEYS_FOLDER, REGISTRY_KEYS_FOLDER].some((f) => path.startsWith(`${f}/`))
-      ? '`npm run compact` then `npm run vendor-keys:account`' : '`npm run vendor-keys`';
+      ? '`npm run compact` then `npm run vendor-keys:account`'
+      : '`npm run vendor-keys`';
     if (!pin) {
-      throw new KeyMaterialError(`"${path}" is not in the vendored key material — `
-        + `the manifest (made ${pins.generatedAt}) has no pin for it, and an unpinned `
-        + `file must not be trusted to ${wanted}. If the SDK now asks for artefacts `
-        + 'the vendoring did not cover (a new circuit, a new parameter size, a new '
-        + `circuit version), run ${remedy} and read its report.`);
+      throw new KeyMaterialError(
+        `"${path}" is not in the vendored key material — ` +
+          `the manifest (made ${pins.generatedAt}) has no pin for it, and an unpinned ` +
+          `file must not be trusted to ${wanted}. If the SDK now asks for artefacts ` +
+          'the vendoring did not cover (a new circuit, a new parameter size, a new ' +
+          `circuit version), run ${remedy} and read its report.`
+      );
     }
     const cached = await cache.get(path);
     if (cached) {
-      if (await sha256Hex(cached) === pin.sha256) return cached;
+      if ((await sha256Hex(cached)) === pin.sha256) return cached;
       /* A damaged cache is a miss, not a verdict — the origin copy decides. */
       await cache.remove(path);
     }
@@ -316,23 +343,29 @@ export function makePinnedKeyMaterialProvider(
     try {
       response = await fetchFn(`${base}/${path}`);
     } catch (e) {
-      throw new KeyMaterialError(`the vendored "${path}" could not be read from this `
-        + `wallet's own origin (${describeFailure(e)}). `
-        + 'Nothing was proved.');
+      throw new KeyMaterialError(
+        `the vendored "${path}" could not be read from this ` +
+          `wallet's own origin (${describeFailure(e)}). ` +
+          'Nothing was proved.'
+      );
     }
     if (!response.ok) {
-      throw new KeyMaterialError(`the vendored "${path}" is missing from this wallet's `
-        + `own origin (${response.status}) though the manifest pins it. Run `
-        + `${remedy}; this wallet never falls back to the bucket.`);
+      throw new KeyMaterialError(
+        `the vendored "${path}" is missing from this wallet's ` +
+          `own origin (${response.status}) though the manifest pins it. Run ` +
+          `${remedy}; this wallet never falls back to the bucket.`
+      );
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     const got = await sha256Hex(bytes);
     if (got !== pin.sha256) {
-      throw new KeyMaterialError(`REFUSING TO PROVE: "${path}" does not match its pin. `
-        + `The manifest (made ${pins.generatedAt}) pins SHA-256 ${pin.sha256}; the file `
-        + `served hashes to ${got}. A proving key that is not the one vendored must `
-        + 'never be used — no proof was built, and there is no fallback. Find out '
-        + 'what changed the file before re-vendoring.');
+      throw new KeyMaterialError(
+        `REFUSING TO PROVE: "${path}" does not match its pin. ` +
+          `The manifest (made ${pins.generatedAt}) pins SHA-256 ${pin.sha256}; the file ` +
+          `served hashes to ${got}. A proving key that is not the one vendored must ` +
+          'never be used — no proof was built, and there is no fallback. Find out ' +
+          'what changed the file before re-vendoring.'
+      );
     }
     try {
       await cache.put(path, bytes);
@@ -347,7 +380,7 @@ export function makePinnedKeyMaterialProvider(
     const [proverKey, verifierKey, ir] = await Promise.all([
       artefact(`${path}.prover`, `prove ${keyLocation}`),
       artefact(`${path}.verifier`, `verify ${keyLocation}`),
-      artefact(`${path}.bzkir`, `run ${keyLocation}'s circuit`),
+      artefact(`${path}.bzkir`, `run ${keyLocation}'s circuit`)
     ]);
     return { proverKey, verifierKey, ir };
   };
@@ -364,27 +397,36 @@ export function makePinnedKeyMaterialProvider(
       const ofTheVault = !ofTheAccount && vaultCircuits.has(located.circuitId);
       const ofTheRegistry = !ofTheAccount && !ofTheVault && registryCircuits.has(located.circuitId);
       if (!ofTheAccount && !ofTheVault && !ofTheRegistry) {
-        throw new KeyMaterialError(`REFUSING TO PROVE: "${located.circuitId}" is not a circuit of the company `
-          + 'account, the vault or the registry this wallet proves, so no key is served for it and nothing was proved.');
+        throw new KeyMaterialError(
+          `REFUSING TO PROVE: "${located.circuitId}" is not a circuit of the company ` +
+            'account, the vault or the registry this wallet proves, so no key is served for it and nothing was proved.'
+        );
       }
-      const [folder, thisBuildsIt] = ofTheVault ? [VAULT_KEYS_FOLDER, thisBuildsVault]
-        : ofTheRegistry ? [REGISTRY_KEYS_FOLDER, thisBuildsRegistry] : [ACCOUNT_KEYS_FOLDER, thisBuilds];
+      const [folder, thisBuildsIt] = ofTheVault
+        ? [VAULT_KEYS_FOLDER, thisBuildsVault]
+        : ofTheRegistry
+          ? [REGISTRY_KEYS_FOLDER, thisBuildsRegistry]
+          : [ACCOUNT_KEYS_FOLDER, thisBuilds];
       const material = await circuitFiles(`${folder}/${located.circuitId}`, keyLocation);
       await thisBuildsIt(located.circuitId, material.verifierKey);
       const served = await sha256Hex(material.verifierKey);
       if (served !== located.verifierKeyHash) {
-        throw new KeyMaterialError(`REFUSING TO PROVE: the call asks for "${located.circuitId}" with the verifier `
-          + `key ${located.verifierKeyHash}, and the key this wallet holds for it hashes to ${served}. A proof `
-          + 'made with another key would not be the call that was built, so nothing was proved. The wallet '
-          + 'and the contract it was built for disagree: re-vendor its keys from the same compile.');
+        throw new KeyMaterialError(
+          `REFUSING TO PROVE: the call asks for "${located.circuitId}" with the verifier ` +
+            `key ${located.verifierKeyHash}, and the key this wallet holds for it hashes to ${served}. A proof ` +
+            'made with another key would not be the call that was built, so nothing was proved. The wallet ' +
+            'and the contract it was built for disagree: re-vendor its keys from the same compile.'
+        );
       }
       return material;
     },
     getParams: async (k: number) => artefact(`bls_midnight_2p${k}`, `prove with parameter size 2^${k}`),
     accountVerifierKey: async (circuit: string) => {
       if (!accountCircuits.has(circuit)) {
-        throw new KeyMaterialError(`"${circuit}" is not a circuit of the company account this wallet proves, `
-          + 'so no call to it is built here.');
+        throw new KeyMaterialError(
+          `"${circuit}" is not a circuit of the company account this wallet proves, ` +
+            'so no call to it is built here.'
+        );
       }
       const key = await artefact(`${ACCOUNT_KEYS_FOLDER}/${circuit}.verifier`, `build a call to ${circuit}`);
       await thisBuilds(circuit, key);
@@ -392,7 +434,9 @@ export function makePinnedKeyMaterialProvider(
     },
     vaultVerifierKey: async (circuit: string) => {
       if (!vaultVerifiers.has(circuit)) {
-        throw new KeyMaterialError(`"${circuit}" is not a circuit of the vault this wallet builds, so no key for it is served.`);
+        throw new KeyMaterialError(
+          `"${circuit}" is not a circuit of the vault this wallet builds, so no key for it is served.`
+        );
       }
       const key = await artefact(`${VAULT_KEYS_FOLDER}/${circuit}.verifier`, `build the vault's ${circuit}`);
       await thisBuildsVault(circuit, key);
@@ -400,12 +444,14 @@ export function makePinnedKeyMaterialProvider(
     },
     registryVerifierKey: async (circuit: string) => {
       if (!registryCircuits.has(circuit)) {
-        throw new KeyMaterialError(`"${circuit}" is not a circuit of the registry this wallet writes to, so no key for it is served.`);
+        throw new KeyMaterialError(
+          `"${circuit}" is not a circuit of the registry this wallet writes to, so no key for it is served.`
+        );
       }
       const key = await artefact(`${REGISTRY_KEYS_FOLDER}/${circuit}.verifier`, `build the registry's ${circuit}`);
       await thisBuildsRegistry(circuit, key);
       return key;
-    },
+    }
   };
 }
 
@@ -428,7 +474,10 @@ export type KeyAskSource = 'probe-prefetch' | 'proof';
 export interface KeyAskRecord {
   paramsFetched?: { k: number; ms: number; bytes: number }[];
   circuitsAsked?: {
-    keyLocation: string; ms: number; proverBytes: number; askedBy: KeyAskSource;
+    keyLocation: string;
+    ms: number;
+    proverBytes: number;
+    askedBy: KeyAskSource;
   }[];
 }
 
@@ -448,11 +497,7 @@ export interface KeyAskRecord {
  * needs a circuit nobody vendored does not degrade — it stops dead, after
  * the person has pressed send and waited out the proving.
  */
-export function recordKeyAsk(
-  into: KeyAskRecord,
-  ask: KeyMaterialAsk,
-  askedBy: KeyAskSource,
-): void {
+export function recordKeyAsk(into: KeyAskRecord, ask: KeyMaterialAsk, askedBy: KeyAskSource): void {
   if (ask.kind === 'params') {
     into.paramsFetched ??= [];
     into.paramsFetched.push({ k: ask.k, ms: ask.ms, bytes: ask.bytes });
@@ -460,8 +505,10 @@ export function recordKeyAsk(
   }
   into.circuitsAsked ??= [];
   into.circuitsAsked.push({
-    keyLocation: ask.keyLocation, ms: ask.ms,
-    proverBytes: ask.proverBytes, askedBy,
+    keyLocation: ask.keyLocation,
+    ms: ask.ms,
+    proverBytes: ask.proverBytes,
+    askedBy
   });
 }
 
@@ -472,7 +519,7 @@ export function recordKeyAsk(
  */
 export function recordingKeyMaterial(
   inner: KeyMaterialProvider,
-  onAsk: (ask: KeyMaterialAsk) => void,
+  onAsk: (ask: KeyMaterialAsk) => void
 ): KeyMaterialProvider {
   return {
     lookupKey: async (keyLocation) => {
@@ -480,9 +527,10 @@ export function recordingKeyMaterial(
       const material = await inner.lookupKey(keyLocation);
       if (material) {
         onAsk({
-          kind: 'circuit', keyLocation,
+          kind: 'circuit',
+          keyLocation,
           ms: Math.round(performance.now() - start),
-          proverBytes: material.proverKey.byteLength,
+          proverBytes: material.proverKey.byteLength
         });
       }
       return material;
@@ -491,11 +539,12 @@ export function recordingKeyMaterial(
       const start = performance.now();
       const bytes = await inner.getParams(k);
       onAsk({
-        kind: 'params', k,
+        kind: 'params',
+        k,
         ms: Math.round(performance.now() - start),
-        bytes: bytes.byteLength,
+        bytes: bytes.byteLength
       });
       return bytes;
-    },
+    }
   };
 }

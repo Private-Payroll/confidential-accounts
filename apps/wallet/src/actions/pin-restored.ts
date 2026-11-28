@@ -22,7 +22,11 @@ export type PinRestored =
   | { readonly of: 'not-open' };
 
 /** Pins `label` to the one account the person's entries name for it and the chain bears out, if there is one. */
-export async function pinRestoredFor(ctx: Pick<StepContext, 'held' | 'keyring'>, label: string, find: RegistryFinder): Promise<PinRestored> {
+export async function pinRestoredFor(
+  ctx: Pick<StepContext, 'held' | 'keyring'>,
+  label: string,
+  find: RegistryFinder
+): Promise<PinRestored> {
   const before = pinnedFor(ctx, label);
   if (before.of === 'not-open') return { of: 'not-open' };
   if (before.of === 'pinned') return { of: 'already-pinned' };
@@ -51,5 +55,6 @@ export function restoreFinderOf(chain: Pick<CompanyChain, 'indexer' | 'registryE
   const doors = chain.registryEntry;
   if (doors === undefined) return null;
   const build: AccountBuilding = (ask) => doors.build()(ask);
-  return (identity) => registryEntriesFound(identity, doors.network, liveRegistryReads(doors.network, chain.indexer.indexerUri, build));
+  return (identity) =>
+    registryEntriesFound(identity, doors.network, liveRegistryReads(doors.network, chain.indexer.indexerUri, build));
 }

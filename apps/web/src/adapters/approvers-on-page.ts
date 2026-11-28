@@ -1,6 +1,11 @@
 import type { PageView } from './filing-judge.js';
 import type { AccountAddress, CompanyLabel } from 'midnight-identity/profile/company-label';
-import { approversFrom, rightsBelievedIn, seatAndThreshold, unnamedSeatsRefusal } from 'vaults-web-shared/approvers-read.js';
+import {
+  approversFrom,
+  rightsBelievedIn,
+  seatAndThreshold,
+  unnamedSeatsRefusal
+} from 'vaults-web-shared/approvers-read.js';
 import { isSignerRole } from '../../../../src/core/roles.js';
 import { invitedSeatRightsOf, scopeOfRole } from '../../../../src/core/seat-rights.js';
 import { refusalSaid, seatThresholdRefusal } from '../../../../src/core/vault-approvers.js';
@@ -25,7 +30,9 @@ interface SeatAsked {
 }
 
 /** What the count needs, as this page reads it with its own read key and its own wallet. */
-type CountRead = Omit<Parameters<typeof approversFrom>[0], 'rights'> & { readonly believed: Parameters<typeof rightsBelievedIn>[0] };
+type CountRead = Omit<Parameters<typeof approversFrom>[0], 'rights'> & {
+  readonly believed: Parameters<typeof rightsBelievedIn>[0];
+};
 
 /**
  * What the roster is counted from, read here, or null when this page cannot read them: no saved keys here, the
@@ -45,7 +52,7 @@ async function countReadHere(view: PageView): Promise<CountRead | null> {
     const [holders, here, wide] = await Promise.all([
       view.holders(),
       directoryHereFor(view, label, address, viewingKey, async () => account)(),
-      theVaultBuilder().then((builder) => builder.companyWide()),
+      theVaultBuilder().then((builder) => builder.companyWide())
     ]);
     return { account, held: holders, companyWide: wide, believed: here.dir.seats };
   } catch {

@@ -74,29 +74,48 @@ export interface BalancingCounts {
   readonly unread: number;
 }
 
-interface OfferLike { readonly inputs?: readonly unknown[]; readonly outputs?: readonly unknown[] }
+interface OfferLike {
+  readonly inputs?: readonly unknown[];
+  readonly outputs?: readonly unknown[];
+}
 interface TransactionLike {
   readonly guaranteedOffer?: OfferLike | null;
   readonly fallibleOffer?: ReadonlyMap<unknown, OfferLike> | null;
-  readonly intents?: ReadonlyMap<unknown, { readonly dustActions?: { readonly spends?: readonly unknown[] } | null }> | null;
+  readonly intents?: ReadonlyMap<
+    unknown,
+    { readonly dustActions?: { readonly spends?: readonly unknown[] } | null }
+  > | null;
 }
 
 /** The counts of a recipe's transactions, read off the ledger's own fields; a field a transaction lacks counts nothing. */
 export function balancingCounts(transactions: readonly unknown[]): BalancingCounts {
-  let offers = 0; let coinsSpent = 0; let coinsMade = 0; let dustSpends = 0; let unread = 0;
+  let offers = 0;
+  let coinsSpent = 0;
+  let coinsMade = 0;
+  let dustSpends = 0;
+  let unread = 0;
   for (const tx of transactions as readonly (TransactionLike | null)[]) {
-    if (tx === null || typeof tx !== 'object' || !('intents' in tx || 'guaranteedOffer' in tx)) { unread += 1; continue; }
-    const all = [tx.guaranteedOffer, ...(tx.fallibleOffer instanceof Map ? tx.fallibleOffer.values() : [])]
-      .filter((o): o is OfferLike => o !== null && o !== undefined);
+    if (tx === null || typeof tx !== 'object' || !('intents' in tx || 'guaranteedOffer' in tx)) {
+      unread += 1;
+      continue;
+    }
+    const all = [tx.guaranteedOffer, ...(tx.fallibleOffer instanceof Map ? tx.fallibleOffer.values() : [])].filter(
+      (o): o is OfferLike => o !== null && o !== undefined
+    );
     offers += all.length;
-    for (const o of all) { coinsSpent += o.inputs?.length ?? 0; coinsMade += o.outputs?.length ?? 0; }
-    for (const i of tx.intents instanceof Map ? tx.intents.values() : []) dustSpends += i?.dustActions?.spends?.length ?? 0;
+    for (const o of all) {
+      coinsSpent += o.inputs?.length ?? 0;
+      coinsMade += o.outputs?.length ?? 0;
+    }
+    for (const i of tx.intents instanceof Map ? tx.intents.values() : [])
+      dustSpends += i?.dustActions?.spends?.length ?? 0;
   }
   return { transactions: transactions.length, offers, coinsSpent, coinsMade, dustSpends, unread };
 }
 
-const countsSaid = (c: BalancingCounts): string => `${c.transactions} transaction(s), ${c.offers} private offer(s): `
-  + `${c.coinsSpent} of the wallet's private coins spent, ${c.coinsMade} coins made, ${c.dustSpends} DUST spends`;
+const countsSaid = (c: BalancingCounts): string =>
+  `${c.transactions} transaction(s), ${c.offers} private offer(s): ` +
+  `${c.coinsSpent} of the wallet's private coins spent, ${c.coinsMade} coins made, ${c.dustSpends} DUST spends`;
 
 /** A balancing, and whether giving its coins back worked: `gaveBack` is null when it did, or the failure's words. */
 export type BalancingSeen =
@@ -106,7 +125,10 @@ export type BalancingSeen =
 /** What a balancing needs of the wallet's facade: adopt a transaction, balance it, give its coins back. */
 export interface FacadeToBalance<H, R> {
   adoptTransaction(bytes: Uint8Array, kind: 'Unproven'): H;
-  balanceUnprovenTransaction(handle: H, options: { ttl: Date; tokenKindsToBalance: ('shielded' | 'dust')[] }): Promise<R>;
+  balanceUnprovenTransaction(
+    handle: H,
+    options: { ttl: Date; tokenKindsToBalance: ('shielded' | 'dust')[] }
+  ): Promise<R>;
   revert(recipe: R): Promise<unknown>;
 }
 
@@ -115,18 +137,28 @@ export interface FacadeToBalance<H, R> {
  * signed or sent: what was added, counted, and whether the giving back worked, or the wallet's refusal.
  */
 export async function balancedAndGivenBack<H, R>(
-  facade: FacadeToBalance<H, R>, shape: { serialize(): Uint8Array }, kinds: readonly ('shielded' | 'dust')[],
-  transactionsOf: (recipe: R) => readonly unknown[], said: (e: unknown) => string,
+  facade: FacadeToBalance<H, R>,
+  shape: { serialize(): Uint8Array },
+  kinds: readonly ('shielded' | 'dust')[],
+  transactionsOf: (recipe: R) => readonly unknown[],
+  said: (e: unknown) => string
 ): Promise<BalancingSeen> {
   let recipe: R;
   try {
     const handle = facade.adoptTransaction(shape.serialize(), 'Unproven');
-    recipe = await facade.balanceUnprovenTransaction(handle, { ttl: new Date(Date.now() + 20 * 60_000), tokenKindsToBalance: [...kinds] });
+    recipe = await facade.balanceUnprovenTransaction(handle, {
+      ttl: new Date(Date.now() + 20 * 60_000),
+      tokenKindsToBalance: [...kinds]
+    });
   } catch (e) {
     return { balanced: false, said: said(e) };
   }
   let counts: BalancingCounts;
-  try { counts = balancingCounts(transactionsOf(recipe)); } catch { counts = balancingCounts([null]); }
+  try {
+    counts = balancingCounts(transactionsOf(recipe));
+  } catch {
+    counts = balancingCounts([null]);
+  }
   try {
     await facade.revert(recipe);
     return { balanced: true, counts, gaveBack: null };
@@ -140,7 +172,7 @@ export async function balancedAndGivenBack<H, R>(
  * error, a saved report). An empty token changes nothing.
  */
 export const withoutTheToken = (text: string, token: string): string =>
-  (token === '' ? text : text.split(token).join('<project token>'));
+  token === '' ? text : text.split(token).join('<project token>');
 
 export interface Seen {
   readonly first: Readonly<Record<PartName, PartSeen>>;
@@ -150,20 +182,26 @@ export interface Seen {
   readonly withItsOwnDust: BalancingSeen;
 }
 
-const partVerdict = (name: string, p: PartSeen): string => (p.reading === 'read' && p.readInMs !== null
-  ? `SEEN WORKING  the ${name} part read the chain in ${seconds(p.readInMs)}.`
-  : `SEEN FAILING  the ${name} part did not finish reading (${p.reading})${p.failed === null ? '' : `: ${p.failed}`}.`);
+const partVerdict = (name: string, p: PartSeen): string =>
+  p.reading === 'read' && p.readInMs !== null
+    ? `SEEN WORKING  the ${name} part read the chain in ${seconds(p.readInMs)}.`
+    : `SEEN FAILING  the ${name} part did not finish reading (${p.reading})${p.failed === null ? '' : `: ${p.failed}`}.`;
 
 const balancingVerdict = (what: string, b: BalancingSeen, paysWithDust: boolean): string => {
   if ('said' in b) return `SEEN FAILING  ${what}: ${b.said}`;
-  if (b.gaveBack !== null) return `SEEN FAILING  ${what}: balanced (${countsSaid(b.counts)}), but giving the coins back failed: ${b.gaveBack}`;
+  if (b.gaveBack !== null)
+    return `SEEN FAILING  ${what}: balanced (${countsSaid(b.counts)}), but giving the coins back failed: ${b.gaveBack}`;
   if (b.counts.unread > 0 || b.counts.transactions === 0) {
-    return `NOT SEEN      ${what}: balanced and every coin given back, but what the balancing added could not be read, `
-      + 'so what it spent was not shown.';
+    return (
+      `NOT SEEN      ${what}: balanced and every coin given back, but what the balancing added could not be read, ` +
+      'so what it spent was not shown.'
+    );
   }
   if (paysWithDust && b.counts.dustSpends === 0) {
-    return `NOT SEEN      ${what}: balanced (${countsSaid(b.counts)}) and every coin given back, but no DUST was spent, `
-      + 'so the wallet paying its own fee was not shown.';
+    return (
+      `NOT SEEN      ${what}: balanced (${countsSaid(b.counts)}) and every coin given back, but no DUST was spent, ` +
+      'so the wallet paying its own fee was not shown.'
+    );
   }
   return `SEEN WORKING  ${what}: balanced (${countsSaid(b.counts)}); every coin given back.`;
 };
@@ -180,7 +218,11 @@ export function verdicts(s: Seen): string[] {
     s.restartedInMs === null
       ? 'NOT SEEN      the private part was not restarted from its saved state.'
       : `SEEN          the private part, restarted from its saved state, read the chain again in ${seconds(s.restartedInMs)}.`,
-    balancingVerdict('a deposit balanced as the wallet pays one today (the fee left to the fee payer)', s.asTheWalletPaysToday, false),
-    balancingVerdict('a deposit balanced with the wallet\'s own DUST paying the fee', s.withItsOwnDust, true),
+    balancingVerdict(
+      'a deposit balanced as the wallet pays one today (the fee left to the fee payer)',
+      s.asTheWalletPaysToday,
+      false
+    ),
+    balancingVerdict("a deposit balanced with the wallet's own DUST paying the fee", s.withItsOwnDust, true)
   ];
 }

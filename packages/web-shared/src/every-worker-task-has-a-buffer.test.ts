@@ -24,7 +24,7 @@ import { workerNameFor } from './proving-session.js';
 import { NothingWasSent, saysNothingWasSent, type Job, type JobRunner } from '../../../src/core/jobs.js';
 
 /** Runs `go` with no `Buffer` anywhere global, as a browser's worker has none, and puts back what was there. */
-const withoutBuffer = async <T,>(go: () => Promise<T>): Promise<T> => {
+const withoutBuffer = async <T>(go: () => Promise<T>): Promise<T> => {
   const g = globalThis as { Buffer?: unknown };
   const held = g.Buffer;
   delete g.Buffer;
@@ -43,30 +43,80 @@ const hasBuffer = (): boolean => (globalThis as { Buffer?: unknown }).Buffer !==
  */
 const BARE: Record<string, Record<string, unknown>> = {
   deploy: { account: 'ab'.repeat(32) },
-  'account-deploy': { foundingLeaf: 'ab'.repeat(32), label: 'co_' + 'cd'.repeat(32), foundingKey: { tag: 'schnorr', value: 'ef'.repeat(32) } },
+  'account-deploy': {
+    foundingLeaf: 'ab'.repeat(32),
+    label: 'co_' + 'cd'.repeat(32),
+    foundingKey: { tag: 'schnorr', value: 'ef'.repeat(32) }
+  },
   'finished-creation': { account: 'ab'.repeat(32), signature: { tag: 'schnorr', value: '00' } },
   'born-held-vault': { account: 'ab'.repeat(32), holders: { committee: [], threshold: 1 } },
-  'vault-as-deployed': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), holders: { committee: [], threshold: 1 }, indexer: { indexerUri: '', indexerWsUri: '' } },
+  'vault-as-deployed': {
+    vault: 'ab'.repeat(32),
+    account: 'cd'.repeat(32),
+    holders: { committee: [], threshold: 1 },
+    indexer: { indexerUri: '', indexerWsUri: '' }
+  },
   handover: { vault: 'ab'.repeat(32), counter: '0', temporaryKey: {}, to: {} },
   deposit: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' }, state: '', parameters: '' },
   'public-deposit': { vault: 'ab'.repeat(32), token: '00', amount: '1', state: '', parameters: '' },
   commitments: { vault: 'ab'.repeat(32), coin: { nonce: '00', token: '00', value: '1' } },
-  'vault-on-chain': { vault: 'ab'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'vaults-on-chain': { vaults: ['ab'.repeat(32)], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'chain-at-one-block': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'account-presence': { account: 'ab'.repeat(32), transactions: [], indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'events-of': { transactionHash: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'created-by': { vault: 'ab'.repeat(32), commitment: 'ef'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'vault-call-on-chain': { vault: 'ab'.repeat(32), entryPoints: ['depositUnshielded'], transaction: '', indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'vault-on-chain': {
+    vault: 'ab'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'vaults-on-chain': {
+    vaults: ['ab'.repeat(32)],
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'chain-at-one-block': {
+    vault: 'ab'.repeat(32),
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'account-presence': {
+    account: 'ab'.repeat(32),
+    transactions: [],
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'events-of': {
+    transactionHash: 'ef'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'created-by': {
+    vault: 'ab'.repeat(32),
+    commitment: 'ef'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'vault-call-on-chain': {
+    vault: 'ab'.repeat(32),
+    entryPoints: ['depositUnshielded'],
+    transaction: '',
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
   'transaction-read': { transaction: '' },
-  'step-kept': { vault: 'ab'.repeat(32), secret: 'cd'.repeat(32), step: { spent: { nonce: '00', token: '00', value: '1' }, amount: '1' } },
-  'vault-rebuilt': { vault: 'ab'.repeat(32), chain: { notes: [], everCreated: [] }, secrets: [], versions: [], attempted: { deposits: [], payments: [] } },
+  'step-kept': {
+    vault: 'ab'.repeat(32),
+    secret: 'cd'.repeat(32),
+    step: { spent: { nonce: '00', token: '00', value: '1' }, amount: '1' }
+  },
+  'vault-rebuilt': {
+    vault: 'ab'.repeat(32),
+    chain: { notes: [], everCreated: [] },
+    secrets: [],
+    versions: [],
+    attempted: { deposits: [], payments: [] }
+  },
   'own-seat': { material: {} },
   'warm-proving': {},
   'creation-again': { deploy: '', insert: '' },
   'secret-is-the-vaults': { vault: 'ab'.repeat(32), state: '', secret: 'cd'.repeat(32) },
   'own-chain-copy': { vault: 'ab'.repeat(32), state: '', reader: 'cd'.repeat(32), of: 'commitment' },
-  'secret-set-at': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), commitment: 'ef'.repeat(32), indexer: { indexerUri: '', indexerWsUri: '' } },
+  'secret-set-at': {
+    vault: 'ab'.repeat(32),
+    account: 'cd'.repeat(32),
+    commitment: 'ef'.repeat(32),
+    indexer: { indexerUri: '', indexerWsUri: '' }
+  },
   'notes-for-payment': { notes: [], token: '00', amount: '1' },
   'payments-fit': { notes: [], payments: [] },
   'after-payment': { notes: [], spent: '', amount: '1', change: null, createdIn: '' },
@@ -83,45 +133,134 @@ const BARE: Record<string, Record<string, unknown>> = {
   'anchor-heads': { after: [] },
   'seat-openings': { account: 'cd'.repeat(32), openings: [] },
   'anchor-tag': { account: 'cd'.repeat(32), material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32) } },
-  'anchors-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' } },
-  'rounds-on-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, chainIds: [] },
-  'paid-leaves': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, leaves: [] },
-  'runs-outrun': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' } },
-  'invited-seats': { account: 'cd'.repeat(32), indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }, proposals: [] },
+  'anchors-on-chain': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }
+  },
+  'rounds-on-chain': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' },
+    chainIds: []
+  },
+  'paid-leaves': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' },
+    leaves: []
+  },
+  'runs-outrun': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' }
+  },
+  'invited-seats': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'http://indexer.invalid/api', indexerWsUri: 'ws://indexer.invalid/ws' },
+    proposals: []
+  },
   'seat-invited': {
-    account: 'cd'.repeat(32), proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32), intoVacatedSlot: false,
-    material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32), scope: '02'.repeat(32) }, invite: { coinSecretKey: '03'.repeat(32), addressSalt: '04'.repeat(32) }, chain: {},
+    account: 'cd'.repeat(32),
+    proposal: '2b'.repeat(32),
+    proposalSalt: '3c'.repeat(32),
+    intoVacatedSlot: false,
+    material: { signingSecret: 'ef'.repeat(32), blinding: '01'.repeat(32), scope: '02'.repeat(32) },
+    invite: { coinSecretKey: '03'.repeat(32), addressSalt: '04'.repeat(32) },
+    chain: {}
   },
   anchor: { account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32) },
   'recover-anchor': {
-    account: 'cd'.repeat(32), material: {}, chain: {}, previous: '00'.repeat(32), batch: 'ab'.repeat(32),
-    resumesFrom: '1a'.repeat(32), latest: '1800003600', lastRecovery: '00'.repeat(32), proposal: '2b'.repeat(32), proposalSalt: '3c'.repeat(32),
+    account: 'cd'.repeat(32),
+    material: {},
+    chain: {},
+    previous: '00'.repeat(32),
+    batch: 'ab'.repeat(32),
+    resumesFrom: '1a'.repeat(32),
+    latest: '1800003600',
+    lastRecovery: '00'.repeat(32),
+    proposal: '2b'.repeat(32),
+    proposalSalt: '3c'.repeat(32)
   },
-  'account-call-chain': { account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'account-call-chain': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
   'proposal-identity': { change: { kind: 'threshold', threshold: '1' }, salt: '00'.repeat(32) },
-  'vouched-run-identity': { run: { root: 'ab'.repeat(32), payees: '1', opensAt: '1', closesAt: '2', required: '0', vault: 'cd'.repeat(32), head: '1a'.repeat(32), r: '2b'.repeat(32) } },
+  'vouched-run-identity': {
+    run: {
+      root: 'ab'.repeat(32),
+      payees: '1',
+      opensAt: '1',
+      closesAt: '2',
+      required: '0',
+      vault: 'cd'.repeat(32),
+      head: '1a'.repeat(32),
+      r: '2b'.repeat(32)
+    }
+  },
   'company-wide': {},
   'policy-bar-key': {},
-  'one-off-opened': { rec: { company: 'c1', kind: 'transfer', id: 'one_' + '00'.repeat(16), version: 1, keyEpoch: 0, sealed: {}, wrapped: [] }, key: '11'.repeat(32) },
-  'address-claim-refusal': { claim: { kind: 'unshielded', address: 'mn_addr_undeployed1', verifyingKey: 'ab'.repeat(32), signature: 'cd'.repeat(64) }, for: {} },
-  'spending-policy-keys': { pairs: [{ vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) }] },
+  'one-off-opened': {
+    rec: {
+      company: 'c1',
+      kind: 'transfer',
+      id: 'one_' + '00'.repeat(16),
+      version: 1,
+      keyEpoch: 0,
+      sealed: {},
+      wrapped: []
+    },
+    key: '11'.repeat(32)
+  },
+  'address-claim-refusal': {
+    claim: {
+      kind: 'unshielded',
+      address: 'mn_addr_undeployed1',
+      verifyingKey: 'ab'.repeat(32),
+      signature: 'cd'.repeat(64)
+    },
+    for: {}
+  },
+  'spending-policy-keys': {
+    pairs: [{ vault: 'ab'.repeat(32), asset: 'cd'.repeat(32), assetBlinding: 'ef'.repeat(32) }]
+  },
   'start-standing': { vault: 'ab'.repeat(32), accountState: '', vaultState: '', now: '0' },
-  'set-nonce-secret': { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), run: {}, proposal: '00', opensAt: '0', closesAt: '1', chain: {} },
+  'set-nonce-secret': {
+    vault: 'ab'.repeat(32),
+    account: 'cd'.repeat(32),
+    run: {},
+    proposal: '00',
+    opensAt: '0',
+    closesAt: '1',
+    chain: {}
+  },
   'write-secret-copy': { vault: 'ab'.repeat(32), run: {}, place: 0, state: '' },
   retire: { vault: 'ab'.repeat(32), account: 'cd'.repeat(32), proposal: '00', salt: '00', chain: {} },
-  'account-committee': { account: 'cd'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
-  'contract-authority': { address: 'ab'.repeat(32), indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' } },
+  'account-committee': {
+    account: 'cd'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
+  'contract-authority': {
+    address: 'ab'.repeat(32),
+    indexer: { indexerUri: 'https://indexer.invalid/api', indexerWsUri: 'wss://indexer.invalid/ws' }
+  },
   'super-admin-update': { vault: 'ab'.repeat(32), counter: '0', to: { committee: [], threshold: 1 } },
-  'super-admin-signed': { key: { tag: 'schnorr', value: 'ab'.repeat(32) }, data: '', signature: { tag: 'schnorr', value: '00' } },
-  'super-admin-joined': { key: { tag: 'schnorr', value: 'ab'.repeat(32) }, data: '', signature: '00' },
+  'super-admin-signed': {
+    key: { tag: 'schnorr', value: 'ab'.repeat(32) },
+    data: '',
+    signature: { tag: 'schnorr', value: '00' }
+  },
+  'super-admin-joined': { key: { tag: 'schnorr', value: 'ab'.repeat(32) }, data: '', signature: '00' }
 };
 
 describe('the vault worker', () => {
   it('HAS A TEST HERE FOR EVERY ASK IT ANSWERS', () => {
     /* RED WHEN: the worker answers an ask this file does not run - that ask would be the one left without a Buffer. */
     /* The worker's entry answers some asks itself and hands the rest to the answerers beside it, each of which gives undefined for an ask it does not answer. */
-    const answering = readdirSync(import.meta.dirname).filter((f) => f === 'vault-worker-entry.ts'
-      || (f.endsWith('.ts') && !f.includes('.test') && readFileSync(join(import.meta.dirname, f), 'utf8').includes('Promise<VaultAnswer | undefined>')));
+    const answering = readdirSync(import.meta.dirname).filter(
+      (f) =>
+        f === 'vault-worker-entry.ts' ||
+        (f.endsWith('.ts') &&
+          !f.includes('.test') &&
+          readFileSync(join(import.meta.dirname, f), 'utf8').includes('Promise<VaultAnswer | undefined>'))
+    );
     expect(answering.length).toBeGreaterThan(1);
     const source = answering.map((f) => readFileSync(join(import.meta.dirname, f), 'utf8')).join('\n');
     const answered = [...source.matchAll(/^\s+case '([a-z-]+)':/gm)].map((m) => m[1]).sort();
@@ -129,27 +268,46 @@ describe('the vault worker', () => {
     expect(Object.keys(BARE).sort()).toEqual(answered);
   });
 
-  it.each(Object.keys(BARE))('%s: THE Buffer IS THERE BEFORE THE WORKER LOADS WHAT THE ASK IS BUILT WITH, AND AFTER', async (kind) => {
-    let whenLoaded: boolean | undefined;
-    const deps = async (): Promise<WorkerDeps> => { whenLoaded = hasBuffer(); return {} as WorkerDeps; };
-    const after = await withoutBuffer(async () => {
-      await answerVaultAsk(deps, { id: 1, network: 'undeployed', ask: kind, ...BARE[kind] } as unknown as VaultAsk)
-        .catch(() => undefined);
-      return hasBuffer();
-    });
-    /* RED WHEN: the Buffer is installed inside one ask's case rather than before every ask, or not at all. */
-    expect(whenLoaded, 'the worker loaded what this ask is built with before there was a Buffer').toBe(true);
-    expect(after, 'this ask ran without a Buffer being put where the runtime looks').toBe(true);
-  });
+  it.each(Object.keys(BARE))(
+    '%s: THE Buffer IS THERE BEFORE THE WORKER LOADS WHAT THE ASK IS BUILT WITH, AND AFTER',
+    async (kind) => {
+      let whenLoaded: boolean | undefined;
+      const deps = async (): Promise<WorkerDeps> => {
+        whenLoaded = hasBuffer();
+        return {} as WorkerDeps;
+      };
+      const after = await withoutBuffer(async () => {
+        await answerVaultAsk(deps, {
+          id: 1,
+          network: 'undeployed',
+          ask: kind,
+          ...BARE[kind]
+        } as unknown as VaultAsk).catch(() => undefined);
+        return hasBuffer();
+      });
+      /* RED WHEN: the Buffer is installed inside one ask's case rather than before every ask, or not at all. */
+      expect(whenLoaded, 'the worker loaded what this ask is built with before there was a Buffer').toBe(true);
+      expect(after, 'this ask ran without a Buffer being put where the runtime looks').toBe(true);
+    }
+  );
 });
 
 describe('the payslip reader', () => {
   it('READS A PAYMENT WITH A Buffer IN PLACE BEFORE IT BUILDS WHAT THE PAYMENT IS RECORDED UNDER', async () => {
     const seen: Array<[string, boolean]> = [];
     const deps: PayslipReaderDeps = {
-      movementOf: async () => { seen.push(['movement', hasBuffer()]); return '00'.repeat(32) as never; },
-      sourceFor: async () => { seen.push(['source', hasBuffer()]); throw new Error('no indexer here'); },
-      readLedger: async () => { seen.push(['ledger', hasBuffer()]); throw new Error('no ledger here'); },
+      movementOf: async () => {
+        seen.push(['movement', hasBuffer()]);
+        return '00'.repeat(32) as never;
+      },
+      sourceFor: async () => {
+        seen.push(['source', hasBuffer()]);
+        throw new Error('no indexer here');
+      },
+      readLedger: async () => {
+        seen.push(['ledger', hasBuffer()]);
+        throw new Error('no ledger here');
+      }
     };
     const ask = { id: 1, company: 'ab'.repeat(32), indexer: {}, payments: [{}] } as unknown as PayslipAsk;
     const answer = await withoutBuffer(() => answerPayslipAsk(deps, ask));
@@ -162,26 +320,45 @@ describe('the payslip reader', () => {
 
 describe('the proving worker', () => {
   const job: Job = {
-    id: 'job_1', accountId: 'acc_1', kind: 'approve', state: 'queued', signerId: 'sgn_1',
-    payload: {}, attempts: 0, createdAt: 'x', updatedAt: 'x',
+    id: 'job_1',
+    accountId: 'acc_1',
+    kind: 'approve',
+    state: 'queued',
+    signerId: 'sgn_1',
+    payload: {},
+    attempts: 0,
+    createdAt: 'x',
+    updatedAt: 'x'
   };
 
-  it.each(['prove', 'submit', 'recover'] as const)('%s: A TASK THE QUEUE HANDS IT BEGINS WITH A Buffer', async (task) => {
-    let had: boolean | undefined;
-    const runner: JobRunner = {
-      prove: async () => { had = hasBuffer(); return { proof: 1 }; },
-      submit: async () => { had = hasBuffer(); return { txRef: 'r' }; },
-      recover: async () => { had = hasBuffer(); return null; },
-    };
-    const wrapped = withABuffer(runner);
-    await withoutBuffer(async () => {
-      if (task === 'prove') await wrapped.prove(job);
-      else if (task === 'submit') await wrapped.submit(job, { proof: 1 });
-      else await wrapped.recover?.(job);
-    });
-    /* RED WHEN: a task is handed to the runner with no Buffer installed first. */
-    expect(had).toBe(true);
-  });
+  it.each(['prove', 'submit', 'recover'] as const)(
+    '%s: A TASK THE QUEUE HANDS IT BEGINS WITH A Buffer',
+    async (task) => {
+      let had: boolean | undefined;
+      const runner: JobRunner = {
+        prove: async () => {
+          had = hasBuffer();
+          return { proof: 1 };
+        },
+        submit: async () => {
+          had = hasBuffer();
+          return { txRef: 'r' };
+        },
+        recover: async () => {
+          had = hasBuffer();
+          return null;
+        }
+      };
+      const wrapped = withABuffer(runner);
+      await withoutBuffer(async () => {
+        if (task === 'prove') await wrapped.prove(job);
+        else if (task === 'submit') await wrapped.submit(job, { proof: 1 });
+        else await wrapped.recover?.(job);
+      });
+      /* RED WHEN: a task is handed to the runner with no Buffer installed first. */
+      expect(had).toBe(true);
+    }
+  );
 
   it('PASSES A REFUSAL THAT SENT NOTHING THROUGH AS IT WAS, SO THE QUEUE STILL READS IT AS NOTHING SENT', async () => {
     /*
@@ -190,7 +367,12 @@ describe('the proving worker', () => {
      * may have settled.
      */
     const refusal = new NothingWasSent('refused before anything was sent');
-    const wrapped = withABuffer({ prove: async () => ({ proof: 1 }), submit: async () => { throw refusal; } });
+    const wrapped = withABuffer({
+      prove: async () => ({ proof: 1 }),
+      submit: async () => {
+        throw refusal;
+      }
+    });
     const thrown = await wrapped.submit(job, { proof: 1 }).catch((e: unknown) => e);
     expect(thrown).toBe(refusal);
     expect(saysNothingWasSent(thrown)).toBe(true);
@@ -214,20 +396,38 @@ describe('the proving worker', () => {
     const scope = {
       name: workerNameFor({ artefactBase: '/artefacts', dbName: 'every-task-has-a-buffer' }),
       indexedDB: new IDBFactory(),
-      fetch: async () => { fetched.push(hasBuffer()); return { ok: false, status: 404 }; },
-      postMessage: (m: { kind?: string; id?: number }) => { replies.push(m); },
-      addEventListener: (_: string, h: (e: { data: unknown }) => void) => { listener = h; },
-      setInterval, clearInterval,
+      fetch: async () => {
+        fetched.push(hasBuffer());
+        return { ok: false, status: 404 };
+      },
+      postMessage: (m: { kind?: string; id?: number }) => {
+        replies.push(m);
+      },
+      addEventListener: (_: string, h: (e: { data: unknown }) => void) => {
+        listener = h;
+      },
+      setInterval,
+      clearInterval
     };
     await withoutBuffer(async () => {
       await startProvingWorker(scope);
-      const answered = (id: number) => new Promise<void>((resolve) => {
-        const wait = () => (replies.some((r) => r.id === id) ? resolve() : setTimeout(wait, 5));
-        wait();
+      const answered = (id: number) =>
+        new Promise<void>((resolve) => {
+          const wait = () => (replies.some((r) => r.id === id) ? resolve() : setTimeout(wait, 5));
+          wait();
+        });
+      listener?.({
+        data: {
+          kind: 'enqueue',
+          id: 1,
+          args: {
+            accountId: 'acc_1',
+            kind: 'approve',
+            signerId: 'sgn_1',
+            payload: { circuit: 'propose', preimageUrl: '/preimage/1' }
+          }
+        }
       });
-      listener?.({ data: { kind: 'enqueue', id: 1, args: {
-        accountId: 'acc_1', kind: 'approve', signerId: 'sgn_1', payload: { circuit: 'propose', preimageUrl: '/preimage/1' },
-      } } });
       await answered(1);
       listener?.({ data: { kind: 'drain', id: 2 } });
       await answered(2);

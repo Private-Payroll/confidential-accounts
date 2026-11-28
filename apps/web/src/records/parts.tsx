@@ -1,13 +1,60 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { SquareLock02Icon } from '@hugeicons/core-free-icons';
-import { Alert, AlertDescription, AlertTitle, Amount, AMOUNT_KIND, AmountFigureOnly, AmountLoading, Badge, Button, EmptyState, formatDate, PageLoading, PrivatePill, StatTile, StatTiles, useLanguage, useText, type AmountKind, type TokenAmount } from 'vaults-ui';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Amount,
+  AMOUNT_KIND,
+  AmountFigureOnly,
+  AmountLoading,
+  Badge,
+  Button,
+  EmptyState,
+  formatDate,
+  PageLoading,
+  PrivatePill,
+  StatTile,
+  StatTiles,
+  useLanguage,
+  useText,
+  type AmountKind,
+  type TokenAmount
+} from 'vaults-ui';
 import { proposalsNotRead } from './counts.js';
 import { isPending, PendingPill, useStandingSays, VaultName } from './vault-pending.js';
-import { companyPagesOpen, INVITED, OPENED, READ, visibilityKnown, type CompanyRecords, type InvitationRow, type Read, type VendorRow } from '../adapters/company-records.js';
-import { ADMIT_BY, PAID, PAID_STATE, STANDING, type AdmitBy, type Paid, type PersonRow, type PersonStanding, type ProposalRow, type RunRow, type VaultRow } from '../adapters/company-rows.js';
+import {
+  companyPagesOpen,
+  INVITED,
+  OPENED,
+  READ,
+  visibilityKnown,
+  type CompanyRecords,
+  type InvitationRow,
+  type Read,
+  type VendorRow
+} from '../adapters/company-records.js';
+import {
+  ADMIT_BY,
+  PAID,
+  PAID_STATE,
+  STANDING,
+  type AdmitBy,
+  type Paid,
+  type PersonRow,
+  type PersonStanding,
+  type ProposalRow,
+  type RunRow,
+  type VaultRow
+} from '../adapters/company-rows.js';
 import { readVaultPublicMoney } from '../adapters/company-vaults-read.js';
 import { vaultReadAgainIn } from '../adapters/filing-judge.js';
-import { COULD_NOT_READ, PRIVATE_MONEY, readVaultPrivateMoney, type VaultPrivateMoney as VaultPrivateMoneyHeld } from '../adapters/vault-private-money.js';
+import {
+  COULD_NOT_READ,
+  PRIVATE_MONEY,
+  readVaultPrivateMoney,
+  type VaultPrivateMoney as VaultPrivateMoneyHeld
+} from '../adapters/vault-private-money.js';
 import type { VaultPublicMoney as VaultPublicMoneyHeld } from '../adapters/vault-public-money.js';
 import { PERSON_KIND, type PersonKind } from '../adapters/person-acts.js';
 import { ACT_REFUSAL, type ActRefusal } from '../adapters/refusals.js';
@@ -57,7 +104,9 @@ export function useCalendarDay(): (date: string) => string {
   return (date) => {
     if (!CALENDAR_DATE.test(date)) return '';
     const d = new Date(Date.parse(date));
-    return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date ? '' : formatDate(d, language, CALENDAR_DAY);
+    return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date
+      ? ''
+      : formatDate(d, language, CALENDAR_DAY);
   };
 }
 
@@ -100,9 +149,22 @@ export function useMonth(): (period: string) => string {
  * be read hides nothing another read. `unreadable`, when given, is the words
  * for the read that could not be read, in place of the general line.
  */
-export function ReadOf<T>({ read, unreadable, children }: { read: Read<T>; unreadable?: ReactNode; children: (value: T) => ReactNode }) {
+export function ReadOf<T>({
+  read,
+  unreadable,
+  children
+}: {
+  read: Read<T>;
+  unreadable?: ReactNode;
+  children: (value: T) => ReactNode;
+}) {
   const t = useText();
-  if (read.of === READ.unreadable) return <p className="text-sm text-muted-foreground" data-unreadable>{unreadable ?? t('records.unreadable')}</p>;
+  if (read.of === READ.unreadable)
+    return (
+      <p className="text-sm text-muted-foreground" data-unreadable>
+        {unreadable ?? t('records.unreadable')}
+      </p>
+    );
   return <>{children(read.value)}</>;
 }
 
@@ -121,14 +183,33 @@ function OpenWithYourWallet({ part }: { part: (typeof PART)[keyof typeof PART] }
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<ActRefusal | null>(null);
   const press = async (): Promise<void> => {
-    setBusy(true); setRefused(null);
+    setBusy(true);
+    setRefused(null);
     setRefused(await openKeys());
     setBusy(false);
   };
   return (
-    <Alert className="max-w-xl" data-records={part === PART.records ? 'not-opened-yet' : undefined} data-records-notice={part === PART.notice ? 'not-opened-yet' : undefined}>
-      <AlertDescription>{part === PART.records ? t('records.notOpened.says') : t('records.notOpened.some')}</AlertDescription>
-      <div className="mt-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => { void press(); }} data-action="open-with-your-wallet">{t('records.notOpened.open')}</Button></div>
+    <Alert
+      className="max-w-xl"
+      data-records={part === PART.records ? 'not-opened-yet' : undefined}
+      data-records-notice={part === PART.notice ? 'not-opened-yet' : undefined}
+    >
+      <AlertDescription>
+        {part === PART.records ? t('records.notOpened.says') : t('records.notOpened.some')}
+      </AlertDescription>
+      <div className="mt-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            void press();
+          }}
+          data-action="open-with-your-wallet"
+        >
+          {t('records.notOpened.open')}
+        </Button>
+      </div>
       {refused === null ? null : <ActRefused why={refused} />}
     </Alert>
   );
@@ -146,17 +227,34 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
   const [refused, setRefused] = useState<ActRefusal | null>(null);
   /* While these pages are on screen, opening the saved keys opens this company too; leaving them names none. */
   useEffect(() => (shown === null ? undefined : companyPagesOpen(shown)), [shown]);
-  if (shown === null) return <p className="text-sm text-muted-foreground" data-no-company>{t('records.noCompany')}</p>;
+  if (shown === null)
+    return (
+      <p className="text-sm text-muted-foreground" data-no-company>
+        {t('records.noCompany')}
+      </p>
+    );
   if (company === null) return <PageLoading data-reading="" />;
   if (company.of === OPENED.open) {
-    return company.notOpened === undefined || company.notOpened.length === 0 ? <>{children(company)}</> : <><OpenWithYourWallet part={PART.notice} />{children(company)}</>;
+    return company.notOpened === undefined || company.notOpened.length === 0 ? (
+      <>{children(company)}</>
+    ) : (
+      <>
+        <OpenWithYourWallet part={PART.notice} />
+        {children(company)}
+      </>
+    );
   }
-  if (company.of === OPENED.refused && company.why === ACT_REFUSAL.notOpenedYet) return <OpenWithYourWallet part={PART.records} />;
+  if (company.of === OPENED.refused && company.why === ACT_REFUSAL.notOpenedYet)
+    return <OpenWithYourWallet part={PART.records} />;
   if (company.of === OPENED.refused) {
     return (
       <div className="flex max-w-xl flex-col gap-3" data-records={company.of}>
         <ActRefused why={company.why} />
-        <div><Button variant="outline" onClick={reload} data-action="read-again">{t('records.readAgain')}</Button></div>
+        <div>
+          <Button variant="outline" onClick={reload} data-action="read-again">
+            {t('records.readAgain')}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -169,7 +267,8 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
     );
   }
   const open = async (): Promise<void> => {
-    setBusy(true); setRefused(null);
+    setBusy(true);
+    setRefused(null);
     setRefused(await openKeys());
     setBusy(false);
   };
@@ -178,7 +277,17 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
       <EmptyState
         icon={SquareLock02Icon}
         title={t('records.locked.title')}
-        action={<Button disabled={busy} onClick={() => { void open(); }} data-action="open-with-your-account">{t('records.locked.open')}</Button>}
+        action={
+          <Button
+            disabled={busy}
+            onClick={() => {
+              void open();
+            }}
+            data-action="open-with-your-account"
+          >
+            {t('records.locked.open')}
+          </Button>
+        }
       >
         {t('records.locked.body')}
       </EmptyState>
@@ -188,8 +297,12 @@ export function WithRecords({ children }: { children: (records: CompanyRecords) 
 }
 
 /** One person or vendor who accepted and is waiting for the fingerprint check: what the one admit control is asked for. */
-interface WaitingOne { readonly id: string; readonly name: string; readonly kind: PersonKind; readonly admitBy: AdmitBy }
-
+interface WaitingOne {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: PersonKind;
+  readonly admitBy: AdmitBy;
+}
 
 /**
  * Everyone waiting for the check, employees first and then vendors, from the two whole-or-nothing reads: unreadable if either could not be
@@ -197,24 +310,33 @@ interface WaitingOne { readonly id: string; readonly name: string; readonly kind
  */
 export function waitingRead(records: CompanyRecords): Read<readonly WaitingOne[]> {
   const { people, vendors } = records;
-  if (people.of === READ.unreadable || vendors === undefined || vendors.of === READ.unreadable) return { of: READ.unreadable };
-  const waiting = <T extends { standing: PersonStanding }>(rows: readonly T[]): T[] => rows.filter((r) => r.standing === STANDING.waitingForCheck);
+  if (people.of === READ.unreadable || vendors === undefined || vendors.of === READ.unreadable)
+    return { of: READ.unreadable };
+  const waiting = <T extends { standing: PersonStanding }>(rows: readonly T[]): T[] =>
+    rows.filter((r) => r.standing === STANDING.waitingForCheck);
   return {
     of: READ.read,
     value: [
       ...waiting(people.value).map((p) => ({ id: p.id, name: p.name, kind: PERSON_KIND.employee, admitBy: p.admitBy })),
-      ...waiting(vendors.value.vendors).map((v) => ({ id: v.id, name: v.name, kind: PERSON_KIND.vendor, admitBy: v.admitBy })),
-    ],
+      ...waiting(vendors.value.vendors).map((v) => ({
+        id: v.id,
+        name: v.name,
+        kind: PERSON_KIND.vendor,
+        admitBy: v.admitBy
+      }))
+    ]
   };
 }
-
 
 /** The words for who an invitation is for, used by the sent links and by the people waiting for the check: one set, so the two lists say the same. */
 export function useInvitedKindSays(): Record<InvitationRow['kind'], string> {
   const t = useText();
-  return { [INVITED.signer]: t('invitations.kind.signer'), [INVITED.employee]: t('invitations.kind.employee'), [INVITED.vendor]: t('invitations.kind.vendor') };
+  return {
+    [INVITED.signer]: t('invitations.kind.signer'),
+    [INVITED.employee]: t('invitations.kind.employee'),
+    [INVITED.vendor]: t('invitations.kind.vendor')
+  };
 }
-
 
 /** A person or vendor waiting for the check: their name, and under it whether they are to be paid as an employee or as a vendor. */
 export function WaitingName({ one }: { one: WaitingOne }) {
@@ -222,20 +344,25 @@ export function WaitingName({ one }: { one: WaitingOne }) {
   return (
     <span className="flex flex-col">
       <span className="font-medium">{one.name}</span>
-      <span className="text-xs text-muted-foreground" data-kind={one.kind}>{says[one.kind]}</span>
+      <span className="text-xs text-muted-foreground" data-kind={one.kind}>
+        {says[one.kind]}
+      </span>
     </span>
   );
 }
-
 
 /** THE FINGERPRINT CHECK, FROM A LIST: opens the one admit control (`AdmitPerson`) in the right-hand panel, where its answer survives the records being read again. Named for what the person is asked to do: check a fingerprint, or admit on a wallet's signed claim. */
 export function CheckFingerprint({ one, size = 'default' }: { one: WaitingOne; size?: 'default' | 'sm' }) {
   const t = useText();
   const panel = usePanel();
-  const open = (): void => panel.open({ title: t('people.admit.title'), description: one.name, body: <AdmitPerson person={one} /> });
-  return <Button size={size} onClick={open} data-action="check-fingerprint">{one.admitBy === ADMIT_BY.fingerprint ? t('people.checkFingerprint') : t('people.admit.button')}</Button>;
+  const open = (): void =>
+    panel.open({ title: t('people.admit.title'), description: one.name, body: <AdmitPerson person={one} /> });
+  return (
+    <Button size={size} onClick={open} data-action="check-fingerprint">
+      {one.admitBy === ADMIT_BY.fingerprint ? t('people.checkFingerprint') : t('people.admit.button')}
+    </Button>
+  );
 }
-
 
 /**
  * AN ACTION NOT BUILT YET: the kit's button, where the action will be and at
@@ -243,10 +370,22 @@ export function CheckFingerprint({ one, size = 'default' }: { one: WaitingOne; s
  * nothing appears on hover; the menu entries and page headings of what is not
  * built yet carry the Coming soon pill, never an action.
  */
-export function UnbuiltAction({ children, variant = 'default', size = 'default', ...marks }: {
-  children: ReactNode; variant?: 'default' | 'outline'; size?: 'default' | 'sm'; 'data-action': string;
+export function UnbuiltAction({
+  children,
+  variant = 'default',
+  size = 'default',
+  ...marks
+}: {
+  children: ReactNode;
+  variant?: 'default' | 'outline';
+  size?: 'default' | 'sm';
+  'data-action': string;
 }) {
-  return <Button variant={variant} size={size} disabled data-soon {...marks}>{children}</Button>;
+  return (
+    <Button variant={variant} size={size} disabled data-soon {...marks}>
+      {children}
+    </Button>
+  );
 }
 
 /** How a payment is made, in words: privately, publicly, not set up yet, or not known. A public payment's amount, and one not known, carries the Public pill where it is shown. */
@@ -256,7 +395,7 @@ export function PaidWords({ paid }: { paid: Paid }) {
     [PAID.privately]: t('records.paid.privately'),
     [PAID.publicly]: t('records.paid.publicly'),
     [PAID.notSetUp]: t('records.paid.notSetUp'),
-    [PAID.notKnown]: t('records.paid.notKnown'),
+    [PAID.notKnown]: t('records.paid.notKnown')
   };
   return <span data-paid={paid}>{says[paid]}</span>;
 }
@@ -268,11 +407,14 @@ export function StandingBadge({ standing }: { standing: PersonStanding }) {
     [STANDING.invited]: t('people.standing.invited'),
     [STANDING.waitingForCheck]: t('people.standing.waitingForCheck'),
     [STANDING.active]: t('people.standing.active'),
-    [STANDING.leaver]: t('people.standing.left'),
+    [STANDING.leaver]: t('people.standing.left')
   };
-  return <Badge variant="outline" data-standing={standing}>{says[standing]}</Badge>;
+  return (
+    <Badge variant="outline" data-standing={standing}>
+      {says[standing]}
+    </Badge>
+  );
 }
-
 
 /**
  * An amount somebody is paid: with the Public pill when their address says the payment is public, and with none when no address decides that
@@ -281,13 +423,22 @@ export function StandingBadge({ standing }: { standing: PersonStanding }) {
  */
 export function PayAmount({ amount, paid }: { amount: TokenAmount; paid: Paid }) {
   if (visibilityKnown(paid)) return <Amount value={amount} kind={AMOUNT_KIND.toBePaid} />;
-  return <span className="inline-flex items-center gap-1" data-pay-unset><AmountFigureOnly value={amount} /><span dir="ltr">{amount.symbol}</span></span>;
+  return (
+    <span className="inline-flex items-center gap-1" data-pay-unset>
+      <AmountFigureOnly value={amount} />
+      <span dir="ltr">{amount.symbol}</span>
+    </span>
+  );
 }
 
 /** A person's pay, or that their token is not one this app knows. */
 export function PayOf({ person }: { person: PersonRow }) {
   const t = useText();
-  return person.pay === null ? <>{t('records.unrecognisedOne')}</> : <PayAmount amount={person.pay} paid={person.paid} />;
+  return person.pay === null ? (
+    <>{t('records.unrecognisedOne')}</>
+  ) : (
+    <PayAmount amount={person.pay} paid={person.paid} />
+  );
 }
 
 /** How a vendor is paid: one-off payments, or a monthly amount in a token, or a monthly amount in a token this app does not know, which is not shown. A vendor paid one-off has no token (`asset` is set for monthly terms only). */
@@ -296,7 +447,12 @@ export function TermsOf({ vendor }: { vendor: VendorRow }) {
   if (vendor.asset === null) return <span data-terms-of>{t('invite.terms.oneOff')}</span>;
   return (
     <span data-terms-of>
-      {t('vendors.terms.monthly')} {vendor.monthly === null ? t('records.unrecognisedOne') : <PayAmount amount={vendor.monthly} paid={vendor.paid} />}
+      {t('vendors.terms.monthly')}{' '}
+      {vendor.monthly === null ? (
+        t('records.unrecognisedOne')
+      ) : (
+        <PayAmount amount={vendor.monthly} paid={vendor.paid} />
+      )}
     </span>
   );
 }
@@ -309,18 +465,37 @@ export const BELIEF = { people: 'data-people-belief', vendors: 'data-vendors-bel
  * because it can name none; the records that do not read as a person's (`refused`); and the active ones it believes and will not pay, each with
  * why, who are in the list too, marked. Nothing when nothing was left out. The page gives the words, one sentence for each.
  */
-export function BeliefLeftOut({ mark, title, notBelieved, refused = [], notPayable }: {
-  mark: (typeof BELIEF)[keyof typeof BELIEF]; title: string; notBelieved: { readonly count: number; readonly words: string } | null;
-  refused?: readonly { readonly id: string; readonly words: string }[]; notPayable: readonly { readonly id: string; readonly words: string }[];
+export function BeliefLeftOut({
+  mark,
+  title,
+  notBelieved,
+  refused = [],
+  notPayable
+}: {
+  mark: (typeof BELIEF)[keyof typeof BELIEF];
+  title: string;
+  notBelieved: { readonly count: number; readonly words: string } | null;
+  refused?: readonly { readonly id: string; readonly words: string }[];
+  notPayable: readonly { readonly id: string; readonly words: string }[];
 }) {
   if (notBelieved === null && refused.length === 0 && notPayable.length === 0) return null;
   const marks: Record<string, true> = { [mark]: true };
   return (
     <Alert {...marks}>
       <AlertTitle>{title}</AlertTitle>
-      {notBelieved === null ? null : <AlertDescription data-not-believed={notBelieved.count}>{notBelieved.words}</AlertDescription>}
-      {refused.map((r) => <AlertDescription key={r.id} data-refused={r.id}>{r.words}</AlertDescription>)}
-      {notPayable.map((n) => <AlertDescription key={n.id} data-not-payable={n.id}>{n.words}</AlertDescription>)}
+      {notBelieved === null ? null : (
+        <AlertDescription data-not-believed={notBelieved.count}>{notBelieved.words}</AlertDescription>
+      )}
+      {refused.map((r) => (
+        <AlertDescription key={r.id} data-refused={r.id}>
+          {r.words}
+        </AlertDescription>
+      ))}
+      {notPayable.map((n) => (
+        <AlertDescription key={n.id} data-not-payable={n.id}>
+          {n.words}
+        </AlertDescription>
+      ))}
     </Alert>
   );
 }
@@ -339,7 +514,7 @@ const KIND_SAYS: Readonly<Record<ProposalRow['kind'], (t: ReturnType<typeof useT
   'vault-secret': (t) => t('proposals.kind.vaultSecret'),
   'pay-key': (t) => t('proposals.kind.payKey'),
   'retire-vault': (t) => t('proposals.kind.retireVault'),
-  unreadable: (t) => t('proposals.kind.unreadable'),
+  unreadable: (t) => t('proposals.kind.unreadable')
 };
 
 /** What a proposal does, in plain words; a kind this does not know is said as a change to the company, never as nothing. */
@@ -350,10 +525,26 @@ export function ProposalWhat({ row }: { row: ProposalRow }) {
     const { period, symbol, paid } = row.pays;
     if (symbol === null) {
       const at = { month: month(period) };
-      return <>{paid === PAID.privately ? t('proposals.kind.payRunPrivatelyUnknownToken', at) : paid === PAID.publicly ? t('proposals.kind.payRunPubliclyUnknownToken', at) : t('proposals.kind.payRunUnknownToken', at)}</>;
+      return (
+        <>
+          {paid === PAID.privately
+            ? t('proposals.kind.payRunPrivatelyUnknownToken', at)
+            : paid === PAID.publicly
+              ? t('proposals.kind.payRunPubliclyUnknownToken', at)
+              : t('proposals.kind.payRunUnknownToken', at)}
+        </>
+      );
     }
     const said = { month: month(period), token: symbol };
-    return <>{paid === PAID.privately ? t('proposals.kind.payRunPrivately', said) : paid === PAID.publicly ? t('proposals.kind.payRunPublicly', said) : t('proposals.kind.payRun', said)}</>;
+    return (
+      <>
+        {paid === PAID.privately
+          ? t('proposals.kind.payRunPrivately', said)
+          : paid === PAID.publicly
+            ? t('proposals.kind.payRunPublicly', said)
+            : t('proposals.kind.payRun', said)}
+      </>
+    );
   }
   const says = KIND_SAYS[row.kind] as ((x: typeof t) => string) | undefined;
   return <>{says === undefined ? t('proposals.kind.other') : says(t)}</>;
@@ -363,7 +554,13 @@ export function ProposalWhat({ row }: { row: ProposalRow }) {
 export function Approvals({ row }: { row: ProposalRow }) {
   const t = useText();
   if (row.status === 'unreadable') return <span data-approvals>{t('proposals.approvals.notRead')}</span>;
-  return <span data-approvals>{row.needed === null ? t('proposals.approvals', { count: row.approvals }) : t('proposals.approvalsOf', { have: row.approvals, count: row.needed })}</span>;
+  return (
+    <span data-approvals>
+      {row.needed === null
+        ? t('proposals.approvals', { count: row.approvals })
+        : t('proposals.approvalsOf', { have: row.approvals, count: row.needed })}
+    </span>
+  );
 }
 
 /** Where a proposal stands, in words. */
@@ -377,20 +574,26 @@ export function ProposalStatus({ row }: { row: ProposalRow }) {
     cancelled: t('proposals.status.cancelled'),
     expired: t('proposals.status.expired'),
     closed: t('proposals.status.closed'),
-    unreadable: t('proposals.status.unreadable'),
+    unreadable: t('proposals.status.unreadable')
   };
-  return <Badge variant={row.status === 'open' ? 'default' : 'outline'} data-status={row.status}>{says[row.status] ?? t('proposals.status.unreadable')}</Badge>;
+  return (
+    <Badge variant={row.status === 'open' ? 'default' : 'outline'} data-status={row.status}>
+      {says[row.status] ?? t('proposals.status.unreadable')}
+    </Badge>
+  );
 }
-
 
 /** Says that some proposals were left out of the list's details for want of a key this device believes; nothing when none were. */
 export function ProposalsNotRead({ rows }: { rows: readonly ProposalRow[] }) {
   const t = useText();
   const count = proposalsNotRead(rows);
   if (count === 0) return null;
-  return <p className="text-sm text-muted-foreground" data-proposals-not-read={count}>{t('proposals.someNotRead', { count })}</p>;
+  return (
+    <p className="text-sm text-muted-foreground" data-proposals-not-read={count}>
+      {t('proposals.someNotRead', { count })}
+    </p>
+  );
 }
-
 
 /** A run's standing in words: paid, partly paid or not paid as the chain shows it, not read where the chain was not read, and a draft while the company's record of it names no proposal for any leg. Nothing the service says of the run is read. */
 export function RunStatus({ run }: { run: RunRow }) {
@@ -399,18 +602,35 @@ export function RunStatus({ run }: { run: RunRow }) {
   const draft = run.legs.every((l) => l.proposal === null);
   return (
     <span
-      data-status={paid === PAID_STATE.all ? 'paid' : paid === PAID_STATE.some ? 'partly-paid' : draft ? 'draft' : paid === PAID_STATE.none ? 'not-paid' : 'not-read'}
+      data-status={
+        paid === PAID_STATE.all
+          ? 'paid'
+          : paid === PAID_STATE.some
+            ? 'partly-paid'
+            : draft
+              ? 'draft'
+              : paid === PAID_STATE.none
+                ? 'not-paid'
+                : 'not-read'
+      }
       data-paid-on-chain={paid ?? ''}
     >
-      {paid === PAID_STATE.all ? t('payroll.status.paid') : paid === PAID_STATE.some ? t('payroll.status.partlyPaid') : draft ? t('payroll.status.draft')
-        : paid === PAID_STATE.none ? t('payroll.status.notPaid') : t('payroll.status.paidUnread')}
+      {paid === PAID_STATE.all
+        ? t('payroll.status.paid')
+        : paid === PAID_STATE.some
+          ? t('payroll.status.partlyPaid')
+          : draft
+            ? t('payroll.status.draft')
+            : paid === PAID_STATE.none
+              ? t('payroll.status.notPaid')
+              : t('payroll.status.paidUnread')}
     </span>
   );
 }
 
-
 /** Whether a run's amounts read as paid: only once the chain shows every payment of it paid, whatever the service says of the run. */
-export const paymentKindOf = (run: RunRow): AmountKind => (run.paidOnChain === PAID_STATE.all ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid);
+export const paymentKindOf = (run: RunRow): AmountKind =>
+  run.paidOnChain === PAID_STATE.all ? AMOUNT_KIND.paid : AMOUNT_KIND.toBePaid;
 
 /** A run's money, one token to a line and each split by how it is paid, never added into one figure. */
 export function RunMoney({ run }: { run: RunRow }) {
@@ -419,11 +639,25 @@ export function RunMoney({ run }: { run: RunRow }) {
     <div className="flex flex-col gap-1" data-run-money>
       {run.currencies.map((c) => (
         <div key={c.code} className="flex flex-col gap-0.5" data-currency={c.code}>
-          {c.privately === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.privately')}</span><Amount value={c.privately} kind={paymentKindOf(run)} /></span>}
-          {c.publicly === null ? null : <span className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-muted-foreground">{t('payroll.runTotal.publicly')}</span><Amount value={c.publicly} kind={paymentKindOf(run)} /></span>}
+          {c.privately === null ? null : (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">{t('payroll.runTotal.privately')}</span>
+              <Amount value={c.privately} kind={paymentKindOf(run)} />
+            </span>
+          )}
+          {c.publicly === null ? null : (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">{t('payroll.runTotal.publicly')}</span>
+              <Amount value={c.publicly} kind={paymentKindOf(run)} />
+            </span>
+          )}
         </div>
       ))}
-      {run.unrecognised === 0 ? null : <span className="text-xs text-muted-foreground" data-unrecognised={run.unrecognised}>{t('records.unrecognised', { count: run.unrecognised })}</span>}
+      {run.unrecognised === 0 ? null : (
+        <span className="text-xs text-muted-foreground" data-unrecognised={run.unrecognised}>
+          {t('records.unrecognised', { count: run.unrecognised })}
+        </span>
+      )}
     </div>
   );
 }
@@ -450,8 +684,8 @@ export interface VaultMoney {
  */
 /** Whether a vault is read holding any money, privately or publicly; a side still being read, or unread, holds none here. */
 export const holdsMoney = (m: VaultMoney): boolean =>
-  (m.private !== MONEY.reading && m.private.of === PRIVATE_MONEY.held && m.private.amounts.length > 0)
-  || (typeof m.public !== 'string' && m.public.amounts.length > 0);
+  (m.private !== MONEY.reading && m.private.of === PRIVATE_MONEY.held && m.private.amounts.length > 0) ||
+  (typeof m.public !== 'string' && m.public.amounts.length > 0);
 
 export function useVaultMoney(company: string, vault: string, asked = 0): VaultMoney {
   const { person } = useSession();
@@ -470,9 +704,15 @@ export function useVaultMoney(company: string, vault: string, asked = 0): VaultM
     let alive = true;
     setMoney({ private: MONEY.reading, public: MONEY.reading });
     if (view === null || view.company !== company) return undefined;
-    void readVaultPrivateMoney(person.id, view, vault, { round }).then((h) => { if (alive) setMoney((m) => ({ ...m, private: h })); });
-    void readVaultPublicMoney(person.id, view, vault, round).then((h) => { if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable })); });
-    return () => { alive = false; };
+    void readVaultPrivateMoney(person.id, view, vault, { round }).then((h) => {
+      if (alive) setMoney((m) => ({ ...m, private: h }));
+    });
+    void readVaultPublicMoney(person.id, view, vault, round).then((h) => {
+      if (alive) setMoney((m) => ({ ...m, public: h ?? MONEY.unreadable }));
+    });
+    return () => {
+      alive = false;
+    };
   }, [person.id, company, view, vault, round]);
   return money;
 }
@@ -487,11 +727,22 @@ export function useVaultMoney(company: string, vault: string, asked = 0): VaultM
  * keys open in this tab, no record on this device) names the step that clears
  * it, and the others its refresh button. `tile` says it is on a tile.
  */
-export function PrivateMoneyUnshown({ money, tile = false }: { money: Exclude<VaultPrivateMoneyHeld, { of: typeof PRIVATE_MONEY.held }>; tile?: boolean }) {
+export function PrivateMoneyUnshown({
+  money,
+  tile = false
+}: {
+  money: Exclude<VaultPrivateMoneyHeld, { of: typeof PRIVATE_MONEY.held }>;
+  tile?: boolean;
+}) {
   const t = useText();
-  if (money.of === PRIVATE_MONEY.nothingYet) return <span data-private-money={money.of}>{t('vault.privateMoney.nothingYet')}</span>;
+  if (money.of === PRIVATE_MONEY.nothingYet)
+    return <span data-private-money={money.of}>{t('vault.privateMoney.nothingYet')}</span>;
   if (money.of === PRIVATE_MONEY.notBelieved) {
-    return <span data-private-money={money.of}>{tile ? t('vaults.privateMoney.notBelieved') : t('vault.privateMoney.notBelieved')}</span>;
+    return (
+      <span data-private-money={money.of}>
+        {tile ? t('vaults.privateMoney.notBelieved') : t('vault.privateMoney.notBelieved')}
+      </span>
+    );
   }
   const why = {
     [COULD_NOT_READ.noKeys]: t('vault.privateMoney.why.noKeys'),
@@ -499,11 +750,19 @@ export function PrivateMoneyUnshown({ money, tile = false }: { money: Exclude<Va
     [COULD_NOT_READ.chain]: t('vault.privateMoney.why.chain'),
     [COULD_NOT_READ.layout]: t('vault.privateMoney.why.layout'),
     [COULD_NOT_READ.record]: t('vault.privateMoney.why.record'),
-    [COULD_NOT_READ.other]: t('vault.privateMoney.why.other'),
+    [COULD_NOT_READ.other]: t('vault.privateMoney.why.other')
   }[money.why];
-  const next = money.why === COULD_NOT_READ.noKeys ? t('vault.privateMoney.next.noKeys')
-    : money.why === COULD_NOT_READ.record ? t('vault.privateMoney.next.record') : t('vault.privateMoney.next.again');
-  return <span data-unreadable="private" data-why={money.why}>{tile ? t('vaults.privateMoney.cannotRead', { why }) : t('vault.privateMoney.cannotRead', { why, next })}</span>;
+  const next =
+    money.why === COULD_NOT_READ.noKeys
+      ? t('vault.privateMoney.next.noKeys')
+      : money.why === COULD_NOT_READ.record
+        ? t('vault.privateMoney.next.record')
+        : t('vault.privateMoney.next.again');
+  return (
+    <span data-unreadable="private" data-why={money.why}>
+      {tile ? t('vaults.privateMoney.cannotRead', { why }) : t('vault.privateMoney.cannotRead', { why, next })}
+    </span>
+  );
 }
 
 /**
@@ -517,25 +776,65 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
   const t = useText();
   const priv = money.private;
   const pub = money.public;
-  const holdsNone = priv !== MONEY.reading && priv.of === PRIVATE_MONEY.held && typeof pub !== 'string'
-    && priv.amounts.length === 0 && priv.unrecognised === 0 && pub.amounts.length === 0 && pub.unrecognised === 0;
+  const holdsNone =
+    priv !== MONEY.reading &&
+    priv.of === PRIVATE_MONEY.held &&
+    typeof pub !== 'string' &&
+    priv.amounts.length === 0 &&
+    priv.unrecognised === 0 &&
+    pub.amounts.length === 0 &&
+    pub.unrecognised === 0;
   return (
     <span className="flex flex-col gap-1" data-money-lines>
       {priv === MONEY.reading ? <AmountLoading /> : null}
-      {priv === MONEY.reading || priv.of === PRIVATE_MONEY.held ? null : <span className="text-muted-foreground"><PrivateMoneyUnshown money={priv} tile /></span>}
-      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held ? null : priv.amounts.map((a) => (
-        <span key={a.symbol} className="flex flex-wrap items-center gap-1.5" data-held={a.symbol} data-visibility="private"><Amount value={a} kind={AMOUNT_KIND.held} /><PrivatePill /></span>
-      ))}
-      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held || priv.unrecognised === 0 ? null : <span data-unrecognised={priv.unrecognised} data-side="private">{t('vault.privateMoney.unrecognised', { count: priv.unrecognised })}</span>}
+      {priv === MONEY.reading || priv.of === PRIVATE_MONEY.held ? null : (
+        <span className="text-muted-foreground">
+          <PrivateMoneyUnshown money={priv} tile />
+        </span>
+      )}
+      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held
+        ? null
+        : priv.amounts.map((a) => (
+            <span
+              key={a.symbol}
+              className="flex flex-wrap items-center gap-1.5"
+              data-held={a.symbol}
+              data-visibility="private"
+            >
+              <Amount value={a} kind={AMOUNT_KIND.held} />
+              <PrivatePill />
+            </span>
+          ))}
+      {priv === MONEY.reading || priv.of !== PRIVATE_MONEY.held || priv.unrecognised === 0 ? null : (
+        <span data-unrecognised={priv.unrecognised} data-side="private">
+          {t('vault.privateMoney.unrecognised', { count: priv.unrecognised })}
+        </span>
+      )}
       {pub === MONEY.reading ? <AmountLoading /> : null}
-      {pub === MONEY.unreadable ? <span className="text-muted-foreground" data-unreadable="public">{t('vaults.publicMoney.unreadable')}</span> : null}
+      {pub === MONEY.unreadable ? (
+        <span className="text-muted-foreground" data-unreadable="public">
+          {t('vaults.publicMoney.unreadable')}
+        </span>
+      ) : null}
       {typeof pub === 'string' ? null : (
         <>
-          {pub.amounts.map((a) => <span key={a.symbol} data-held={a.symbol} data-visibility="public"><Amount value={a} kind={AMOUNT_KIND.held} /></span>)}
-          {pub.unrecognised === 0 ? null : <span data-unrecognised={pub.unrecognised} data-side="public">{t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}</span>}
+          {pub.amounts.map((a) => (
+            <span key={a.symbol} data-held={a.symbol} data-visibility="public">
+              <Amount value={a} kind={AMOUNT_KIND.held} />
+            </span>
+          ))}
+          {pub.unrecognised === 0 ? null : (
+            <span data-unrecognised={pub.unrecognised} data-side="public">
+              {t('vault.publicMoney.unrecognised', { count: pub.unrecognised })}
+            </span>
+          )}
         </>
       )}
-      {holdsNone ? <span className="text-muted-foreground" data-holds-none>{t('vaults.money.none')}</span> : null}
+      {holdsNone ? (
+        <span className="text-muted-foreground" data-holds-none>
+          {t('vaults.money.none')}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -546,7 +845,13 @@ function VaultMoneyLines({ money }: { money: VaultMoney }) {
  * vaults there are.
  */
 export function VaultTiles({ company, rows }: { company: string; rows: readonly VaultRow[] }) {
-  return <StatTiles>{rows.map((v, i) => <VaultTile key={v.vault} company={company} vault={v} index={i} />)}</StatTiles>;
+  return (
+    <StatTiles>
+      {rows.map((v, i) => (
+        <VaultTile key={v.vault} company={company} vault={v} index={i} />
+      ))}
+    </StatTiles>
+  );
 }
 
 /**
@@ -567,11 +872,23 @@ function VaultTile({ company, vault, index }: { company: string; vault: VaultRow
   return (
     <StatTile
       link={<PageLink to={PAGE.vault} params={{ vault: vault.vault }} data-vault={vault.vault} />}
-      title={<span className="flex flex-wrap items-center gap-2"><span><VaultName company={company} vault={vault} number={index + 1} /></span><PendingPill vault={vault} /></span>}
-      tagline={isPending(vault.standing) ? undefined : <span data-standing={vault.standing}>{says(vault.standing)}</span>}
+      title={
+        <span className="flex flex-wrap items-center gap-2">
+          <span>
+            <VaultName company={company} vault={vault} number={index + 1} />
+          </span>
+          <PendingPill vault={vault} />
+        </span>
+      }
+      tagline={
+        isPending(vault.standing) ? undefined : <span data-standing={vault.standing}>{says(vault.standing)}</span>
+      }
       subtext={t('vaults.tile.created', { date: day(vault.createdAt) })}
     >
-      <span className="pt-2"><VaultMoneyLines money={money} />{vault.retired === true ? <RetiredMayHold read={onChain} /> : null}</span>
+      <span className="pt-2">
+        <VaultMoneyLines money={money} />
+        {vault.retired === true ? <RetiredMayHold read={onChain} /> : null}
+      </span>
     </StatTile>
   );
 }

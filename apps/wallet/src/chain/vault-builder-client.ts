@@ -1,4 +1,8 @@
-import { vaultBuilderOnWorkers, WALLET_VAULT_BUILDER, type VaultBuilderClient } from '../../../../packages/web-shared/src/vault-worker-client.js';
+import {
+  vaultBuilderOnWorkers,
+  WALLET_VAULT_BUILDER,
+  type VaultBuilderClient
+} from '../../../../packages/web-shared/src/vault-worker-client.js';
 import { NETWORK } from '../config.js';
 
 /**
@@ -8,4 +12,11 @@ import { NETWORK } from '../config.js';
  * from the wallet's own keys and proofs.
  */
 export const walletVaultBuilder = (): VaultBuilderClient =>
-  vaultBuilderOnWorkers(() => new Worker(new URL('./vault-builder-worker.ts', import.meta.url), { type: 'module', name: WALLET_VAULT_BUILDER }) as never, NETWORK);
+  vaultBuilderOnWorkers(
+    () =>
+      new Worker(new URL('./vault-builder-worker.ts', import.meta.url), {
+        type: 'module',
+        name: WALLET_VAULT_BUILDER
+      }) as never,
+    NETWORK
+  );

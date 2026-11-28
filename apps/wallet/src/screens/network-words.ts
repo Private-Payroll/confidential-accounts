@@ -12,6 +12,5 @@ export const NETWORK_LABEL: string = networkRecord(NETWORK).label;
  * network that gives none away. A sentence about a faucet is shown only where
  * this says there is one.
  */
-export const FAUCET_NAME: string | null = networkRecord(NETWORK).endpoints?.faucet == null
-  ? null
-  : `${NETWORK_LABEL} faucet`;
+export const FAUCET_NAME: string | null =
+  networkRecord(NETWORK).endpoints?.faucet == null ? null : `${NETWORK_LABEL} faucet`;

@@ -25,7 +25,7 @@ vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -38,7 +38,7 @@ vi.mock('midnight-identity', async (importOriginal) => {
      * is a claim about when the CALL happens, not about what is displayed —
      * a version that sealed early and showed late would look identical on
      * screen. The spy runs the library's own function. */
-    sealKeys: vi.fn(actual.sealKeys),
+    sealKeys: vi.fn(actual.sealKeys)
   };
 });
 
@@ -69,13 +69,17 @@ const passkeyFixture = (credentialId: string): Passkey => ({
   rpId: 'localhost',
   syncsToACloud: false,
   backedUpNow: false,
-  transports: [],
+  transports: []
 });
 
 const registrationFixture = {
-  credentialId: 'cred-paired', personHandle: 'cGVyc29uLTE', clientDataJSON: new Uint8Array(),
-  authenticatorData: new Uint8Array(), publicKeySpki: new Uint8Array([1, 2, 3]),
-  publicKeyAlgorithm: -7, transports: [],
+  credentialId: 'cred-paired',
+  personHandle: 'cGVyc29uLTE',
+  clientDataJSON: new Uint8Array(),
+  authenticatorData: new Uint8Array(),
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  publicKeyAlgorithm: -7,
+  transports: []
 };
 
 function Probe(): ReactNode {
@@ -84,9 +88,7 @@ function Probe(): ReactNode {
     <div>
       <span data-testid="phase">{session.phase.name}</span>
       <span data-testid="secret-fp">
-        {session.phase.name === 'unlocked'
-          ? toBase64Url(fingerprintOf(session.phase.secret))
-          : ''}
+        {session.phase.name === 'unlocked' ? toBase64Url(fingerprintOf(session.phase.secret)) : ''}
       </span>
     </div>
   );
@@ -98,7 +100,12 @@ type Scope = ReturnType<typeof within>;
  * "browser" — is the NEW machine's, which is the side that lands anything. */
 function mountBoth(secretA: Uint8Array): { O: Scope; R: Scope } {
   const offer = render(<OfferDevice secret={secretA} />);
-  const receive = render(<SessionProvider><ReceiveDevice /><Probe /></SessionProvider>);
+  const receive = render(
+    <SessionProvider>
+      <ReceiveDevice />
+      <Probe />
+    </SessionProvider>
+  );
   return { O: within(offer.container as HTMLElement), R: within(receive.container as HTMLElement) };
 }
 
@@ -115,8 +122,14 @@ function carry(from: Scope, testId: string, to: Scope, label: string, action: st
 /** Drive both sides through the exchange to both digit screens. `mangle`
  * turns the number the person carries by eye into what they actually type —
  * identity for an attentive person, a typo for the refusal tests. */
-function runToDigits(O: Scope, R: Scope, mangle?: (digits: string) => string): {
-  offerDigits: string; receiveDigits: string; crossed: string[];
+function runToDigits(
+  O: Scope,
+  R: Scope,
+  mangle?: (digits: string) => string
+): {
+  offerDigits: string;
+  receiveDigits: string;
+  crossed: string[];
 } {
   const crossed: string[] = [];
   fireEvent.click(R.getByText('Show a code to scan'));
@@ -130,13 +143,13 @@ function runToDigits(O: Scope, R: Scope, mangle?: (digits: string) => string): {
    * answer is printed above the box confirms nothing. */
   expect(R.queryByTestId('receive-digits')).toBeNull();
   fireEvent.change(R.getByLabelText('The number the other machine shows'), {
-    target: { value: (mangle ?? ((d: string) => d))(offerDigits) },
+    target: { value: (mangle ?? ((d: string) => d))(offerDigits) }
   });
   fireEvent.click(R.getByText(/I typed it — show this machine/));
   return {
     offerDigits,
     receiveDigits: R.getByTestId('receive-digits').textContent ?? '',
-    crossed,
+    crossed
   };
 }
 
@@ -160,8 +173,7 @@ describe('pairing, end to end across two machines', () => {
      * this harness built — a sixth QR panel carrying the digits would appear
      * right here. Every payload surface on either screen is a long base64url
      * string, and none of them is either machine's number. */
-    const shownPayloads = Array.from(
-      document.querySelectorAll('.qr-text'), (el) => (el.textContent ?? '').trim());
+    const shownPayloads = Array.from(document.querySelectorAll('.qr-text'), (el) => (el.textContent ?? '').trim());
     expect(shownPayloads.length).toBeGreaterThan(0);
     for (const payload of shownPayloads) {
       expect(payload).not.toBe(offerDigits);
@@ -196,7 +208,7 @@ describe('pairing, end to end across two machines', () => {
     /* The number was already carried by eye (inside runToDigits — the rule makes
      * it the first act); now the sealed wallet crosses by scan. */
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
     fireEvent.click(R.getByText('Open the wallet on this machine'));
@@ -220,13 +232,12 @@ describe('pairing, end to end across two machines', () => {
      * five of its own records, and which one is open. Nothing about money and
      * nothing that was not already readable beside it. This assertion is the
      * thing that would catch a future round writing anything else. */
-    const keys = Array.from(
-      { length: localStorage.length }, (...args) => localStorage.key(args[1]) ?? '').sort();
+    const keys = Array.from({ length: localStorage.length }, (...args) => localStorage.key(args[1]) ?? '').sort();
     expect(keys).toEqual([
       'midnight-identity:arrived',
       'midnight-identity:keyring',
       'midnight-identity:passkeys',
-      'midnight-identity:wallets',
+      'midnight-identity:wallets'
     ]);
     expect(sessionStorage.length).toBe(0);
     expect(document.cookie).toBe('');
@@ -241,13 +252,14 @@ describe('pairing, end to end across two machines', () => {
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
     fireEvent.click(R.getByText('Open the wallet on this machine'));
 
-    expect((R.getByText(/Stop unless the other one shows the same/).textContent ?? ''))
-      .toMatch(/this device is showing \d\d/);
+    expect(R.getByText(/Stop unless the other one shows the same/).textContent ?? '').toMatch(
+      /this device is showing \d\d/
+    );
     expect(R.getByTestId('phase').textContent).not.toBe('unlocked');
     expect(await loadSecret(ORIGINAL_SLOT)).toBeNull();
   });
@@ -280,7 +292,7 @@ describe('pairing, end to end across two machines', () => {
     /* The man in the middle reveals his own key instead. */
     const forged = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
     fireEvent.change(R.getByLabelText('What the other machine reveals'), {
-      target: { value: forged },
+      target: { value: forged }
     });
     fireEvent.click(R.getByText('Check it'));
     expect(R.getByText(/revealed a different key from the one it committed to/)).toBeTruthy();
@@ -291,7 +303,7 @@ describe('pairing, end to end across two machines', () => {
     const { O } = mountBoth(newSecret());
     const stale = askToPair(Date.now() - 10 * 60 * 1000);
     fireEvent.change(O.getByLabelText('The code the new machine shows'), {
-      target: { value: stale.code },
+      target: { value: stale.code }
     });
     fireEvent.click(O.getByText('Use this code'));
     expect(O.getByText(/that code has expired/)).toBeTruthy();
@@ -308,7 +320,11 @@ describe('the route through the REAL App: the completion screen survives the unl
     mockCreatePasskey.mockResolvedValue(registrationFixture);
     mockVerifyRegistration.mockResolvedValue(passkeyFixture('cred-paired'));
     window.location.hash = '#/add-device';
-    const app = render(<SessionProvider><App /></SessionProvider>);
+    const app = render(
+      <SessionProvider>
+        <App />
+      </SessionProvider>
+    );
     const R = within(app.container as HTMLElement);
     const offer = render(<OfferDevice secret={secretA} />);
     const O = within(offer.container as HTMLElement);
@@ -317,7 +333,7 @@ describe('the route through the REAL App: the completion screen survives the unl
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
     fireEvent.click(R.getByText('Open the wallet on this machine'));
@@ -351,7 +367,7 @@ describe('the landing beside what is already here, on the pairing side', () => {
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
 
@@ -384,7 +400,7 @@ describe('the gate can tell your own wallet from a stranger’s', () => {
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
 
@@ -409,14 +425,16 @@ describe('a landing that cannot store says so, and spends nothing at all', () =>
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
 
     /* The browser refuses storage AT the landing — a private window, a
      * managed profile, an evicted store. */
     (globalThis as { indexedDB?: unknown }).indexedDB = {
-      open: () => { throw new Error('refused by this profile'); },
+      open: () => {
+        throw new Error('refused by this profile');
+      }
     };
     fireEvent.click(R.getByText('Open the wallet on this machine'));
     /* The failure is stated HERE, in storage's own words — never silence,
@@ -443,15 +461,14 @@ describe('a landing that cannot store says so, and spends nothing at all', () =>
 describe('the ceremony after the landing — the rule, on the pairing side', () => {
   it('a cancelled ceremony leaves the wallet LANDED behind the doorway, old record retired', async () => {
     savePasskey(passkeyFixture('cred-old'), ORIGINAL_SLOT);
-    mockCreatePasskey.mockRejectedValue(
-      new Error('the passkey was not created — it was cancelled, or it timed out.'));
+    mockCreatePasskey.mockRejectedValue(new Error('the passkey was not created — it was cancelled, or it timed out.'));
     const secretA = newSecret();
     const { O, R } = mountBoth(secretA);
     runToDigits(O, R);
     fireEvent.click(O.getByText('They match — send the wallet'));
     const sealed = O.getByTestId('offer-sealed').textContent ?? '';
     fireEvent.change(R.getByLabelText('The sealed wallet from the other machine'), {
-      target: { value: sealed },
+      target: { value: sealed }
     });
     fireEvent.click(R.getByText('Use it'));
     fireEvent.click(R.getByText('Open the wallet on this machine'));

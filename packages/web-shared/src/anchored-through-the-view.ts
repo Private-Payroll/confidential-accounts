@@ -25,20 +25,25 @@ const serviceThrough = (view: CompanyView<unknown>, service: AnchorDoors['servic
   ...service,
   sealedProposals: async () => {
     const listed = await view.list('proposals');
-    if (!Array.isArray(listed)) throw new Error('the service did not answer with the company\'s proposals');
+    if (!Array.isArray(listed)) throw new Error("the service did not answer with the company's proposals");
     return listed as SealedProposal[];
   },
   foundingRecords: async () => {
     const state = stateRecordId(FOUNDING_KEY_EPOCH);
-    const [s, r] = await view.records([{ kind: 'state', id: state, every: true }, { kind: 'roster', id: ROSTER_ID, every: true }]);
+    const [s, r] = await view.records([
+      { kind: 'state', id: state, every: true },
+      { kind: 'roster', id: ROSTER_ID, every: true }
+    ]);
     return { state: firstOf(s, view.company, 'state', state), roster: firstOf(r, view.company, 'roster', ROSTER_ID) };
   },
-  sendProven: async (_accountId, tx) => (await view.write([{ to: 'proven', tx }]))[0],
+  sendProven: async (_accountId, tx) => (await view.write([{ to: 'proven', tx }]))[0]
 });
 
 /** Refused: what each anchoring attempt reads and sends through its own view (`throughTheView`), never through this door. */
 const throughEachAttempt = (what: string) => async (): Promise<never> => {
-  throw new Error(`the anchor's ${what} goes through each attempt's own view of the company, so nothing was read or sent here`);
+  throw new Error(
+    `the anchor's ${what} goes through each attempt's own view of the company, so nothing was read or sent here`
+  );
 };
 
 /**
@@ -50,7 +55,7 @@ export const anchorServiceThrough = (held: GovernedView): AnchorDoors['service']
   callState: governedCallServiceThrough(held).callState,
   sealedProposals: throughEachAttempt('read of the proposals'),
   foundingRecords: throughEachAttempt('read of its founding records'),
-  sendProven: throughEachAttempt('send'),
+  sendProven: throughEachAttempt('send')
 });
 
 /** The doors one attempt reads and writes through: the step's current view's. */
@@ -69,9 +74,13 @@ export const throughTheView = (doors: AnchorDoors): AnchorDoors => {
     ...(headers === undefined ? {} : { headers }),
     ...(checked === undefined ? {} : { checked }),
     ...(changes === undefined ? {} : { changes }),
-    ...(doors.fileDirectory === undefined ? {} : {
-      fileDirectory: async (filing) => { await view.write([{ to: 'directory', filing }]); },
-    }),
+    ...(doors.fileDirectory === undefined
+      ? {}
+      : {
+          fileDirectory: async (filing) => {
+            await view.write([{ to: 'directory', filing }]);
+          }
+        })
   };
 };
 
@@ -85,7 +94,7 @@ export const heldHere = async (doors: AnchorDoors, asked: RecordsAsked): Promise
   view.declare({
     ...(asked.records === undefined ? {} : { records: asked.records }),
     ...(asked.kinds === undefined ? {} : { kinds: asked.kinds }),
-    ...(asked.everyPending === true ? { everyPending: true } : {}),
+    ...(asked.everyPending === true ? { everyPending: true } : {})
   });
   await view.directory();
   return view.held(asked);

@@ -12,9 +12,31 @@ import type { VaultService } from 'vaults-web-shared/vault-service.js';
 import { vaultServiceThrough } from 'vaults-web-shared/vault-service-through-the-view.js';
 import { coinsKeptOnThisDevice } from 'vaults-web-shared/vault-coins-kept-here.js';
 import { privateTokenFromTheWallet, publicTokenFromTheWallet } from 'vaults-web-shared/deposit-source.js';
-import { checkWhatThisBrowserDeposited, sayWhatTheCheckFound, type JournalledDeposit, type WhatThisBrowserDeposited } from 'vaults-web-shared/check-what-this-browser-sent.js';
-import { depositPubliclyIntoCompanyVault, PublicDepositNeverLanded, PublicDepositNotYetSeen, PublicDepositRefused, PublicDepositSignedNotSent, publicDepositCannotLandAfter, type PublicDepositDoors } from 'vaults-web-shared/vault-public-deposit.js';
-import { DepositLandedNotYetRecorded, DepositNotSent, DepositNotYetSeen, DepositMayOutliveItsWindow, DepositStartedElsewhere, DepositStillInFlight, type settleDepositInFlight, type DepositDoors } from 'vaults-web-shared/vault-private-deposit.js';
+import {
+  checkWhatThisBrowserDeposited,
+  sayWhatTheCheckFound,
+  type JournalledDeposit,
+  type WhatThisBrowserDeposited
+} from 'vaults-web-shared/check-what-this-browser-sent.js';
+import {
+  depositPubliclyIntoCompanyVault,
+  PublicDepositNeverLanded,
+  PublicDepositNotYetSeen,
+  PublicDepositRefused,
+  PublicDepositSignedNotSent,
+  publicDepositCannotLandAfter,
+  type PublicDepositDoors
+} from 'vaults-web-shared/vault-public-deposit.js';
+import {
+  DepositLandedNotYetRecorded,
+  DepositNotSent,
+  DepositNotYetSeen,
+  DepositMayOutliveItsWindow,
+  DepositStartedElsewhere,
+  DepositStillInFlight,
+  type settleDepositInFlight,
+  type DepositDoors
+} from 'vaults-web-shared/vault-private-deposit.js';
 import { type VaultStage } from 'vaults-web-shared/vault-doors.js';
 import type { DeviceSigner } from 'vaults-web-shared/deposit-on-device.js';
 import type { ProofInProgress } from 'vaults-web-shared/vault-worker-client.js';
@@ -57,7 +79,7 @@ export type DepositKind = (typeof DEPOSIT_KIND)[keyof typeof DEPOSIT_KIND];
 
 /** The ways money can be put in, in the order a screen lists them. Another way is another entry, with the kinds it can bring. */
 export const DEPOSIT_METHODS = [
-  { id: 'from-your-wallet', kinds: [DEPOSIT_KIND.private, DEPOSIT_KIND.public] },
+  { id: 'from-your-wallet', kinds: [DEPOSIT_KIND.private, DEPOSIT_KIND.public] }
 ] as const;
 export type DepositMethod = (typeof DEPOSIT_METHODS)[number]['id'];
 
@@ -67,7 +89,7 @@ export const DEPOSIT_STEP = {
   provingTheDeposit: 'proving-the-deposit',
   payingInYourWallet: 'paying-in-your-wallet',
   sending: 'sending',
-  waitingForTheChain: 'waiting-for-the-chain',
+  waitingForTheChain: 'waiting-for-the-chain'
 } as const;
 export type DepositStep = (typeof DEPOSIT_STEP)[keyof typeof DEPOSIT_STEP];
 
@@ -80,9 +102,12 @@ export type DepositStep = (typeof DEPOSIT_STEP)[keyof typeof DEPOSIT_STEP];
 const STEPS = {
   [DEPOSIT_KIND.private]: [DEPOSIT_STEP.payingInYourWallet, DEPOSIT_STEP.provingTheDeposit],
   [DEPOSIT_KIND.public]: [
-    DEPOSIT_STEP.checkingTheVault, DEPOSIT_STEP.provingTheDeposit, DEPOSIT_STEP.payingInYourWallet,
-    DEPOSIT_STEP.sending, DEPOSIT_STEP.waitingForTheChain,
-  ],
+    DEPOSIT_STEP.checkingTheVault,
+    DEPOSIT_STEP.provingTheDeposit,
+    DEPOSIT_STEP.payingInYourWallet,
+    DEPOSIT_STEP.sending,
+    DEPOSIT_STEP.waitingForTheChain
+  ]
 } as const satisfies Readonly<Record<DepositKind, readonly DepositStep[]>>;
 
 /** The shared public deposit's own words for its stages, each to the step a screen shows. */
@@ -91,11 +116,13 @@ const STEP_OF_STAGE: Partial<Record<VaultStage, DepositStep>> = {
   'building the deposit': DEPOSIT_STEP.provingTheDeposit,
   'asking your wallet': DEPOSIT_STEP.payingInYourWallet,
   'sending the deposit': DEPOSIT_STEP.sending,
-  'waiting for the chain': DEPOSIT_STEP.waitingForTheChain,
+  'waiting for the chain': DEPOSIT_STEP.waitingForTheChain
 };
 
 /* Every step of each kind has its usual time, or null, in the usual times. */
-DEPOSIT_USUAL_SECONDS satisfies { readonly [K in DepositKind]: { readonly [S in (typeof STEPS)[K][number]]: number | null } };
+DEPOSIT_USUAL_SECONDS satisfies {
+  readonly [K in DepositKind]: { readonly [S in (typeof STEPS)[K][number]]: number | null };
+};
 
 /** Whether this tab holds the company key the person's wallet released for `companyId`: without it, checking the last deposit first opens the company's records in the wallet. */
 export const companyKeyHeldHere = (companyId: string): boolean => companyKeyReleasedFor(companyId) !== null;
@@ -127,7 +154,7 @@ export const AMOUNT_REFUSAL = {
   heldNotKnown: 'held-not-known',
   tokenNotKnown: 'token-not-known',
   noPrivateForm: 'no-private-form',
-  noPublicForm: 'no-public-form',
+  noPublicForm: 'no-public-form'
 } as const;
 export type AmountRefusal = (typeof AMOUNT_REFUSAL)[keyof typeof AMOUNT_REFUSAL];
 
@@ -146,7 +173,13 @@ export type AmountToPutIn =
   | { readonly of: typeof PUT_IN.refused; readonly why: AmountRefusal };
 
 /** What an answer of this adapter is, compared by a screen. */
-export const PUT_IN = { amount: 'amount', refused: 'refused', started: 'started', alreadyRunning: 'already-running', vaultRefused: 'vault-refused' } as const;
+export const PUT_IN = {
+  amount: 'amount',
+  refused: 'refused',
+  started: 'started',
+  alreadyRunning: 'already-running',
+  vaultRefused: 'vault-refused'
+} as const;
 
 /** Whether the service's answer about a vault already says it will refuse money for it: a standing is present, is not unknown, and is not one the service funds. The answer can only stop a deposit: an absent or unreadable one is false and leaves the deposit to the checks that follow. */
 export const serviceRefusesVault = (standing: VaultStanding | undefined): boolean =>
@@ -172,7 +205,10 @@ const TRAILING_ZEROS = /0+$/u;
  * the held amount exactly.
  */
 export function amountToPutIn(
-  entry: string | typeof MAX, pick: DepositPick, held: bigint | null, registry: AssetRegistry = assets,
+  entry: string | typeof MAX,
+  pick: DepositPick,
+  held: bigint | null,
+  registry: AssetRegistry = assets
 ): AmountToPutIn {
   const asset = registry.find(pick.code);
   if (asset === null) return refusedAmount(AMOUNT_REFUSAL.tokenNotKnown);
@@ -188,7 +224,8 @@ export function amountToPutIn(
   } else {
     const typed = typeof entry === 'string' ? entry.trim() : '';
     if (typed === '') return refusedAmount(AMOUNT_REFUSAL.empty);
-    if (NEGATIVE.test(typed)) return refusedAmount(A_DIGIT.test(typed) ? AMOUNT_REFUSAL.negative : AMOUNT_REFUSAL.notANumber);
+    if (NEGATIVE.test(typed))
+      return refusedAmount(A_DIGIT.test(typed) ? AMOUNT_REFUSAL.negative : AMOUNT_REFUSAL.notANumber);
     if (GROUPED.test(typed)) return refusedAmount(AMOUNT_REFUSAL.groupSeparator);
     const parts = PLAIN_DECIMAL.exec(typed);
     const whole = parts?.[1] ?? '';
@@ -196,13 +233,17 @@ export function amountToPutIn(
     if (parts === null || !A_DIGIT.test(typed)) return refusedAmount(AMOUNT_REFUSAL.notANumber);
     if (fraction.length > asset.decimals) return refusedAmount(AMOUNT_REFUSAL.tooManyDecimals);
     const scale = 10n ** BigInt(asset.decimals);
-    units = BigInt(whole === '' ? 0 : whole) * scale + BigInt(fraction === '' ? 0 : fraction.padEnd(asset.decimals, '0'));
+    units =
+      BigInt(whole === '' ? 0 : whole) * scale + BigInt(fraction === '' ? 0 : fraction.padEnd(asset.decimals, '0'));
   }
   if (units <= 0n) return refusedAmount(AMOUNT_REFUSAL.zero);
   if (units > held) return refusedAmount(AMOUNT_REFUSAL.aboveHeld);
   return {
-    of: PUT_IN.amount, units,
-    amount: isPrivate ? privateAmount(units, asset.decimals, asset.symbol) : publicAmount(units, asset.decimals, asset.symbol),
+    of: PUT_IN.amount,
+    units,
+    amount: isPrivate
+      ? privateAmount(units, asset.decimals, asset.symbol)
+      : publicAmount(units, asset.decimals, asset.symbol)
   };
 }
 
@@ -229,26 +270,39 @@ type EarlierSettled = Awaited<ReturnType<typeof settleDepositInFlight>>['state']
  */
 export type DepositNow =
   | {
-    readonly of: typeof DEPOSITED.running; readonly kind: DepositKind; readonly amount: PrivateAmount | PublicAmount;
-    readonly steps: readonly DepositStep[]; readonly step: DepositStep; readonly n: number; readonly since: number;
-    readonly proofs: readonly ProofInProgress[];
-  }
+      readonly of: typeof DEPOSITED.running;
+      readonly kind: DepositKind;
+      readonly amount: PrivateAmount | PublicAmount;
+      readonly steps: readonly DepositStep[];
+      readonly step: DepositStep;
+      readonly n: number;
+      readonly since: number;
+      readonly proofs: readonly ProofInProgress[];
+    }
   | {
-    readonly of: typeof DEPOSITED.done; readonly kind: DepositKind; readonly amount: PrivateAmount | PublicAmount;
-    readonly chainTransaction: string | null; readonly notYetSpendable: boolean; readonly earlier: EarlierSettled | null;
-  }
+      readonly of: typeof DEPOSITED.done;
+      readonly kind: DepositKind;
+      readonly amount: PrivateAmount | PublicAmount;
+      readonly chainTransaction: string | null;
+      readonly notYetSpendable: boolean;
+      readonly earlier: EarlierSettled | null;
+    }
   | {
-    readonly of: typeof DEPOSITED.failed; readonly kind: DepositKind; readonly amount: PrivateAmount | PublicAmount;
-    readonly mayHaveBeenSent: boolean; readonly refusal: ActRefusal; readonly reasons: readonly string[];
-    /** A private deposit the wallet sent nothing for, and which stop it was: the screen words each. */
-    readonly stopped?: Stopped;
-    /** A public deposit that may have been sent: the time until which it can still arrive and the same money must not be put in again (`publicDepositCannotLandAfter`). A public deposit that never landed: the time it stopped being valid. */
-    readonly until?: number;
-    /** A public deposit the chain answered for: it took it and refused it, or it never landed and now never will. Nothing went into the vault either way. */
-    readonly chainSaid?: typeof CHAIN_SAID[keyof typeof CHAIN_SAID];
-    /** A public deposit the wallet signed and this page did not send: whoever holds the signed transaction can still send it until `until`. */
-    readonly signedNotSent?: true;
-  };
+      readonly of: typeof DEPOSITED.failed;
+      readonly kind: DepositKind;
+      readonly amount: PrivateAmount | PublicAmount;
+      readonly mayHaveBeenSent: boolean;
+      readonly refusal: ActRefusal;
+      readonly reasons: readonly string[];
+      /** A private deposit the wallet sent nothing for, and which stop it was: the screen words each. */
+      readonly stopped?: Stopped;
+      /** A public deposit that may have been sent: the time until which it can still arrive and the same money must not be put in again (`publicDepositCannotLandAfter`). A public deposit that never landed: the time it stopped being valid. */
+      readonly until?: number;
+      /** A public deposit the chain answered for: it took it and refused it, or it never landed and now never will. Nothing went into the vault either way. */
+      readonly chainSaid?: (typeof CHAIN_SAID)[keyof typeof CHAIN_SAID];
+      /** A public deposit the wallet signed and this page did not send: whoever holds the signed transaction can still send it until `until`. */
+      readonly signedNotSent?: true;
+    };
 
 /** What the chain answered for a public deposit that was sent and put nothing into the vault. */
 export const CHAIN_SAID = { refused: 1, neverLanded: 2 } as const;
@@ -261,7 +315,11 @@ const keyOf = (vault: string): string => vault.toLowerCase();
 /** Tells each watcher of `vault` that its deposit changed; a watcher that throws never stops the deposit or the others. */
 const tellWatchers = (vault: string): void => {
   for (const watcher of [...(WATCHERS.get(keyOf(vault)) ?? [])]) {
-    try { watcher(); } catch { /* a screen's own failure stays the screen's */ }
+    try {
+      watcher();
+    } catch {
+      /* a screen's own failure stays the screen's */
+    }
   }
 };
 
@@ -282,7 +340,9 @@ export function watchDeposit(vault: string, watcher: () => void): () => void {
   const set = WATCHERS.get(key) ?? new Set<() => void>();
   set.add(watcher);
   WATCHERS.set(key, set);
-  return () => { set.delete(watcher); };
+  return () => {
+    set.delete(watcher);
+  };
 }
 
 /** Puts away an ended deposit once its result was read; a running one is never put away. */
@@ -294,38 +354,69 @@ export function putAwayEndedDeposit(vault: string): void {
 }
 
 /** The errors after which money may have moved, or may still move: the person checks before trying again. */
-const MAY_HAVE_BEEN_SENT = [DepositNotYetSeen, DepositLandedNotYetRecorded, PublicDepositNotYetSeen, PublicDepositSignedNotSent] as const;
+const MAY_HAVE_BEEN_SENT = [
+  DepositNotYetSeen,
+  DepositLandedNotYetRecorded,
+  PublicDepositNotYetSeen,
+  PublicDepositSignedNotSent
+] as const;
 /** The errors that say nothing was sent, or that what was sent put nothing into the vault and never will. */
 const NOTHING_SENT = [
-  DepositNotSent, DepositMayOutliveItsWindow, DepositStillInFlight, DepositStartedElsewhere, PublicDepositRefused, PublicDepositNeverLanded,
+  DepositNotSent,
+  DepositMayOutliveItsWindow,
+  DepositStillInFlight,
+  DepositStartedElsewhere,
+  PublicDepositRefused,
+  PublicDepositNeverLanded
 ] as const;
 
 /** An error's own message and those of what caused it, for support. */
 function reasonsOf(e: unknown): string[] {
   const out: string[] = [];
-  for (let at: unknown = e, depth = 0; at instanceof Error && depth < 4; at = at.cause, depth += 1) out.push(at.message);
+  for (let at: unknown = e, depth = 0; at instanceof Error && depth < 4; at = at.cause, depth += 1)
+    out.push(at.message);
   return out;
 }
 
 /** How a deposit that threw ended: anything may have been sent once its send began, unless the error says nothing was or that the chain put nothing in; a public one that may have been sent also says until when it can still arrive, from the transaction the wallet signed and the margin for clocks, and says no time when none was read; a public one the wallet signed and this page did not send says so (`signedNotSent`). */
-function failedWith(e: unknown, began: { readonly sending: boolean }, kind: DepositKind): Pick<Extract<DepositNow, { of: 'failed' }>, 'mayHaveBeenSent' | 'refusal' | 'reasons' | 'until' | 'chainSaid' | 'signedNotSent'> {
-  const maybe = MAY_HAVE_BEEN_SENT.some((c) => e instanceof c)
-    || (began.sending && !NOTHING_SENT.some((c) => e instanceof c));
-  const until = e instanceof PublicDepositNeverLanded ? e.until
-    : maybe && kind === DEPOSIT_KIND.public && (e instanceof PublicDepositNotYetSeen || e instanceof PublicDepositSignedNotSent)
-      ? publicDepositCannotLandAfter(e.until)
-    : null;
-  const chainSaid = e instanceof PublicDepositRefused ? CHAIN_SAID.refused
-    : e instanceof PublicDepositNeverLanded ? CHAIN_SAID.neverLanded
-    : null;
+function failedWith(
+  e: unknown,
+  began: { readonly sending: boolean },
+  kind: DepositKind
+): Pick<
+  Extract<DepositNow, { of: 'failed' }>,
+  'mayHaveBeenSent' | 'refusal' | 'reasons' | 'until' | 'chainSaid' | 'signedNotSent'
+> {
+  const maybe =
+    MAY_HAVE_BEEN_SENT.some((c) => e instanceof c) || (began.sending && !NOTHING_SENT.some((c) => e instanceof c));
+  const until =
+    e instanceof PublicDepositNeverLanded
+      ? e.until
+      : maybe &&
+          kind === DEPOSIT_KIND.public &&
+          (e instanceof PublicDepositNotYetSeen || e instanceof PublicDepositSignedNotSent)
+        ? publicDepositCannotLandAfter(e.until)
+        : null;
+  const chainSaid =
+    e instanceof PublicDepositRefused
+      ? CHAIN_SAID.refused
+      : e instanceof PublicDepositNeverLanded
+        ? CHAIN_SAID.neverLanded
+        : null;
   return {
-    mayHaveBeenSent: maybe, refusal: refusalOf(e), reasons: reasonsOf(e),
-    ...(until === null ? {} : { until }), ...(chainSaid === null ? {} : { chainSaid }),
-    ...(until !== null && e instanceof PublicDepositSignedNotSent ? { signedNotSent: true as const } : {}),
+    mayHaveBeenSent: maybe,
+    refusal: refusalOf(e),
+    reasons: reasonsOf(e),
+    ...(until === null ? {} : { until }),
+    ...(chainSaid === null ? {} : { chainSaid }),
+    ...(until !== null && e instanceof PublicDepositSignedNotSent ? { signedNotSent: true as const } : {})
   };
 }
 
-const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 /**
  * WHO HOLDS THE COMPANY AND THE INDEXER ITS WALLET READS THROUGH, as `view` asked the person's wallet once for them:
@@ -333,7 +424,7 @@ const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => { se
  */
 const holdersIn = (view: PageView) => ({
   onChain: async () => ({ holders: await view.holders() }),
-  indexer: () => walletIndexerIn(view),
+  indexer: () => walletIndexerIn(view)
 });
 
 /**
@@ -343,7 +434,8 @@ const holdersIn = (view: PageView) => ({
  */
 const vaultServiceIn = (view: PageView, roster: () => Promise<Roster>): VaultService => ({
   ...vaultServiceThrough({ current: () => view }),
-  keys: () => keysCheckedAgainst(async () => await view.vaultKeys() as Awaited<ReturnType<VaultService['keys']>>, roster),
+  keys: () =>
+    keysCheckedAgainst(async () => (await view.vaultKeys()) as Awaited<ReturnType<VaultService['keys']>>, roster)
 });
 
 /**
@@ -354,10 +446,13 @@ function checkDoorsOf(here: SeatAndRecordsHere, me: DeviceSigner): DepositDoors 
   const holders = holdersIn(here.view);
   const opener = { signerId: me.signerId, wrappingSecret: me.wrappingSecret };
   return {
-    sleep, progress: () => {},
+    sleep,
+    progress: () => {},
     service: vaultServiceIn(here.view, async () => here.opened),
-    company: here.company, account: here.account,
-    onChain: holders.onChain, indexer: holders.indexer,
+    company: here.company,
+    account: here.account,
+    onChain: holders.onChain,
+    indexer: holders.indexer,
     builder: here.builder,
     me,
     myRecordsKey: recordsKeypairFrom(fromHex(here.companyKey)).publicKey as Hex,
@@ -365,7 +460,9 @@ function checkDoorsOf(here: SeatAndRecordsHere, me: DeviceSigner): DepositDoors 
     records: here.records,
     kept: coinsKeptOnThisDevice(browserInFlightRecords(), opener),
     inFlight: browserDepositsInFlight(opener),
-    pay: async () => { throw new Fault(FAULT.depositCheckPays); },
+    pay: async () => {
+      throw new Fault(FAULT.depositCheckPays);
+    }
   };
 }
 
@@ -378,16 +475,24 @@ const releaseTheCompanyKey = (companyId: string) => () => companyKeysForVaults(c
  */
 const PRIVATE_DEPOSIT = {
   created: 'created',
-  recorded: 'recorded', notYetSpendable: 'not-yet-spendable', notYetSeen: 'not-yet-seen', landedNotRecorded: 'landed-not-recorded',
+  recorded: 'recorded',
+  notYetSpendable: 'not-yet-spendable',
+  notYetSeen: 'not-yet-seen',
+  landedNotRecorded: 'landed-not-recorded'
 } as const;
 
 /** How the wallet stopped a private deposit it sent nothing for: the build step refused, or this vault held shut after its fee or the network said no. */
 export const STOPPED = {
-  notMade: 'not-made', declined: 'declined', tooLittleDust: 'too-little-dust', notPaid: 'not-paid', networkRefused: 'network-refused',
+  notMade: 'not-made',
+  declined: 'declined',
+  tooLittleDust: 'too-little-dust',
+  notPaid: 'not-paid',
+  networkRefused: 'network-refused'
 } as const;
 export type Stopped = (typeof STOPPED)[keyof typeof STOPPED];
 
-const STOPPED_KEY = /^act\.private-deposit\.why\.(?:(not-made)|held\.(declined|too-little-dust|not-paid|network-refused))$/u;
+const STOPPED_KEY =
+  /^act\.private-deposit\.why\.(?:(not-made)|held\.(declined|too-little-dust|not-paid|network-refused))$/u;
 
 /** The kind of stop the wallet's refusal key names, or null for a key this page has no words of its own for. */
 function stoppedOf(ended: ActOutcome): Stopped | null {
@@ -397,8 +502,10 @@ function stoppedOf(ended: ActOutcome): Stopped | null {
   return Object.values(STOPPED).find((one) => one === named) ?? null;
 }
 
-
-const stoppedAs = (ended: ActOutcome): { readonly stopped?: Stopped } => { const kind = stoppedOf(ended); return kind === null ? {} : { stopped: kind }; };
+const stoppedAs = (ended: ActOutcome): { readonly stopped?: Stopped } => {
+  const kind = stoppedOf(ended);
+  return kind === null ? {} : { stopped: kind };
+};
 
 /** How the wallet's private deposit ended, for this page: done, or failed and whether the deposit may have been sent. */
 function endOfTheWalletsDeposit(ended: ActOutcome, amount: PrivateAmount | PublicAmount): Ended {
@@ -408,8 +515,12 @@ function endOfTheWalletsDeposit(ended: ActOutcome, amount: PrivateAmount | Publi
   if (ended.of === 'done' || recorded) {
     const created = told[PRIVATE_DEPOSIT.created];
     return {
-      of: DEPOSITED.done, kind: DEPOSIT_KIND.private, amount, chainTransaction: typeof created === 'string' ? created : null,
-      notYetSpendable: told['state'] === PRIVATE_DEPOSIT.notYetSpendable, earlier: null,
+      of: DEPOSITED.done,
+      kind: DEPOSIT_KIND.private,
+      amount,
+      chainTransaction: typeof created === 'string' ? created : null,
+      notYetSpendable: told['state'] === PRIVATE_DEPOSIT.notYetSpendable,
+      earlier: null
     };
   }
   /*
@@ -421,9 +532,13 @@ function endOfTheWalletsDeposit(ended: ActOutcome, amount: PrivateAmount | Publi
   const seen = told['state'] === PRIVATE_DEPOSIT.notYetSeen || told['state'] === PRIVATE_DEPOSIT.landedNotRecorded;
   const began = typeof told['vault'] === 'string';
   return {
-    of: DEPOSITED.failed, kind: DEPOSIT_KIND.private, amount,
+    of: DEPOSITED.failed,
+    kind: DEPOSIT_KIND.private,
+    amount,
     mayHaveBeenSent: seen || ((began || ended.outcome === undefined) && (ended.relayed > 0 || ended.unconfirmed > 0)),
-    refusal: ACT_REFUSAL.didNotFinish, reasons: [], ...stoppedAs(ended),
+    refusal: ACT_REFUSAL.didNotFinish,
+    reasons: [],
+    ...stoppedAs(ended)
   };
 }
 
@@ -434,53 +549,108 @@ type Run = (step: (to: DepositStep) => void, progress: (stage: VaultStage) => vo
  * A private deposit of `units` of `code`, asked of the person's wallet by intent and made there whole: the wallet's
  * window is the first step, the deposit it makes, sends and records the second.
  */
-function privately(personId: string, opening: PageView, vault: string, code: AssetId, units: bigint, amount: PrivateAmount | PublicAmount, registry: AssetRegistry): Run {
+function privately(
+  personId: string,
+  opening: PageView,
+  vault: string,
+  code: AssetId,
+  units: bigint,
+  amount: PrivateAmount | PublicAmount,
+  registry: AssetRegistry
+): Run {
   const companyId = opening.company;
   /* Where the company is on the chain, as the screen's view read it at the press: the wallet reads the rest itself. */
   const at = onTheChainIn(opening);
-  at.catch(() => { /* said when the deposit reads it */ });
+  at.catch(() => {
+    /* said when the deposit reads it */
+  });
   return async (step) => {
-    const failed = (refusal: ActRefusal): Ended => ({ of: DEPOSITED.failed, kind: DEPOSIT_KIND.private, amount, mayHaveBeenSent: false, refusal, reasons: [] });
+    const failed = (refusal: ActRefusal): Ended => ({
+      of: DEPOSITED.failed,
+      kind: DEPOSIT_KIND.private,
+      amount,
+      mayHaveBeenSent: false,
+      refusal,
+      reasons: []
+    });
     if (!(await keyringFor(personId))) return failed(ACT_REFUSAL.notSignedIn);
     const where = await at;
     if (where === null) return failed(ACT_REFUSAL.didNotFinish);
     const { company, account } = where;
-    const money = privateTokenFromTheWallet(async () => { throw new Fault(FAULT.privateDepositPaidHere); }, registry)
-      .money({ code, value: units });
-    const ended = await privateDepositInTheWallet({
-      record: companyId, company, account, vault: vault.toLowerCase(), token: money.token.toLowerCase(), units: money.value,
-    }, ACCOUNT_ORIGIN, { onStep: (at) => step(at.step >= 2 ? DEPOSIT_STEP.provingTheDeposit : DEPOSIT_STEP.payingInYourWallet) });
+    const money = privateTokenFromTheWallet(async () => {
+      throw new Fault(FAULT.privateDepositPaidHere);
+    }, registry).money({ code, value: units });
+    const ended = await privateDepositInTheWallet(
+      {
+        record: companyId,
+        company,
+        account,
+        vault: vault.toLowerCase(),
+        token: money.token.toLowerCase(),
+        units: money.value
+      },
+      ACCOUNT_ORIGIN,
+      { onStep: (at) => step(at.step >= 2 ? DEPOSIT_STEP.provingTheDeposit : DEPOSIT_STEP.payingInYourWallet) }
+    );
     return endOfTheWalletsDeposit(ended, amount);
   };
 }
 
 /** A public deposit of `units` of `code`: the vault's public deposit, given only what a public deposit needs. */
-function publicly(personId: string, companyId: string, vault: string, code: AssetId, units: bigint, amount: PrivateAmount | PublicAmount, registry: AssetRegistry): Run {
-  return (_step, progress) => readThroughAViewOf(companyId, async (view) => {
-    const failed = (refusal: ActRefusal): Ended => ({ of: DEPOSITED.failed, kind: DEPOSIT_KIND.public, amount, mayHaveBeenSent: false, refusal, reasons: [] });
-    if (!(await keyringFor(personId))) return failed(ACT_REFUSAL.notSignedIn);
-    const where = await onTheChainIn(view);
-    if (where === null) return failed(ACT_REFUSAL.didNotFinish);
-    const { company, account } = where;
-    const holders = holdersIn(view);
-    /*
-     * The indexer is kept once read (the vault is read through it before anything is built): the send ends the view, and
-     * the chain is still watched through this indexer after it. A read that failed is asked again when next needed.
-     */
-    let named: Awaited<ReturnType<typeof holders.indexer>> | undefined;
-    const indexer = async () => (named ??= await holders.indexer());
-    const pay: PublicDepositDoors['pay'] = (ask) => payIntoAVaultFromTheWallet(ACCOUNT_ORIGIN, ask);
-    const doors: PublicDepositDoors = {
-      sleep, progress,
-      /* A public deposit never asks for the vault's keys, so no roster is read for it: an ask for them would find no readers and be refused. */
-      service: vaultServiceIn(view, async () => ({ id: companyId, signers: [], notBelieved: [] })),
-      builder: await theVaultBuilder(),
-      company, account, onChain: holders.onChain, indexer, pay,
-    };
-    const money = publicTokenFromTheWallet(pay, registry).money({ code, value: units });
-    const done = await depositPubliclyIntoCompanyVault(doors, vault as Hex, money);
-    return { of: DEPOSITED.done, kind: DEPOSIT_KIND.public, amount, chainTransaction: done.transactionHash, notYetSpendable: false, earlier: null };
-  });
+function publicly(
+  personId: string,
+  companyId: string,
+  vault: string,
+  code: AssetId,
+  units: bigint,
+  amount: PrivateAmount | PublicAmount,
+  registry: AssetRegistry
+): Run {
+  return (_step, progress) =>
+    readThroughAViewOf(companyId, async (view) => {
+      const failed = (refusal: ActRefusal): Ended => ({
+        of: DEPOSITED.failed,
+        kind: DEPOSIT_KIND.public,
+        amount,
+        mayHaveBeenSent: false,
+        refusal,
+        reasons: []
+      });
+      if (!(await keyringFor(personId))) return failed(ACT_REFUSAL.notSignedIn);
+      const where = await onTheChainIn(view);
+      if (where === null) return failed(ACT_REFUSAL.didNotFinish);
+      const { company, account } = where;
+      const holders = holdersIn(view);
+      /*
+       * The indexer is kept once read (the vault is read through it before anything is built): the send ends the view, and
+       * the chain is still watched through this indexer after it. A read that failed is asked again when next needed.
+       */
+      let named: Awaited<ReturnType<typeof holders.indexer>> | undefined;
+      const indexer = async () => (named ??= await holders.indexer());
+      const pay: PublicDepositDoors['pay'] = (ask) => payIntoAVaultFromTheWallet(ACCOUNT_ORIGIN, ask);
+      const doors: PublicDepositDoors = {
+        sleep,
+        progress,
+        /* A public deposit never asks for the vault's keys, so no roster is read for it: an ask for them would find no readers and be refused. */
+        service: vaultServiceIn(view, async () => ({ id: companyId, signers: [], notBelieved: [] })),
+        builder: await theVaultBuilder(),
+        company,
+        account,
+        onChain: holders.onChain,
+        indexer,
+        pay
+      };
+      const money = publicTokenFromTheWallet(pay, registry).money({ code, value: units });
+      const done = await depositPubliclyIntoCompanyVault(doors, vault as Hex, money);
+      return {
+        of: DEPOSITED.done,
+        kind: DEPOSIT_KIND.public,
+        amount,
+        chainTransaction: done.transactionHash,
+        notYetSpendable: false,
+        earlier: null
+      };
+    });
 }
 
 /** What a press of Put money in came to: started (with the deposit's end), refused before anything (the amount's reason, or the service's own answer that it refuses the vault), or one already running for this vault, so nothing was sent. */
@@ -504,8 +674,14 @@ export type PutMoneyIn =
  * and ended with it. `depositNow` and `watchDeposit` follow it.
  */
 export function putMoneyIn(
-  personId: string, opening: PageView, vault: string, pick: DepositPick, entry: string | typeof MAX, held: bigint | null,
-  registry: AssetRegistry = assets, standing?: VaultStanding,
+  personId: string,
+  opening: PageView,
+  vault: string,
+  pick: DepositPick,
+  entry: string | typeof MAX,
+  held: bigint | null,
+  registry: AssetRegistry = assets,
+  standing?: VaultStanding
 ): PutMoneyIn {
   if (DEPOSITS.get(keyOf(vault))?.of === DEPOSITED.running) return { of: PUT_IN.alreadyRunning };
   if (standing !== undefined && serviceRefusesVault(standing)) return { of: PUT_IN.vaultRefused, standing };
@@ -527,11 +703,16 @@ export function putMoneyIn(
     if (to !== undefined && (DEPOSITS.get(keyOf(vault)) as { step?: DepositStep } | undefined)?.step !== to) step(to);
   };
   step(steps[0]!);
-  const run = kind === DEPOSIT_KIND.private
-    ? privately(personId, opening, vault, pick.code, units, amount, registry)
-    : publicly(personId, companyId, vault, pick.code, units, amount, registry);
-  const ended = run(step, progress).catch((e: unknown): Ended => ({ of: DEPOSITED.failed, kind, amount, ...failedWith(e, began, kind) }))
-    .then((end) => { setNow(vault, end); return end as DepositNow; });
+  const run =
+    kind === DEPOSIT_KIND.private
+      ? privately(personId, opening, vault, pick.code, units, amount, registry)
+      : publicly(personId, companyId, vault, pick.code, units, amount, registry);
+  const ended = run(step, progress)
+    .catch((e: unknown): Ended => ({ of: DEPOSITED.failed, kind, amount, ...failedWith(e, began, kind) }))
+    .then((end) => {
+      setNow(vault, end);
+      return end as DepositNow;
+    });
   return { of: PUT_IN.started, ended };
 }
 
@@ -546,7 +727,9 @@ type AmountUnshown = (typeof AMOUNT_UNSHOWN)[keyof typeof AMOUNT_UNSHOWN];
 
 /** The private amount of `value` of the private token `token`, as the registry names it, or null when it lists no such token. */
 function privateAmountOf(token: string, value: bigint, registry: AssetRegistry): PrivateAmount | null {
-  const asset = registry.all().find((a) => typeof a.ledger.shielded === 'string' && a.ledger.shielded.toLowerCase() === token.toLowerCase());
+  const asset = registry
+    .all()
+    .find((a) => typeof a.ledger.shielded === 'string' && a.ledger.shielded.toLowerCase() === token.toLowerCase());
   return asset === undefined ? null : privateAmount(value, asset.decimals, asset.symbol);
 }
 
@@ -564,19 +747,25 @@ function privateAmountOf(token: string, value: bigint, registry: AssetRegistry):
  */
 export type LastDepositChecked =
   | {
-    readonly of: typeof CHECKED.checked; readonly deposit: WhatThisBrowserDeposited['deposit']['state'];
-    readonly until: number | null; readonly notYetSpendable: boolean; readonly named: number; readonly unnamed: number;
-    /** Amounts the chain can name and that this check, which files nothing, left for a signer's wallet to name. */
-    readonly toName: number;
-    readonly forSupport: string;
-    readonly deposited: PrivateAmount | null;
-    readonly unshown: AmountUnshown | null;
-    /** One more deposit the vault's deposit journal names, each as the check found it. */
-    readonly earlier: ReadonlyArray<{
-      readonly deposit: JournalledDeposit['state']; readonly until: number;
-      readonly deposited: PrivateAmount | null; readonly unshown: AmountUnshown | null;
-    }>;
-  }
+      readonly of: typeof CHECKED.checked;
+      readonly deposit: WhatThisBrowserDeposited['deposit']['state'];
+      readonly until: number | null;
+      readonly notYetSpendable: boolean;
+      readonly named: number;
+      readonly unnamed: number;
+      /** Amounts the chain can name and that this check, which files nothing, left for a signer's wallet to name. */
+      readonly toName: number;
+      readonly forSupport: string;
+      readonly deposited: PrivateAmount | null;
+      readonly unshown: AmountUnshown | null;
+      /** One more deposit the vault's deposit journal names, each as the check found it. */
+      readonly earlier: ReadonlyArray<{
+        readonly deposit: JournalledDeposit['state'];
+        readonly until: number;
+        readonly deposited: PrivateAmount | null;
+        readonly unshown: AmountUnshown | null;
+      }>;
+    }
   | { readonly of: typeof CHECKED.refused; readonly why: ActRefusal; readonly reasons: readonly string[] };
 
 /**
@@ -593,7 +782,12 @@ export type LastDepositChecked =
  * asked to release it, in a window of its own.
  * A public deposit leaves nothing in this browser to check.
  */
-export async function checkMyLastDeposit(personId: string, view: PageView, vault: string, registry: AssetRegistry = assets): Promise<LastDepositChecked> {
+export async function checkMyLastDeposit(
+  personId: string,
+  view: PageView,
+  vault: string,
+  registry: AssetRegistry = assets
+): Promise<LastDepositChecked> {
   try {
     const here = await seatAndRecordsHere(personId, view, releaseTheCompanyKey(view.company));
     if (typeof here === 'string') return { of: CHECKED.refused, why: here, reasons: [] };
@@ -604,16 +798,24 @@ export async function checkMyLastDeposit(personId: string, view: PageView, vault
     const earlier = (found.alsoJournalled ?? []).map((e) => {
       const amount = e.checked === undefined ? null : privateAmountOf(e.checked.token, e.checked.value, registry);
       return {
-        deposit: e.state, until: e.until, deposited: amount,
-        unshown: e.checked !== undefined && amount === null ? AMOUNT_UNSHOWN.tokenNotListed : null,
+        deposit: e.state,
+        until: e.until,
+        deposited: amount,
+        unshown: e.checked !== undefined && amount === null ? AMOUNT_UNSHOWN.tokenNotListed : null
       };
     });
     return {
-      of: CHECKED.checked, deposit: d.state,
-      until: d.state === 'still-on-its-way' || d.state === 'journalled-not-seen' ? d.until : null, earlier,
+      of: CHECKED.checked,
+      deposit: d.state,
+      until: d.state === 'still-on-its-way' || d.state === 'journalled-not-seen' ? d.until : null,
+      earlier,
       notYetSpendable: d.state === 'recorded' && d.notYetSpendable !== undefined,
-      named: found.named, unnamed: found.unnamed, toName: found.toName ?? 0, forSupport: sayWhatTheCheckFound(found),
-      deposited, unshown: judged !== null && deposited === null ? AMOUNT_UNSHOWN.tokenNotListed : null,
+      named: found.named,
+      unnamed: found.unnamed,
+      toName: found.toName ?? 0,
+      forSupport: sayWhatTheCheckFound(found),
+      deposited,
+      unshown: judged !== null && deposited === null ? AMOUNT_UNSHOWN.tokenNotListed : null
     };
   } catch (e) {
     return { of: CHECKED.refused, why: refusalOf(e), reasons: reasonsOf(e) };

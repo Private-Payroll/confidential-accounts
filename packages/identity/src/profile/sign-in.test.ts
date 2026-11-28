@@ -46,7 +46,7 @@ const signIn = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   purpose: 'So we know it is you.',
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 /** A disclosure on the wire, in the shape first shipped — no `kind` at all. */
@@ -57,7 +57,7 @@ const disclosure = (over: Record<string, unknown> = {}): Record<string, unknown>
   wants: [{ attribute: 'given-name', required: true }],
   nonce: 'n1',
   expiresAt: NOW + 60_000,
-  ...over,
+  ...over
 });
 
 const codeOf = (run: () => unknown): string => {
@@ -82,27 +82,25 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
   });
 
   it('A SIGN-IN THAT CARRIES ATTRIBUTES IS REFUSED BY NAME, NOT IGNORED', () => {
-    expect(codeOf(() => parseAsk(
-      signIn({ wants: [{ attribute: 'given-name', required: true }] }), ORIGIN, NOW)))
-      .toBe('attributes-on-a-sign-in');
+    expect(codeOf(() => parseAsk(signIn({ wants: [{ attribute: 'given-name', required: true }] }), ORIGIN, NOW))).toBe(
+      'attributes-on-a-sign-in'
+    );
   });
 
   it('and an EMPTY list on a sign-in is refused too — by presence, not by content', () => {
     /* `wants: []` is not "nothing asked for" here; it is a field that has no
      * business on this kind. Answering it would leave whoever sent it entitled
      * to believe the wallet had considered it. */
-    expect(codeOf(() => parseAsk(signIn({ wants: [] }), ORIGIN, NOW)))
-      .toBe('attributes-on-a-sign-in');
+    expect(codeOf(() => parseAsk(signIn({ wants: [] }), ORIGIN, NOW))).toBe('attributes-on-a-sign-in');
   });
 
   it('THE EMPTY-`wants` REFUSAL IS UNTOUCHED FOR A DISCLOSURE, named and stated', () => {
     /* The guard this change was told not to loosen. Both spellings of the ask
      * meet it: the one first shipped, and the one that names its kind. */
-    expect(codeOf(() => parseAsk(disclosure({ wants: [] }), ORIGIN, NOW)))
-      .toBe('nothing-asked-for');
-    expect(codeOf(() => parseAsk(
-      disclosure({ kind: 'disclosure', wants: [] }), ORIGIN, NOW)))
-      .toBe('nothing-asked-for');
+    expect(codeOf(() => parseAsk(disclosure({ wants: [] }), ORIGIN, NOW))).toBe('nothing-asked-for');
+    expect(codeOf(() => parseAsk(disclosure({ kind: 'disclosure', wants: [] }), ORIGIN, NOW))).toBe(
+      'nothing-asked-for'
+    );
   });
 
   it('AN UNKNOWN KIND IS REFUSED BY NAME AND BECOMES NEITHER OF THE TWO', () => {
@@ -169,7 +167,21 @@ describe('§4 — A REQUEST DECLARES WHAT IT IS', () => {
      * `screens/approve-addresses-and-balances.tsx`. */
     /* **AND FOR `act`**, appended thirteenth, with its window in `screens/approve-window.tsx` and the screen it runs
      * on in `actions/runner-screen.tsx`. */
-    expect([...ASK_KINDS]).toEqual(['disclosure', 'sign-in', 'unlock', 'join', 'keyring', 'balance', 'committee', 'records-key', 'holders', 'creation', 'join-code', 'addresses-and-balances', 'act']);
+    expect([...ASK_KINDS]).toEqual([
+      'disclosure',
+      'sign-in',
+      'unlock',
+      'join',
+      'keyring',
+      'balance',
+      'committee',
+      'records-key',
+      'holders',
+      'creation',
+      'join-code',
+      'addresses-and-balances',
+      'act'
+    ]);
   });
 });
 
@@ -183,8 +195,7 @@ describe('AN ABSENT KIND FAILS CLOSED, IN BOTH DIRECTIONS', () => {
   it('a disclosure with no `kind` is still exactly the disclosure first shipped', () => {
     const ask = parseAsk(disclosure(), ORIGIN, NOW);
     expect(ask.kind).toBe('disclosure');
-    expect(ask.kind === 'disclosure' && ask.wants.map((w) => w.attribute))
-      .toEqual(['given-name']);
+    expect(ask.kind === 'disclosure' && ask.wants.map((w) => w.attribute)).toEqual(['given-name']);
   });
 
   it('STRIPPING `kind` OFF A SIGN-IN IN FLIGHT REFUSES IT — it does not become one', () => {
@@ -194,8 +205,7 @@ describe('AN ABSENT KIND FAILS CLOSED, IN BOTH DIRECTIONS', () => {
   });
 
   it('ADDING `kind: sign-in` TO A REAL DISCLOSURE REFUSES IT TOO', () => {
-    expect(codeOf(() => parseAsk(disclosure({ kind: 'sign-in' }), ORIGIN, NOW)))
-      .toBe('attributes-on-a-sign-in');
+    expect(codeOf(() => parseAsk(disclosure({ kind: 'sign-in' }), ORIGIN, NOW))).toBe('attributes-on-a-sign-in');
   });
 });
 
@@ -207,16 +217,13 @@ describe('the disclosure-only door stays a disclosure-only door', () => {
   it('and every rule that was true of a disclosure is true of a sign-in', () => {
     /* The four §5.3 refusals, on the new kind, so none of them was reached
      * through the `wants` branch by accident. */
-    expect(codeOf(() => parseAsk(signIn(), 'http://payroll-a.example', NOW)))
-      .toBe('malformed-field');
-    expect(codeOf(() => parseAsk(
-      signIn({ requester: { name: 'A', rdns: 'a', origin: ORIGIN } }), ORIGIN, NOW)))
-      .toBe('claims-its-own-origin');
-    expect(codeOf(() => parseAsk(signIn({ origin: ORIGIN }), ORIGIN, NOW)))
-      .toBe('claims-its-own-origin');
+    expect(codeOf(() => parseAsk(signIn(), 'http://payroll-a.example', NOW))).toBe('malformed-field');
+    expect(codeOf(() => parseAsk(signIn({ requester: { name: 'A', rdns: 'a', origin: ORIGIN } }), ORIGIN, NOW))).toBe(
+      'claims-its-own-origin'
+    );
+    expect(codeOf(() => parseAsk(signIn({ origin: ORIGIN }), ORIGIN, NOW))).toBe('claims-its-own-origin');
     expect(codeOf(() => parseAsk(signIn(), ORIGIN, NOW + 60_001))).toBe('expired');
-    expect(codeOf(() => parseAsk(signIn({ schema: 'something/else' }), ORIGIN, NOW)))
-      .toBe('wrong-schema');
+    expect(codeOf(() => parseAsk(signIn({ schema: 'something/else' }), ORIGIN, NOW))).toBe('wrong-schema');
   });
 });
 
@@ -226,17 +233,26 @@ describe('the channel carries a sign-in and reads no kind of its own', () => {
     const states: ChannelState[] = [];
     const view: ChannelWindow = {
       opener: opener as unknown as ChannelWindow['opener'],
-      addEventListener: (_t, h) => { handlers.push(h); },
-      removeEventListener: () => { /* not exercised here */ },
+      addEventListener: (_t, h) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* not exercised here */
+      }
     };
-    listen(view, () => NOW, (s) => states.push(s), ORIGIN);
+    listen(
+      view,
+      () => NOW,
+      (s) => states.push(s),
+      ORIGIN
+    );
     const deliver = (event: Partial<MessageEvent>): void => {
       for (const h of handlers) h(event as MessageEvent);
     };
     return { states, deliver };
   };
 
-  it('a sign-in arrives with the BROWSER\'S origin on it, like everything else', () => {
+  it("a sign-in arrives with the BROWSER'S origin on it, like everything else", () => {
     const opener = { postMessage: vi.fn() };
     const { states, deliver } = channelFor(opener);
     deliver({ source: opener as never, origin: ORIGIN, data: signIn() });
@@ -262,24 +278,29 @@ const addressOf = (account: number): string =>
   addressOfVerifyingKey(
     signatureVerifyingKey({
       tag: 'schnorr',
-      value: Buffer.from(identity.moneyAt(account).night).toString('hex'),
-    }).value, NETWORK);
+      value: Buffer.from(identity.moneyAt(account).night).toString('hex')
+    }).value,
+    NETWORK
+  );
 
 const AT = 1_755_000_000_000;
 
-const minted = (disclosed: readonly Sent[], declined: readonly string[]) => mint(
-  identity, SUBWALLET, {
+const minted = (disclosed: readonly Sent[], declined: readonly string[]) =>
+  mint(identity, SUBWALLET, {
     origin: ORIGIN,
     nonce: 'n1',
     address: addressOf(SUBWALLET),
     at: AT,
     disclosed,
     declined,
-    requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' },
+    requesterSaidItWas: { name: 'Payroll A', rdns: 'example.payroll-a' }
   });
 
 const asSent = (id: string, about: string, text: string): Sent => ({
-  id, about, says: { of: 'value', value: text }, asserted: { by: 'self', formerly: null },
+  id,
+  about,
+  says: { of: 'value', value: text },
+  asserted: { by: 'self', formerly: null }
 });
 
 const atA = {
@@ -287,7 +308,7 @@ const atA = {
   expectingNonce: 'n1',
   payingAddress: addressOf(SUBWALLET),
   networkId: NETWORK,
-  now: AT + 1000,
+  now: AT + 1000
 };
 
 describe('§4 — THE PAYLOAD DOES NOT CHANGE, AND THAT IS THE POINT', () => {
@@ -313,8 +334,11 @@ describe('§4 — THE PAYLOAD DOES NOT CHANGE, AND THAT IS THE POINT', () => {
     expect(aSignIn.payload.disclosed).toEqual([]);
     expect(aSignIn.payload.declined).toEqual([]);
     /* Everything a recipient binds against is present and identical. */
-    expect({ ...aSignIn.payload, disclosed: [], declined: [] })
-      .toEqual({ ...aDisclosure.payload, disclosed: [], declined: [] });
+    expect({ ...aSignIn.payload, disclosed: [], declined: [] }).toEqual({
+      ...aDisclosure.payload,
+      disclosed: [],
+      declined: []
+    });
     expect(aSignIn.scheme).toBe(aDisclosure.scheme);
   });
 
@@ -333,20 +357,23 @@ describe('THE REPLAY BINDING, ON THE ACTION MOST LIKELY TO BE REPLAYED', () => {
    */
   it('a sign-in for A is REFUSED at B', () => {
     const aSignIn = minted([], []).response;
-    expect(verify(aSignIn, { ...atA, atOrigin: 'https://payroll-b.example' }))
-      .toMatchObject({ ok: false, code: 'origin-mismatch' });
+    expect(verify(aSignIn, { ...atA, atOrigin: 'https://payroll-b.example' })).toMatchObject({
+      ok: false,
+      code: 'origin-mismatch'
+    });
   });
 
   it('a sign-in answering an earlier nonce is refused against a later request', () => {
     const aSignIn = minted([], []).response;
-    expect(verify(aSignIn, { ...atA, expectingNonce: 'n2' }))
-      .toMatchObject({ ok: false, code: 'nonce-mismatch' });
+    expect(verify(aSignIn, { ...atA, expectingNonce: 'n2' })).toMatchObject({ ok: false, code: 'nonce-mismatch' });
   });
 
   it('a sign-in is refused when the address about to be paid is a different one', () => {
     const aSignIn = minted([], []).response;
-    expect(verify(aSignIn, { ...atA, payingAddress: addressOf(4) }))
-      .toMatchObject({ ok: false, code: 'address-mismatch' });
+    expect(verify(aSignIn, { ...atA, payingAddress: addressOf(4) })).toMatchObject({
+      ok: false,
+      code: 'address-mismatch'
+    });
   });
 
   it('AND REWRITING THE PAYLOAD TO AGREE WITH ITSELF DOES NOT HELP', () => {
@@ -356,9 +383,11 @@ describe('THE REPLAY BINDING, ON THE ACTION MOST LIKELY TO BE REPLAYED', () => {
     const aSignIn = minted([], []).response;
     const rewritten = {
       ...aSignIn,
-      payload: { ...aSignIn.payload, origin: 'https://payroll-b.example' },
+      payload: { ...aSignIn.payload, origin: 'https://payroll-b.example' }
     };
-    expect(verify(rewritten, { ...atA, atOrigin: 'https://payroll-b.example' }))
-      .toMatchObject({ ok: false, code: 'signature-invalid' });
+    expect(verify(rewritten, { ...atA, atOrigin: 'https://payroll-b.example' })).toMatchObject({
+      ok: false,
+      code: 'signature-invalid'
+    });
   });
 });

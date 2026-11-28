@@ -15,8 +15,9 @@ import { rosterHere, type RosterDoors, type RosterReads } from './roster-here.js
 import { seatsTakenAsked } from './seat-not-read-on-the-chain.js';
 import type { GovernanceDoors } from './company-change-on-device.js';
 /** Why nobody is invited when the chain could not be read for the seat an earlier invitation of the address took. */
-const NOT_READ = 'this device could not read from the network which seat an earlier invitation of this address took, so it invites nobody. '
-  + 'Reload the page and try again';
+const NOT_READ =
+  'this device could not read from the network which seat an earlier invitation of this address took, so it invites nobody. ' +
+  'Reload the page and try again';
 
 export type { InviteAddressOf } from '../../../src/core/seat-address.js';
 import type { InviteAddressOf } from '../../../src/core/seat-address.js';
@@ -48,33 +49,57 @@ export async function addressSeatedOrInvitedRefusal(
     /** The time of the newest block, in milliseconds, at the indexer this device reads the chain from. */
     readonly chainTime?: () => Promise<number>;
   },
-  accountId: string, viewingKey: KeysHeld, inviteAddressOf: InviteAddressOf, coinPublicKey: Hex, except?: string | readonly string[],
+  accountId: string,
+  viewingKey: KeysHeld,
+  inviteAddressOf: InviteAddressOf,
+  coinPublicKey: Hex,
+  except?: string | readonly string[]
 ): Promise<string | null> {
-  const cannot = 'this device cannot read which addresses the company\'s proposals have seated or invited, so it invites nobody '
-    + 'by address. Reload the page and try again';
-  if (reads.proposals === undefined || reads.directory === undefined || reads.roundsOnChain === undefined) return cannot;
+  const cannot =
+    "this device cannot read which addresses the company's proposals have seated or invited, so it invites nobody " +
+    'by address. Reload the page and try again';
+  if (reads.proposals === undefined || reads.directory === undefined || reads.roundsOnChain === undefined)
+    return cannot;
   const coin = coinPublicKey.toLowerCase();
-  const twice = 'that address already has a seat on this company, and one address can hold only one seat. Invite a different address';
+  const twice =
+    'that address already has a seat on this company, and one address can hold only one seat. Invite a different address';
   /* A proposal the company's records name and the service left out is refused here (`listedHere`), never read as none. */
   const here = await reads.directory(kindAsked('proposal'));
   const listed = listedHere(here, 'proposal', await reads.proposals(), 'proposal');
   if (reads.seated !== undefined && (await reads.seated()).some((x) => x.toLowerCase() === coin)) return twice;
-  const excepted = new Set((typeof except === 'string' ? [except] : except ?? []).map((x) => x.toLowerCase()));
-  const invited = addressesInvitedIn([...listed, ...listed.setAside], accountId, viewingKey, inviteAddressOf)
-    .filter((x) => x.coinPublicKey === coin && !excepted.has(x.chainId));
+  const excepted = new Set((typeof except === 'string' ? [except] : (except ?? [])).map((x) => x.toLowerCase()));
+  const invited = addressesInvitedIn([...listed, ...listed.setAside], accountId, viewingKey, inviteAddressOf).filter(
+    (x) => x.coinPublicKey === coin && !excepted.has(x.chainId)
+  );
   const same = invited.map((x) => x.chainId);
   if (same.length === 0) return null;
-  const [seated, rounds] = await Promise.all([seatsTakenAsked(reads.invitedSeats, same, NOT_READ), reads.roundsOnChain(same)]);
+  const [seated, rounds] = await Promise.all([
+    seatsTakenAsked(reads.invitedSeats, same, NOT_READ),
+    reads.roundsOnChain(same)
+  ]);
   const onTheChain = new Set(here.holders.seats.map((x) => x.toLowerCase()));
-  if (same.some((id) => { const leaf = seated[id]; return typeof leaf === 'string' && onTheChain.has(leaf.toLowerCase()); })) return twice;
-  if (same.some((id) => (seated[id] ?? null) === null && (rounds[id]?.held === 'open' || rounds[id]?.held === 'cleared'))) {
-    return 'another invitation for this address is still open on the network. Wait until it is taken, or the signer who raised it '
-      + 'withdraws it from the Proposals page, before you invite this address again';
+  if (
+    same.some((id) => {
+      const leaf = seated[id];
+      return typeof leaf === 'string' && onTheChain.has(leaf.toLowerCase());
+    })
+  )
+    return twice;
+  if (
+    same.some((id) => (seated[id] ?? null) === null && (rounds[id]?.held === 'open' || rounds[id]?.held === 'cleared'))
+  ) {
+    return (
+      'another invitation for this address is still open on the network. Wait until it is taken, or the signer who raised it ' +
+      'withdraws it from the Proposals page, before you invite this address again'
+    );
   }
   const filed = invited.filter((x) => (seated[x.chainId] ?? null) === null && rounds[x.chainId]?.held === 'never');
   if (filed.length === 0) return null;
   const sitting = sittingSigningKeysIn(here, onTheChain);
-  return filedInvitationRefusal(filed.filter((x) => x.filedBy !== undefined && sitting.has(x.filedBy)), reads.chainTime);
+  return filedInvitationRefusal(
+    filed.filter((x) => x.filedBy !== undefined && sitting.has(x.filedBy)),
+    reads.chainTime
+  );
 }
 
 /**
@@ -85,23 +110,32 @@ export async function addressSeatedOrInvitedRefusal(
  * a record with a deadline is waiting, it refuses with words to try again rather than letting the address through.
  */
 const filedInvitationRefusal = async (
-  filed: readonly AddressInvited[], chainTime: (() => Promise<number>) | undefined,
+  filed: readonly AddressInvited[],
+  chainTime: (() => Promise<number>) | undefined
 ): Promise<string | null> => {
   const holding = await raisesStillHolding(filed, chainTime);
   if (holding === 'time-not-read') {
-    return 'the network\'s time could not be read to tell whether another invitation for this address, written down but not yet '
-      + 'on the network, may still reach it. Try again in a minute';
+    return (
+      "the network's time could not be read to tell whether another invitation for this address, written down but not yet " +
+      'on the network, may still reach it. Try again in a minute'
+    );
   }
   if (holding.length === 0) return null;
-  const until = new Date(Math.max(...holding.map((x) => Number(x.raiseBy) * 1000))).toISOString().slice(0, 16).replace('T', ' ');
-  return 'another invitation for this address was written down but is not on the network yet, and it may still reach the network '
-    + `until ${until} UTC, by the network's clock. Try again after that time. If it shows on the network first, the signer who `
-    + 'raised it withdraws it from the Proposals page before you invite this address again';
+  const until = new Date(Math.max(...holding.map((x) => Number(x.raiseBy) * 1000)))
+    .toISOString()
+    .slice(0, 16)
+    .replace('T', ' ');
+  return (
+    'another invitation for this address was written down but is not on the network yet, and it may still reach the network ' +
+    `until ${until} UTC, by the network's clock. Try again after that time. If it shows on the network first, the signer who ` +
+    'raised it withdraws it from the Proposals page before you invite this address again'
+  );
 };
 
 /** The coin keys the roster this device believes records for the seats it holds active. */
 const coinKeysSeatedHere = (roster: RosterDoors) => async (): Promise<string[]> =>
-  (await rosterHere(roster)).account.signers.filter((x) => x.status === 'active' && typeof x.coinPublicKey === 'string')
+  (await rosterHere(roster)).account.signers
+    .filter((x) => x.status === 'active' && typeof x.coinPublicKey === 'string')
     .map((x) => x.coinPublicKey!.toLowerCase());
 
 /**
@@ -110,12 +144,13 @@ const coinKeysSeatedHere = (roster: RosterDoors) => async (): Promise<string[]> 
  * records, and the chain's time when given.
  */
 export const addressReadsOf = (
-  doors: GovernanceDoors & { readonly roster: RosterDoors }, chainTime: (() => Promise<number>) | undefined,
+  doors: GovernanceDoors & { readonly roster: RosterDoors },
+  chainTime: (() => Promise<number>) | undefined
 ): Parameters<typeof addressSeatedOrInvitedRefusal>[0] => ({
   ...(doors.records?.proposals === undefined ? {} : { proposals: doors.records.proposals }),
   ...(doors.records === undefined ? {} : { directory: doors.records.directory }),
   ...(doors.records?.roundsOnChain === undefined ? {} : { roundsOnChain: doors.records.roundsOnChain }),
   ...(doors.roster.reads.invitedSeats === undefined ? {} : { invitedSeats: doors.roster.reads.invitedSeats }),
   seated: coinKeysSeatedHere(doors.roster),
-  ...(chainTime === undefined ? {} : { chainTime }),
+  ...(chainTime === undefined ? {} : { chainTime })
 });

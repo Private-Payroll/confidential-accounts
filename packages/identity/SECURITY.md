@@ -10,7 +10,7 @@ does not resolve, that is a defect and worth reporting.
 ## Reporting a vulnerability
 
 **Please do not open a public issue.** Use GitHub's private vulnerability reporting on this
-repository — the *Security* tab, *Report a vulnerability* — which opens an advisory private to you
+repository — the _Security_ tab, _Report a vulnerability_ — which opens an advisory private to you
 and the maintainers. (How GitHub handles it is GitHub's behaviour, not this library's.)
 
 **There is no security email address for this project**, and the advisory flow above is the only
@@ -65,8 +65,8 @@ access to their funds, say so in the title.
   they can.**
 
 - **No extended public key above the leaf leaves this library, and that is a rule rather than an
-  omission.** Because role and index are not hardened, an extended *public* key at the account or
-  role node combined with any single child *private* key beneath it yields the parent private key —
+  omission.** Because role and index are not hardened, an extended _public_ key at the account or
+  role node combined with any single child _private_ key beneath it yields the parent private key —
   and therefore every sibling. **PINNED:** `packages/identity/src/security-claims.test.ts:77`, `:96`, a source scan
   that fails if any file outside the three tests that deliberately walk `@scure/bip32` names an HD
   node or an extended key. A watch-only balance view, a server-side verifier and an address export
@@ -142,11 +142,11 @@ access to their funds, say so in the title.
 - **A recovery piece carries the threshold and a fingerprint of the account it belongs to**, and
   **the rebuilt answer is checked.** Shamir itself has no integrity check and no knowledge of its own
   threshold, so without this a wrong number of pieces — or pieces from an older set of the same
-  person's — would rebuild *something*, and the person would be handed a valid wallet at a place
+  person's — would rebuild _something_, and the person would be handed a valid wallet at a place
   nobody has ever paid into. **PINNED:** `packages/identity/src/recovery/session.test.ts:209` (a piece from a foreign
   set is refused), `:270` (the threshold is read off the piece, not trusted from the caller),
   `packages/identity/src/recovery/pieces.test.ts:129` (a damaged share is caught by the fingerprint of what was
-  rebuilt — `wrong-secret`) and `:174` (two cuts of the *same* secret are refused as
+  rebuilt — `wrong-secret`) and `:174` (two cuts of the _same_ secret are refused as
   `pieces-from-different-sets`).
 
 - **A recovery session that has ended — finished or cancelled — carries none of its pieces.**
@@ -184,7 +184,7 @@ access to their funds, say so in the title.
   you like. **PINNED:** `packages/identity/src/devices/pairing.test.ts:222` (a reveal that does not match the
   commitment is refused), `:102` (the digits cannot be ground, because the commitment comes first),
   `:170` (the nonce cannot be ground either, because the old device answers once), `:519` (the digits
-  depend on both keys *and* the nonce), `:475` (300 distinct, unpredictable nonces), `:69` (nothing
+  depend on both keys _and_ the nonce), `:475` (300 distinct, unpredictable nonces), `:69` (nothing
   is sealed until a number has been shown) and `:321` (a code is one use on the receiving side too).
 
 ### Passkeys and sign-in
@@ -207,7 +207,7 @@ access to their funds, say so in the title.
   the request. **The signature is checked first, so a mismatch cannot be used to discover which
   accounts exist.** **PINNED, and the ordering specifically:** `packages/identity/src/passkey/verify.test.ts:293` (a
   sign-in claimed for the wrong person is refused) and `:335`, which supplies an input that is wrong
-  in *both* ways at once and requires the answer to be `bad-signature` — so moving the handle check
+  in _both_ ways at once and requires the answer to be `bad-signature` — so moving the handle check
   above the signature check turns it red.
 
 - **Replay is refused by a one-use challenge, and the challenge STORE is the thing that refuses
@@ -257,16 +257,16 @@ access to their funds, say so in the title.
   `packages/identity/src/security-claims.test.ts:148`, which derives this list from the source rather than trusting
   the prose below, and fails if a fourth file anywhere in the application names an absolute origin.
   - **The indexer**, for balances — `apps/wallet/src/config.ts:33`, `:38`. Asked **only when the person
-    presses *Check the balance***, and named on screen for that reason: asking it tells its
+    presses _Check the balance_**, and named on screen for that reason: asking it tells its
     operator this wallet's address.
   - **A stagenet RPC node**, through the SDK facade — `apps/wallet/src/chain/facade.ts`.
   - **`rehearsal.invalid`** — `apps/wallet/src/chain/rehearsal.ts`, deliberately unresolvable, so a rehearsal
     reaches nothing.
-  **AND SEPARATELY, FROM THIS WALLET'S OWN ORIGIN:** the proving-key manifest and the key artefacts
-  themselves, `apps/wallet/src/chain/key-material.ts:167`, `:227`, reached from the send path via
-  `apps/wallet/src/chain/proving.ts:61`. Same-origin and hash-pinned against a committed manifest, so it is not a
-  third party — but it **is** a network request, and an earlier draft of this file said there was
-  only one and named only the manifest. That is why the list above is derived and not written.
+    **AND SEPARATELY, FROM THIS WALLET'S OWN ORIGIN:** the proving-key manifest and the key artefacts
+    themselves, `apps/wallet/src/chain/key-material.ts:167`, `:227`, reached from the send path via
+    `apps/wallet/src/chain/proving.ts:61`. Same-origin and hash-pinned against a committed manifest, so it is not a
+    third party — but it **is** a network request, and an earlier draft of this file said there was
+    only one and named only the manifest. That is why the list above is derived and not written.
 
 ## Handling of secrets in this repository
 

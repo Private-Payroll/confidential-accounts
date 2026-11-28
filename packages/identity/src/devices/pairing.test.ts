@@ -5,15 +5,23 @@ import { x25519 } from '@noble/curves/ed25519.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import {
-  PAIRING_TTL_MS, PairingError, acceptKeys, answerCommitment, askToPair, beginOffer,
-  checkAndShow, digitsFor, publicKeyOf, revealAndShow, sealKeys,
+  PAIRING_TTL_MS,
+  PairingError,
+  acceptKeys,
+  answerCommitment,
+  askToPair,
+  beginOffer,
+  checkAndShow,
+  digitsFor,
+  publicKeyOf,
+  revealAndShow,
+  sealKeys
 } from './pairing.js';
 import type { PairingRequest } from './pairing.js';
 import { identityFromSecret, newSecret, secretFromWords, wordsFromSecret } from '../keys/derivation.js';
 import { fromBase64Url, toBase64Url } from '../passkey/bytes.js';
 
-const hex = (b: Uint8Array): string =>
-  Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+const hex = (b: Uint8Array): string => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
 const T0 = 1_700_000_000_000;
 const secret = secretFromWords(TEST_MNEMONIC);
@@ -43,7 +51,7 @@ function pair(now = T0, secretToSend: Uint8Array = secret) {
     reveal,
     keys,
     digits: reveal.digits,
-    onNewDevice,
+    onNewDevice
   };
 }
 
@@ -56,8 +64,7 @@ describe('adding a device by scanning a code', () => {
     const { secret: arrived } = acceptKeys(request, reveal.ephemeralPublic, keys, digits, T0);
     expect(hex(arrived)).toBe(hex(secret));
     expect(wordsFromSecret(arrived).join(' ')).toBe(TEST_MNEMONIC);
-    expect(identityFromSecret(arrived).money.zswap)
-      .toEqual(identityFromSecret(secret).money.zswap);
+    expect(identityFromSecret(arrived).money.zswap).toEqual(identityFromSecret(secret).money.zswap);
   });
 
   it('carries a freshly minted account just as well', () => {
@@ -121,8 +128,12 @@ describe('the relay, which is the attack this exists to stop', () => {
     const toRelayReveal = revealAndShow(toRelay.pending, relayAnswered.nonce, T0);
     const oldScreen = toRelayReveal.digits;
     const stolen = acceptKeys(
-      relayAnswered.request, toRelayReveal.ephemeralPublic,
-      sealKeys(toRelay.pending, secret, T0), oldScreen, T0);
+      relayAnswered.request,
+      toRelayReveal.ephemeralPublic,
+      sealKeys(toRelay.pending, secret, T0),
+      oldScreen,
+      T0
+    );
     expect(hex(stolen.secret)).toBe(hex(secret));
 
     /*
@@ -155,7 +166,8 @@ describe('the relay, which is the attack this exists to stop', () => {
      * the accepted draw, with the same bound it always had.
      */
     const drawHonestly = (): {
-      asked: PairingRequest; offer: ReturnType<typeof beginOffer>;
+      asked: PairingRequest;
+      offer: ReturnType<typeof beginOffer>;
       answered: ReturnType<typeof answerCommitment>;
       reveal: ReturnType<typeof revealAndShow>;
     } => {
@@ -190,13 +202,11 @@ describe('the relay, which is the attack this exists to stop', () => {
     let couldHaveCheated = 0;
     for (let i = 0; i < 4_000; i += 1) {
       const candidate = x25519.keygen();
-      if (digitsFor(candidate.publicKey, publicKeyOf(honest.secretKey), honestAnswered.nonce)
-        === oldScreen) {
+      if (digitsFor(candidate.publicKey, publicKeyOf(honest.secretKey), honestAnswered.nonce) === oldScreen) {
         couldHaveCheated += 1;
         const forged = { ephemeralPublic: toBase64Url(candidate.publicKey), digits: oldScreen };
         /* Found a key with the right number — and it is not the one committed. */
-        refuses(
-          () => checkAndShow(honestAnswered.request, forged.ephemeralPublic, T0), 'commitment-broken');
+        refuses(() => checkAndShow(honestAnswered.request, forged.ephemeralPublic, T0), 'commitment-broken');
       }
     }
     /* Every one of them was refused, by the commitment rather than by luck. */
@@ -205,10 +215,16 @@ describe('the relay, which is the attack this exists to stop', () => {
     /* Playing honestly, the relay's number differs and the person sees it - so the
      * number they confirmed off the old screen is one this device can refuse. */
     refuses(
-      () => acceptKeys(
-        honestAnswered.request, onwardReveal.ephemeralPublic,
-        sealKeys(onward.pending, stolen.secret, T0), oldScreen, T0),
-      'digits-do-not-match');
+      () =>
+        acceptKeys(
+          honestAnswered.request,
+          onwardReveal.ephemeralPublic,
+          sealKeys(onward.pending, stolen.secret, T0),
+          oldScreen,
+          T0
+        ),
+      'digits-do-not-match'
+    );
   });
 
   it('CANNOT GRIND THE NONCE EITHER, because the old device answers once', () => {
@@ -244,13 +260,11 @@ describe('the relay, which is the attack this exists to stop', () => {
     let ground: string | null = null;
     for (let i = 0; i < 5_000 && ground === null; i += 1) {
       const candidate = toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
-      if (digitsFor(
-        fromBase64Url(learnedKey), publicKeyOf(asked.secretKey), candidate) === target) {
+      if (digitsFor(fromBase64Url(learnedKey), publicKeyOf(asked.secretKey), candidate) === target) {
         ground = candidate;
       }
     }
-    expect(ground, 'a nonce hitting the target is easy to find — that is the point')
-      .not.toBeNull();
+    expect(ground, 'a nonce hitting the target is easy to find — that is the point').not.toBeNull();
 
     /*
      * And it is worth nothing, because the old device will not answer again —
@@ -287,11 +301,9 @@ describe('the relay, which is the attack this exists to stop', () => {
 
     /* Confirm a number that is not the one on either screen, and it stops. */
     const wrong = String((Number(onThisDevice) + 1) % 100).padStart(2, '0');
-    refuses(() => acceptKeys(request, reveal.ephemeralPublic, keys, wrong, T0),
-      'digits-do-not-match');
+    refuses(() => acceptKeys(request, reveal.ephemeralPublic, keys, wrong, T0), 'digits-do-not-match');
     /* Confirm the right one and it goes through. */
-    expect(hex(acceptKeys(request, reveal.ephemeralPublic, keys, onThisDevice, T0).secret))
-      .toBe(hex(secret));
+    expect(hex(acceptKeys(request, reveal.ephemeralPublic, keys, onThisDevice, T0).secret)).toBe(hex(secret));
   });
 
   it('refuses a number that is right for a DIFFERENT exchange', () => {
@@ -322,7 +334,8 @@ describe('the relay, which is the attack this exists to stop', () => {
 
     refuses(
       () => acceptKeys(first.request, first.reveal.ephemeralPublic, first.keys, second.digits, T0),
-      'digits-do-not-match');
+      'digits-do-not-match'
+    );
   });
 
   it('is one chance in a hundred, and that is the accepted cost — not a bug', () => {
@@ -349,8 +362,7 @@ describe('the relay, which is the attack this exists to stop', () => {
      * so the 1% claim simply did not apply to them. A statistical test needs
      * statistical inputs.
      */
-    const pick = (): Uint8Array =>
-      pool[crypto.getRandomValues(new Uint32Array(1))[0]! % pool.length] as Uint8Array;
+    const pick = (): Uint8Array => pool[crypto.getRandomValues(new Uint32Array(1))[0]! % pool.length] as Uint8Array;
 
     let agreed = 0;
     for (let i = 0; i < 2_000; i += 1) {
@@ -386,8 +398,7 @@ describe('what a pairing refuses', () => {
      */
     const honest = askToPair(T0);
     const bytes = fromBase64Url(honest.code);
-    new DataView(bytes.buffer, bytes.byteOffset)
-      .setBigUint64(33, BigInt(T0 + 100 * 365 * 24 * 3600 * 1000), false);
+    new DataView(bytes.buffer, bytes.byteOffset).setBigUint64(33, BigInt(T0 + 100 * 365 * 24 * 3600 * 1000), false);
     refuses(() => beginOffer(toBase64Url(bytes), T0), 'lives-too-long');
   });
 
@@ -405,13 +416,8 @@ describe('what a pairing refuses', () => {
     const answered = answerCommitment(asked, begun.message, T0 + 59_000);
     const reveal = revealAndShow(begun.pending, answered.nonce, T0 + 59_000);
     const keys = sealKeys(begun.pending, secret, T0 + 59_000);
-    refuses(
-      () => acceptKeys(
-        answered.request, reveal.ephemeralPublic, keys, reveal.digits, T0 + 60_000),
-      'expired');
-    expect(() => acceptKeys(
-      answered.request, reveal.ephemeralPublic, keys, reveal.digits, T0 + 59_999))
-      .not.toThrow();
+    refuses(() => acceptKeys(answered.request, reveal.ephemeralPublic, keys, reveal.digits, T0 + 60_000), 'expired');
+    expect(() => acceptKeys(answered.request, reveal.ephemeralPublic, keys, reveal.digits, T0 + 59_999)).not.toThrow();
   });
 
   it('refuses sealed keys altered anywhere on the way', () => {
@@ -486,17 +492,15 @@ describe('what a pairing refuses', () => {
 
     /* It decrypts. That is the point — and it is still refused. */
     refuses(
-      () => acceptKeys(answered.request, reveal.ephemeralPublic,
-        { sealed: toBase64Url(sealed) }, reveal.digits, T0),
-      'will-not-open');
+      () => acceptKeys(answered.request, reveal.ephemeralPublic, { sealed: toBase64Url(sealed) }, reveal.digits, T0),
+      'will-not-open'
+    );
   });
 
   it('refuses a reveal that is not a key at all', () => {
     const { request, keys, digits } = pair();
     for (const bad of [toBase64Url(new Uint8Array(31)), '', 'AAAA']) {
-      refuses(
-        () => acceptKeys(request, bad, keys, digits, T0),
-        'not-an-offer');
+      refuses(() => acceptKeys(request, bad, keys, digits, T0), 'not-an-offer');
     }
   });
 
@@ -543,8 +547,7 @@ describe('the randomness the digits stand on', () => {
      * claimed the new device's half.
      */
     const asked = askToPair(T0);
-    const keys = Array.from({ length: 200 }, () =>
-      beginOffer(asked.code, T0).pending.ephemeralPublic).map(hex);
+    const keys = Array.from({ length: 200 }, () => beginOffer(asked.code, T0).pending.ephemeralPublic).map(hex);
     expect(new Set(keys).size).toBe(200);
   });
 
@@ -623,8 +626,7 @@ describe('the two digits', () => {
     const nonce = toBase64Url(new Uint8Array(16).fill(3));
     const seen = new Map<string, number>();
     for (let i = 0; i < 600; i += 1) {
-      const d = digitsFor(
-        publicKeyOf(askToPair(T0).secretKey), publicKeyOf(askToPair(T0).secretKey), nonce);
+      const d = digitsFor(publicKeyOf(askToPair(T0).secretKey), publicKeyOf(askToPair(T0).secretKey), nonce);
       expect(d).toMatch(/^\d{2}$/u);
       seen.set(d, (seen.get(d) ?? 0) + 1);
     }

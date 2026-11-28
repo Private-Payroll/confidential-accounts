@@ -8,17 +8,33 @@ import { readsAnswered, serviceRead, SERVICE_READ_BOUND_MS } from './read-bound.
  * bound has not run out; it keeps waiting past its bound; it waits for a read that was started after it was
  * asked, or for a read that has answered, refused or run out of time; or a read is held in flight after it ended.
  */
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const pending = () => {
   let answer!: (v: string) => void;
   let refuse!: (e: Error) => void;
-  const work = () => new Promise<string>((a, r) => { answer = a; refuse = r; });
-  return { work, answer: (v: string) => { answer(v); }, refuse: (e: Error) => { refuse(e); } };
+  const work = () =>
+    new Promise<string>((a, r) => {
+      answer = a;
+      refuse = r;
+    });
+  return {
+    work,
+    answer: (v: string) => {
+      answer(v);
+    },
+    refuse: (e: Error) => {
+      refuse(e);
+    }
+  };
 };
 const isDone = async (p: Promise<void>): Promise<boolean> => {
   let done = false;
-  void p.then(() => { done = true; });
+  void p.then(() => {
+    done = true;
+  });
   await vi.advanceTimersByTimeAsync(0);
   return done;
 };

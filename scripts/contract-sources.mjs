@@ -36,9 +36,27 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
  * contract is compiled after every contract it links to.
  */
 export const CONTRACT_TABLE = {
-  account: { source: 'contracts/src/ConfidentialAccount.compact', compiled: 'contracts/managed', name: 'ConfidentialAccount', builtFrom: ['account', 'witnesses'], links: {} },
-  vault: { source: 'contracts/src/Vault.compact', compiled: 'contracts/managed-vault', name: 'Vault', builtFrom: ['vault', 'account', 'witnesses'], links: { Acct: 'account' } },
-  registry: { source: 'contracts/src/PrivateRegistry.compact', compiled: 'contracts/managed-registry', name: 'PrivateRegistry', builtFrom: ['registry'], links: {} },
+  account: {
+    source: 'contracts/src/ConfidentialAccount.compact',
+    compiled: 'contracts/managed',
+    name: 'ConfidentialAccount',
+    builtFrom: ['account', 'witnesses'],
+    links: {}
+  },
+  vault: {
+    source: 'contracts/src/Vault.compact',
+    compiled: 'contracts/managed-vault',
+    name: 'Vault',
+    builtFrom: ['vault', 'account', 'witnesses'],
+    links: { Acct: 'account' }
+  },
+  registry: {
+    source: 'contracts/src/PrivateRegistry.compact',
+    compiled: 'contracts/managed-registry',
+    name: 'PrivateRegistry',
+    builtFrom: ['registry'],
+    links: {}
+  }
 };
 
 /** The witnesses' file: a part a contract's compiled copy can be built from besides the contracts. */
@@ -62,18 +80,22 @@ export function tableRefusals(table) {
     if (!Array.isArray(row.builtFrom)) out.push(`${k}: builtFrom is missing`);
     else {
       if (!row.builtFrom.includes(k)) out.push(`${k}: builtFrom leaves out the contract itself`);
-      for (const p of row.builtFrom) if (p !== 'witnesses' && !order.includes(p)) out.push(`${k}: builtFrom names ${p}, which is no row`);
+      for (const p of row.builtFrom)
+        if (p !== 'witnesses' && !order.includes(p)) out.push(`${k}: builtFrom names ${p}, which is no row`);
     }
-    if (row.links === null || typeof row.links !== 'object' || Array.isArray(row.links)) out.push(`${k}: links is missing`);
+    if (row.links === null || typeof row.links !== 'object' || Array.isArray(row.links))
+      out.push(`${k}: links is missing`);
     else {
       for (const [f, to] of Object.entries(row.links)) {
-        if (!order.slice(0, i).includes(to)) out.push(`${k}: links ${f} to ${to}, which is not a row compiled before it`);
+        if (!order.slice(0, i).includes(to))
+          out.push(`${k}: links ${f} to ${to}, which is not a row compiled before it`);
       }
     }
   }
   for (const f of ['source', 'compiled']) {
     const seen = rows.map(([, c]) => c?.[f]).filter((v) => typeof v === 'string');
-    for (const v of new Set(seen)) if (seen.filter((x) => x === v).length > 1) out.push(`${f} ${v} is held by two rows`);
+    for (const v of new Set(seen))
+      if (seen.filter((x) => x === v).length > 1) out.push(`${f} ${v} is held by two rows`);
   }
   return out;
 }
@@ -90,7 +112,7 @@ export const COMPILED_INTO = Object.fromEntries(Object.entries(CONTRACT_TABLE).m
 /** The code with comments and spacing taken out. Strings are kept whole, so a // inside one stays. */
 export function codeOf(text) {
   let out = '';
-  for (let i = 0; i < text.length; ) {
+  for (let i = 0; i < text.length;) {
     const c = text[i];
     if (c === '"' || c === "'" || c === '`') {
       let j = i + 1;
@@ -115,8 +137,10 @@ export function codeOf(text) {
 /** Comments, and strings too when `strings` is set (quotes included), blanked to spaces; offsets and lines kept. */
 export function blank(src, strings) {
   const out = src.split('');
-  const wipe = (from, to) => { for (let k = from; k < to && k < out.length; k += 1) if (out[k] !== '\n') out[k] = ' '; };
-  for (let i = 0; i < src.length; ) {
+  const wipe = (from, to) => {
+    for (let k = from; k < to && k < out.length; k += 1) if (out[k] !== '\n') out[k] = ' ';
+  };
+  for (let i = 0; i < src.length;) {
     if (src.startsWith('/*', i)) {
       const e = src.indexOf('*/', i + 2);
       const end = e < 0 ? src.length : e + 2;
@@ -147,14 +171,19 @@ export function statementsOf(text, file) {
   for (const m of bare.matchAll(/\b(import|include)\b/g)) {
     const at = m.index ?? 0;
     const end = bare.indexOf(';', at);
-    const stmt = code.slice(at, end < 0 ? code.length : end + 1).replace(/\s+/g, ' ').trim();
+    const stmt = code
+      .slice(at, end < 0 ? code.length : end + 1)
+      .replace(/\s+/g, ' ')
+      .trim();
     const line = lineAt(text, at);
     const byPath = /^(?:import|include) "([^"\\]*)" ?;$/.exec(stmt);
     if (byPath) found.push({ line, text: stmt, path: byPath[1] });
     else if (/^import CompactStandardLibrary ?;$/.test(stmt)) found.push({ line, text: stmt });
     else {
-      throw new Error(`${file}:${line}: \`${stmt}\` brings a file in by a form the contract's source list does not read; ` +
-        'write it as import "<path>"; (or include "<path>";), so every reader of the contract sees the file');
+      throw new Error(
+        `${file}:${line}: \`${stmt}\` brings a file in by a form the contract's source list does not read; ` +
+          'write it as import "<path>"; (or include "<path>";), so every reader of the contract sees the file'
+      );
     }
   }
   return found;
@@ -164,7 +193,10 @@ export function statementsOf(text, file) {
 export function contractSources(root, main) {
   const out = [];
   const walk = (file, chain) => {
-    if (chain.includes(file)) throw new Error(`${file} is brought in by a file it brings in (${[...chain, file].join(' -> ')}); break the cycle`);
+    if (chain.includes(file))
+      throw new Error(
+        `${file} is brought in by a file it brings in (${[...chain, file].join(' -> ')}); break the cycle`
+      );
     if (out.includes(file)) return;
     const abs = posix.join(root.split('\\').join('/'), file);
     if (!existsSync(abs)) {
@@ -175,9 +207,13 @@ export function contractSources(root, main) {
     for (const s of statementsOf(readFileSync(abs, 'utf8'), file)) {
       if (s.path === undefined) continue;
       const where = `${file}:${s.line}`;
-      if (s.path.startsWith('/')) throw new Error(`${where}: \`${s.text}\` names an absolute path; name it from ${posix.dirname(file)}/`);
+      if (s.path.startsWith('/'))
+        throw new Error(`${where}: \`${s.text}\` names an absolute path; name it from ${posix.dirname(file)}/`);
       const next = posix.normalize(posix.join(posix.dirname(file), `${s.path}.compact`));
-      if (!next.startsWith('contracts/src/')) throw new Error(`${where}: \`${s.text}\` reaches ${next}, outside contracts/src/; keep every contract file under contracts/src/`);
+      if (!next.startsWith('contracts/src/'))
+        throw new Error(
+          `${where}: \`${s.text}\` reaches ${next}, outside contracts/src/; keep every contract file under contracts/src/`
+        );
       walk(next, [...chain, file]);
     }
   };
@@ -197,15 +233,22 @@ export function moduleStateOf(text, file) {
     [/\b(?:export\s+)?(?:sealed\s+)?ledger\s+[A-Za-z_]/g, 'declares a ledger field'],
     [/\bwitness\s+[A-Za-z_]/g, 'declares a witness'],
     [/\bkernel\s*\./g, 'reaches the kernel'],
-    [/\b(?:receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|ownPublicKey)\s*\(/g, 'calls a circuit that moves money or reads the caller'],
+    [
+      /\b(?:receiveUnshielded|sendUnshielded|mintUnshieldedToken|receiveShielded|sendShielded|sendImmediateShielded|mintShieldedToken|mergeCoin|mergeCoinImmediate|createZswapInput|createZswapOutput|ownPublicKey)\s*\(/g,
+      'calls a circuit that moves money or reads the caller'
+    ]
   ];
-  for (const [re, what] of rule) for (const m of code.matchAll(re)) said.push(`${file}:${lineAt(text, m.index ?? 0)}: ${what}; keep it in the main file`);
+  for (const [re, what] of rule)
+    for (const m of code.matchAll(re))
+      said.push(`${file}:${lineAt(text, m.index ?? 0)}: ${what}; keep it in the main file`);
   return said;
 }
 
 /** Every file of the list, read and joined, for a reader that searches the contract's whole text. */
 export const contractSourceText = (root, main) =>
-  contractSources(root, main).map((f) => readFileSync(posix.join(root.split('\\').join('/'), f), 'utf8')).join('\n');
+  contractSources(root, main)
+    .map((f) => readFileSync(posix.join(root.split('\\').join('/'), f), 'utf8'))
+    .join('\n');
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
@@ -220,7 +263,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       const row = CONTRACT_TABLE[args[1]];
       if (!row) throw new Error(`no contract called "${args[1]}" in the table`);
       for (const p of row.builtFrom) {
-        for (const f of p === 'witnesses' ? [WITNESSES] : contractSources(ROOT, CONTRACT_TABLE[p].source)) console.log(f);
+        for (const f of p === 'witnesses' ? [WITNESSES] : contractSources(ROOT, CONTRACT_TABLE[p].source))
+          console.log(f);
       }
       process.exit(0);
     }
@@ -231,7 +275,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     }
     const root = args[0] === '--root' ? args[1] : ROOT;
     const main = args[0] === '--root' ? args[2] : args[0];
-    if (!main) throw new Error('usage: node scripts/contract-sources.mjs [--root <folder>] <main.compact> | --table | --built-from <contract>');
+    if (!main)
+      throw new Error(
+        'usage: node scripts/contract-sources.mjs [--root <folder>] <main.compact> | --table | --built-from <contract>'
+      );
     for (const f of contractSources(root, main)) console.log(f);
   } catch (e) {
     console.error(`contract-sources: ${e.message}`);

@@ -19,8 +19,11 @@ import { mayInvite } from '../../../src/midnight/seat-directory.js';
  * inviter checked, so an inviter who has left since strands nobody waiting to
  * be admitted.
  */
-export const signedByASeatHeld = (invited: SignedSeatInvitation, seats: readonly DirectoryWitness[], leafOnTheChain = false): boolean =>
-  inviterRefusalOf(invited, seats, leafOnTheChain) === null;
+export const signedByASeatHeld = (
+  invited: SignedSeatInvitation,
+  seats: readonly DirectoryWitness[],
+  leafOnTheChain = false
+): boolean => inviterRefusalOf(invited, seats, leafOnTheChain) === null;
 
 /**
  * **WHY THE SEAT THAT SIGNED `invited` INVITES NOBODY**, or null when it may:
@@ -29,15 +32,20 @@ export const signedByASeatHeld = (invited: SignedSeatInvitation, seats: readonly
  * leaf the request is for (`leafOnTheChain`), on any seat it believes.
  */
 export const inviterRefusalOf = (
-  invited: SignedSeatInvitation, seats: readonly DirectoryWitness[], leafOnTheChain = false,
+  invited: SignedSeatInvitation,
+  seats: readonly DirectoryWitness[],
+  leafOnTheChain = false
 ): 'not-seated' | 'may-not-invite' | null => {
-  const inviter = seats.find((x) => x.signingKey.toLowerCase() === invited.signedBy.toLowerCase() && (leafOnTheChain || !x.retired));
+  const inviter = seats.find(
+    (x) => x.signingKey.toLowerCase() === invited.signedBy.toLowerCase() && (leafOnTheChain || !x.retired)
+  );
   if (inviter === undefined) return 'not-seated';
   return mayInvite(inviter) ? null : 'may-not-invite';
 };
 
 /** The way out every refusal of an invitation by address names. */
-const RAISE_IT_AGAIN = 'Withdraw this proposal, and raise the invitation again from the device of a seated signer who may invite.';
+const RAISE_IT_AGAIN =
+  'Withdraw this proposal, and raise the invitation again from the device of a seated signer who may invite.';
 
 /**
  * **WHAT A SIGNER APPROVES WHEN THEY APPROVE AN INVITATION IS WHAT THE SEAT
@@ -57,7 +65,10 @@ const RAISE_IT_AGAIN = 'Withdraw this proposal, and raise the invitation again f
  * device before it approves.
  */
 export const invitationByAddressRefusal = (
-  company: string, invited: unknown, invite: { readonly address?: unknown; readonly scope?: unknown }, seats: readonly DirectoryWitness[],
+  company: string,
+  invited: unknown,
+  invite: { readonly address?: unknown; readonly scope?: unknown },
+  seats: readonly DirectoryWitness[]
 ): string | null => {
   if (seatInvitationRefusal(invited) !== null) {
     return `This proposal does not carry an invitation signed by the seat that invited, so this device does not act on it. ${RAISE_IT_AGAIN}`;
@@ -79,19 +90,26 @@ export const invitationByAddressRefusal = (
   const inviter = seats.find((x) => !x.retired && x.signingKey.toLowerCase() === signed.signedBy.toLowerCase());
   const wider = vaultsOfferedRefusal(inviter?.rights ?? NO_VAULT_COUNTED, t.vaults);
   if (wider !== null) return `This device does not act on this invitation: ${wider}. ${RAISE_IT_AGAIN}`;
-  if (String(invite.address).toLowerCase() !== t.invite.address.toLowerCase() || String(invite.scope).toLowerCase() !== t.invite.scope.toLowerCase()) {
-    return 'The address or the rights this proposal invites are not the ones the seat that invited signed, so this device does not '
-      + `approve it. Do not approve it. ${RAISE_IT_AGAIN}`;
+  if (
+    String(invite.address).toLowerCase() !== t.invite.address.toLowerCase() ||
+    String(invite.scope).toLowerCase() !== t.invite.scope.toLowerCase()
+  ) {
+    return (
+      'The address or the rights this proposal invites are not the ones the seat that invited signed, so this device does not ' +
+      `approve it. Do not approve it. ${RAISE_IT_AGAIN}`
+    );
   }
   return null;
 };
 
 /** What a device says for each way an invitation is not the one its approvers agreed to (`approvedInvitationRefusal`). */
 export const NOT_APPROVED_SAID: Readonly<Record<NotApproved, string>> = Object.freeze({
-  'not-raised': 'The invitation this proposal carries names no proposal raised for the address it seats, so the approvers would not be agreeing to its role',
-  'not-its-salt': 'The salt this proposal is raised under is not the one its invitation makes, so the proposal would not commit to the person, name and role invited',
+  'not-raised':
+    'The invitation this proposal carries names no proposal raised for the address it seats, so the approvers would not be agreeing to its role',
+  'not-its-salt':
+    'The salt this proposal is raised under is not the one its invitation makes, so the proposal would not commit to the person, name and role invited',
   'not-its-proposal': 'The proposal this invitation names is not the one its address, rights, threshold and salt make',
-  'another-leaf': 'The seat this invitation names is not the one the network shows its proposal took',
+  'another-leaf': 'The seat this invitation names is not the one the network shows its proposal took'
 });
 
 /**
@@ -111,30 +129,51 @@ export const NOT_APPROVED_SAID: Readonly<Record<NotApproved, string>> = Object.f
  * person accepted, for the person.
  */
 export const linkInvitationRefusal = (
-  accountId: string, invited: SignedSeatInvitation, waiting: Pick<PendingSignerPayload, 'leafCommitment' | 'invited' | 'opening' | 'seatAddress'>,
-  inviteAddressOf: InviteAddressOf | null,
+  accountId: string,
+  invited: SignedSeatInvitation,
+  waiting: Pick<PendingSignerPayload, 'leafCommitment' | 'invited' | 'opening' | 'seatAddress'>,
+  inviteAddressOf: InviteAddressOf | null
 ): string | null => {
   const t = invited.terms;
   const w = waiting.invited?.terms;
-  const vaultsOf = (x: { readonly vaults?: readonly string[] }) => canonical((x.vaults ?? []).map((v) => v.toLowerCase()));
-  if (w === undefined || t.leaf?.toLowerCase() !== waiting.leafCommitment.toLowerCase() || t.role !== w.role || vaultsOf(t) !== vaultsOf(w)
-    || t.person !== w.person || t.name !== w.name || String(waiting.opening?.scope).toLowerCase() !== t.invite?.scope.toLowerCase()) {
-    return 'The invitation this proposal carries does not give the seat, role, vaults, person or name of the person waiting for it, so this '
-      + 'device does not approve it. Do not approve it. Withdraw it, and invite the person again.';
+  const vaultsOf = (x: { readonly vaults?: readonly string[] }) =>
+    canonical((x.vaults ?? []).map((v) => v.toLowerCase()));
+  if (
+    w === undefined ||
+    t.leaf?.toLowerCase() !== waiting.leafCommitment.toLowerCase() ||
+    t.role !== w.role ||
+    vaultsOf(t) !== vaultsOf(w) ||
+    t.person !== w.person ||
+    t.name !== w.name ||
+    String(waiting.opening?.scope).toLowerCase() !== t.invite?.scope.toLowerCase()
+  ) {
+    return (
+      'The invitation this proposal carries does not give the seat, role, vaults, person or name of the person waiting for it, so this ' +
+      'device does not approve it. Do not approve it. Withdraw it, and invite the person again.'
+    );
   }
   if (t.invite?.threshold !== undefined) return LINK_SEAT_SETS_NO_THRESHOLD;
-  const signed = seatAddressSignedFor(waiting.seatAddress, waiting.opening?.walletKey, accountId, waiting.leafCommitment, inviteAddressOf);
+  const signed = seatAddressSignedFor(
+    waiting.seatAddress,
+    waiting.opening?.walletKey,
+    accountId,
+    waiting.leafCommitment,
+    inviteAddressOf
+  );
   if (typeof signed === 'string') return NO_SIGNED_ADDRESS;
   if (t.invite?.address.toLowerCase() !== signed.address || t.invite.salt.toLowerCase() !== signed.salt) {
-    return 'The address this proposal would seat is not the one the person waiting signed with their own wallet, so whoever holds it '
-      + 'would take the seat. This device does not approve it. Do not approve it. Withdraw it, and raise the person\'s seat again '
-      + 'from the device of a seated signer who may invite.';
+    return (
+      'The address this proposal would seat is not the one the person waiting signed with their own wallet, so whoever holds it ' +
+      "would take the seat. This device does not approve it. Do not approve it. Withdraw it, and raise the person's seat again " +
+      'from the device of a seated signer who may invite.'
+    );
   }
   return null;
 };
 
 /** Why a proposal to seat a person who joined by a link or a code is refused when it sets a new threshold, and what clears it. */
-const LINK_SEAT_SETS_NO_THRESHOLD = 'This proposal sets the approvals the company needs once the seat is taken, and a seat for a '
-  + 'person who joined by a link or a code keeps the approvals in force and shows no new number to anybody approving it, so this '
-  + 'device does not approve it. Do not approve it. Withdraw it, and raise the person\'s seat again without a change to the '
-  + 'approvals needed; to change them with the seat, invite the person by their private address.';
+const LINK_SEAT_SETS_NO_THRESHOLD =
+  'This proposal sets the approvals the company needs once the seat is taken, and a seat for a ' +
+  'person who joined by a link or a code keeps the approvals in force and shows no new number to anybody approving it, so this ' +
+  "device does not approve it. Do not approve it. Withdraw it, and raise the person's seat again without a change to the " +
+  'approvals needed; to change them with the seat, invite the person by their private address.';

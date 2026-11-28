@@ -42,15 +42,19 @@ import { ORIGIN } from './config.js';
 const FRAMED_PHASES: ReadonlySet<string> = new Set(['welcome', 'locked', 'unlocked']);
 
 const FRAMED_ELSEWHERE =
-  'only an approval opens inside another page. Everything else in your wallet opens in a tab of '
-  + 'its own, where you can see its address.';
+  'only an approval opens inside another page. Everything else in your wallet opens in a tab of ' +
+  'its own, where you can see its address.';
 
 function FramedRefusal({ says }: { readonly says: string }): ReactNode {
   return (
     <>
       <h1 data-framed-refusal>Open your wallet on its own</h1>
       <p className="lede">{says.charAt(0).toUpperCase() + says.slice(1)}</p>
-      <p><a href={`${ORIGIN}/`} target="_blank" rel="noopener noreferrer">Open your wallet in a new tab</a></p>
+      <p>
+        <a href={`${ORIGIN}/`} target="_blank" rel="noopener noreferrer">
+          Open your wallet in a new tab
+        </a>
+      </p>
     </>
   );
 }
@@ -76,13 +80,18 @@ function Stacked({ children }: { readonly children: ReactNode }): ReactNode {
 /** The way in, for every phase that is not "in". Null only when unlocked. */
 function entryFor(phase: Phase): ReactNode | null {
   switch (phase.name) {
-    case 'welcome': return <Welcome />;
-    case 'locked': return <Unlock />;
+    case 'welcome':
+      return <Welcome />;
+    case 'locked':
+      return <Unlock />;
     case 'account-no-passkey':
       return <AccountNoPasskey recordDamaged={phase.recordDamaged} />;
-    case 'passkey-no-account': return <PasskeyNoAccount />;
-    case 'broken': return <Broken message={phase.message} />;
-    default: return null;
+    case 'passkey-no-account':
+      return <PasskeyNoAccount />;
+    case 'broken':
+      return <Broken message={phase.message} />;
+    default:
+      return null;
   }
 }
 
@@ -129,7 +138,9 @@ export function App(): ReactNode {
    * seen by the next one.
    */
   const phaseNow = useRef(phase);
-  useEffect(() => { phaseNow.current = phase; }, [phase]);
+  useEffect(() => {
+    phaseNow.current = phase;
+  }, [phase]);
   const unlockedIdentity = phase.name === 'unlocked' ? phase.identity : null;
   useEffect(() => {
     if (unlockedIdentity === null) {
@@ -173,14 +184,33 @@ export function App(): ReactNode {
    * phase whose screen offers to start again, re-enrol a passkey or repair the
    * wallet, each of which stays a thing done in the wallet's own tab.
    */
-  if (FRAMING.of === 'refused') return <Shell bare><FramedRefusal says={FRAMING.why} /></Shell>;
+  if (FRAMING.of === 'refused')
+    return (
+      <Shell bare>
+        <FramedRefusal says={FRAMING.why} />
+      </Shell>
+    );
   if (FRAMING.of === 'framed' && (route.name !== 'approve' || !FRAMED_PHASES.has(phase.name))) {
-    return <Shell bare><FramedRefusal says={FRAMED_ELSEWHERE} /></Shell>;
+    return (
+      <Shell bare>
+        <FramedRefusal says={FRAMED_ELSEWHERE} />
+      </Shell>
+    );
   }
 
-  if (route.name === 'kit') return <Shell widePage><Kit /></Shell>;
+  if (route.name === 'kit')
+    return (
+      <Shell widePage>
+        <Kit />
+      </Shell>
+    );
 
-  if (phase.name === 'unsupported') return <Shell narrow><Unsupported /></Shell>;
+  if (phase.name === 'unsupported')
+    return (
+      <Shell narrow>
+        <Unsupported />
+      </Shell>
+    );
 
   /* Broken owns the window — except the two routes that are exactly the
    * doors out of it: recovery, and (a decision, now taken) receiving the
@@ -188,7 +218,11 @@ export function App(): ReactNode {
    * corpse that is here, and both stand their landing behind the three-way
    * The landing gate, which for a broken browser names the stored wallet honestly. */
   if (phase.name === 'broken' && route.name !== 'recover' && route.name !== 'add-device') {
-    return <Shell narrow><Broken message={phase.message} /></Shell>;
+    return (
+      <Shell narrow>
+        <Broken message={phase.message} />
+      </Shell>
+    );
   }
 
   switch (route.name) {
@@ -270,7 +304,11 @@ export function App(): ReactNode {
       return <Shell narrow>{entryFor(phase)}</Shell>;
     }
     case 'not-found':
-      return <Shell narrow><NotFound path={route.path} /></Shell>;
+      return (
+        <Shell narrow>
+          <NotFound path={route.path} />
+        </Shell>
+      );
     case 'send': {
       /* Acts on an unlocked account and on nothing else — money-adjacent
        * screens acquire the phase guard on arrival, never as a retrofit.
@@ -335,7 +373,13 @@ export function App(): ReactNode {
      */
     case 'profile': {
       if (phase.name === 'unlocked') {
-        return <Shell><Stacked><ProfileScreen identity={phase.identity} /></Stacked></Shell>;
+        return (
+          <Shell>
+            <Stacked>
+              <ProfileScreen identity={phase.identity} />
+            </Stacked>
+          </Shell>
+        );
       }
       return <Shell narrow>{entryFor(phase)}</Shell>;
     }
@@ -343,7 +387,9 @@ export function App(): ReactNode {
       if (phase.name === 'unlocked') {
         return (
           <Shell bare={FRAMING.of === 'framed'}>
-            <Stacked><Approve identity={phase.identity} secret={phase.secret} /></Stacked>
+            <Stacked>
+              <Approve identity={phase.identity} secret={phase.secret} />
+            </Stacked>
           </Shell>
         );
       }
@@ -378,7 +424,12 @@ export function App(): ReactNode {
      * Settings. */
     case 'address-book': {
       /* Acts on an unlocked account and on nothing else. */
-      if (phase.name === 'unlocked') return <Shell narrow><NotBuilt route={route.name} /></Shell>;
+      if (phase.name === 'unlocked')
+        return (
+          <Shell narrow>
+            <NotBuilt route={route.name} />
+          </Shell>
+        );
       return <Shell narrow>{entryFor(phase)}</Shell>;
     }
     case 'recover': {
@@ -403,7 +454,11 @@ export function App(): ReactNode {
           </Shell>
         );
       }
-      return <Shell narrow><Recover /></Shell>;
+      return (
+        <Shell narrow>
+          <Recover />
+        </Shell>
+      );
     }
     case 'add-device': {
       /* One route, two roles, decided by what this browser holds. Unlocked,
@@ -429,7 +484,11 @@ export function App(): ReactNode {
           </Shell>
         );
       }
-      return <Shell narrow><ReceiveDevice /></Shell>;
+      return (
+        <Shell narrow>
+          <ReceiveDevice />
+        </Shell>
+      );
     }
   }
 }

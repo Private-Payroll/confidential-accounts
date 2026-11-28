@@ -8,7 +8,11 @@ import { FEE_SPONSORED, FEE_SPONSORED_DONE, listsRoute } from 'midnight-identity
 import type { RecordWrite } from '../../../../packages/web-shared/src/records-source.js';
 import { THROUGH_THE_SERVICE, type ChainCall, type HandOver } from '../../../../packages/web-shared/src/hand-over.js';
 import { OUR_SERVICE, serviceAddressRefusal } from '../../../../src/midnight/company-service-record.js';
-import { provenOnTheChainAlready, straightFromTheOwnWallet, type FeeAndSubmit } from '../chain/sent-straight-to-the-chain.js';
+import {
+  provenOnTheChainAlready,
+  straightFromTheOwnWallet,
+  type FeeAndSubmit
+} from '../chain/sent-straight-to-the-chain.js';
 import { toTheCompanysService } from '../chain/sent-to-the-companys-service.js';
 import type { ServiceRead } from './company-service-read.js';
 import type { CompanyChain } from './company-reach.js';
@@ -17,11 +21,22 @@ import { dustFromSpecks, exactSpecks } from '../chain/amount.js';
 import { fellBackLine, type FellBack } from './fall-back-line.js';
 
 /** `sponsor`, its telling that this wallet is done with a call kept in `owed` for after the send, not made inside it. */
-const doneAfterTheSend = (sponsor: NonNullable<FeeAndSubmit['sponsor']>, owed: (() => Promise<void>)[]): NonNullable<FeeAndSubmit['sponsor']> =>
+const doneAfterTheSend =
+  (
+    sponsor: NonNullable<FeeAndSubmit['sponsor']>,
+    owed: (() => Promise<void>)[]
+  ): NonNullable<FeeAndSubmit['sponsor']> =>
   async (tx, expected) => {
     const back = await sponsor(tx, expected);
     const done = back.done;
-    return done === undefined ? back : { tx: back.tx, done: async () => { owed.push(done); } };
+    return done === undefined
+      ? back
+      : {
+          tx: back.tx,
+          done: async () => {
+            owed.push(done);
+          }
+        };
   };
 
 /**
@@ -47,10 +62,14 @@ const doneAfterTheSend = (sponsor: NonNullable<FeeAndSubmit['sponsor']>, owed: (
  * a call the chain shows after our service gave no answer is told too (`ctx.seenOnTheChain`).
  */
 export function handOverFor(
-  ctx: Pick<StepContext, 'held' | 'signal'> & Pick<StepContext, 'sendStraight'> & Partial<Pick<StepContext, 'show' | 'seenOnTheChain' | 'confirmFee'>>,
+  ctx: Pick<StepContext, 'held' | 'signal'> &
+    Pick<StepContext, 'sendStraight'> &
+    Partial<Pick<StepContext, 'show' | 'seenOnTheChain' | 'confirmFee'>>,
   chain: Pick<CompanyChain, 'ownWallet' | 'ownServiceSend'>,
-  service: ServiceRead = { choice: OUR_SERVICE }, now: () => number = Date.now,
-  sponsor?: FeeAndSubmit['sponsor'], ownWalletChosen = false,
+  service: ServiceRead = { choice: OUR_SERVICE },
+  now: () => number = Date.now,
+  sponsor?: FeeAndSubmit['sponsor'],
+  ownWalletChosen = false
 ): HandOver {
   const account = ctx.held.account;
   const own = chain.ownWallet;
@@ -65,21 +84,39 @@ export function handOverFor(
    * The sponsorship is told this wallet is done with the call only once the runner's door has closed on the send, so
    * the step's view has taken the send's own moves and the telling is checked against the company as the send left it.
    */
-  const sent = (submit?: FeeAndSubmit['submit']) => (account === undefined || own === undefined ? undefined
-    : async (tx: string, call: ChainCall): Promise<void> => {
-      const owed: (() => Promise<void>)[] = [];
-      try {
-        /* Through the runner's door: the step's read of the company is checked before the call leaves this wallet. */
-        await ctx.sendStraight((door) => straightFromTheOwnWallet(() => own(ctx.held.identity, account), now, () => !ctx.signal.aborted, { over: false }, {
-          ...(sponsor === undefined ? {} : { sponsor: doneAfterTheSend(sponsor, owed) }), ...(submit === undefined ? {} : { submit }),
-          ownDustPaid: () => note('own-dust'), unreached: () => note('unreached'), handedOver: door.handedOver, ownWalletChosen,
-          offer: (fee, sponsorSaid) => ownFeeConfirmed(ctx, ownFeeOfferLines(fee, sponsorSaid), door.ready, fee),
-        })(tx, call), [], [{ circuit: call.circuit, contract: call.contract }]);
-      } finally {
-        /* Telling the sponsorship is its bookkeeping, not the send's: each is settled, so one that fails leaves the send as it went. */
-        await Promise.allSettled(owed.map((done) => done()));
-      }
-    });
+  const sent = (submit?: FeeAndSubmit['submit']) =>
+    account === undefined || own === undefined
+      ? undefined
+      : async (tx: string, call: ChainCall): Promise<void> => {
+          const owed: (() => Promise<void>)[] = [];
+          try {
+            /* Through the runner's door: the step's read of the company is checked before the call leaves this wallet. */
+            await ctx.sendStraight(
+              (door) =>
+                straightFromTheOwnWallet(
+                  () => own(ctx.held.identity, account),
+                  now,
+                  () => !ctx.signal.aborted,
+                  { over: false },
+                  {
+                    ...(sponsor === undefined ? {} : { sponsor: doneAfterTheSend(sponsor, owed) }),
+                    ...(submit === undefined ? {} : { submit }),
+                    ownDustPaid: () => note('own-dust'),
+                    unreached: () => note('unreached'),
+                    handedOver: door.handedOver,
+                    ownWalletChosen,
+                    offer: (fee, sponsorSaid) =>
+                      ownFeeConfirmed(ctx, ownFeeOfferLines(fee, sponsorSaid), door.ready, fee)
+                  }
+                )(tx, call),
+              [],
+              [{ circuit: call.circuit, contract: call.contract }]
+            );
+          } finally {
+            /* Telling the sponsorship is its bookkeeping, not the send's: each is settled, so one that fails leaves the send as it went. */
+            await Promise.allSettled(owed.map((done) => done()));
+          }
+        };
   const choice = 'unread' in service ? null : service.choice;
   if (choice !== null && choice.service === 'ours') {
     const toChain = sent();
@@ -93,25 +130,43 @@ export function handOverFor(
         if (there) ctx.seenOnTheChain?.();
         return there;
       } finally {
-        await o.stop?.().catch(() => { /* The wallet only read the chain here: a failure to stop it changes nothing sent or read. */ });
+        await o.stop?.().catch(() => {
+          /* The wallet only read the chain here: a failure to stop it changes nothing sent or read. */
+        });
       }
     };
     return Object.freeze({
       path: 'service' as const,
       fallback: Object.freeze({
-        toChain, fellBack: (why?: 'unreached') => { taken = true; note(why ?? 'chain'); }, taken: () => taken, landed,
-      }),
+        toChain,
+        fellBack: (why?: 'unreached') => {
+          taken = true;
+          note(why ?? 'chain');
+        },
+        taken: () => taken,
+        landed
+      })
     });
   }
   if (choice !== null && choice.service === 'own') {
     const bad = serviceAddressRefusal(choice.at);
-    if (bad !== null) return Object.freeze({ path: 'company-service' as const, at: choice.at, refused: `${bad}. Nothing was sent.` });
+    if (bad !== null)
+      return Object.freeze({ path: 'company-service' as const, at: choice.at, refused: `${bad}. Nothing was sent.` });
     const toChain = sent(toTheCompanysService(choice.at, chain.ownServiceSend));
-    return Object.freeze({ path: 'company-service' as const, at: choice.at, ...(toChain === undefined ? {} : { toChain }) });
+    return Object.freeze({
+      path: 'company-service' as const,
+      at: choice.at,
+      ...(toChain === undefined ? {} : { toChain })
+    });
   }
   const straight = sent();
-  const toChain = straight === undefined || choice !== null ? straight
-    : async (tx: string, call: ChainCall) => { note('unread'); await straight(tx, call); };
+  const toChain =
+    straight === undefined || choice !== null
+      ? straight
+      : async (tx: string, call: ChainCall) => {
+          note('unread');
+          await straight(tx, call);
+        };
   return Object.freeze({ path: 'chain' as const, ...(toChain === undefined ? {} : { toChain }) });
 }
 
@@ -125,7 +180,10 @@ export function handOverFor(
  * company is read again (`ready`) before anything leaves, since the answer may come minutes after it was read.
  */
 export const ownFeeConfirmed = async (
-  ctx: Partial<Pick<StepContext, 'confirmFee'>>, lines: readonly Words[], ready: () => Promise<void>, fee?: bigint,
+  ctx: Partial<Pick<StepContext, 'confirmFee'>>,
+  lines: readonly Words[],
+  ready: () => Promise<void>,
+  fee?: bigint
 ): Promise<boolean> => {
   if ((await ctx.confirmFee?.(lines, fee)) !== true) return false;
   /* The fee confirmed, maybe minutes after the company was read: it is read again before the call leaves. */
@@ -136,23 +194,33 @@ export const ownFeeConfirmed = async (
 /** What the person is shown when their own DUST is offered for a call's fee: what the sponsorship said, if it refused, and the fee. */
 export const ownFeeOfferLines = (fee: bigint, sponsorSaid: string | null): readonly Words[] => [
   ...(sponsorSaid === null ? [] : [{ key: 'act.fee.sponsor-said', values: { says: sponsorSaid } }]),
-  { key: 'act.fee.own-offer', values: { fee: dustFromSpecks(fee), specks: exactSpecks(fee) } },
+  { key: 'act.fee.own-offer', values: { fee: dustFromSpecks(fee), specks: exactSpecks(fee) } }
 ];
 
 export const sponsorFor = (
-  intent: Pick<StepContext['intent'], 'name'>, write: (w: RecordWrite) => Promise<unknown>,
+  intent: Pick<StepContext['intent'], 'name'>,
+  write: (w: RecordWrite) => Promise<unknown>
 ): FeeAndSubmit['sponsor'] => {
   const shape = intentShapeOf(intent.name);
   if (shape === undefined || !listsRoute(shape, FEE_SPONSORED)) return undefined;
   const told = listsRoute(shape, FEE_SPONSORED_DONE);
   return async (tx, call) => {
-    const back = await write({ to: 'fee', body: { tx, kind: call.kind, contract: call.contract, circuit: call.circuit } }) as { tx?: unknown; booking?: unknown } | null;
-    if (typeof back?.tx !== 'string' || back.tx.length === 0) throw new Error('the fee sponsorship handed back no call. Nothing was paid or sent; try again');
+    const back = (await write({
+      to: 'fee',
+      body: { tx, kind: call.kind, contract: call.contract, circuit: call.circuit }
+    })) as { tx?: unknown; booking?: unknown } | null;
+    if (typeof back?.tx !== 'string' || back.tx.length === 0)
+      throw new Error('the fee sponsorship handed back no call. Nothing was paid or sent; try again');
     const booking = back.booking;
     return {
       tx: back.tx,
       ...(told && typeof booking === 'string'
-        ? { done: async () => { await write({ to: 'fee-done', body: { booking } }); } } : {}),
+        ? {
+            done: async () => {
+              await write({ to: 'fee-done', body: { booking } });
+            }
+          }
+        : {})
     };
   };
 };
@@ -163,28 +231,35 @@ export const sponsorFor = (
  */
 export const handOverMarked = (given: HandOver | undefined, handed: Handed): HandOver => {
   const over = given ?? THROUGH_THE_SERVICE;
-  const mark = (): void => { handed.over = true; };
-  const marked = (toChain: NonNullable<HandOver['toChain']>): NonNullable<HandOver['toChain']> => async (tx, call) => {
-    try {
-      await toChain(tx, call);
-    } catch (e) {
-      const marked = e as { nothingWasSent?: unknown; thisSendNotSent?: unknown } | null;
-      if (marked?.nothingWasSent !== true && marked?.thisSendNotSent !== true) mark();
-      throw e;
-    }
-    mark();
+  const mark = (): void => {
+    handed.over = true;
   };
+  const marked =
+    (toChain: NonNullable<HandOver['toChain']>): NonNullable<HandOver['toChain']> =>
+    async (tx, call) => {
+      try {
+        await toChain(tx, call);
+      } catch (e) {
+        const marked = e as { nothingWasSent?: unknown; thisSendNotSent?: unknown } | null;
+        if (marked?.nothingWasSent !== true && marked?.thisSendNotSent !== true) mark();
+        throw e;
+      }
+      mark();
+    };
   if (over.toChain === undefined && over.fallback === undefined) return over;
   return Object.freeze({
     ...over,
     ...(over.toChain === undefined ? {} : { toChain: marked(over.toChain) }),
-    ...(over.fallback === undefined ? {} : { fallback: Object.freeze({ ...over.fallback, toChain: marked(over.fallback.toChain) }) }),
+    ...(over.fallback === undefined
+      ? {}
+      : { fallback: Object.freeze({ ...over.fallback, toChain: marked(over.fallback.toChain) }) })
   });
 };
-
 
 /**
  * Whether an action's own call has been handed over to be sent (`over`), so a refusal after it is never said as nothing
  * sent.
  */
-export interface Handed { over: boolean }
+export interface Handed {
+  over: boolean;
+}

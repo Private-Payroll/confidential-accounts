@@ -35,7 +35,8 @@ export function pinIn(k: Keyring, label: string): KeptPin | null {
  */
 export function withPin(k: Keyring, label: string, account: string, from: PinFrom, at: string): Keyring {
   const lower = account.toLowerCase();
-  if (!isCompanyLabel(label) || !HEX64.test(lower)) throw new Error('that is not a company\'s label and account, so nothing was pinned. Nothing was changed.');
+  if (!isCompanyLabel(label) || !HEX64.test(lower))
+    throw new Error("that is not a company's label and account, so nothing was pinned. Nothing was changed.");
   if (pinIn(k, label) !== null) return k;
   return { ...k, pins: { ...(k.pins ?? {}), [label]: { account: lower, from, at } } };
 }

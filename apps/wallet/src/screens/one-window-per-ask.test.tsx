@@ -14,13 +14,15 @@ import { IDBFactory } from 'fake-indexeddb';
  */
 
 /* The page this wallet is built to answer: a window opened by any other page is answered nothing. */
-vi.hoisted(() => { process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example'; });
+vi.hoisted(() => {
+  process.env['VITE_APP_ORIGIN'] = 'https://app.payroll.example';
+});
 
 vi.mock('midnight-identity/browser', () => ({
   ensureBuffer: (): void => {},
   passkeysAvailable: (): boolean => true,
   createPasskey: vi.fn(),
-  usePasskey: vi.fn(),
+  usePasskey: vi.fn()
 }));
 
 vi.mock('midnight-identity', async (importOriginal) => {
@@ -58,15 +60,26 @@ const mockUsePasskey = vi.mocked(usePasskey);
 const mockVerifyAssertion = vi.mocked(verifyAssertion);
 
 const passkeyFixture = (credentialId: string): Passkey => ({
-  credentialId, personHandle: 'person-1', publicKeySpki: new Uint8Array([1, 2, 3]), algorithm: -7, signCount: 0,
-  provenBySignIn: false, rpId: 'localhost', syncsToACloud: false, backedUpNow: false, transports: [],
+  credentialId,
+  personHandle: 'person-1',
+  publicKeySpki: new Uint8Array([1, 2, 3]),
+  algorithm: -7,
+  signCount: 0,
+  provenBySignIn: false,
+  rpId: 'localhost',
+  syncsToACloud: false,
+  backedUpNow: false,
+  transports: []
 });
 
 /** A passkey prompt that the person completes with `credentialId`. */
 const passkeyAnswers = (credentialId: string): void => {
   mockUsePasskey.mockResolvedValueOnce({
-    credentialId, clientDataJSON: new Uint8Array(), authenticatorData: new Uint8Array(), signature: new Uint8Array(),
-    userHandle: 'cGVyc29uLTE',
+    credentialId,
+    clientDataJSON: new Uint8Array(),
+    authenticatorData: new Uint8Array(),
+    signature: new Uint8Array(),
+    userHandle: 'cGVyc29uLTE'
   } as never);
   mockVerifyAssertion.mockResolvedValueOnce({ passkey: passkeyFixture(credentialId) } as never);
 };
@@ -89,7 +102,7 @@ const ask = (kind: string, over: Record<string, unknown> = {}): Record<string, u
   nonce: `${kind}-${(asked += 1)}`,
   expiresAt: Date.now() + 600_000,
   ...(kind === 'keyring' ? { person: 'person-7' } : {}),
-  ...over,
+  ...over
 });
 
 /* The page that opened this window: it keeps what the wallet posts, and sends its ask whenever the wallet says it is
@@ -103,24 +116,29 @@ const page = {
       const sending = asking;
       setTimeout(() => send(sending), 0);
     }
-  },
+  }
 };
 const send = (data: unknown): void => {
   const event = new Event('message');
   Object.defineProperties(event, { data: { value: data }, origin: { value: ASKER }, source: { value: page } });
   window.dispatchEvent(event);
 };
-const answers = (schema: string): unknown[] => posted.filter((m) => {
-  const said = m as { schema?: unknown; payload?: { schema?: unknown } };
-  return said.schema === schema || said.payload?.schema === schema;
-});
+const answers = (schema: string): unknown[] =>
+  posted.filter((m) => {
+    const said = m as { schema?: unknown; payload?: { schema?: unknown } };
+    return said.schema === schema || said.payload?.schema === schema;
+  });
 const RESPONSE = 'midnight-identity/disclosure-response/v1';
 const REFUSED = 'midnight-identity/disclosure-refused/v1';
 const KEYRING = 'midnight-identity/keyring-release/v1';
 
 const mount = (theAsk: Record<string, unknown>) => {
   asking = theAsk;
-  return render(<SessionProvider><App /></SessionProvider>);
+  return render(
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  );
 };
 const theWindow = async (kind: string): Promise<HTMLButtonElement> => {
   await waitFor(() => expect(document.querySelector(`[data-ask-window="${kind}"]`)).not.toBeNull());
@@ -201,7 +219,9 @@ describe('an ask that reaches a locked wallet is one window', () => {
     asking = { ...asking!, purpose: 'Something the window did not show.' };
     fireEvent.click(approve);
     /* RED WHEN: an ask swapped in after the passkey is shown with its own button as if it were the one approved. */
-    await waitFor(() => expect(document.querySelector('[data-not-what-was-approved]')).not.toBeNull(), { timeout: 5000 });
+    await waitFor(() => expect(document.querySelector('[data-not-what-was-approved]')).not.toBeNull(), {
+      timeout: 5000
+    });
     expect(document.querySelector('[data-sign-in]')).toBeNull();
     /* RED WHEN: the page is left waiting, or answered, instead of told the swapped ask was refused. */
     await waitFor(() => expect(answers(REFUSED)).toEqual([{ schema: REFUSED, reason: 'declined' }]));
@@ -233,7 +253,11 @@ describe('an ask that reaches a locked wallet is one window', () => {
     passkeyAnswers('cred-a');
     fireEvent.click(approve);
     /* RED WHEN: a passkey of a wallet other than the one the window names opens that wallet. */
-    await waitFor(() => expect(document.body.textContent).toContain('That passkey opens another wallet held in this browser, not Work'), { timeout: 5000 });
+    await waitFor(
+      () =>
+        expect(document.body.textContent).toContain('That passkey opens another wallet held in this browser, not Work'),
+      { timeout: 5000 }
+    );
     /* RED WHEN: the window invites pressing again where pressing again cannot work, or hides the list that is the way out. */
     expect(document.querySelector('[data-passkey-again]')).toBeNull();
     expect(document.querySelectorAll('[data-wallet-choice]')).toHaveLength(2);
@@ -247,12 +271,31 @@ describe('an ask that reaches a locked wallet is one window', () => {
     await saveSecret(secret);
     function Opener() {
       const { unlock, error } = useSession();
-      return <><button type="button" data-open onClick={() => { void unlock({ onlyTheOpenWallet: true, onlyThatWallet: true }); }}>open</button><p data-error>{error}</p></>;
+      return (
+        <>
+          <button
+            type="button"
+            data-open
+            onClick={() => {
+              void unlock({ onlyTheOpenWallet: true, onlyThatWallet: true });
+            }}
+          >
+            open
+          </button>
+          <p data-error>{error}</p>
+        </>
+      );
     }
-    render(<SessionProvider><Opener /></SessionProvider>);
+    render(
+      <SessionProvider>
+        <Opener />
+      </SessionProvider>
+    );
     press('[data-open]');
     /* RED WHEN: a wallet with no passkey on record offers the browser an empty list, which any passkey answers. */
-    await waitFor(() => expect(document.querySelector('[data-error]')?.textContent).toContain('has no passkey kept in this browser'));
+    await waitFor(() =>
+      expect(document.querySelector('[data-error]')?.textContent).toContain('has no passkey kept in this browser')
+    );
     expect(mockUsePasskey).not.toHaveBeenCalled();
   });
 });
@@ -325,25 +368,40 @@ describe('a payment this wallet cannot read', () => {
   it('is refused in the window, before any passkey, with nothing to approve', async () => {
     const handlers: ((event: MessageEvent) => void)[] = [];
     const received: unknown[] = [];
-    const asker = { postMessage: (message: unknown) => { received.push(message); } };
+    const asker = {
+      postMessage: (message: unknown) => {
+        received.push(message);
+      }
+    };
     const view = {
       opener: asker,
-      addEventListener: (_t: string, h: (e: MessageEvent) => void) => { handlers.push(h); },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: (_t: string, h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     } as unknown as ChannelWindow;
     await putWallet('Everyday', 'cred-a');
     render(
       <SessionProvider>
         <ApproveEntry
-          phase={{ name: 'locked' }} entry={null} view={view} port={localStorage}
+          phase={{ name: 'locked' }}
+          entry={null}
+          view={view}
+          port={localStorage}
           readLabel={async () => ({ of: 'no-account' })}
-          readLedger={async () => { throw new Error('no ledger here'); }}
+          readLedger={async () => {
+            throw new Error('no ledger here');
+          }}
         />
-      </SessionProvider>);
+      </SessionProvider>
+    );
     const payment = ask('balance', {
       company: 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071',
       account: 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8',
-      vault: 'aa'.repeat(32), transaction: 'AAAA',
+      vault: 'aa'.repeat(32),
+      transaction: 'AAAA'
     });
     for (const h of handlers) h({ source: asker, origin: ASKER, data: payment } as unknown as MessageEvent);
     await waitFor(() => expect(document.querySelector('[data-balance-refused]')).not.toBeNull());
@@ -360,29 +418,44 @@ describe('what the window shows, and what the opened wallet still refuses', () =
     const asker = { postMessage: () => {} };
     const view = {
       opener: asker,
-      addEventListener: (_t: string, h: (e: MessageEvent) => void) => { handlers.push(h); },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: (_t: string, h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     } as unknown as ChannelWindow;
     const VAULT = 'aa'.repeat(32);
     const TOKEN = '02'.repeat(32);
-    const ledger = async () => ({
-      Transaction: {
-        deserialize: () => ({
-          intents: new Map([[1, { actions: [{ address: VAULT, entryPoint: 'deposit' }] }]]),
-          guaranteedOffer: { inputs: [], transients: [], outputs: [{ contractAddress: VAULT }] },
-          imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'shielded', raw: TOKEN }, -2500n]] : []),
-        }),
-      },
-    }) as never;
+    const ledger = async () =>
+      ({
+        Transaction: {
+          deserialize: () => ({
+            intents: new Map([[1, { actions: [{ address: VAULT, entryPoint: 'deposit' }] }]]),
+            guaranteedOffer: { inputs: [], transients: [], outputs: [{ contractAddress: VAULT }] },
+            imbalances: (s: number) => new Map(s === 0 ? [[{ tag: 'shielded', raw: TOKEN }, -2500n]] : [])
+          })
+        }
+      }) as never;
     const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071';
     await putWallet('Everyday', 'cred-a');
     render(
       <SessionProvider>
-        <ApproveEntry phase={{ name: 'locked' }} entry={null} view={view} port={localStorage}
-          readLabel={async () => ({ of: 'carries', label: CO }) as never} readLedger={ledger} />
-      </SessionProvider>);
+        <ApproveEntry
+          phase={{ name: 'locked' }}
+          entry={null}
+          view={view}
+          port={localStorage}
+          readLabel={async () => ({ of: 'carries', label: CO }) as never}
+          readLedger={ledger}
+        />
+      </SessionProvider>
+    );
     const payment = ask('balance', {
-      company: CO, account: 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8', vault: VAULT, transaction: 'AAAA',
+      company: CO,
+      account: 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8',
+      vault: VAULT,
+      transaction: 'AAAA'
     });
     for (const h of handlers) h({ source: asker, origin: ASKER, data: payment } as unknown as MessageEvent);
     /* RED WHEN: a private deposit the page built, its coin chosen by the page, can be approved and paid: this wallet makes a private deposit whole, asked by intent. */
@@ -402,7 +475,9 @@ describe('what the window shows, and what the opened wallet still refuses', () =
     passkeyAnswers('cred-b');
     fireEvent.click(approve);
     await waitFor(() => expect(document.querySelector('[data-not-this-wallet]')).not.toBeNull(), { timeout: 5000 });
-    await new Promise((r) => { setTimeout(r, 300); });
+    await new Promise((r) => {
+      setTimeout(r, 300);
+    });
     /* RED WHEN: approving before the passkey lets a wallet that did not sign in to the page give it a key. */
     expect(answers(KEYRING)).toHaveLength(0);
   });
@@ -466,35 +541,71 @@ describe('a key approved in the window is given at once only when nothing warns'
   const NOW = 1_755_000_000_000;
   const CO = 'co_1f2e3d4c5b6a79880a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071';
   const ACCOUNT = 'dbe119a304f8e7ea882353435c1d536cf2faf4298236a9aae77670e750af65c8';
-  const carries = async (account: string) => (account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' }) as never;
+  const carries = async (account: string) =>
+    (account === ACCOUNT ? { of: 'carries', label: CO } : { of: 'no-account' }) as never;
   const secret = newSecret();
   const identity = identityFromSecret(secret);
   const wire = (kind: 'unlock' | 'keyring', nonce: string) => ({
-    schema: 'midnight-identity/disclosure-request/v1', kind, requester: { name: 'Payroll', rdns: 'example.payroll' },
-    purpose: 'So the page can open your records.', nonce, expiresAt: NOW + 600_000, company: CO, account: ACCOUNT,
-    ...(kind === 'keyring' ? { person: 'person-7' } : {}),
+    schema: 'midnight-identity/disclosure-request/v1',
+    kind,
+    requester: { name: 'Payroll', rdns: 'example.payroll' },
+    purpose: 'So the page can open your records.',
+    nonce,
+    expiresAt: NOW + 600_000,
+    company: CO,
+    account: ACCOUNT,
+    ...(kind === 'keyring' ? { person: 'person-7' } : {})
   });
   /* The opened wallet's screen, for an ask the window approved, in a window opened by the page. */
   const opened = (data: ReturnType<typeof wire>) => {
     const handlers: ((event: MessageEvent) => void)[] = [];
     const received: unknown[] = [];
-    const asker = { postMessage: (message: unknown) => { received.push(message); } };
+    const asker = {
+      postMessage: (message: unknown) => {
+        received.push(message);
+      }
+    };
     const view = {
       opener: asker,
-      addEventListener: (_t: string, h: (e: MessageEvent) => void) => { handlers.push(h); },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: (_t: string, h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     } as unknown as ChannelWindow;
     approveBeforeThePasskey(parseAsk(data, ASKER, NOW));
-    render(<Approve identity={identity} secret={secret} port={localStorage} view={view} now={() => NOW} readLabel={carries} embedder={ASKER} />);
+    render(
+      <Approve
+        identity={identity}
+        secret={secret}
+        port={localStorage}
+        view={view}
+        now={() => NOW}
+        readLabel={carries}
+        embedder={ASKER}
+      />
+    );
     for (const h of handlers) h({ source: asker, origin: ASKER, data } as unknown as MessageEvent);
     const given = () => received.filter((m) => (m as { schema?: unknown }).schema !== READY_PING);
     return { given };
   };
   const keyWentTo = async (origin: string) => {
-    await save(localStorage, identity, recordRelease(emptyProfile(NOW), {
-      at: NOW - 1000, nonce: 'earlier', recipient: { origin, name: 'Elsewhere', rdns: 'example.elsewhere' },
-      company: CO as never, account: ACCOUNT as never,
-    }, NOW));
+    await save(
+      localStorage,
+      identity,
+      recordRelease(
+        emptyProfile(NOW),
+        {
+          at: NOW - 1000,
+          nonce: 'earlier',
+          recipient: { origin, name: 'Elsewhere', rdns: 'example.elsewhere' },
+          company: CO as never,
+          account: ACCOUNT as never
+        },
+        NOW
+      )
+    );
   };
 
   it('an unlock is given with no press once the account carries the label', async () => {
@@ -503,34 +614,42 @@ describe('a key approved in the window is given at once only when nothing warns'
     await waitFor(() => expect(given()).toHaveLength(1), { timeout: 5000 });
   });
 
-  it('an unlock is held, with the reason above its button, when another wallet here answered the page\'s sign-in', async () => {
+  it("an unlock is held, with the reason above its button, when another wallet here answered the page's sign-in", async () => {
     rememberSignIn(localStorage, ASKER, 'another-wallet-held-here');
     const shown: Element[] = [];
-    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = function scrolled(this: Element) { shown.push(this); };
+    (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = function scrolled(this: Element) {
+      shown.push(this);
+    };
     const { given } = opened(wire('unlock', 'u-other'));
     await waitFor(() => expect(document.querySelector('[data-not-this-wallet]')).not.toBeNull());
     /* RED WHEN: the reason an approved ask was held is left far down the screen, out of the person's sight. */
     await waitFor(() => expect(shown).toContain(document.querySelector('[data-not-this-wallet]')));
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-    await new Promise((r) => { setTimeout(r, 300); });
+    await new Promise((r) => {
+      setTimeout(r, 300);
+    });
     /* RED WHEN: a key is given at once to a page another wallet signed in to. */
     expect(given()).toEqual([]);
   });
 
-  it('an unlock is held, with the warning above its button, when this company\'s key went to another page before', async () => {
+  it("an unlock is held, with the warning above its button, when this company's key went to another page before", async () => {
     await keyWentTo('https://elsewhere.example');
     const { given } = opened(wire('unlock', 'u-elsewhere'));
     await waitFor(() => expect(document.querySelector('[data-seen-elsewhere]')).not.toBeNull());
-    await new Promise((r) => { setTimeout(r, 300); });
+    await new Promise((r) => {
+      setTimeout(r, 300);
+    });
     /* RED WHEN: an unlock is given at once though the company's key went to another page before. */
     expect(given()).toEqual([]);
   });
 
-  it('a keyring ask naming a company is held when that company\'s key went to another page before', async () => {
+  it("a keyring ask naming a company is held when that company's key went to another page before", async () => {
     await keyWentTo('https://elsewhere.example');
     const { given } = opened(wire('keyring', 'k-elsewhere'));
     await waitFor(() => expect(document.querySelector('[data-seen-elsewhere]')).not.toBeNull());
-    await new Promise((r) => { setTimeout(r, 300); });
+    await new Promise((r) => {
+      setTimeout(r, 300);
+    });
     /* RED WHEN: a keyring ask is answered at once though the company's key went to another page before. */
     expect(given()).toEqual([]);
   });
@@ -543,26 +662,54 @@ describe('a sign-in approved in the window waits when the address it would give 
     const identity = identityFromSecret(secret);
     /* This page and another site were both given the same account before. */
     const theirs = chooseSlot(emptyProfile(NOW), ASKER).account;
-    let profile = grantTo(emptyProfile(NOW), { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' }, theirs, [], NOW - 2000);
-    profile = grantTo(profile, { origin: 'https://elsewhere.example', name: 'Elsewhere', rdns: 'example.elsewhere' }, theirs, [], NOW - 1000);
+    let profile = grantTo(
+      emptyProfile(NOW),
+      { origin: ASKER, name: 'Payroll', rdns: 'example.payroll' },
+      theirs,
+      [],
+      NOW - 2000
+    );
+    profile = grantTo(
+      profile,
+      { origin: 'https://elsewhere.example', name: 'Elsewhere', rdns: 'example.elsewhere' },
+      theirs,
+      [],
+      NOW - 1000
+    );
     await save(localStorage, identity, profile);
     const data = {
-      schema: 'midnight-identity/disclosure-request/v1', kind: 'sign-in', requester: { name: 'Payroll', rdns: 'example.payroll' },
-      purpose: 'So the page knows it is you.', nonce: 's-shared', expiresAt: NOW + 600_000,
+      schema: 'midnight-identity/disclosure-request/v1',
+      kind: 'sign-in',
+      requester: { name: 'Payroll', rdns: 'example.payroll' },
+      purpose: 'So the page knows it is you.',
+      nonce: 's-shared',
+      expiresAt: NOW + 600_000
     };
     const handlers: ((event: MessageEvent) => void)[] = [];
     const received: unknown[] = [];
-    const asker = { postMessage: (message: unknown) => { received.push(message); } };
+    const asker = {
+      postMessage: (message: unknown) => {
+        received.push(message);
+      }
+    };
     const view = {
       opener: asker,
-      addEventListener: (_t: string, h: (e: MessageEvent) => void) => { handlers.push(h); },
-      removeEventListener: () => { /* torn down by cleanup */ },
+      addEventListener: (_t: string, h: (e: MessageEvent) => void) => {
+        handlers.push(h);
+      },
+      removeEventListener: () => {
+        /* torn down by cleanup */
+      }
     } as unknown as ChannelWindow;
     approveBeforeThePasskey(parseAsk(data, ASKER, NOW));
-    render(<Approve identity={identity} secret={secret} port={localStorage} view={view} now={() => NOW} embedder={ASKER} />);
+    render(
+      <Approve identity={identity} secret={secret} port={localStorage} view={view} now={() => NOW} embedder={ASKER} />
+    );
     for (const h of handlers) h({ source: asker, origin: ASKER, data } as unknown as MessageEvent);
     await waitFor(() => expect(document.querySelector('[data-wallet-shared]')).not.toBeNull());
-    await new Promise((r) => { setTimeout(r, 300); });
+    await new Promise((r) => {
+      setTimeout(r, 300);
+    });
     /* RED WHEN: a sign-in is answered at once with an address another site already has, before the person has seen that. */
     expect(received.filter((m) => (m as { schema?: unknown }).schema !== READY_PING)).toEqual([]);
   });
